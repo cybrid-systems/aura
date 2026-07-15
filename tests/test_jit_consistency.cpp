@@ -147,7 +147,7 @@ bool test_unhandled_opcode_atomic() {
 
 // ── Test 3: intrinsic_count / fallback_count / consistency ──
 //
-// These three counters are read by (jit:intrinsic-count) +
+// These three counters are read by (stats:get "jit:intrinsic-count") +
 // the consistency harness follow-up. Pin independence.
 bool test_observability_counter_independence() {
     std::println("\n--- Test: intrinsic/fallback/consistency independence ---");

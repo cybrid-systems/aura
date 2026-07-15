@@ -108,77 +108,80 @@ void CompilePrims::register_compile_p56(PrimRegistrar add, Evaluator& ev) {
     //     hw_region (Synth | Sim | Unset), and richer
     //     hardware-specific messages (e.g. "may introduce
     //     latch" for incomplete case + width-loss).
-    add("compile:hw-coercion-lossy?", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return ev.make_merr("bad-arg", "usage: (compile:hw-coercion-lossy? from-name to-name)");
-        auto from_sx = as_string_idx(a[0]);
-        auto to_sx = as_string_idx(a[1]);
-        std::string from_name, to_name;
-        if (from_sx < ev.string_heap_.size())
-            from_name = ev.string_heap_[from_sx];
-        if (to_sx < ev.string_heap_.size())
-            to_name = ev.string_heap_[to_sx];
-        if (!ev.type_registry_)
-            return make_int(0);
-        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        auto from_tid = reg.lookup_type(from_name);
-        auto to_tid = reg.lookup_type(to_name);
-        if (!from_tid.valid() || !to_tid.valid())
-            return make_int(0);
-        auto* from_bv = reg.hw_bitvec_of(from_tid);
-        auto* to_bv = reg.hw_bitvec_of(to_tid);
-        if (!from_bv || !to_bv)
-            return make_int(0); // not a hw coercion
-        // Lossy iff FROM is wider than TO (narrowing drops bits).
-        // Same width (regardless of signedness) is lossless:
-        // reinterpreting signed↔unsigned doesn't lose bits.
-        // Widening is lossless (zero- or sign-extension).
-        const bool lossy = from_bv->width > to_bv->width;
-        return make_int(lossy ? 1 : 0);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:hw-coercion-lossy?", [&ev](const auto& a) -> EvalValue {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return ev.make_merr("bad-arg",
+                                    "usage: (compile:hw-coercion-lossy? from-name to-name)");
+            auto from_sx = as_string_idx(a[0]);
+            auto to_sx = as_string_idx(a[1]);
+            std::string from_name, to_name;
+            if (from_sx < ev.string_heap_.size())
+                from_name = ev.string_heap_[from_sx];
+            if (to_sx < ev.string_heap_.size())
+                to_name = ev.string_heap_[to_sx];
+            if (!ev.type_registry_)
+                return make_int(0);
+            auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+            auto from_tid = reg.lookup_type(from_name);
+            auto to_tid = reg.lookup_type(to_name);
+            if (!from_tid.valid() || !to_tid.valid())
+                return make_int(0);
+            auto* from_bv = reg.hw_bitvec_of(from_tid);
+            auto* to_bv = reg.hw_bitvec_of(to_tid);
+            if (!from_bv || !to_bv)
+                return make_int(0); // not a hw coercion
+            // Lossy iff FROM is wider than TO (narrowing drops bits).
+            // Same width (regardless of signedness) is lossless:
+            // reinterpreting signed↔unsigned doesn't lose bits.
+            // Widening is lossless (zero- or sign-extension).
+            const bool lossy = from_bv->width > to_bv->width;
+            return make_int(lossy ? 1 : 0);
+        });
 }
 
 // Issue #909 compile part 57 (orig 4699-4773)
 void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
 
-    add("compile:hw-coercion-warning", [&ev](const auto& a) -> EvalValue {
-        // Issue #1050: empty-string sentinel must be a real heap entry,
-        // never make_string(heap.size()) which is OOB.
-        auto empty_str = [&ev]() -> EvalValue {
-            return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
-        };
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return ev.make_merr("bad-arg",
-                                "usage: (compile:hw-coercion-warning from-name to-name)");
-        auto from_sx = as_string_idx(a[0]);
-        auto to_sx = as_string_idx(a[1]);
-        std::string from_name, to_name;
-        if (from_sx < ev.string_heap_.size())
-            from_name = ev.string_heap_[from_sx];
-        if (to_sx < ev.string_heap_.size())
-            to_name = ev.string_heap_[to_sx];
-        if (!ev.type_registry_)
-            return empty_str();
-        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
-        auto from_tid = reg.lookup_type(from_name);
-        auto to_tid = reg.lookup_type(to_name);
-        if (!from_tid.valid() || !to_tid.valid())
-            return empty_str();
-        auto* from_bv = reg.hw_bitvec_of(from_tid);
-        auto* to_bv = reg.hw_bitvec_of(to_tid);
-        if (!from_bv || !to_bv)
-            return empty_str();
-        if (from_bv->width <= to_bv->width)
-            return empty_str(); // lossless — no warning
-        const std::uint32_t dropped = from_bv->width - to_bv->width;
-        const std::string from_str = from_bv->is_signed ? "signed" : "unsigned";
-        const std::string to_str = to_bv->is_signed ? "signed" : "unsigned";
-        const std::string msg = "lossy coercion: " + from_name + " (W" +
-                                std::to_string(from_bv->width) + " " + from_str + ") -> " +
-                                to_name + " (W" + std::to_string(to_bv->width) + " " + to_str +
-                                ") drops " + std::to_string(dropped) + " bits";
-        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(msg)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:hw-coercion-warning", [&ev](const auto& a) -> EvalValue {
+            // Issue #1050: empty-string sentinel must be a real heap entry,
+            // never make_string(heap.size()) which is OOB.
+            auto empty_str = [&ev]() -> EvalValue {
+                return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
+            };
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return ev.make_merr("bad-arg",
+                                    "usage: (compile:hw-coercion-warning from-name to-name)");
+            auto from_sx = as_string_idx(a[0]);
+            auto to_sx = as_string_idx(a[1]);
+            std::string from_name, to_name;
+            if (from_sx < ev.string_heap_.size())
+                from_name = ev.string_heap_[from_sx];
+            if (to_sx < ev.string_heap_.size())
+                to_name = ev.string_heap_[to_sx];
+            if (!ev.type_registry_)
+                return empty_str();
+            auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.type_registry_);
+            auto from_tid = reg.lookup_type(from_name);
+            auto to_tid = reg.lookup_type(to_name);
+            if (!from_tid.valid() || !to_tid.valid())
+                return empty_str();
+            auto* from_bv = reg.hw_bitvec_of(from_tid);
+            auto* to_bv = reg.hw_bitvec_of(to_tid);
+            if (!from_bv || !to_bv)
+                return empty_str();
+            if (from_bv->width <= to_bv->width)
+                return empty_str(); // lossless — no warning
+            const std::uint32_t dropped = from_bv->width - to_bv->width;
+            const std::string from_str = from_bv->is_signed ? "signed" : "unsigned";
+            const std::string to_str = to_bv->is_signed ? "signed" : "unsigned";
+            const std::string msg = "lossy coercion: " + from_name + " (W" +
+                                    std::to_string(from_bv->width) + " " + from_str + ") -> " +
+                                    to_name + " (W" + std::to_string(to_bv->width) + " " + to_str +
+                                    ") drops " + std::to_string(dropped) + " bits";
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(msg)));
+        });
 
     // ── Issue #373: MacroIntroduced hygiene guard primitives ──
     //
@@ -797,7 +800,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // ast_arena_bytes_in_use, ast_arena_upstream_bytes) before
     // serializing. Returns void if CompilerService / CompilerMetrics
     // back-pointers are unset (e.g. bare Evaluator without service).
-    add("compiler:metrics", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compiler:metrics", [&ev](const auto&) -> EvalValue {
         auto* svc = static_cast<CompilerService*>(ev.compiler_service());
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         if (!svc || !m)

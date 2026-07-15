@@ -52,7 +52,7 @@ int main() {
 
     // #1147: orch:metrics path bumps counters (void outside serve-async is fine)
     {
-        auto r = cs.eval("(orch:metrics)");
+        auto r = cs.eval("(stats:get \"orch:metrics\")");
         CHECK(r, "orch:metrics returns");
         auto s = cs.eval("(engine:metrics \"query:orchestration-telemetry-pipeline-stats\")");
         CHECK(s && is_hash(*s), "orch telemetry stats hash");

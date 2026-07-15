@@ -112,8 +112,8 @@ int main() {
 
         (void)cs_a.eval("(aot:set-module-version 3)");
         (void)cs_b.eval("(aot:set-module-version 4)");
-        auto va = cs_a.eval("(aot:get-module-version)");
-        auto vb = cs_b.eval("(aot:get-module-version)");
+        auto va = cs_a.eval("(stats:get \"aot:get-module-version\")");
+        auto vb = cs_b.eval("(stats:get \"aot:get-module-version\")");
         CHECK(va && is_int(*va) && as_int(*va) == 3, "Aura CS A module=3");
         CHECK(vb && is_int(*vb) && as_int(*vb) == 4, "Aura CS B module=4");
     }

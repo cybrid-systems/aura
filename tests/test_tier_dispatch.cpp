@@ -32,7 +32,7 @@ int main() {
 
     // Hot table populated after registration
     {
-        auto n = ival(cs, "(prim-hot-table-size)");
+        auto n = ival(cs, "(stats:get \"prim-hot-table-size\")");
         CHECK(n > 0, "hot_table_size > 0 after registration");
         // Should include at least RENDER_PRIMITIVE_META terminals + math (+ - * /)
         CHECK(n >= 5, "hot table has multiple hot primitives");
@@ -75,7 +75,7 @@ int main() {
         CHECK(id && is_int(*id) && as_int(*id) >= 0, "make-terminal-buffer (hot)");
         auto ok = cs.eval(std::format("(terminal-set-cell {} 0 0 65 1 0)", as_int(*id)));
         CHECK(ok && is_bool(*ok), "terminal-set-cell (hot)");
-        CHECK(ival(cs, "(prim-hot-table-size)") >= 5, "hot table still populated");
+        CHECK(ival(cs, "(stats:get \"prim-hot-table-size\")") >= 5, "hot table still populated");
     }
 
     // Cold fallback probe: lookup of unknown name doesn't crash
@@ -94,8 +94,8 @@ int main() {
         auto s = cs.eval("(engine:metrics \"query:prim-dispatch-stats\")");
         CHECK(s && is_string(*s), "stats final");
         // Ensure finalize left coherent size
-        CHECK(ival(cs, "(prim-hot-table-size)") ==
-                  static_cast<std::int64_t>(ival(cs, "(prim-hot-table-size)")),
+        CHECK(ival(cs, "(stats:get \"prim-hot-table-size\")") ==
+                  static_cast<std::int64_t>(ival(cs, "(stats:get \"prim-hot-table-size\")")),
               "hot size stable");
     }
 

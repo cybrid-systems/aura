@@ -227,18 +227,18 @@ bool test_clear_all_clears_all_fibers() {
 // ═════════════════════════════════════════════════════════════
 
 bool test_jit_exception_depth_primitive() {
-    std::println("\n--- Test 4.1: (jit:exception-depth) is registered ---");
+    std::println("\n--- Test 4.1: (stats:get \"jit:exception-depth\") is registered ---");
     aura::compiler::CompilerService cs;
-    int64_t v = run_int(cs, "(jit:exception-depth)");
-    CHECK(v >= 0, "(jit:exception-depth) returns non-negative int");
+    int64_t v = run_int(cs, "(stats:get \"jit:exception-depth\")");
+    CHECK(v >= 0, "(stats:get \"jit:exception-depth\") returns non-negative int");
     return true;
 }
 
 bool test_jit_exception_fibers_primitive() {
-    std::println("\n--- Test 4.2: (jit:exception-fibers) is registered ---");
+    std::println("\n--- Test 4.2: (stats:get \"jit:exception-fibers\") is registered ---");
     aura::compiler::CompilerService cs;
-    int64_t v = run_int(cs, "(jit:exception-fibers)");
-    CHECK(v >= 0, "(jit:exception-fibers) returns non-negative int");
+    int64_t v = run_int(cs, "(stats:get \"jit:exception-fibers\")");
+    CHECK(v >= 0, "(stats:get \"jit:exception-fibers\") returns non-negative int");
     return true;
 }
 
@@ -328,13 +328,13 @@ bool test_jit_register_exception_symbols() {
     std::println("\n--- Test 6.4: JIT registers per-fiber exception symbols ---");
     // The JIT engine registers the per-fiber exception state
     // functions as known symbols. This is verified indirectly:
-    // a test that calls (jit:exception-depth) and (jit:exception-fibers)
+    // a test that calls (stats:get "jit:exception-depth") and (stats:get "jit:exception-fibers")
     // works means the symbols are linked into the binary.
     aura::compiler::CompilerService cs;
-    int64_t d = run_int(cs, "(jit:exception-depth)");
-    int64_t f = run_int(cs, "(jit:exception-fibers)");
-    CHECK(d >= 0, "(jit:exception-depth) works (symbols linked)");
-    CHECK(f >= 0, "(jit:exception-fibers) works (symbols linked)");
+    int64_t d = run_int(cs, "(stats:get \"jit:exception-depth\")");
+    int64_t f = run_int(cs, "(stats:get \"jit:exception-fibers\")");
+    CHECK(d >= 0, "(stats:get \"jit:exception-depth\") works (symbols linked)");
+    CHECK(f >= 0, "(stats:get \"jit:exception-fibers\") works (symbols linked)");
     return true;
 }
 

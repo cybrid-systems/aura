@@ -154,14 +154,14 @@ bool test_regression_existing_primitives() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     // Core ast:* primitives (red-line #2 — stay in engine).
-    auto r1 = cs.eval("(ast:nodes)");
-    CHECK(r1.has_value(), "(ast:nodes) (regression)");
-    auto r2 = cs.eval("(ast:defs)");
-    CHECK(r2.has_value(), "(ast:defs) (regression)");
-    auto r3 = cs.eval("(ast:version)");
-    CHECK(r3.has_value(), "(ast:version) (regression)");
-    auto r4 = cs.eval("(ast:generation)");
-    CHECK(r4.has_value(), "(ast:generation) (regression)");
+    auto r1 = cs.eval("(stats:get \"ast:nodes\")");
+    CHECK(r1.has_value(), "(stats:get \"ast:nodes\") (regression)");
+    auto r2 = cs.eval("(stats:get \"ast:defs\")");
+    CHECK(r2.has_value(), "(stats:get \"ast:defs\") (regression)");
+    auto r3 = cs.eval("(stats:get \"ast:version\")");
+    CHECK(r3.has_value(), "(stats:get \"ast:version\") (regression)");
+    auto r4 = cs.eval("(stats:get \"ast:generation\")");
+    CHECK(r4.has_value(), "(stats:get \"ast:generation\") (regression)");
     // Core workspace:* primitives.
     auto r5 = cs.eval("(workspace:current)");
     CHECK(r5.has_value(), "(workspace:current) (regression)");

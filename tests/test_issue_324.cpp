@@ -77,12 +77,12 @@ bool test_flatast_compact() {
 
 // ── Scenario 3: arena stats accessible ──
 bool test_arena_stats_accessible() {
-    std::println("\n--- Scenario 3: (arena:stats-json) accessible ---");
+    std::println("\n--- Scenario 3: (stats:get \"arena:stats-json\") accessible ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(arena:stats-json)");
-    CHECK(r.has_value(), "(arena:stats-json) returns a value");
+    auto r = cs.eval("(stats:get \"arena:stats-json\")");
+    CHECK(r.has_value(), "(stats:get \"arena:stats-json\") returns a value");
     return true;
 }
 

@@ -6,7 +6,7 @@
 //   AC1: Dynamic passthrough rule elides safe Dynamic-target casts.
 //   AC2: keep_for_debug disables elision but counts CastOps.
 //   AC3: elapsed_us is monotonic + observable via the
-//        (compile:dead-coercion-elapsed) primitive.
+//        (stats:get "compile:dead-coercion-elapsed") primitive.
 //   AC4: End-to-end gradual-typed mutation loop: result is
 //        identical with and without elision; elimination
 //        count > 0 in the gradual case.
@@ -192,10 +192,11 @@ bool test_elapsed_us_snapshot() {
 
 // ── AC3b: elapsed_us primitive returns int ────────────────
 bool test_elapsed_us_primitive() {
-    std::println("\n--- AC3b: (compile:dead-coercion-elapsed) primitive ---");
+    std::println("\n--- AC3b: (stats:get \"compile:dead-coercion-elapsed\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(compile:dead-coercion-elapsed)");
-    CHECK(r && aura::compiler::types::is_int(*r), "(compile:dead-coercion-elapsed) returns int");
+    auto r = cs.eval("(stats:get \"compile:dead-coercion-elapsed\")");
+    CHECK(r && aura::compiler::types::is_int(*r),
+          "(stats:get \"compile:dead-coercion-elapsed\") returns int");
     if (r && aura::compiler::types::is_int(*r)) {
         std::int64_t v = aura::compiler::types::as_int(*r);
         CHECK(v >= 0, "elapsed_us >= 0");

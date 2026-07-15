@@ -432,17 +432,17 @@ bool test_arena_compact_primitive() {
 }
 
 bool test_arena_estimate_primitive() {
-    std::println("\n--- Test 6.2: (arena:estimate) primitive ---");
+    std::println("\n--- Test 6.2: (stats:get \"arena:estimate\") primitive ---");
     aura::compiler::CompilerService cs;
-    int64_t r = run_int(cs, "(arena:estimate)");
-    CHECK(r >= 0, "(arena:estimate) returns non-negative bytes");
+    int64_t r = run_int(cs, "(stats:get \"arena:estimate\")");
+    CHECK(r >= 0, "(stats:get \"arena:estimate\") returns non-negative bytes");
     return true;
 }
 
 bool test_arena_stats_json_primitive() {
-    std::println("\n--- Test 6.3: (arena:stats-json) primitive ---");
+    std::println("\n--- Test 6.3: (stats:get \"arena:stats-json\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(arena:stats-json)");
+    auto v = run_on(cs, "(stats:get \"arena:stats-json\")");
     // Result is a string. We verify the type and that the call
     // didn't error. Inspecting the JSON content directly from the
     // test would require access to the Evaluator's string heap
@@ -450,10 +450,11 @@ bool test_arena_stats_json_primitive() {
     // expected keys based on the C++-level ArenaGroup::stats_json
     // test (test_arena_group_stats_json).
     if (aura::compiler::types::is_string(v)) {
-        std::println("  PASS: (arena:stats-json) returns string");
+        std::println("  PASS: (stats:get \"arena:stats-json\") returns string");
         ++g_passed;
     } else {
-        std::println("    [expected string from (arena:stats-json), got val={}]", v.val);
+        std::println("    [expected string from (stats:get \"arena:stats-json\"), got val={}]",
+                     v.val);
         ++g_failed;
     }
     return true;

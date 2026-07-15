@@ -1,5 +1,5 @@
 // @category: integration
-// @reason: uses CompilerService + (compiler:metrics) primitive
+// @reason: uses CompilerService + (stats:get "compiler:metrics") primitive
 //          to verify the 4 env_frames_/arena observability
 //          counters are queryable post-implementation.
 //
@@ -13,7 +13,7 @@
 // reclamation is overdue.
 //
 // This test verifies the 4 metrics are queryable via
-// (compiler:metrics) primitive (returns JSON string with the 4
+// (stats:get "compiler:metrics") primitive (returns JSON string with the 4
 // keys) and reflect state changes:
 //   1. env_frames_size_total — current env_frames_.size()
 //   2. env_frames_stale_count — frames with version_ < current
@@ -23,7 +23,7 @@
 //      CountingMR upstream
 //
 // Tests:
-//   AC1: JSON returned by (compiler:metrics) has all 4 keys
+//   AC1: JSON returned by (stats:get "compiler:metrics") has all 4 keys
 //        with non-negative integer values.
 //   AC2: env_frames_size_total >= 1 after (set-code + eval).
 //   AC3: env_frames_size_total grows monotonically across
@@ -67,10 +67,10 @@ static void setup_workspace(aura::compiler::CompilerService& cs, const std::stri
     run_eval(cs, "(eval-current)");
 }
 
-// Helper: query (compiler:metrics) and return the JSON string.
+// Helper: query (stats:get "compiler:metrics") and return the JSON string.
 // Returns empty string on failure.
 static std::string query_compiler_metrics(aura::compiler::CompilerService& cs) {
-    auto r = cs.eval("(compiler:metrics)");
+    auto r = cs.eval("(stats:get \"compiler:metrics\")");
     if (!r)
         return std::string{};
     if (!aura::compiler::types::is_string(*r))
@@ -102,11 +102,11 @@ static std::uint64_t parse_uint64(const std::string& json, const std::string& ke
 
 // ── AC1: JSON has all 4 keys with non-negative integer values ──
 bool test_ac1_json_has_all_four_keys() {
-    std::println("\n--- AC1: (compiler:metrics) JSON has all 4 keys ---");
+    std::println("\n--- AC1: (stats:get \"compiler:metrics\") JSON has all 4 keys ---");
     aura::compiler::CompilerService cs;
 
     std::string json = query_compiler_metrics(cs);
-    CHECK(!json.empty(), "AC1: (compiler:metrics) returned a non-empty string");
+    CHECK(!json.empty(), "AC1: (stats:get \"compiler:metrics\") returned a non-empty string");
 
     auto sz = parse_uint64(json, "env_frames_size_total");
     auto stale = parse_uint64(json, "env_frames_stale_count");

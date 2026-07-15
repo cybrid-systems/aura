@@ -1422,7 +1422,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (aot:get-region-mask) → int — this Evaluator's mask
-    add("aot:get-region-mask", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("aot:get-region-mask", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(aura_get_aot_region_mask_for_eval(&ev)));
     });
 
@@ -1436,9 +1436,10 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (aot:get-module-version) → int — this Evaluator's version
-    add("aot:get-module-version", [&ev](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "aot:get-module-version", [&ev](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(aura_get_module_version_for_eval(&ev)));
+        });
 
     // (query:aot-reload-primitive-stats) → hash
     ObservabilityPrims::register_stats_impl(

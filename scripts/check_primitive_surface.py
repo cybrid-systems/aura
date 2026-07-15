@@ -59,7 +59,7 @@ ALLOWLIST: frozenset[str] = frozenset()
 TARGET_BUDGET = 420
 # Interim hard ceiling ratchets down as demotion batches land (#1449).
 # After dirty/render demotion (~573 total). Hard-fail only on growth past this.
-INTERIM_HARD_CEILING = 590
+INTERIM_HARD_CEILING = 520
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.

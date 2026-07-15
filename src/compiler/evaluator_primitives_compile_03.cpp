@@ -139,7 +139,7 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
     // depends on that define"; mutations to the target cascade
     // to invalidate the source via invalidate_function BFS.
     // Returns 0 if no hook is installed.
-    add("compile:dep-edges", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:dep-edges", [&ev](const auto&) -> EvalValue {
         if (!ev.get_incremental_stats_fn_)
             return make_int(0);
         auto packed = ev.get_incremental_stats_fn_();
@@ -153,38 +153,40 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
     // an EDSL agent can measure "did the previous mutation
     // actually re-lower anything?" by reading this primitive
     // before and after a mutation cycle.
-    add("compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        if (!ev.get_dirty_block_count_fn_)
-            return make_int(0);
-        return make_int(
-            static_cast<std::int64_t>(ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_int(0);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_int(0);
+            if (!ev.get_dirty_block_count_fn_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(
+                ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
+        });
 
     // (compile:func-block-dirty-count name func-idx) —
     // Issue #196: dirty block count for a specific function
     // in the named define's IR cache entry. Returns 0 if
     // no hook, the entry doesn't exist, or func-idx is
     // out of range.
-    add("compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
-            return make_int(0);
-        }
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        auto fidx = as_int(a[1]);
-        if (fidx < 0)
-            return make_int(0);
-        if (!ev.get_func_dirty_block_count_fn_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.get_func_dirty_block_count_fn_(
-            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
+            if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
+                return make_int(0);
+            }
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_int(0);
+            auto fidx = as_int(a[1]);
+            if (fidx < 0)
+                return make_int(0);
+            if (!ev.get_func_dirty_block_count_fn_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.get_func_dirty_block_count_fn_(
+                ev.string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
+        });
 }
 
 // Issue #909 compile part 26 (orig 2000-2072)
@@ -668,12 +670,13 @@ void CompilePrims::register_compile_p31(PrimRegistrar add, Evaluator& ev) {
     // Issue #290: (compile:macro-dirty-count) — number of
     // nodes with any macro_dirty_ bit set on the eval flat
     // where macro expansion actually ran. #f on no flat.
-    add("compile:macro-dirty-count", [&ev](const auto&) -> EvalValue {
-        auto* ws = CompilePrims::pick_macro_flat(ev);
-        if (!ws)
-            return make_bool(false);
-        return make_int(static_cast<std::int64_t>(ws->macro_dirty_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:macro-dirty-count", [&ev](const auto&) -> EvalValue {
+            auto* ws = CompilePrims::pick_macro_flat(ev);
+            if (!ws)
+                return make_bool(false);
+            return make_int(static_cast<std::int64_t>(ws->macro_dirty_count()));
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

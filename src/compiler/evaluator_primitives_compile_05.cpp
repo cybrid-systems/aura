@@ -216,20 +216,22 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
     // current defuse_version_ and return it as an int. Use with
     // (concurrency:version-current? snap) to detect concurrent
     // mutations between two points in the program.
-    add("concurrency:version-snapshot", [&ev](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(ev.defuse_version_snapshot()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "concurrency:version-snapshot", [&ev](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(ev.defuse_version_snapshot()));
+        });
 
     // (concurrency:version-current? snap) — Issue #189: returns
     // #t if the defuse_version_ has not changed since `snap` was
     // captured. #f if a mutation has happened (and AST/cells/pairs
     // may be stale).
-    add("concurrency:version-current?", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto snap = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_bool(ev.is_version_current(snap));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "concurrency:version-current?", [&ev](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_bool(false);
+            auto snap = static_cast<std::uint64_t>(as_int(a[0]));
+            return make_bool(ev.is_version_current(snap));
+        });
 
     // (syntax-marker node-id) — Issue #190: return the SyntaxMarker
     // value of a node (0=User, 1=MacroIntroduced, 2=BoolLiteral).
@@ -372,68 +374,70 @@ void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
     // plus total-nodes. Useful for dashboards ("how much of the
     // workspace is macro-introduced code?") and for asserting
     // hygiene invariants in tests.
-    add("syntax-marker-counts", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_void();
-        std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
-        const auto& markers = ev.workspace_flat_->marker_column();
-        for (std::size_t i = 0; i < markers.size(); ++i) {
-            ++total;
-            auto m = static_cast<int>(markers[i]);
-            if (m == 0)
-                ++user;
-            else if (m == 1)
-                ++macro;
-            else if (m == 2)
-                ++bool_lit;
-        }
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
+    ObservabilityPrims::register_stats_impl(
+        "syntax-marker-counts", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+            std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
+            const auto& markers = ev.workspace_flat_->marker_column();
+            for (std::size_t i = 0; i < markers.size(); ++i) {
+                ++total;
+                auto m = static_cast<int>(markers[i]);
+                if (m == 0)
+                    ++user;
+                else if (m == 1)
+                    ++macro;
+                else if (m == 2)
+                    ++bool_lit;
+            }
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"user", make_int(static_cast<std::int64_t>(user))},
-            {"macro-introduced", make_int(static_cast<std::int64_t>(macro))},
-            {"bool-literal", make_int(static_cast<std::int64_t>(bool_lit))},
-            {"total-nodes", make_int(static_cast<std::int64_t>(total))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"user", make_int(static_cast<std::int64_t>(user))},
+                {"macro-introduced", make_int(static_cast<std::int64_t>(macro))},
+                {"bool-literal", make_int(static_cast<std::int64_t>(bool_lit))},
+                {"total-nodes", make_int(static_cast<std::int64_t>(total))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 45 (orig 3631-3794)

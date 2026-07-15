@@ -87,7 +87,7 @@ int main() {
         CompilerService cs;
         auto s = cs.eval("(aot:set-module-version 99)");
         CHECK(s && is_bool(*s) && as_bool(*s), "aot:set-module-version → #t");
-        auto g = cs.eval("(aot:get-module-version)");
+        auto g = cs.eval("(stats:get \"aot:get-module-version\")");
         CHECK(g && is_int(*g) && as_int(*g) == 99, "aot:get-module-version → 99");
         (void)cs.eval("(aot:set-module-version 0)");
     }

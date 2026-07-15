@@ -50,7 +50,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: query:reflect-node-members ---");
     cs.eval("(set-code \"(define x 42) (let ((y 1)) (+ y x))\")");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
-    auto defs = cs.eval("(ast:defs)");
+    auto defs = cs.eval("(stats:get \"ast:defs\")");
     CHECK(defs && is_pair(*defs), "ast:defs returns alist");
     auto node_r = cs.eval("(query:reflect-node-members 0)");
     CHECK(node_r && is_pair(*node_r), "reflect-node-members returns alist");

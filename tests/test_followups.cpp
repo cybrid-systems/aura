@@ -40,7 +40,7 @@ bool test_mutation_log_diff() {
     // range of the rebinds depends on what set-code does. We
     // dynamically discover the rebind count via mutation-count
     // before each diff call.
-    auto n_before = run_int(cs, "(mutation-count)");
+    auto n_before = run_int(cs, "(stats:get \"mutation-count\")");
     if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
         ++g_failed;
         return false;
@@ -53,7 +53,7 @@ bool test_mutation_log_diff() {
         ++g_failed;
         return false;
     }
-    auto n_total = run_int(cs, "(mutation-count)");
+    auto n_total = run_int(cs, "(stats:get \"mutation-count\")");
     CHECK(n_total >= n_before + 3, "3 rebinds added 3+ mutations");
     // Diff from 0 to MAX returns all mutations
     auto n_all = run_int(cs, "(length (mutation-log:diff 0 -1))");
@@ -150,7 +150,7 @@ bool test_narrowings_at_mutation() {
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck succeeds");
     // Get the current mutation count
-    auto muts = run_int(cs, "(mutation-count)");
+    auto muts = run_int(cs, "(stats:get \"mutation-count\")");
     CHECK(muts >= 0, "mutation-count >= 0");
     // Query narrowings at the latest mutation
     auto n = run_int(cs, "(length (query:narrowings-at-mutation 9999))");

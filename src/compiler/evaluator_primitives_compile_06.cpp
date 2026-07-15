@@ -521,14 +521,16 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     //   FlatAST::bump_generation_subtree(). is_valid_subtree()
     //   (C++) compares the captured subtree_gen_at_capture
     //   against this counter.
-    add("compile:subtree-generation", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return ev.make_merr("bad-arg", "usage: (compile:subtree-generation subtree-root-id)");
-        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_generation(id)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:subtree-generation", [&ev](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return ev.make_merr("bad-arg",
+                                    "usage: (compile:subtree-generation subtree-root-id)");
+            const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_generation(id)));
+        });
 }
 
 // Issue #909 compile part 53 (orig 4378-4487)
@@ -542,11 +544,12 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
     //   FlatAST::bump_generation_subtree() actually bumps a
     //   subtree (excludes the no-op when the id has no
     //   enclosing Define).
-    add("compile:subtree-bump-count", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_bump_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:subtree-bump-count", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_bump_count()));
+        });
 
     // (compile:mutator-dispatch-stats)
     //   — Issue #501 follow-up #4: snapshot of the

@@ -164,7 +164,7 @@ bool test_query_aura_wrappers() {
     CHECK(marker.has_value() && aura::compiler::types::is_string(*marker),
           "(query:node-marker) returns a string");
 
-    // (query:ref-counts) returns an int (0 or more).
+    // (stats:get "query:ref-counts") returns an int (0 or more).
     auto ref_count = run_int(cs, "(query:ref-counts 0)");
     CHECK(ref_count >= 0, "(query:ref-counts 0) returns a number");
 
@@ -228,9 +228,9 @@ bool test_backward_compat() {
         return false;
     }
 
-    // (mutation-count) still works.
-    auto mc = run_int(cs, "(mutation-count)");
-    CHECK(mc >= 1, "(mutation-count) >= 1 (regression check)");
+    // (stats:get "mutation-count") still works.
+    auto mc = run_int(cs, "(stats:get \"mutation-count\")");
+    CHECK(mc >= 1, "(stats:get \"mutation-count\") >= 1 (regression check)");
 
     // (mutation-history node) still works.
     auto hist = cs.eval("(mutation-history 0)");
@@ -254,9 +254,9 @@ bool test_backward_compat() {
     CHECK(refv.value_or(true) == false,
           "(ast:ref-valid?) returns #f for stale ref (existing behavior)");
 
-    // (ast:summary) still works.
-    auto sum = cs.eval("(ast:summary)");
-    CHECK(sum.has_value(), "(ast:summary) returns a value (existing primitive)");
+    // (stats:get "ast:summary") still works.
+    auto sum = cs.eval("(stats:get \"ast:summary\")");
+    CHECK(sum.has_value(), "(stats:get \"ast:summary\") returns a value (existing primitive)");
 
     // (stats:get "dirty:counts") still works.
     auto dc = cs.eval("(stats:get \"dirty:counts\")");

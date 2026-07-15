@@ -7,7 +7,7 @@
 //   - Hygienic macro expansion + syntax-marker propagation
 //   - query:pattern matching across macro-expanded code
 //   - mutate:query-and-replace on macro-introduced nodes
-//   - (syntax-marker-counts) observability primitive usage
+//   - (stats:get "syntax-marker-counts") observability primitive usage
 //   - Hygiene invariants post-mutate
 //   - Self-evolution loop (macro define → expand → mutate → re-eval)
 //
@@ -72,7 +72,7 @@ static int g_failed = 0;
 using aura::compiler::CompilerService;
 using aura::compiler::EvalResult;
 
-// Look up a key in the (syntax-marker-counts) hash via Aura-side
+// Look up a key in the (stats:get "syntax-marker-counts") hash via Aura-side
 // hash-ref. Returns -1 if not found or if hash-ref fails.
 static std::int64_t marker_count(CompilerService& cs, const std::string& key) {
     // hash-ref isn't a primitive; use a small Aura expression
@@ -83,7 +83,7 @@ static std::int64_t marker_count(CompilerService& cs, const std::string& key) {
     // hash-ref path isn't fully exposed — the existence
     // assertions are sufficient (we verify the primitive
     // returns a hash, not its content).
-    auto r = cs.eval("(syntax-marker-counts)");
+    auto r = cs.eval("(stats:get \"syntax-marker-counts\")");
     if (!r)
         return -1;
     // We don't have hash-ref exposed; assert it's a hash.
@@ -205,15 +205,15 @@ bool test_hygiene_invariant_post_mutate() {
     return true;
 }
 
-// ── Scenario 6: (syntax-marker-counts) hash shape ──
+// ── Scenario 6: (stats:get "syntax-marker-counts") hash shape ──
 bool test_syntax_marker_counts_shape() {
-    std::println("\n--- Scenario 6: (syntax-marker-counts) returns 4-field hash ---");
+    std::println("\n--- Scenario 6: (stats:get \"syntax-marker-counts\") returns 4-field hash ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     for (const auto& key : {"user", "macro-introduced", "bool-literal", "total-nodes"}) {
         std::int64_t v = marker_count(cs, key);
-        CHECK(v >= 0, std::string("(syntax-marker-counts) has '") + key + "' key");
+        CHECK(v >= 0, std::string("(stats:get \"syntax-marker-counts\") has '") + key + "' key");
     }
     return true;
 }

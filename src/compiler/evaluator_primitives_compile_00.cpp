@@ -78,14 +78,15 @@ void CompilePrims::register_compile_p0(PrimRegistrar add, Evaluator& ev) {
     // CompilerMetrics struct (ev.compiler_metrics_ pointer set
     // by service.ixx). Returns 0 if no service is bound
     // (legacy standalone Evaluator usage).
-    add("compile:linear-elide-count", [&ev](const auto&) -> EvalValue {
-        std::uint64_t cnt = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            cnt = m->linear_elide_count.load(std::memory_order_relaxed);
-        }
-        return make_int(static_cast<std::int64_t>(cnt));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:linear-elide-count", [&ev](const auto&) -> EvalValue {
+            std::uint64_t cnt = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+                cnt = m->linear_elide_count.load(std::memory_order_relaxed);
+            }
+            return make_int(static_cast<std::int64_t>(cnt));
+        });
 
     // (compile:dead-coercion-stats) — Issue #433: dead
     // coercion elimination observability. Returns
@@ -114,14 +115,15 @@ void CompilePrims::register_compile_p0(PrimRegistrar add, Evaluator& ev) {
     // was". In typical workloads this should be
     // sub-millisecond even on large IR modules; spikes
     // point at pathological coercion chains.
-    add("compile:dead-coercion-elapsed", [&ev](const auto&) -> EvalValue {
-        std::uint64_t us = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            us = m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
-        }
-        return make_int(static_cast<std::int64_t>(us));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:dead-coercion-elapsed", [&ev](const auto&) -> EvalValue {
+            std::uint64_t us = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+                us = m->dead_coercion_elapsed_us_total.load(std::memory_order_relaxed);
+            }
+            return make_int(static_cast<std::int64_t>(us));
+        });
 }
 
 // Issue #909 compile part 1 (orig 124-221)
@@ -130,14 +132,15 @@ void CompilePrims::register_compile_p1(PrimRegistrar add, Evaluator& ev) {
     // (compile:dead-coercion-kept-for-debug) — Issue #508:
     // total CastOps that would have been eliminated when
     // keep_for_debug was set (blame-mode observability).
-    add("compile:dead-coercion-kept-for-debug", [&ev](const auto&) -> EvalValue {
-        std::uint64_t cnt = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            cnt = m->dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
-        }
-        return make_int(static_cast<std::int64_t>(cnt));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:dead-coercion-kept-for-debug", [&ev](const auto&) -> EvalValue {
+            std::uint64_t cnt = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+                cnt = m->dead_coercion_kept_for_debug_total.load(std::memory_order_relaxed);
+            }
+            return make_int(static_cast<std::int64_t>(cnt));
+        });
 
     // (query:dead-coercion-elim-stats) — Issue #687: hash
     // dashboard for the DeadCoercionEliminationPass +
@@ -497,11 +500,12 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
     // Returning a NodeId-typed merr would require changing
     // clone_macro_body's signature (invasive); observability path
     // is the scope-limited fix. Documented in macro_expansion.ixx.
-    add("compile:macro-origin-provenance-errors", [](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(
-            aura::compiler::macro_exp::g_macro_origin_provenance_errors.load(
-                std::memory_order_relaxed)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "compile:macro-origin-provenance-errors", [](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::macro_exp::g_macro_origin_provenance_errors.load(
+                    std::memory_order_relaxed)));
+        });
 
     ObservabilityPrims::register_stats_impl(
         "compile:ast-ops-stats", [&ev](const auto&) -> EvalValue {

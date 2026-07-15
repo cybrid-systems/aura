@@ -33,7 +33,7 @@
 //           residual, no elims — vacuously zero overhead)
 //   - AC5:  schema sentinel is 687
 //   - AC6:  regression — (engine:metrics \"compile:dead-coercion-stats\") (#433)
-//           and (compile:dead-coercion-elapsed) (#508) still
+//           and (stats:get "compile:dead-coercion-elapsed") (#508) still
 //           reachable (the single-int primitives are kept
 //           alongside the hash dashboard)
 
@@ -119,7 +119,7 @@ static void run_ac5_schema_sentinel(aura::compiler::CompilerService& cs) {
 static void run_ac6_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — single-int primitives still reachable ---");
     auto stats = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
-    auto elapsed = cs.eval("(compile:dead-coercion-elapsed)");
+    auto elapsed = cs.eval("(stats:get \"compile:dead-coercion-elapsed\")");
     auto kept = cs.eval("(compile:dead-coercion-kept-for-debug)");
     CHECK(stats && aura::compiler::types::is_int(*stats),
           "compile:dead-coercion-stats (#433) regression [int]");

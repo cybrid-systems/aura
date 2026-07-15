@@ -113,9 +113,9 @@ bool test_occurrence_stale_cleared() {
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
     (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
                   "\"issue-518-stale\")");
-    auto stale_after_mutate = cs.eval("(query:occurrence-stale-count)");
+    auto stale_after_mutate = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     CHECK(stale_after_mutate.has_value() && aura::compiler::types::is_int(*stale_after_mutate),
-          "(query:occurrence-stale-count) after mutate");
+          "(stats:get \"query:occurrence-stale-count\") after mutate");
     const auto stale_after =
         stale_after_mutate && aura::compiler::types::is_int(*stale_after_mutate)
             ? aura::compiler::types::as_int(*stale_after_mutate)
@@ -161,7 +161,7 @@ bool test_occurrence_stale_count_decreases() {
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
     (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
                   "\"issue-518-dec\")");
-    auto after = cs.eval("(query:occurrence-stale-count)");
+    auto after = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto count_after =
         after && aura::compiler::types::is_int(*after) ? aura::compiler::types::as_int(*after) : -1;
     std::println("  stale_count after mutate auto re-narrow: {}", count_after);
@@ -270,7 +270,7 @@ bool test_mutate_auto_renarrow_eager() {
                   "\"issue-537-auto\")");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto snap1 = cs.snapshot();
-    auto stale = cs.eval("(query:occurrence-stale-count)");
+    auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto stale_count =
         stale && aura::compiler::types::is_int(*stale) ? aura::compiler::types::as_int(*stale) : -1;
     std::println("  narrowing_refresh: {} -> {}, stale_count={}", n0, n1, stale_count);

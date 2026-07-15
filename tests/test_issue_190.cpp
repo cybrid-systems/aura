@@ -28,7 +28,7 @@
 //
 //   4. New Aura observability primitives:
 //      (syntax-marker node-id) — return marker value of a node
-//      (syntax-marker-counts) — hash with user/macro/bool-literal/total
+//      (stats:get "syntax-marker-counts") — hash with user/macro/bool-literal/total
 //
 //   5. Tests verifying all of the above.
 //
@@ -100,12 +100,13 @@ bool test_clone_macro_body_marker_param() {
     // (the main user-facing path) and checking the cloned nodes
     // get MacroIntroduced.
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(syntax-marker-counts)");
+    auto v = run_on(cs, "(stats:get \"syntax-marker-counts\")");
     if (v.val == 11) { // void sentinel (acceptable: hash build can overflow 8-slot probing)
-        std::println("  PASS: (syntax-marker-counts) is registered (void is acceptable)");
+        std::println(
+            "  PASS: (stats:get \"syntax-marker-counts\") is registered (void is acceptable)");
         ++g_passed;
     } else {
-        std::println("  PASS: (syntax-marker-counts) returns a value");
+        std::println("  PASS: (stats:get \"syntax-marker-counts\") returns a value");
         ++g_passed;
     }
     return true;
@@ -126,7 +127,7 @@ bool test_closure_body_marker_is_user() {
     auto v = run_on(cs, "(begin "
                         "  (define (square x) (* x x)) "
                         "  (define y (square 5)) "
-                        "  (syntax-marker-counts))");
+                        "  (stats:get \"syntax-marker-counts\"))");
     if (v.val == 11) {
         std::println("  PASS: closure body marker is User (hash build overflow is acceptable)");
         ++g_passed;
@@ -187,14 +188,15 @@ bool test_syntax_marker_out_of_range() {
 }
 
 bool test_syntax_marker_counts_primitive() {
-    std::println("\n--- Test 4.3: (syntax-marker-counts) primitive ---");
+    std::println("\n--- Test 4.3: (stats:get \"syntax-marker-counts\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(syntax-marker-counts)");
+    auto v = run_on(cs, "(stats:get \"syntax-marker-counts\")");
     if (v.val == 11) { // void sentinel (acceptable: hash build can overflow 8-slot probing)
-        std::println("  PASS: (syntax-marker-counts) is registered (void is acceptable)");
+        std::println(
+            "  PASS: (stats:get \"syntax-marker-counts\") is registered (void is acceptable)");
         ++g_passed;
     } else {
-        std::println("  PASS: (syntax-marker-counts) returns a value");
+        std::println("  PASS: (stats:get \"syntax-marker-counts\") returns a value");
         ++g_passed;
     }
     return true;
@@ -235,12 +237,12 @@ bool test_marker_counts_after_macro() {
                         "  (define a 1) "
                         "  (define b (incr a)) "
                         "  (define c (incr b)) "
-                        "  (syntax-marker-counts))");
+                        "  (stats:get \"syntax-marker-counts\"))");
     if (v.val == 11) {
         std::println("  PASS: marker counts hash build is registered (void is acceptable)");
         ++g_passed;
     } else {
-        std::println("  PASS: (syntax-marker-counts) returns a value");
+        std::println("  PASS: (stats:get \"syntax-marker-counts\") returns a value");
         ++g_passed;
     }
     return true;

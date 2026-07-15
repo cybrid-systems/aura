@@ -85,7 +85,7 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
 
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
-    add("typecheck-status", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("typecheck-status", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (ev.last_mutate_error_.empty()) {
             auto sidx = ev.string_heap_.size();
@@ -136,21 +136,22 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 1 (orig lines 1236-1289)
 void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
     // Issue #753: (resource:quota-get kind) — read configured limit.
-    add("resource:quota-get", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
+    ObservabilityPrims::register_stats_impl(
+        "resource:quota-get", [&ev](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_int(0);
+            const auto ki = as_string_idx(a[0]);
+            if (ki >= ev.string_heap_.size())
+                return make_int(0);
+            const auto& kind = ev.string_heap_[ki];
+            if (kind == "memory")
+                return make_int(static_cast<std::int64_t>(ev.resource_quota_memory()));
+            if (kind == "fibers")
+                return make_int(static_cast<std::int64_t>(ev.resource_quota_fibers()));
+            if (kind == "time")
+                return make_int(static_cast<std::int64_t>(ev.resource_quota_time_us()));
             return make_int(0);
-        const auto ki = as_string_idx(a[0]);
-        if (ki >= ev.string_heap_.size())
-            return make_int(0);
-        const auto& kind = ev.string_heap_[ki];
-        if (kind == "memory")
-            return make_int(static_cast<std::int64_t>(ev.resource_quota_memory()));
-        if (kind == "fibers")
-            return make_int(static_cast<std::int64_t>(ev.resource_quota_fibers()));
-        if (kind == "time")
-            return make_int(static_cast<std::int64_t>(ev.resource_quota_time_us()));
-        return make_int(0);
-    });
+        });
     // Issue #753 / #1013: (resource:quota-check kind current) — enforce quota;
     // bumps quota-violations / resource-trend / deployment-slo-hits +
     // production-hardening resource_quota_* counters.
@@ -374,9 +375,8 @@ void ObservabilityPrims::register_eval_p2(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #480: (query:primitive-list-with-meta) — list of
     // (name . meta-pair) for every registered primitive.
-    ev.primitives_.add(
-        "query:primitive-list-with-meta",
-        [&ev](const auto& a) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:primitive-list-with-meta", [&ev](const auto& a) -> EvalValue {
             (void)a;
             ev.bump_primitive_list_meta_count();
             EvalValue result = make_void();
@@ -393,12 +393,7 @@ void ObservabilityPrims::register_eval_p2(PrimRegistrar add, Evaluator& ev) {
                 result = make_pair(wrap);
             }
             return result;
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "List every primitive with its PrimMeta pair.",
-                 .category = "general",
-                 .schema = "() -> list"});
+        });
 }
 
 // Issue #909 part 3 (orig lines 1349-1432)
@@ -515,9 +510,8 @@ void ObservabilityPrims::register_eval_p4(PrimRegistrar add, Evaluator& ev) {
     //                              counters (so the Agent can see
     //                              how much the catalog has been
     //                              used this session)
-    ev.primitives_.add(
-        "query:primitives-meta-catalog",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:primitives-meta-catalog", [&ev](const auto&) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->primitives_meta_catalog_query_total.fetch_add(1, std::memory_order_relaxed);
             auto build_hash =
@@ -596,13 +590,7 @@ void ObservabilityPrims::register_eval_p4(PrimRegistrar add, Evaluator& ev) {
                 {"introspection-hits", make_int(static_cast<std::int64_t>(introspect_hits))},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "One-call AI Agent discovery: meta layer breakdown by category + "
-                        "introspection hit counter.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 5 (orig lines 1545-1618)

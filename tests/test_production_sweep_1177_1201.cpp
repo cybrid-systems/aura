@@ -71,7 +71,7 @@ int main() {
 
     // Smoke: fiber:join and broadcast primitives still registered
     {
-        auto r = cs.eval("(mailbox-count)");
+        auto r = cs.eval("(stats:get \"mailbox-count\")");
         CHECK(r && is_int(*r), "mailbox-count returns int");
     }
 

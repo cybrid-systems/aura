@@ -156,11 +156,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace:mutation-count) → total mutations recorded
-    add("workspace:mutation-count", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "workspace:mutation-count", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
+        });
     // ═══════════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════════
     // P13: Workspace Layering (P1 — COW + read-only lock)
@@ -399,15 +400,16 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (workspace:cow-refused-count) → COW refusals for this workspace
-    add("workspace:cow-refused-count", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_tree_)
-            return make_int(0);
-        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto* n = wt->active();
-        if (!n)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(n->cow_refused_count));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "workspace:cow-refused-count", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_tree_)
+                return make_int(0);
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto* n = wt->active();
+            if (!n)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(n->cow_refused_count));
+        });
     // (workspace:delete id) → #t
     add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)

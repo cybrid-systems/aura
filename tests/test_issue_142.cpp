@@ -229,7 +229,7 @@ bool test_mutation_record_subtree_fields() {
             "  (let* ((ids (query:filter (query:where :tag \"LiteralInt\"))) "
             "         (lit-id (car ids))) "
             "    (mutate:replace-subtree lit-id \"42\") "
-            "    (workspace:mutation-count)))");
+            "    (stats:get \"workspace:mutation-count\")))");
     // The replace-subtree should add at least one mutation. We don't
     // have a direct way to read mutation-count from Aura, so we use a
     // string-based report: source contains 42, so the mutation went

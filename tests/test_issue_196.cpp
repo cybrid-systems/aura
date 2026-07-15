@@ -77,26 +77,26 @@ static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src
 // ═════════════════════════════════════════════════════════════
 
 bool test_cache_size_primitive() {
-    std::println("\n--- Test 1.1: (compile:cache-size) is registered ---");
+    std::println("\n--- Test 1.1: (stats:get \"compile:cache-size\") is registered ---");
     aura::compiler::CompilerService cs;
-    int64_t v = run_int(cs, "(compile:cache-size)");
-    CHECK(v >= 0, "(compile:cache-size) returns non-negative int");
+    int64_t v = run_int(cs, "(stats:get \"compile:cache-size\")");
+    CHECK(v >= 0, "(stats:get \"compile:cache-size\") returns non-negative int");
     return true;
 }
 
 bool test_dirty_count_primitive() {
-    std::println("\n--- Test 1.2: (compile:dirty-count) is registered ---");
+    std::println("\n--- Test 1.2: (stats:get \"compile:dirty-count\") is registered ---");
     aura::compiler::CompilerService cs;
-    int64_t v = run_int(cs, "(compile:dirty-count)");
-    CHECK(v >= 0, "(compile:dirty-count) returns non-negative int");
+    int64_t v = run_int(cs, "(stats:get \"compile:dirty-count\")");
+    CHECK(v >= 0, "(stats:get \"compile:dirty-count\") returns non-negative int");
     return true;
 }
 
 bool test_epoch_primitive() {
-    std::println("\n--- Test 1.3: (compile:epoch) is registered ---");
+    std::println("\n--- Test 1.3: (stats:get \"compile:epoch\") is registered ---");
     aura::compiler::CompilerService cs;
-    int64_t v = run_int(cs, "(compile:epoch)");
-    CHECK(v >= 0, "(compile:epoch) returns non-negative int");
+    int64_t v = run_int(cs, "(stats:get \"compile:epoch\")");
+    CHECK(v >= 0, "(stats:get \"compile:epoch\") returns non-negative int");
     return true;
 }
 
@@ -117,10 +117,10 @@ bool test_primitives_non_destructive() {
     // Calling the observability primitives shouldn't change
     // the count values. Verify by reading multiple times.
     aura::compiler::CompilerService cs;
-    int64_t c1 = run_int(cs, "(compile:cache-size)");
-    int64_t c2 = run_int(cs, "(compile:cache-size)");
-    int64_t c3 = run_int(cs, "(compile:cache-size)");
-    CHECK(c1 == c2 && c2 == c3, "(compile:cache-size) is read-only");
+    int64_t c1 = run_int(cs, "(stats:get \"compile:cache-size\")");
+    int64_t c2 = run_int(cs, "(stats:get \"compile:cache-size\")");
+    int64_t c3 = run_int(cs, "(stats:get \"compile:cache-size\")");
+    CHECK(c1 == c2 && c2 == c3, "(stats:get \"compile:cache-size\") is read-only");
     return true;
 }
 
@@ -142,8 +142,8 @@ bool test_primitives_work_after_set_code() {
     std::println("\n--- Test 3.1: primitives work after set-code ---");
     aura::compiler::CompilerService cs;
     run_on(cs, "(set-code \"(define (f x) (* x 2))\")");
-    int64_t v = run_int(cs, "(compile:cache-size)");
-    CHECK(v >= 0, "(compile:cache-size) returns non-negative after set-code");
+    int64_t v = run_int(cs, "(stats:get \"compile:cache-size\")");
+    CHECK(v >= 0, "(stats:get \"compile:cache-size\") returns non-negative after set-code");
     return true;
 }
 
@@ -151,10 +151,10 @@ bool test_primitives_work_after_defines() {
     std::println("\n--- Test 3.2: primitives work after multiple defines ---");
     aura::compiler::CompilerService cs;
     run_on(cs, "(begin (define (a x) (* x 2)) (define (b x) (a x)) (define (c x) (b x)))");
-    int64_t c = run_int(cs, "(compile:cache-size)");
-    int64_t e = run_int(cs, "(compile:epoch)");
-    CHECK(c >= 0, "(compile:cache-size) returns non-negative after defines");
-    CHECK(e >= 0, "(compile:epoch) returns non-negative after defines");
+    int64_t c = run_int(cs, "(stats:get \"compile:cache-size\")");
+    int64_t e = run_int(cs, "(stats:get \"compile:epoch\")");
+    CHECK(c >= 0, "(stats:get \"compile:cache-size\") returns non-negative after defines");
+    CHECK(e >= 0, "(stats:get \"compile:epoch\") returns non-negative after defines");
     return true;
 }
 
@@ -166,8 +166,8 @@ bool test_existing_primitives_still_work() {
     std::println("\n--- Test 4.1: existing primitives still work ---");
     aura::compiler::CompilerService cs;
     // The dirty bitmask primitives from #188 should still work.
-    int64_t v = run_int(cs, "(ast:generation)");
-    CHECK(v >= 0, "(ast:generation) still works (backward compat)");
+    int64_t v = run_int(cs, "(stats:get \"ast:generation\")");
+    CHECK(v >= 0, "(stats:get \"ast:generation\") still works (backward compat)");
     return true;
 }
 

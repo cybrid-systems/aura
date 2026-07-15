@@ -22,7 +22,7 @@
 //      verification_dirty_ / macro_dirty_)
 //   2. 3 new Aura primitives:
 //      - (query:occurrence-stale? if-node-id)
-//      - (query:occurrence-stale-count)
+//      - (stats:get "query:occurrence-stale-count")
 //      - (query:mark-occurrence-stale if-node-id)
 //   3. Public C++ accessors: is_occurrence_stale,
 //      mark_occurrence_stale, clear_occurrence_stale,
@@ -182,9 +182,9 @@ bool test_end_to_end_via_aura() {
     }
     // Now the count should be > 0 via the Aura
     // primitive.
-    auto r = cs.eval("(query:occurrence-stale-count)");
+    auto r = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(query:occurrence-stale-count) returns an int");
+          "(stats:get \"query:occurrence-stale-count\") returns an int");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto n = static_cast<long long>(aura::compiler::types::as_int(*r));
         CHECK(n >= 1, "occurrence-stale-count >= 1 after mark");

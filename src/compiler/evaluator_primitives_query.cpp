@@ -411,7 +411,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
     // Issue #488: query:mutation-impact-snapshot. Hash view of the
     // most recent Guard success impact summary for AI decision loops.
-    add("query:mutation-impact-snapshot",
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-impact-snapshot",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
@@ -469,73 +470,74 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - impact-snapshots, mutation-impacts, dirty-nodes, macro-markers
     //   - boundary-depth, guard-epoch, ring-seq, ring-capacity
     //   - boundary-log-total, boundary-log-recommendation
-    add("query:mutation-boundary-log", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        const auto entry = ev->get_latest_mutation_impact_entry();
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-log", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto entry = ev->get_latest_mutation_impact_entry();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        const std::uint64_t snapshots = ev->get_impact_snapshot_count();
-        const std::uint64_t impacts = ev->get_mutation_impact_count();
-        const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
-        const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
-        const std::uint64_t ring_seq = ev->get_mutation_impact_ring_seq();
-        const std::uint64_t total =
-            snapshots + impacts + entry.epoch_delta + entry.nodes_changed + dirty;
-        std::int64_t recommendation = 0;
-        if (!ev->get_last_schema_validation_ok())
-            recommendation = 3;
-        else if (entry.nodes_changed > 20)
-            recommendation = 2;
-        else if (dirty > 10)
-            recommendation = 1;
-        insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
-        insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
-        insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
-        insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
-        insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
-        insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
-        insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
-        insert_kv("macro-markers", static_cast<std::int64_t>(markers));
-        insert_kv("boundary-depth",
-                  static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
-        insert_kv("guard-epoch", static_cast<std::int64_t>(ev->get_guard_dirty_epoch_count()));
-        insert_kv("ring-seq", static_cast<std::int64_t>(ring_seq));
-        insert_kv("ring-capacity", 8); // Evaluator::kMutationImpactRingSize
-        insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
-        insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
-        insert_kv("boundary-log-recommendation", recommendation);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            const std::uint64_t snapshots = ev->get_impact_snapshot_count();
+            const std::uint64_t impacts = ev->get_mutation_impact_count();
+            const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
+            const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+            const std::uint64_t ring_seq = ev->get_mutation_impact_ring_seq();
+            const std::uint64_t total =
+                snapshots + impacts + entry.epoch_delta + entry.nodes_changed + dirty;
+            std::int64_t recommendation = 0;
+            if (!ev->get_last_schema_validation_ok())
+                recommendation = 3;
+            else if (entry.nodes_changed > 20)
+                recommendation = 2;
+            else if (dirty > 10)
+                recommendation = 1;
+            insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
+            insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
+            insert_kv("nodes-changed", static_cast<std::int64_t>(entry.nodes_changed));
+            insert_kv("reasons-mask", static_cast<std::int64_t>(entry.reasons_mask));
+            insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
+            insert_kv("mutation-impacts", static_cast<std::int64_t>(impacts));
+            insert_kv("dirty-nodes", static_cast<std::int64_t>(dirty));
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("boundary-depth",
+                      static_cast<std::int64_t>(Evaluator::mutation_boundary_depth()));
+            insert_kv("guard-epoch", static_cast<std::int64_t>(ev->get_guard_dirty_epoch_count()));
+            insert_kv("ring-seq", static_cast<std::int64_t>(ring_seq));
+            insert_kv("ring-capacity", 8); // Evaluator::kMutationImpactRingSize
+            insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
+            insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
+            insert_kv("boundary-log-recommendation", recommendation);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
     // enforcement counters for EDSL mutate/query hot paths.
@@ -813,7 +815,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // workspace loaded, so the Agent can branch on the bool-result
     // without confusing "unknown node" with "live node" (the
     // latter still returns a hash with all fields populated).
-    add("query:stable-ref-provenance",
+    ObservabilityPrims::register_stats_impl(
+        "query:stable-ref-provenance",
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->stable_ref_provenance_query_total.fetch_add(1, std::memory_order_relaxed);
@@ -6999,70 +7002,71 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // target-node for one record (by id) or the most recent
     // record when the arg is omitted. Returns void when the log
     // is empty or the id is not found.
-    add("query:mutation-provenance", [](std::span<const EvalValue> a) -> EvalValue {
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_void();
-        const auto log = ws->mutation_log_view();
-        if (log.empty())
-            return make_void();
-
-        const aura::ast::MutationRecord* rec = nullptr;
-        if (!a.empty() && is_int(a[0])) {
-            const auto want = static_cast<std::uint64_t>(as_int(a[0]));
-            for (std::size_t i = log.size(); i-- > 0;) {
-                if (log[i].mutation_id == want) {
-                    rec = &log[i];
-                    break;
-                }
-            }
-            if (!rec)
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-provenance", [](std::span<const EvalValue> a) -> EvalValue {
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
                 return make_void();
-        } else {
-            rec = &log.back(); // most recent
-        }
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_void();
+            const auto log = ws->mutation_log_view();
+            if (log.empty())
+                return make_void();
 
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto kidx = ev->push_string_heap(k_str);
-            EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+            const aura::ast::MutationRecord* rec = nullptr;
+            if (!a.empty() && is_int(a[0])) {
+                const auto want = static_cast<std::uint64_t>(as_int(a[0]));
+                for (std::size_t i = log.size(); i-- > 0;) {
+                    if (log[i].mutation_id == want) {
+                        rec = &log[i];
+                        break;
+                    }
                 }
+                if (!rec)
+                    return make_void();
+            } else {
+                rec = &log.back(); // most recent
             }
-        };
-        insert_kv("mutation-id", static_cast<std::int64_t>(rec->mutation_id));
-        insert_kv("timestamp-ms", static_cast<std::int64_t>(rec->timestamp_ms));
-        insert_kv("target-node", static_cast<std::int64_t>(rec->target_node));
-        insert_kv("author-fingerprint", static_cast<std::int64_t>(rec->author_fingerprint));
-        insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec->parent_mutation_id));
-        insert_kv("composite-transaction-id",
-                  static_cast<std::int64_t>(rec->composite_transaction_id));
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev->push_string_heap(k_str);
+                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("mutation-id", static_cast<std::int64_t>(rec->mutation_id));
+            insert_kv("timestamp-ms", static_cast<std::int64_t>(rec->timestamp_ms));
+            insert_kv("target-node", static_cast<std::int64_t>(rec->target_node));
+            insert_kv("author-fingerprint", static_cast<std::int64_t>(rec->author_fingerprint));
+            insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec->parent_mutation_id));
+            insert_kv("composite-transaction-id",
+                      static_cast<std::int64_t>(rec->composite_transaction_id));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // (query:mutations-since <id>) — Issue #346: returns
     // a pair-list of mutations with mutation_id >
@@ -7113,31 +7117,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // display "triggered by mutate:rebind" in the
     // diagnostic output. Returns the empty pair
     // (void) when no mutation has been logged.
-    add("query:last-mutation-blame", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_void();
-        const auto view = ws->mutation_log_view();
-        if (view.empty())
-            return make_void();
-        // Most-recent first.
-        const auto& rec = view.back();
-        // Build the 2-tuple (operator_name . summary).
-        // The pair is (op_str . summary_str) — a flat
-        // (a . b) pair where a is operator_name and
-        // b is summary. The cdr is a string (not a
-        // nested pair) because the test contracts
-        // expect a 2-tuple of strings.
-        const auto oidx = ev->push_string_heap(rec.operator_name);
-        const auto sidx = ev->push_string_heap(rec.summary);
-        // The push_pair helper copies the EvalValues
-        // (so the cdr is a fresh make_string of sidx).
-        return make_pair(ev->push_pair(make_string(oidx), make_string(sidx)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:last-mutation-blame", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_void();
+            const auto view = ws->mutation_log_view();
+            if (view.empty())
+                return make_void();
+            // Most-recent first.
+            const auto& rec = view.back();
+            // Build the 2-tuple (operator_name . summary).
+            // The pair is (op_str . summary_str) — a flat
+            // (a . b) pair where a is operator_name and
+            // b is summary. The cdr is a string (not a
+            // nested pair) because the test contracts
+            // expect a 2-tuple of strings.
+            const auto oidx = ev->push_string_heap(rec.operator_name);
+            const auto sidx = ev->push_string_heap(rec.summary);
+            // The push_pair helper copies the EvalValues
+            // (so the cdr is a fresh make_string of sidx).
+            return make_pair(ev->push_pair(make_string(oidx), make_string(sidx)));
+        });
 
     // Issue #577: query:adt-exhaustiveness-stats. Returns the sum
     // of 4 Task2 ADT/match exhaustiveness + narrowing counters:
@@ -7206,39 +7211,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // surfaces the underlying match-info state to
     // Aura so the AI agent can ask "which matches
     // are currently flagged as non-exhaustive?".
-    add("query:match-exhaustiveness-notes", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_void();
-        // Walk the flat; collect node-ids that
-        // have a match_info entry with
-        // exhaustiveness_checked = true + a
-        // candidate_constructors / used_constructors
-        // gap. We surface the NodeId; the agent can
-        // use (query:node-type <id>) to inspect.
-        EvalValue list = make_void();
-        const auto n = ws->size();
-        for (std::size_t id = n; id-- > 0;) {
-            if (!ws->has_match_info(static_cast<aura::ast::NodeId>(id)))
-                continue;
-            const auto* mi = ws->get_match_info(static_cast<aura::ast::NodeId>(id));
-            if (!mi || !mi->exhaustiveness_checked)
-                continue;
-            // We surface any checked match. A
-            // future enhancement can filter to
-            // "non-exhaustive" (used < candidates)
-            // but the agent can derive that
-            // locally.
-            auto sidx = ev->push_string_heap(std::to_string(id));
-            auto p_idx = ev->push_pair(make_string(sidx), list);
-            list = make_pair(p_idx);
-        }
-        return list;
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:match-exhaustiveness-notes", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_void();
+            // Walk the flat; collect node-ids that
+            // have a match_info entry with
+            // exhaustiveness_checked = true + a
+            // candidate_constructors / used_constructors
+            // gap. We surface the NodeId; the agent can
+            // use (query:node-type <id>) to inspect.
+            EvalValue list = make_void();
+            const auto n = ws->size();
+            for (std::size_t id = n; id-- > 0;) {
+                if (!ws->has_match_info(static_cast<aura::ast::NodeId>(id)))
+                    continue;
+                const auto* mi = ws->get_match_info(static_cast<aura::ast::NodeId>(id));
+                if (!mi || !mi->exhaustiveness_checked)
+                    continue;
+                // We surface any checked match. A
+                // future enhancement can filter to
+                // "non-exhaustive" (used < candidates)
+                // but the agent can derive that
+                // locally.
+                auto sidx = ev->push_string_heap(std::to_string(id));
+                auto p_idx = ev->push_pair(make_string(sidx), list);
+                list = make_pair(p_idx);
+            }
+            return list;
+        });
 
     // Issue #555: query:typed-mutation-stats-task1. Returns
     // the sum of 4 Task1 typed self-mod observability
@@ -7969,12 +7975,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // returns the current count of stale occurrence
     // nodes in the workspace. Cheap O(n) walk; intended
     // for observability + AI agent monitoring.
-    add("query:occurrence-stale-count", [&ev](const auto&) -> EvalValue {
-        auto* ws = ev.workspace_flat();
-        if (!ws)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ws->occurrence_stale_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:occurrence-stale-count", [&ev](const auto&) -> EvalValue {
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ws->occurrence_stale_count()));
+        });
 
     // (query:mark-occurrence-stale if-node-id) — Issue
     // #339: explicitly mark an if-node as stale.

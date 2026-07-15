@@ -715,7 +715,7 @@
     {
       "file": "tests/test_issue_1385_env_arena_metrics.cpp",
       "category": "integration",
-      "reason": "uses CompilerService + (compiler:metrics) primitive",
+      "reason": "uses CompilerService + (stats:get \"compiler:metrics\") primitive",
       "issue": 1385
     },
     {
