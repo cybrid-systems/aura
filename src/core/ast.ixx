@@ -4611,6 +4611,13 @@ public:
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
         clear_cached_value(id); // invalidate result cache
+        // Issue #1455: kOccurrenceDirty implies the occurrence-
+        // stale column — keep the two signals in lockstep so
+        // resolve_if_predicate_occurrence force-reanalyzes and
+        // safe-falls back even when only mark_dirty (not the
+        // set_occurrence_dirty hook) stamped the bit.
+        if ((reasons & static_cast<std::uint8_t>(kOccurrenceDirty)) != 0)
+            mark_occurrence_stale(id);
         // Issue #320: stamp the per-node epoch with the
         // current mutation epoch (if known). The
         // synthesize_flat cache will compare this against
@@ -5082,6 +5089,12 @@ public:
         dirty_upward_fast_fixed_point_hits_.fetch_add(fixed_point_hits, std::memory_order_relaxed);
         mark_tag_arity_index_dirty();
         type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1455: fast upward path must invalidate
+        // NarrowingRecords + occ_stale_ the same way as
+        // mark_dirty_upward (predicate-affecting mutates
+        // often use _fast).
+        (void)invalidate_narrowings_in_subtree(
+            id, type_cache_generation_.load(std::memory_order_relaxed));
     }
 
     // Issue #336: clear specific bits on a node and
@@ -5483,9 +5496,12 @@ public:
         narrowing_log_.push_back(std::move(rec));
     }
 
-    // Issue #639: mark narrowing records stale when a mutation
-    // affects their if/cond subtree or capture_epoch is behind
-    // the current type-cache generation.
+    // Issue #639 / #1455: mark narrowing records stale when a
+    // mutation affects their if/cond subtree or capture_epoch is
+    // behind the current type-cache generation. Also stamp
+    // occ_stale_ + kOccurrenceDirty on the if-node so
+    // resolve_if_predicate_occurrence force-reanalyzes and the
+    // safe-fallback path fires (rec.stale alone was incomplete).
     std::size_t invalidate_narrowings_in_subtree(NodeId root, std::uint64_t current_epoch) {
         if (root == NULL_NODE || root >= tag_.size())
             return 0;
@@ -5503,26 +5519,71 @@ public:
             for (auto c : v.children)
                 stack.push_back(c);
         }
+        const std::uint8_t kOccurrenceBit = static_cast<std::uint8_t>(kOccurrenceDirty);
         std::size_t count = 0;
         for (auto& rec : narrowing_log_) {
             if (rec.stale)
                 continue;
-            if (in_subtree.count(rec.if_node) || in_subtree.count(rec.cond_node) ||
-                rec.capture_epoch < current_epoch) {
-                rec.stale = true;
-                ++count;
+            const bool in_tree =
+                in_subtree.count(rec.if_node) > 0 || in_subtree.count(rec.cond_node) > 0;
+            const bool epoch_behind = rec.capture_epoch < current_epoch;
+            if (!in_tree && !epoch_behind)
+                continue;
+            rec.stale = true;
+            ++count;
+            // #1455: stamp occ_stale_ + kOccurrenceDirty only for ifs
+            // inside the mutated subtree. Epoch-only invalidation marks
+            // provenance stale (has_stale_narrowing_for_if) without
+            // leaving orphaned occ_stale_ bits on detached if-nodes.
+            if (in_tree && rec.if_node != NULL_NODE && rec.if_node < tag_.size()) {
+                mark_occurrence_stale(rec.if_node);
+                // Direct dirty stamp (avoid re-entrancy into
+                // mark_dirty_upward invalidation).
+                if (rec.if_node >= dirty_.size())
+                    dirty_.resize(rec.if_node + 1, 0);
+                dirty_[rec.if_node] =
+                    static_cast<std::uint8_t>(dirty_[rec.if_node] | kOccurrenceBit);
             }
         }
         narrow_invalidation_post_mutate_ += count;
         return count;
     }
 
-    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id, std::uint64_t current_epoch) const {
-        for (const auto& rec : narrowing_log_) {
-            if (rec.if_node == if_id && (rec.stale || rec.capture_epoch < current_epoch))
-                return true;
+    // Issue #1455: after a successful re-narrow of `if_id`, clear
+    // stale flags on NarrowingRecords for that if so
+    // has_stale_narrowing_for_if does not keep firing on
+    // historical records (new captures are appended fresh).
+    std::size_t clear_stale_narrowings_for_if(NodeId if_id, std::uint64_t fresh_epoch) {
+        if (if_id == NULL_NODE)
+            return 0;
+        std::size_t cleared = 0;
+        for (auto& rec : narrowing_log_) {
+            if (rec.if_node != if_id || !rec.stale)
+                continue;
+            rec.stale = false;
+            rec.capture_epoch = fresh_epoch;
+            ++cleared;
         }
-        return false;
+        clear_occurrence_stale(if_id);
+        clear_dirty_for(if_id, static_cast<std::uint8_t>(kOccurrenceDirty));
+        return cleared;
+    }
+
+    // Issue #1455: true only when the *latest* record for this if
+    // is stale / epoch-behind. A later non-stale re-capture
+    // supersedes older stale provenance (blame chain stays
+    // intact on historical rows).
+    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id, std::uint64_t current_epoch) const {
+        const NarrowingRecord* latest = nullptr;
+        for (const auto& rec : narrowing_log_) {
+            if (rec.if_node != if_id)
+                continue;
+            if (!latest || rec.record_id >= latest->record_id)
+                latest = &rec;
+        }
+        if (!latest)
+            return false;
+        return latest->stale || latest->capture_epoch < current_epoch;
     }
 
     [[nodiscard]] std::size_t stale_narrowing_record_count() const {

@@ -1773,6 +1773,9 @@ aura_issue_test_link_llvm_jit(test_occurrence_dirty_blame_post_mutate_467)
 # Issue #639: narrow blame + stale invalidation post-mutate
 aura_add_issue_test(test_occurrence_narrow_blame_stale_invalidation_post_mutate)
 aura_issue_test_link_llvm_jit(test_occurrence_narrow_blame_stale_invalidation_post_mutate)
+# Issue #1455: occurrence stale propagation after mark_dirty / mutate
+aura_add_issue_test(test_issue_1455_occurrence_stale_propagation)
+aura_issue_test_link_llvm_jit(test_issue_1455_occurrence_stale_propagation)
 aura_add_issue_test(test_bidirectional_check_occurrence_narrow_post_mutate)
 aura_issue_test_link_llvm_jit(test_bidirectional_check_occurrence_narrow_post_mutate)
 # Issue #609: occurrence typing blame + post-mutate recovery

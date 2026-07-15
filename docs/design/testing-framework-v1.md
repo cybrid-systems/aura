@@ -2,7 +2,8 @@
 
 > **Issue**: [#1452](https://github.com/cybrid-systems/aura/issues/1452)  
 > **Status**: foundation landed (harness + binding + pets headless CI)  
-> **Follow-ups**: #1455 self-evolution suite  
+> **Follow-ups**: Self-evolution reliability suite (#1463); property/fuzz later  
+
 > **#1453 done**: hard binding + `check_test_coverage` + TestRegistry catalog  
 > **#1454 done**: aura-pets headless TUI regression (`pets` suite + CI_CORE)
 
@@ -26,7 +27,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │ L4  Integration / Pets   (#1454 ✓) headless TUI + CI    │
 ├─────────────────────────────────────────────────────────┤
-│ L3  Property / Fuzz      (#1455+) mutation fuzz / chaos │
+│ L3  Property / Fuzz      (later) mutation fuzz / chaos  │
 ├─────────────────────────────────────────────────────────┤
 │ L2  EDSL declarative     (#1452)  edsl-test-harness +   │
 │                                   edsl_self_test.aura   │
@@ -119,8 +120,9 @@ Wired into `CI_CORE` (every `./build.py ci`) and PR fast-tier builds via
 
 | Item | Tracking |
 |------|----------|
-| Self-evolution reliability suite | #1455 |
-| Property-based / mutation fuzz runner | #1455+ |
+| Self-evolution reliability suite | #1463 |
+| Property-based / mutation fuzz runner | later |
+| Occurrence stale post-mutate (#1455 type-system) | done (mark_dirty ↔ occ_stale + re-narrow) |
 | Full in-process C++ TestRegistry class | future (catalog is enough for now) |
 | Interactive TTY snapshot / golden frames | future (headless smoke is enough for now) |
 
