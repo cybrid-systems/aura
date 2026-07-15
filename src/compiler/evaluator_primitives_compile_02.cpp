@@ -328,98 +328,102 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
     //   (e.g. checkpoint when wrap-count > 0,
     //   investigate when stale-access-count
     //   grows faster than bump-count).
-    add("ast:generation-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto cap = std::max<std::size_t>(8, kv.size() * 2);
-            std::size_t hcap = 8;
-            while (hcap < cap)
-                hcap *= 2;
-            auto* ht = FlatHashTable::create(hcap);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "ast:generation-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto cap = std::max<std::size_t>(8, kv.size() * 2);
+                std::size_t hcap = 8;
+                while (hcap < cap)
+                    hcap *= 2;
+                auto* ht = FlatHashTable::create(hcap);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        if (!ev.compiler_service_)
-            return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        auto snap = svc->snapshot();
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"current-generation", make_int(static_cast<std::int64_t>(snap.current_generation))},
-            {"bump-generation-total",
-             make_int(static_cast<std::int64_t>(snap.bump_generation_count))},
-            {"generation-wrap-total",
-             make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
-            {"stable-ref-invalidations-total",
-             make_int(static_cast<std::int64_t>(snap.stable_ref_invalidations))},
-            {"node-gen-stale-access-total",
-             make_int(static_cast<std::int64_t>(snap.node_gen_stale_access_count))},
-            // Issue #368: current wrap_epoch_ (uint32_t).
-            // AI agents can checkpoint / compact before the
-            // next generation_ wrap creates a wave of stale
-            // refs in long-running workspaces.
-            {"current-wrap-epoch", make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
-            // Issue #369: per-category counters for the
-            // structural-rollback dispatcher. 'structural-
-            // rollback-success' is the number of mutations
-            // that were rolled back successfully (parent +
-            // child_idx + old/new data was available);
-            // 'structural-rollback-besteffort' is the number
-            // of mutations whose op_name aliases to a known
-            // structural op but lacked the field_offset /
-            // old/new_value data (i.e. the wrapper primitive
-            // hasn't been migrated to add_structural_mutation_log_entry
-            // yet). AI agents can use this to find structural
-            // ops that are still at risk of partial rollback.
-            {"structural-rollback-success",
-             make_int(static_cast<std::int64_t>(snap.structural_rollback_success))},
-            {"structural-rollback-besteffort",
-             make_int(static_cast<std::int64_t>(snap.structural_rollback_besteffort))},
-            // Issue #370: lifetime-safe view count.
-            {"children-safe-view-count",
-             make_int(static_cast<std::int64_t>(snap.children_safe_view_count))},
-            {"parent-safe-view-count",
-             make_int(static_cast<std::int64_t>(snap.parent_safe_view_count))},
-            // Issue #1282: auto-restamp after generation wrap recovery count.
-            {"auto-restamp-on-wrap",
-             make_int(static_cast<std::int64_t>(snap.auto_restamp_on_wrap_count))},
-            // Issue #1281: children_ PCV topology restore count.
-            {"children-topology-restore",
-             make_int(static_cast<std::int64_t>(snap.children_topology_restore_count))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            if (!ev.compiler_service_)
+                return make_int(0);
+            auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+            auto snap = svc->snapshot();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"current-generation",
+                 make_int(static_cast<std::int64_t>(snap.current_generation))},
+                {"bump-generation-total",
+                 make_int(static_cast<std::int64_t>(snap.bump_generation_count))},
+                {"generation-wrap-total",
+                 make_int(static_cast<std::int64_t>(snap.generation_wrap_count))},
+                {"stable-ref-invalidations-total",
+                 make_int(static_cast<std::int64_t>(snap.stable_ref_invalidations))},
+                {"node-gen-stale-access-total",
+                 make_int(static_cast<std::int64_t>(snap.node_gen_stale_access_count))},
+                // Issue #368: current wrap_epoch_ (uint32_t).
+                // AI agents can checkpoint / compact before the
+                // next generation_ wrap creates a wave of stale
+                // refs in long-running workspaces.
+                {"current-wrap-epoch",
+                 make_int(static_cast<std::int64_t>(snap.current_wrap_epoch))},
+                // Issue #369: per-category counters for the
+                // structural-rollback dispatcher. 'structural-
+                // rollback-success' is the number of mutations
+                // that were rolled back successfully (parent +
+                // child_idx + old/new data was available);
+                // 'structural-rollback-besteffort' is the number
+                // of mutations whose op_name aliases to a known
+                // structural op but lacked the field_offset /
+                // old/new_value data (i.e. the wrapper primitive
+                // hasn't been migrated to add_structural_mutation_log_entry
+                // yet). AI agents can use this to find structural
+                // ops that are still at risk of partial rollback.
+                {"structural-rollback-success",
+                 make_int(static_cast<std::int64_t>(snap.structural_rollback_success))},
+                {"structural-rollback-besteffort",
+                 make_int(static_cast<std::int64_t>(snap.structural_rollback_besteffort))},
+                // Issue #370: lifetime-safe view count.
+                {"children-safe-view-count",
+                 make_int(static_cast<std::int64_t>(snap.children_safe_view_count))},
+                {"parent-safe-view-count",
+                 make_int(static_cast<std::int64_t>(snap.parent_safe_view_count))},
+                // Issue #1282: auto-restamp after generation wrap recovery count.
+                {"auto-restamp-on-wrap",
+                 make_int(static_cast<std::int64_t>(snap.auto_restamp_on_wrap_count))},
+                // Issue #1281: children_ PCV topology restore count.
+                {"children-topology-restore",
+                 make_int(static_cast<std::int64_t>(snap.children_topology_restore_count))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 20 (orig 1616-1714)

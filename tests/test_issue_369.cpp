@@ -32,7 +32,7 @@
 //      mutate:remove-node, mutate:insert-child, mutate:set-body
 // 4. Per-category counters (structural_rollback_success +
 //    structural_rollback_besteffort) exposed via
-//    (ast:generation-stats) for observability.
+//    (stats:get \"ast:generation-stats\") for observability.
 //
 // Test strategy: 4 layers (all via C++ API since hash
 // introspection isn't available at Aura level).
@@ -171,9 +171,10 @@ bool test_try_rollback_restores_children() {
 // ═══════════════════════════════════════════════════════════
 
 bool test_ast_generation_stats_has_rollback_keys() {
-    std::println("\n--- AC4: (ast:generation-stats) includes structural-rollback keys ---");
+    std::println(
+        "\n--- AC4: (stats:get \"ast:generation-stats\") includes structural-rollback keys ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(ast:generation-stats)");
+    auto r = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(r.has_value(), "ast:generation-stats returns a value");
     return true;
 }

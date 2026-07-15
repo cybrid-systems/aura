@@ -1,7 +1,7 @@
 // @category: integration
 // @reason: Issue #300 — Live-object defragmentation observability foundation
 //
-// Validates (arena:defrag-stats) returns a 5-tuple:
+// Validates (stats:get \"arena:defrag-stats\") returns a 5-tuple:
 //   (compaction-count
 //    defrag-attempted-count
 //    fragmentation-bp
@@ -90,7 +90,7 @@ static bool extract_5tuple(aura::compiler::CompilerService& cs,
 bool test_returns_5tuple() {
     std::println("\n--- AC #1: returns 5-tuple ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(arena:defrag-stats)");
+    auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
     if (!r) {
         ++g_failed;
         std::println(std::cerr, "eval returned null");
@@ -109,7 +109,7 @@ bool test_empty_workspace_zero() {
     // reserved \u2014 that's infrastructure state, not user state.
     std::println("\n--- AC #2: empty workspace → 0 counters ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(arena:defrag-stats)");
+    auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -139,7 +139,7 @@ bool test_5tuple_shape_via_aura() {
     // - 4 nested pairs (cadr/caddr/cadddr all pairs)
     // - terminal cdr is an int
     // - all 4 car slots are ints
-    auto r = cs.eval("(let ((t (arena:defrag-stats)))"
+    auto r = cs.eval("(let ((t (stats:get \"arena:defrag-stats\")))"
                      " (and (pair? t)"
                      "       (pair? (cdr t))"
                      "       (pair? (cdr (cdr t)))"
@@ -166,7 +166,7 @@ bool test_5tuple_stable_across_calls() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define a 1) (define b 2)\")");
     // Capture pre-defrag snapshot
-    auto r0 = cs.eval("(arena:defrag-stats)");
+    auto r0 = cs.eval("(stats:get \"arena:defrag-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
@@ -181,7 +181,7 @@ bool test_5tuple_stable_across_calls() {
     // Call defrag (B foundation: trims the unused tail, increments
     // stats_.defrag_attempted_count + last_defrag_saved).
     cs.eval("(arena:defrag)");
-    auto r = cs.eval("(arena:defrag-stats)");
+    auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
     if (!r) {
         ++g_failed;
         return false;

@@ -66,7 +66,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats2b >= stats2a, "recycle monotonic for column stats");
 
     std::println("\n--- AC3: ast:node-lifecycle-stats integration ---");
-    auto nls = cs.eval("(ast:node-lifecycle-stats)");
+    auto nls = cs.eval("(stats:get \"ast:node-lifecycle-stats\")");
     CHECK(nls.has_value(), "ast:node-lifecycle-stats returns value");
 
     std::println("\n--- AC4: ast:compact-nodes integration ---");

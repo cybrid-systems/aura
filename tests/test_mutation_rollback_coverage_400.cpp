@@ -164,7 +164,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto mls = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
-    auto ags = cs.eval("(ast:generation-stats)");
+    auto ags = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");
     CHECK(ags.has_value(), "ast:generation-stats regression");
 }

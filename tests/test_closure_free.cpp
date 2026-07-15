@@ -152,16 +152,16 @@ int main() {
         CompilerService cs;
         auto r = cs.eval("(closure:free! -1)");
         CHECK(r && is_bool(*r) && as_bool(*r), "closure:free! returns #t for int");
-        auto s = cs.eval("(closure:free-stats)");
+        auto s = cs.eval("(stats:get \"closure:free-stats\")");
         CHECK(s && is_hash(*s), "closure:free-stats is hash");
         // Stats keys present via hash-ref
-        auto ft = href(cs, "closure:free-stats", "free-total");
+        auto ft = href(cs, "stats:get \"closure:free-stats\"", "free-total");
         CHECK(ft >= 0, "free-total key present");
-        auto lv = href(cs, "closure:free-stats", "live");
+        auto lv = href(cs, "stats:get \"closure:free-stats\"", "live");
         CHECK(lv >= 0, "live key present");
-        auto sl = href(cs, "closure:free-stats", "slots");
+        auto sl = href(cs, "stats:get \"closure:free-stats\"", "slots");
         CHECK(sl >= 0, "slots key present");
-        auto ru = href(cs, "closure:free-stats", "reuse-total");
+        auto ru = href(cs, "stats:get \"closure:free-stats\"", "reuse-total");
         CHECK(ru >= 0, "reuse-total key present");
     }
 

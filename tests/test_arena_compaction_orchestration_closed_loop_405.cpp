@@ -3,7 +3,7 @@
 // fragmentation signals for AI orchestration.
 //
 // Non-duplicative with #187 (arena:compact primitives),
-// #335 (arena:adaptive-stats 2-tuple), #300 (arena:defrag-stats).
+// #335 (arena:adaptive-stats 2-tuple), #300 (stats:get \"arena:defrag-stats\").
 //
 // AC1: query:arena-compaction-stats reachable
 // AC2: arena:estimate fragmentation signal returns int
@@ -94,7 +94,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "compaction stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto ads = cs.eval("(arena:adaptive-stats)");
+    auto ads = cs.eval("(stats:get \"arena:adaptive-stats\")");
     auto est2 = cs.eval("(arena:estimate)");
     CHECK(ads && is_pair(*ads), "arena:adaptive-stats regression");
     CHECK(est2 && is_int(*est2), "arena:estimate regression");

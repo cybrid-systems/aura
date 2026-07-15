@@ -1,12 +1,12 @@
 // Regression test for PCV heap-use-after-free.
-// Issue #300 follow-up #1: ArenaStats foundation + (arena:defrag-stats).
-// This test reproduces the ASAN UAF that surfaces under (arena:defrag-stats)
+// Issue #300 follow-up #1: ArenaStats foundation + (stats:get \"arena:defrag-stats\").
+// This test reproduces the ASAN UAF that surfaces under (stats:get \"arena:defrag-stats\")
 // after a previous (arena:defrag) call.
 //
 // Pattern that triggers the UAF (under ASan):
 //   1. set-code with 1 define
 //   2. (arena:defrag)
-//   3. (arena:defrag-stats)
+//   3. (stats:get \"arena:defrag-stats\")
 //
 // Root cause (fixed in #300 follow-up #1): pmr::vector<PersistentChildVector>
 // realloc during parse left aliased PCV slots sharing one heap control
@@ -26,7 +26,7 @@ int main() {
     std::println("step 3: defrag");
     cs.eval("(arena:defrag)");
     std::println("step 4: defrag-stats");
-    auto r = cs.eval("(arena:defrag-stats)");
+    auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
     (void)r;
     std::println("step 5: about to destruct CS (UAF expected under ASan)");
     return 0;

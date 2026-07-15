@@ -17,7 +17,7 @@
 //   - (arena:compact-with-policy name "force"|"auto"|"skip") —
 //     policy override (#430)
 //   - (arena:should-auto-compact? name) — cheap O(1) probe (#335)
-//   - (arena:adaptive-stats) — trigger/skip counters (#335)
+//   - (stats:get \"arena:adaptive-stats\") — trigger/skip counters (#335)
 //   - (arena:stats-json) — JSON snapshot (#187)
 //   - (engine:metrics \"query:arena-auto-stats\") — group-level guard/skip (#464)
 //   - (engine:metrics \"query:arena-auto-compact-stats\") — alloc-path policy (#685)

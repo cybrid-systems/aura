@@ -32,7 +32,7 @@
 //       subsequent calls (productive compactions
 //       shift the next trigger sooner)
 //   AC4 observability counters (trigger / skip)
-//       exposed via (arena:adaptive-stats)
+//       exposed via (stats:get \"arena:adaptive-stats\")
 
 // Plus a perf-bound smoke test: 100 adaptive_compact
 // calls complete in <100ms on a small workspace.
@@ -115,8 +115,8 @@ bool test_adaptive_compact_reclaims_bytes() {
     CHECK(r1_val >= 0, "bytes reclaimed is non-negative");
     // The trigger counter should bump (even if
     // savings is 0 — the call still happened).
-    auto r2 = cs.eval("(arena:adaptive-stats)");
-    CHECK(r2.has_value(), "(arena:adaptive-stats) returns a value");
+    auto r2 = cs.eval("(stats:get \"arena:adaptive-stats\")");
+    CHECK(r2.has_value(), "(stats:get \"arena:adaptive-stats\") returns a value");
     return true;
 }
 
@@ -173,15 +173,15 @@ bool test_observability_counters() {
     compiler::CompilerService cs;
     build_workspace(cs, 3);
     // Snapshot counters before.
-    auto before = cs.eval("(arena:adaptive-stats)");
-    CHECK(before.has_value(), "(arena:adaptive-stats) pre-call returns a value");
+    auto before = cs.eval("(stats:get \"arena:adaptive-stats\")");
+    CHECK(before.has_value(), "(stats:get \"arena:adaptive-stats\") pre-call returns a value");
     // Call adaptive_compact a few times.
     for (int i = 0; i < 5; ++i) {
         cs.eval("(arena:adaptive-compact)");
     }
     // Snapshot counters after.
-    auto after = cs.eval("(arena:adaptive-stats)");
-    CHECK(after.has_value(), "(arena:adaptive-stats) post-call returns a value");
+    auto after = cs.eval("(stats:get \"arena:adaptive-stats\")");
+    CHECK(after.has_value(), "(stats:get \"arena:adaptive-stats\") post-call returns a value");
     return true;
 }
 

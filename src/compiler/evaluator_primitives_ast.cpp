@@ -1123,38 +1123,40 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (ast:post-restore-stats) — Issue #263: result of the most recent
     // ast:restore direct-path validation (0 violations = consistent).
-    add("ast:post-restore-stats", [&ev](const auto&) -> EvalValue {
-        auto& r = ev.last_post_restore_report_;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"violations", make_int(static_cast<std::int64_t>(r.violations))},
-            {"generation", make_int(static_cast<std::int64_t>(r.generation))},
-            {"live-nodes", make_int(static_cast<std::int64_t>(r.live_nodes))},
-            {"free-slots", make_int(static_cast<std::int64_t>(r.free_slots))},
-        };
-        return ev.build_ast_lifecycle_hash(kv);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "ast:post-restore-stats", [&ev](const auto&) -> EvalValue {
+            auto& r = ev.last_post_restore_report_;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"violations", make_int(static_cast<std::int64_t>(r.violations))},
+                {"generation", make_int(static_cast<std::int64_t>(r.generation))},
+                {"live-nodes", make_int(static_cast<std::int64_t>(r.live_nodes))},
+                {"free-slots", make_int(static_cast<std::int64_t>(r.free_slots))},
+            };
+            return ev.build_ast_lifecycle_hash(kv);
+        });
 
     // (ast:node-lifecycle-stats) — fragmentation + counter hash.
-    add("ast:node-lifecycle-stats", [&ev](const auto&) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-        if (!ev.workspace_flat_)
-            return make_void();
-        auto stats = ev.workspace_flat_->node_lifecycle_stats();
-        auto frag_bp = static_cast<std::int64_t>(stats.fragmentation_ratio * 10000.0);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"total-slots", make_int(static_cast<std::int64_t>(stats.total_slots))},
-            {"live-nodes", make_int(static_cast<std::int64_t>(stats.live_nodes))},
-            {"free-slots", make_int(static_cast<std::int64_t>(stats.free_slots))},
-            {"fragmentation-ratio-bp", make_int(frag_bp)},
-            {"recycle-total",
-             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_recycle_total()))},
-            {"slot-reuse-count",
-             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_slot_reuse_count()))},
-            {"compact-total",
-             make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_compact_total()))},
-        };
-        return ev.build_ast_lifecycle_hash(kv);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "ast:node-lifecycle-stats", [&ev](const auto&) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+            if (!ev.workspace_flat_)
+                return make_void();
+            auto stats = ev.workspace_flat_->node_lifecycle_stats();
+            auto frag_bp = static_cast<std::int64_t>(stats.fragmentation_ratio * 10000.0);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"total-slots", make_int(static_cast<std::int64_t>(stats.total_slots))},
+                {"live-nodes", make_int(static_cast<std::int64_t>(stats.live_nodes))},
+                {"free-slots", make_int(static_cast<std::int64_t>(stats.free_slots))},
+                {"fragmentation-ratio-bp", make_int(frag_bp)},
+                {"recycle-total",
+                 make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_recycle_total()))},
+                {"slot-reuse-count",
+                 make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_slot_reuse_count()))},
+                {"compact-total",
+                 make_int(static_cast<std::int64_t>(ev.workspace_flat_->node_compact_total()))},
+            };
+            return ev.build_ast_lifecycle_hash(kv);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail
