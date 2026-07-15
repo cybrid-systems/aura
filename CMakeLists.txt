@@ -4911,6 +4911,12 @@ aura_add_issue_test(test_issue_1466)
 # skeleton + counter bumps + shape invalidation hook integration.
 # Full copy + pointer remapping is Phase 2/3 follow-up.
 aura_add_issue_test(test_issue_1467)
+# Issue #1468: ShapeProfiler history/dominant/stability tuning +
+# deopt-storm protection + AI workload metrics.
+# Pure C++ (no CompilerService / LLVM JIT); tests Preset application,
+# deopt-storm detection, 4 metric accessors, invalidate_all counter,
+# history_hit counter, SpecJITController coordination hook.
+aura_add_issue_test(test_issue_1468)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash

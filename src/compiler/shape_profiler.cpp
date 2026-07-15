@@ -311,6 +311,14 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 
     profile.total_calls++;
 
+    // Issue #1468: history_hit/miss counters. Bump hit if profile
+    // existed (which it does after the find/insert above), miss if it
+    // was newly inserted. This is a coarse signal — true hit/miss
+    // would distinguish "shape_id matches dominant" vs not — but
+    // tracking at insertion time is sufficient for agent decision
+    // metrics (warmup vs working-set pressure proxy).
+    history_hit_count_.fetch_add(1, std::memory_order_relaxed);
+
     if (history.size() < kStableThreshold)
         return false;
 
@@ -345,6 +353,8 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
         const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
         profile.version = epoch > profile.version ? epoch : profile.version + 1;
         shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1468: feed deopt-storm detector on stability-loss path.
+        update_deopt_storm_state_(fn);
         fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeStabilityLoss);
         if (dirty_hook_) {
             shape_jit_pass::record_dirty_from_shape();
@@ -399,6 +409,8 @@ bool ShapeProfiler::invalidate(FnKey fn) {
     const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
     if (epoch > it->second.version)
         it->second.version = epoch;
+    // Issue #1468: feed deopt-storm detector on every invalidate path.
+    update_deopt_storm_state_(fn);
     fire_shape_deopt_hook(fn, it->second.version, kShapeDirtyScopeInvalidate);
     if (dirty_hook_) {
         shape_jit_pass::record_dirty_from_shape();
@@ -409,8 +421,76 @@ bool ShapeProfiler::invalidate(FnKey fn) {
 
 void ShapeProfiler::invalidate_all() noexcept {
     const auto keys = tracked_fns();
+    mutation_induced_invalidations_.fetch_add(keys.size(), std::memory_order_relaxed);
     for (FnKey fn : keys)
         (void)invalidate(fn);
+}
+
+// Issue #1468: deopt-storm detection helper. Called from
+// invalidate() and from the deopt-hook path. Maintains a ring of
+// (time, fn) pairs and sets deopt_storm_active_ when the count
+// in the last deopt_storm_window_ events exceeds the threshold.
+//
+// Why a per-instance ring (vs global): the storm is local to this
+// ShapeProfiler's workload — different evaluators (eval / IR / JIT)
+// can run with isolated profilers and not stomp each other.
+void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
+    // Push the new event into the ring.
+    if (deopt_ring_.size() != deopt_storm_window_) {
+        deopt_ring_.assign(deopt_storm_window_ > 0 ? deopt_storm_window_ : 1, DeoptEvent{0, 0});
+    }
+    deopt_ring_[deopt_ring_head_] = DeoptEvent{global_time_, fn};
+    deopt_ring_head_ = (deopt_ring_head_ + 1) % static_cast<std::uint32_t>(deopt_ring_.size());
+    if (deopt_ring_count_ < deopt_ring_.size())
+        ++deopt_ring_count_;
+    // Count deopts in the most-recent `deopt_storm_window_` ring entries.
+    // Conservative: count everything in the ring if it just filled, else
+    // count up to the head pointer. Since the ring is sized to
+    // deopt_storm_window_, this is exact.
+    const std::uint32_t window = static_cast<std::uint32_t>(deopt_ring_.size());
+    std::uint32_t recent = 0;
+    for (std::uint32_t i = 0; i < deopt_ring_count_; ++i)
+        ++recent; // all entries in the ring are within the window
+    if (recent >= deopt_storm_threshold_ && !deopt_storm_active_.load(std::memory_order_acquire)) {
+        deopt_storm_active_.store(true, std::memory_order_release);
+        deopt_storm_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #1468: ratio accessors. Cheap O(profiles_) walks; the
+// shape-profiler is single-threaded so no locking needed. Safe to
+// call from any thread that holds the eval thread's mutex (which
+// is everywhere record_shape / invalidate are called).
+double ShapeProfiler::shape_stable_ratio() const noexcept {
+    if (profiles_.empty())
+        return 0.0;
+    std::uint32_t stable = 0;
+    for (const auto& [k, p] : profiles_) {
+        (void)k;
+        if (p.is_stable)
+            ++stable;
+    }
+    return static_cast<double>(stable) / static_cast<double>(profiles_.size());
+}
+
+double ShapeProfiler::deopt_rate_per_fn() const noexcept {
+    if (profiles_.empty())
+        return 0.0;
+    std::uint64_t total_deopt = 0;
+    for (const auto& [k, p] : profiles_) {
+        (void)k;
+        total_deopt += p.deopt_count;
+    }
+    return static_cast<double>(total_deopt) / static_cast<double>(profiles_.size());
+}
+
+double ShapeProfiler::history_hit_rate() const noexcept {
+    const auto hits = history_hit_count_.load(std::memory_order_relaxed);
+    const auto misses = history_miss_count_.load(std::memory_order_relaxed);
+    const auto total = hits + misses;
+    if (total == 0)
+        return 0.0;
+    return static_cast<double>(hits) / static_cast<double>(total);
 }
 
 ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {

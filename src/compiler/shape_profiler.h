@@ -77,11 +77,84 @@ public:
     [[nodiscard]] std::uint32_t window_size() const noexcept { return window_size_; }
     [[nodiscard]] double stability_ratio() const noexcept { return stability_ratio_; }
 
+    // Issue #1468: AI high-mutation-rate preset. More conservative
+    // stability judgement (larger window, lower dominant ratio, more
+    // samples required) — designed for long-running self-modifying
+    // workloads where shape churn is normal, not pathological.
+    //
+    // To activate:
+    //   shape::ShapeProfiler sp;
+    //   sp.apply_preset(ShapeProfiler::Preset::kHighMutation);
+    // Or via env var AURA_SHAPE_PRESET=high_mutation in (serve).
+    struct Preset {
+        std::uint32_t window_size;
+        double stability_ratio;
+        std::uint32_t min_samples_for_stable;
+        std::uint32_t deopt_storm_window;    // # of last mutations to consider
+        std::uint32_t deopt_storm_threshold; // # deopts in window → storm
+    };
+    static constexpr Preset kDefaultPreset = {1000, 0.90, 100, 256, 4};
+    static constexpr Preset kHighMutationPreset = {2000, 0.95, 250, 512, 6};
+    static constexpr Preset kLowMutationPreset = {500, 0.85, 50, 128, 3};
+
+    void apply_preset(Preset p) {
+        window_size_ = p.window_size;
+        stability_ratio_ = p.stability_ratio;
+        min_samples_for_stable_ = p.min_samples_for_stable;
+        deopt_storm_window_ = p.deopt_storm_window;
+        deopt_storm_threshold_ = p.deopt_storm_threshold;
+        active_preset_ = p;
+    }
+    [[nodiscard]] Preset active_preset() const noexcept { return active_preset_; }
+    [[nodiscard]] std::uint32_t min_samples_for_stable() const noexcept {
+        return min_samples_for_stable_;
+    }
+    [[nodiscard]] std::uint32_t deopt_storm_window() const noexcept { return deopt_storm_window_; }
+    [[nodiscard]] std::uint32_t deopt_storm_threshold() const noexcept {
+        return deopt_storm_threshold_;
+    }
+
     // Issue #992: hard cap on tracked profiles (long-running serve).
     void set_max_profiles(std::size_t n) { max_profiles_ = n ? n : 1; }
     [[nodiscard]] std::size_t max_profiles() const noexcept { return max_profiles_; }
     [[nodiscard]] std::size_t profile_count() const noexcept { return profiles_.size(); }
     [[nodiscard]] std::uint64_t profile_evictions() const noexcept { return profile_evictions_; }
+
+    // Issue #1468: AI workload metrics. Atomic counters for the
+    // (compile:shape-stability-stats) primitive + agent decision
+    // metrics. Lifetime totals since ShapeProfiler ctor.
+    [[nodiscard]] std::uint64_t mutation_induced_invalidations() const noexcept {
+        return mutation_induced_invalidations_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t deopt_storm_total() const noexcept {
+        return deopt_storm_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t history_hit_count() const noexcept {
+        return history_hit_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t history_miss_count() const noexcept {
+        return history_miss_count_.load(std::memory_order_relaxed);
+    }
+
+    // Issue #1468: deopt-storm detector. Returns true if the
+    // last `deopt_storm_window_` deopts exceeded `deopt_storm_threshold_`.
+    // Once true, callers (SpecJITController, GuardShape) should
+    // down-shift to generic / raise threshold / drop the function.
+    [[nodiscard]] bool deopt_storm_active() const noexcept {
+        return deopt_storm_active_.load(std::memory_order_acquire);
+    }
+
+    // Issue #1468: shape_stable_ratio = (# fns in profiles_ with
+    // is_stable=true) / total profiles_. 0 if no profiles yet.
+    [[nodiscard]] double shape_stable_ratio() const noexcept;
+
+    // Issue #1468: deopt_rate_per_fn = total deopt_count across
+    // all profiles / total profile count. 0 if no profiles.
+    [[nodiscard]] double deopt_rate_per_fn() const noexcept;
+
+    // Issue #1468: history_hit_rate = history_hit_count / (hit+miss).
+    // 0 if no history lookups yet.
+    [[nodiscard]] double history_hit_rate() const noexcept;
 
     // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
     void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
@@ -159,6 +232,26 @@ private:
     std::uint64_t global_time_ = 0;
     std::size_t max_profiles_ = 4096; // Issue #992
     std::uint64_t profile_evictions_ = 0;
+    // Issue #1468: per-instance deopt-event ring for storm detection.
+    // Stores (timestamp, fn) for the last deopt_storm_window_ events.
+    struct DeoptEvent {
+        std::uint64_t time;
+        FnKey fn;
+    };
+    std::vector<DeoptEvent> deopt_ring_;
+    std::uint32_t deopt_ring_head_ = 0;
+    std::uint32_t deopt_ring_count_ = 0;
+    // Issue #1468: atomic counters for the metrics API.
+    std::atomic<std::uint64_t> mutation_induced_invalidations_{0};
+    std::atomic<std::uint64_t> deopt_storm_total_{0};
+    std::atomic<std::uint64_t> history_hit_count_{0};
+    std::atomic<std::uint64_t> history_miss_count_{0};
+    std::atomic<bool> deopt_storm_active_{false};
+    // Issue #1468: configurable knobs (now driven by Preset).
+    std::uint32_t min_samples_for_stable_ = 100;
+    std::uint32_t deopt_storm_window_ = 256;
+    std::uint32_t deopt_storm_threshold_ = 4;
+    Preset active_preset_ = kDefaultPreset;
     std::function<void(FnKey fn, std::uint32_t dirty_scope)> dirty_hook_;
 };
 
