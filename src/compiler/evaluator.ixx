@@ -9789,6 +9789,13 @@ public:
                     m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
                 }
             }
+            // Issue #1461: Agent Decision Metrics liveness — outermost
+            // failed Guard must bump the fiber-boundary rollback counter
+            // so (agent:decision-metrics) / stats facade see a real signal
+            // (not a dead zero). Nested guards do not bump (outer owns the
+            // transaction outcome).
+            if (outermost && !success)
+                ev_->bump_mutation_boundary_rollback();
             ev_->exit_mutation_boundary(success);
             // Issue #285: explicit flush at the boundary exit so any
             // pending mutation stack state is visible to other fibers

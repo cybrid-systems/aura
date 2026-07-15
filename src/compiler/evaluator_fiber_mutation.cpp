@@ -447,6 +447,11 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         // Issue #1373: yield-path forced rollback / failure signal.
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->mutation_boundary_yield_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1461: Agent Decision Metrics — recovery-failure is the
+        // panic-count source for (agent:decision-metrics). Fiber resume
+        // mismatch is the production recovery-failure path.
+        bump_mutation_boundary_recovery_failure();
+        bump_mutation_boundary_rollback();
         bump_guard_panic_reflect_boundary_violation_prevented();
         if (outermost_mutation_success_flag_)
             *outermost_mutation_success_flag_ = false;

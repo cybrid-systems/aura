@@ -142,14 +142,23 @@
                        (catch (e) (void))))
            (total (agent-hash-num ml "total" 0))
            (rolled (agent-hash-num ml "rolled-back" 0))
-           (rb-rate (if (= total 0) 0
-                      (let ((pct (* 100 (/ rolled total))))
+           ; Integer division: compute (* 100 n)/d so rates are not truncated to 0.
+           (ml-rate (if (= total 0) 0
+                      (let ((pct (/ (* 100 rolled) total)))
                         (if (< pct 0) 0 (if (> pct 100) 100 pct)))))
+           ; #1461: atomic-batch outcomes are always live; fold into rate so
+           ; agents do not depend solely on mutation-log RolledBack status.
+           (ab-ok (agent-hash-num ab "batch-count" 0))
+           (ab-rb (agent-hash-num ab "rollback-count" 0))
+           (ab-tot (+ ab-ok ab-rb))
+           (ab-rate (if (= ab-tot 0) 0
+                      (let ((pct (/ (* 100 ab-rb) ab-tot)))
+                        (if (< pct 0) 0 (if (> pct 100) 100 pct)))))
+           (rb-rate (if (> ab-rate ml-rate) ab-rate ml-rate))
+           ; panic-count ← recovery-failures (fiber resume / Guard recovery)
            (panic-n (agent-hash-num fiber "recovery-failures" 0))
            (hold-us (agent-hash-num hold "hold-time-us-total" 0))
            (long-hold (agent-hash-num hold "holds-over-1ms" 0))
-           (ab-ok (agent-hash-num ab "batch-count" 0))
-           (ab-rb (agent-hash-num ab "rollback-count" 0))
            (rec
              (cond
                ((>= panic-n *agent-panic-max*) "escalate")
