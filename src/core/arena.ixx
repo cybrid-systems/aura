@@ -105,14 +105,22 @@ export struct ArenaStats {
     std::size_t frag_reduced_bp = 0;
     std::size_t shape_inval_on_compact = 0;
     std::size_t defrag_savings_alloc = 0;
+    // Issue #1467 Phase 1: live-object-moving defrag observability
+    // (foundation-only — both stay 0 until mark+copy+remap land in
+    // #1467 follow-ups). The (arena:live-defrag-stats) primitive
+    // will read these once the full path ships.
+    std::size_t live_defrag_attempted_count = 0;
+    std::size_t live_objects_marked_total = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
                            "{} compactions (last saved {}B, total {}B) | "
-                           "{} defrags (last saved {}B)",
+                           "{} defrags (last saved {}B) | "
+                           "{} live-defrags ({} marked)",
                            used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
                            allocation_count, wasted, compaction_count, last_compaction_saved,
-                           total_compaction_saved, defrag_attempted_count, last_defrag_saved);
+                           total_compaction_saved, defrag_attempted_count, last_defrag_saved,
+                           live_defrag_attempted_count, live_objects_marked_total);
     }
 
     // Fragmentation ratio: (capacity - used) / capacity.
@@ -136,6 +144,9 @@ export struct ArenaStats {
             last_compaction_saved = other.last_compaction_saved;
         // Issue #300: defrag counters. Same merge discipline as compact.
         defrag_attempted_count += other.defrag_attempted_count;
+        // Issue #1467 Phase 1: live-defrag counters (same sum discipline).
+        live_defrag_attempted_count += other.live_defrag_attempted_count;
+        live_objects_marked_total += other.live_objects_marked_total;
         if (other.defrag_attempted_count > 0)
             last_defrag_saved = other.last_defrag_saved;
         auto_alloc_trigger_count += other.auto_alloc_trigger_count;
@@ -657,6 +668,62 @@ public:
             invoke_compact_hook_();
         }
         // Note: NOT touching stats_.compaction_count /
+
+        // Issue #1467 Phase 1: live-object-moving defrag foundation.
+        //
+        // What this does today (skeleton):
+        //   1. Runs the existing conservative defrag() (trim unused tail).
+        //   2. Walks the SmallObjectPool tiers and counts live objects
+        //      (for each tier: bump_ - start_)/obj_sz). This is the
+        //      "mark" phase of mark-and-sweep — we identify how many
+        //      live objects exist but DO NOT move them yet.
+        //   3. Bumps live_defrag_attempted_count + live_objects_marked_total.
+        //   4. Triggers shape invalidation via the compact hook (since
+        //      any future copy-and-remap would invalidate ShapeIDs that
+        //      point into the arena).
+        //
+        // What's NOT in this skeleton (tracked as #1467 follow-ups):
+        //   - Actual object relocation (copy-and-sweep) — requires
+        //     patching all internal pointers / NodeId / StableNodeRef.
+        //   - PersistentChildVector / gap_buffer coordination (compact
+        //     their gap to end and update data()).
+        //   - Stop-the-world / safepoint integration with the GC.
+        //
+        // Returns the number of live objects marked (the new "saved"
+        // metric for live defrag, distinct from defrag()'s bytes-saved).
+        [[nodiscard]] std::size_t live_defrag() noexcept {
+            // Step 1: conservative trim (same as defrag()).
+            defrag_impl(false);
+            // Step 2: mark phase — count live objects in each tier.
+            std::size_t marked = 0;
+            for (const auto& tier : classes_) {
+                if (tier.obj_sz > 0) {
+                    const std::size_t used_bytes = static_cast<std::size_t>(tier.bump - tier.start);
+                    marked += used_bytes / tier.obj_sz;
+                }
+            }
+            // Step 3: bump counters.
+            stats_.live_defrag_attempted_count++;
+            stats_.live_objects_marked_total += marked;
+            live_defrag_attempted_count_.fetch_add(1, std::memory_order_relaxed);
+            live_objects_marked_total_.fetch_add(marked, std::memory_order_relaxed);
+            // Step 4: shape invalidation hook (same as defrag/compact —
+            // any future copy-and-remap invalidates ShapeIDs pointing
+            // into the arena). Safe to call today: invalidation just
+            // bumps shape_inval_on_compact and ShapeProfiler resets.
+            invoke_compact_hook_();
+            return marked;
+        }
+
+        // Issue #1467: live-defrag counter accessors. Public so
+        // (arena:live-defrag-stats) primitive + tests can read them
+        // without touching the stats struct directly.
+        [[nodiscard]] std::uint64_t live_defrag_attempted_count_relaxed() const noexcept {
+            return live_defrag_attempted_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t live_objects_marked_total_relaxed() const noexcept {
+            return live_objects_marked_total_.load(std::memory_order_relaxed);
+        }
         // last_compaction_saved. This is intentionally a separate
         // counter from compact().
         return saved;
@@ -1203,7 +1270,8 @@ public:
                             "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
                             "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
                             "\"fragmentation_ratio\":{:.3f},"
-                            "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}",
+                            "\"defrag_attempted_count\":{},\"last_defrag_saved\":{},"
+                            "\"live_defrag_attempted_count\":{},\"live_objects_marked_total\":{}}}",
                             esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
                             s.compaction_count, s.last_compaction_saved, s.total_compaction_saved,
                             s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved);
@@ -1254,6 +1322,11 @@ private:
     //     been appropriate)
     std::atomic<std::uint64_t> auto_compact_guard_call_count_{0};
     std::atomic<std::uint64_t> compaction_yield_checks_{0};
+    // Issue #1467 Phase 1: live-defrag foundation counters (atomic
+    // mirrors so the per-arena stats and the process-wide policy
+    // sampler see consistent values without taking the lock).
+    std::atomic<std::uint64_t> live_defrag_attempted_count_{0};
+    std::atomic<std::uint64_t> live_objects_marked_total_{0};
 
     // Issue #335: helper — compute the adaptive threshold
     // for a specific module. Mirrors should_auto_compact's
