@@ -8,7 +8,7 @@
 |--------|---------|-------------|
 | `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
-| `std/agent` | `auto-grow` `safe-eval` `llm-ask` `extract-code` | agent.aura — Self-growing AI agent library |
+| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+2) | agent.aura — Self-growing AI agent library (Issue #1460) |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `colony:search` | lib/std/ant.aura -- ant colony pheromone system + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
