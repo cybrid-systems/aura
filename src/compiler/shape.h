@@ -159,6 +159,9 @@ ShapeID compute_shape_id(const Shape& shape);
 // ── Quick inline shape ID from EvalValue raw bits ──────────────
 // Fast path: extract ShapeID from an int64_t tagged value.
 // Full implementation (with heap traversal) is in shape_profiler.cpp.
+// Issue #1466: hot-path post-condition (total function — Unknown-tagged
+// value → SHAPE_UNKNOWN, otherwise known inline ShapeID). Zero release
+// cost under observe semantic.
 ShapeID inline_shape_of(std::int64_t val) post(r : is_known_inline_shape_id(r));
 
 // ── String conversion ──────────────────────────────────────────

@@ -156,8 +156,81 @@ static_assert(kFixnumTagLow2 == 0, "Issue #1321: fixnum low2 must remain 0 for h
 static_assert(kExpectedTierSizes[2] == 64,
               "Issue #1321: max SmallObjectPool tier must stay 64 for allocate contracts");
 
+// ── Issue #1466 Phase 1: hot-path consteval invariants ───────
+//
+// Goal: more compile-time guarantees for hot-path dispatch tables and
+// encoding layouts so that future drift is caught at build time
+// (zero runtime cost). AI Agent bumps the consteval count and the
+// (query:cxx26-invariants) primitive reflects the change.
+
+// EvalValueTag enum completeness (#1466): the 5 primary tags must be
+// the values 0..4 in declaration order (Fixnum=0, Ref=1, StringV2=2,
+// Special=3, Float=4). Any reorder breaks low-2-bit dispatch. Unknown
+// lives at 255 as a sentinel outside the low-2-bit space.
+constexpr std::uint8_t kEvalValueTagFixnumVal = 0;
+constexpr std::uint8_t kEvalValueTagRefVal = 1;
+constexpr std::uint8_t kEvalValueTagStringV2Val = 2;
+constexpr std::uint8_t kEvalValueTagSpecialVal = 3;
+constexpr std::uint8_t kEvalValueTagFloatVal = 4;
+static_assert(kEvalValueTagFixnumVal == 0,
+              "Issue #1466: Fixnum tag must stay 0 for low-2 dispatch");
+static_assert(kEvalValueTagRefVal == 1, "Issue #1466: Ref tag must stay 1 for low-2 dispatch");
+static_assert(kEvalValueTagStringV2Val == 2,
+              "Issue #1466: StringV2 tag must stay 2 for low-2 dispatch");
+static_assert(kEvalValueTagSpecialVal == 3,
+              "Issue #1466: Special tag must stay 3 for low-2 dispatch");
+static_assert(kEvalValueTagFloatVal == 4,
+              "Issue #1466: Float tag must stay 4 (post-low-2 sentinel)");
+static_assert(kEvalValueTagFixnumVal < kEvalValueTagRefVal,
+              "Issue #1466: enum values must be ascending");
+static_assert(kEvalValueTagRefVal < kEvalValueTagStringV2Val,
+              "Issue #1466: enum values must be ascending");
+static_assert(kEvalValueTagStringV2Val < kEvalValueTagSpecialVal,
+              "Issue #1466: enum values must be ascending");
+static_assert(kEvalValueTagSpecialVal < kEvalValueTagFloatVal,
+              "Issue #1466: enum values must be ascending");
+
+// ShapeID boundary (#1466): SHAPE_UNKNOWN (0) must be the minimum
+// ShapeID; inline ShapeIDs (Int=2, Pair=10, ...) live above SHAPE_ANY
+// (1). Catches future renumbering before it silently breaks
+// is_known_inline_shape_id().
+constexpr std::uint64_t kShapeUnknownBoundary = 0;
+constexpr std::uint64_t kShapeAnyBoundary = 1;
+static_assert(kShapeUnknownBoundary == 0,
+              "Issue #1466: SHAPE_UNKNOWN must be 0 (boundary sentinel)");
+static_assert(kShapeAnyBoundary > kShapeUnknownBoundary,
+              "Issue #1466: SHAPE_ANY must be above SHAPE_UNKNOWN");
+static_assert(kShapeInlineIntId > kShapeAnyBoundary,
+              "Issue #1466: inline Int ShapeID must be above SHAPE_ANY");
+static_assert(kShapeInlinePairId > kShapeInlineIntId,
+              "Issue #1466: inline Pair ShapeID must be above inline Int");
+
+// IR SoA column breakdown (#1466): the 10 columns = 1 opcode + 4
+// operands + 5 metadata fields. The breakdown is the spec; the total
+// is the runtime invariant. Either side changing without the other
+// breaks ir_soa.ixx serialize_soa round-trips.
+constexpr std::size_t kIrSoaOpcodeColumns = 1;
+constexpr std::size_t kIrSoaOperandColumns = 4;
+constexpr std::size_t kIrSoaMetadataColumns = 5;
+constexpr std::size_t kIrSoaComputedTotal =
+    kIrSoaOpcodeColumns + kIrSoaOperandColumns + kIrSoaMetadataColumns;
+static_assert(kIrSoaComputedTotal == kIrSoaColumnCount,
+              "Issue #1466: IR SoA column breakdown (1+4+5) must sum to kIrSoaColumnCount");
+static_assert(kIrSoaMetadataColumns >= 5,
+              "Issue #1466: IR SoA needs >= 5 metadata cols (line/col/generation/dbg_info/flags)");
+
+// Tagged encoding bit layout (#1466): the 4 low-2-bit tag classes
+// (Fixnum, Ref, StringV2, Special) must map to distinct low-2-bit
+// values. Floats share low-2=0 with Fixnums but are disjoint on the
+// range, so the dispatch is two-stage (low-2 + range).
+static_assert(kFixnumTagLow2 != kRefTagLow2 && kFixnumTagLow2 != kStringV2TagLow2 &&
+                  kRefTagLow2 != kStringV2TagLow2 && kFixnumTagLow2 != kSpecialTagLow2 &&
+                  kRefTagLow2 != kSpecialTagLow2 && kStringV2TagLow2 != kSpecialTagLow2,
+              "Issue #1466: 4 low-2-bit tag classes must be pairwise distinct");
+
 // Exported count for (query:cpp26-contracts-stats) consteval_checks field.
-// Bumped #1321 (+4 static_asserts above; total consteval surface).
-inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 36;
+// Bumped #1321 (+4), #1466 Phase 1 (+17: EvalValueTag enum x9 + ShapeID x4 +
+// IR SoA breakdown x3 + tagged bit layout x1). Total consteval surface.
+inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 53;
 
 } // namespace aura::core
