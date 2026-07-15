@@ -1,0 +1,49 @@
+; ── aura-pets headless TUI suite (#1454) ─────────────────────
+;
+; Integration layer for cyber_cat / snake / tetris + tui:* session.
+; Headless-safe (no raw TTY). Uses edsl-test-harness (immediate it forms —
+; quoted test-suite + data_to_flat has edge cases with tui:* side effects).
+;
+; Hard gate: scripts/run_pets_regression.py + tests/test_aura_pets_smoke.cpp
+; Also: ./build.py test suite
+;
+; Run:  ./build/aura --load tests/suite/aura_pets.aura
+
+(require "std/edsl-test-harness" all:)
+
+(display "═══ aura-pets headless suite (#1454) ═══\n")
+(reset-totals)
+
+(describe "pets:tui-session"
+  (lambda ()
+    (it "init-clear-present-shutdown"
+      (begin
+        (tui:init "aura-pets" 16 8)
+        (tui:hide-cursor)
+        (tui:clear 0 0)
+        (tui:cell 1 1 "A" 65280 0 0)
+        (tui:cell 2 1 "u" 65280 0 0)
+        (tui:cell 3 1 "r" 65280 0 0)
+        (tui:cell 4 1 "a" 65280 0 0)
+        (tui:present)
+        (tui:show-cursor)
+        (tui:shutdown)
+        #t))))
+
+(describe "pets:demos"
+  (lambda ()
+    (it "snake-load" (begin (load "examples/snake.aura") #t))
+    (it "snake-demo" (snake-demo))
+    (it "tetris-load" (begin (load "examples/tetris.aura") #t))
+    (it "tetris-demo" (tetris-demo))
+    (it "cyber-cat-load" (begin (load "examples/cyber_cat.aura") #t))
+    (it "cyber-cat-run" (cyber-cat-run 4 #f))))
+
+(describe "pets:tui-run-module"
+  (lambda ()
+    (it "load-run" (begin (load "lib/std/tui/run.aura") #t))
+    (it "tui-run-thunk" (= (tui:run "pets-suite" (lambda () 99)) 99))))
+
+; Fail process loudly when used as a hard gate (Python also parses totals).
+(unless (summary)
+  (error "aura-pets suite failed"))

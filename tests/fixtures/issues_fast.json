@@ -17,6 +17,8 @@
     "test_issues_jit_late4",
     "test_issues_jit_late5",
     "test_issues_light_late",
-    "test_primitives_hotpath_registry_slo"
+    "test_primitives_hotpath_registry_slo",
+    "test_aura_pets_smoke",
+    "test_cyber_cat_smoke"
   ]
 }

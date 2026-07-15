@@ -39,6 +39,7 @@ Test suites:
   fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
   issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
   issues-fast 同上，强制 fast 档（bundle 子集 + git 变更）
+  pets        Issue #1454 — aura-pets headless TUI regression
   check       构建 + core + safety + fuzz + issues（CI 默认）
 """
 
@@ -1189,6 +1190,35 @@ def test_suite_s0():
     return test_suite_runner(s0=True)
 
 
+def test_pets():
+    """Issue #1454: aura-pets headless TUI demos + terminal smokes."""
+    print(f"{B}═══ aura-pets TUI regression (#1454) ═══{N}")
+    ut = ROOT / "tests" / "test_pets_regression.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=str(ROOT))
+        if r0.returncode != 0:
+            fail("test_pets_regression unit tests failed")
+            return 1
+    script = ROOT / "scripts" / "run_pets_regression.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    env = os.environ.copy()
+    env.setdefault("AURA_RUNTIME_DIR", str(ROOT))
+    env["AURA_BUILD_DIR"] = str(BUILD)
+    r = subprocess.run(
+        [sys.executable, str(script), "--build-dir", str(BUILD)],
+        cwd=str(ROOT),
+        env=env,
+        timeout=600,
+    )
+    if r.returncode != 0:
+        fail("aura-pets regression failed")
+        return 1
+    ok("aura-pets regression OK")
+    return 0
+
+
 # ═══════════════════════════════════════════════════════════════
 # CI tiering
 # ═══════════════════════════════════════════════════════════════
@@ -1200,6 +1230,7 @@ CI_CORE = [
     "smoke",
     "bash",
     "suite",
+    "pets",  # #1454 aura-pets headless TUI
     "repl",
     "runtime-c",
     "concurrent",
@@ -1223,6 +1254,7 @@ CI_PARALLEL_SAFE = frozenset(
         "runtime-c",
         "fuzz-equiv",
         "fuzz-corpus",
+        "pets",
     }
 )
 
@@ -1244,6 +1276,7 @@ SUITES = {
     "bash": test_bash,
     "suite": test_suite_runner,
     "suite-s0": test_suite_s0,
+    "pets": test_pets,
     "repl": test_repl,
     "concurrent": test_concurrent,
     "issues": test_issues,
@@ -1441,6 +1474,7 @@ def cmd_list():
     print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus)")
     print(f"  {'check':12s} CI默认: build + core + safety + fuzz + issues")
     print(f"  {'issues-fast':12s} issue tests (AURA_ISSUES_TIER=fast)")
+    print(f"  {'pets':12s} aura-pets headless TUI regression (#1454)")
     print()
     for name, func in sorted(SUITES.items()):
         print(f"  {name:12s} {func.__doc__}")

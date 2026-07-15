@@ -72,6 +72,7 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 - `scripts/check_primitive_surface.py --strict` + unit gate  
 - `scripts/check_test_coverage.py`（#1453：primitive 源码变更必须带 `tests/`；`test-registry.json` 新鲜度）
+- `scripts/run_pets_regression.py` / `./build.py test pets`（#1454：aura-pets headless TUI 回归）
 
 故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。  
 例外路径：`tests/test-binding-allowlist.txt`（尽量少用）。

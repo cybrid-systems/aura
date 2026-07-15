@@ -30,11 +30,17 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_prod("src/compiler/evaluator.ixx"))
         self.assertTrue(self.m.is_prod("src/compiler/service.ixx"))
         self.assertFalse(self.m.is_prod("src/core/ast.ixx"))
+        # #1454 TUI protected
+        self.assertTrue(self.m.is_prod("src/compiler/evaluator_primitives_tui.cpp"))
+        self.assertTrue(self.m.is_prod("lib/std/tui/canvas.aura"))
+        self.assertTrue(self.m.is_prod("examples/cyber_cat.aura"))
+        self.assertTrue(self.m.is_prod("src/tui/tui_runtime.hh"))
 
     def test_test_paths(self):
         self.assertTrue(self.m.is_test("tests/test_issue_1453.cpp"))
         self.assertTrue(self.m.is_test("tests/edsl_self_test.aura"))
         self.assertTrue(self.m.is_test("lib/std/edsl-test-harness.aura"))
+        self.assertTrue(self.m.is_test("scripts/run_pets_regression.py"))
         self.assertFalse(self.m.is_test("docs/design/foo.md"))
 
     def test_pairing_ok(self):
