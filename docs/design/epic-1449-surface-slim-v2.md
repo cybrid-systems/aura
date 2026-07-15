@@ -8,6 +8,7 @@
 | Observability facade + residual stats | #1450 | **Done** — Phase1 facade + Phase2 residual public `*-stats` → `register_stats_impl` |
 | Governance policy doc | #1451 | **Done** — `primitive-governance-policy.md` + `(primitive:validate-new)` |
 | Testing framework entry | #1452 | **Done** — harness + binding gate + declarative self-test |
+| Prim test binding hard gate | #1453 | **Done** — coverage umbrella + TestRegistry + PR template |
 | Hard removal + migration guide | #1455 | Open |
 
 ## #1450 deliverables

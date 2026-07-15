@@ -1,0 +1,4 @@
+# Issue #1453: production files that may change without a tests/ pairing.
+# One path per line (repo-relative). Prefer fixing tests over allowlisting.
+# Example:
+# src/compiler/evaluator_primitives_obs_jit_99.cpp

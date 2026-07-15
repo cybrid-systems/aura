@@ -68,9 +68,17 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 - `string-*` / `string:*`、`json-*`/`json:*`、`math-*`/`math:*`、`vector-*`/`vector:*`、`path-*`/`path:*`、`time-*`/`time:*`（→ `lib/std` / `std/surface`）
 - `ast:ref-*`（#393 StableRef；禁止新名）
 
-`./build.py gate` 跑 `scripts/check_primitive_surface.py --strict` + unit gate + `scripts/check_test_binding.py`（#1452：改 primitive 源码必须带 `tests/` 变更）。故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。
+`./build.py gate` 跑：
 
-EDSL 自测：`./build/aura < tests/edsl_self_test.aura`（harness：`lib/std/edsl-test-harness.aura`，见 [testing-framework-v1.md](design/testing-framework-v1.md)）。
+- `scripts/check_primitive_surface.py --strict` + unit gate  
+- `scripts/check_test_coverage.py`（#1453：primitive 源码变更必须带 `tests/`；`test-registry.json` 新鲜度）
+
+故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。  
+例外路径：`tests/test-binding-allowlist.txt`（尽量少用）。
+
+EDSL 自测：`./build/aura < tests/edsl_self_test.aura`（harness：`lib/std/edsl-test-harness.aura`）。  
+测试索引：`python3 scripts/gen_test_registry.py` → [generated/test-registry.json](generated/test-registry.json)。  
+框架说明：[testing-framework-v1.md](design/testing-framework-v1.md)。
 
 **观测读取（P1 / #1433）**：测试与 Agent 优先 facade：
 
