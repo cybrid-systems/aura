@@ -338,6 +338,16 @@ struct AdaptiveStealStats {
     std::atomic<std::uint64_t> steal_deferred_inner_boundary{0};
     // Issue #1270: starvation mitigation boosts after repeated defers.
     std::atomic<std::uint64_t> starvation_priority_boosts{0};
+    // Issue #1445: dedicated counters for the threshold-based boost path.
+    // steal_priority_boost_triggered: bumped every time the inner-boundary
+    //   deferred_count crosses the threshold (default 3) — direct measure
+    //   of how often a fiber has been boosted.
+    // starvation_mitigated_count: bumped when a long-mutation hook
+    //   (Scheduler::on_long_mutation_held) signals a long-holder and
+    //   waiters get a priority lift. Distinct from starvation_priority_boosts
+    //   which tracks inner-defer boosts.
+    std::atomic<std::uint64_t> steal_priority_boost_triggered{0};
+    std::atomic<std::uint64_t> starvation_mitigated_count{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {

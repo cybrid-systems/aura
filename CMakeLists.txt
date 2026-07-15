@@ -1975,6 +1975,9 @@ aura_issue_test_link_llvm_jit(test_mutation_boundary_invariant_closed_loop_417)
 # Issue #1444: MutationBoundary full coverage audit + new coverage primitive.
 aura_add_issue_test(test_mutation_boundary_full_coverage)
 aura_issue_test_link_llvm_jit(test_mutation_boundary_full_coverage)
+# Issue #1445: orchestration steal boost + new steal-stats primitive.
+aura_add_issue_test(test_orchestration_steal_boost)
+aura_issue_test_link_llvm_jit(test_orchestration_steal_boost)
 # Issue #418: EnvFrame dual-path + stale policy closed loop.
 aura_add_issue_test(test_envframe_dualpath_stale_closed_loop_418)
 aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)

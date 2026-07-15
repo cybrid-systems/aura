@@ -1,4 +1,13 @@
 {
+  "categories": {
+    "compile": 38,
+    "engine": 5,
+    "mutate": 5,
+    "other": 441,
+    "query": 91,
+    "stats-like": 10,
+    "workspace": 26
+  },
   "count": 616,
   "frozen_count": 414,
   "frozen_names": [
@@ -417,6 +426,7 @@
     "vector-ref",
     "vector-set!"
   ],
+  "interim_hard_ceiling": 700,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",
@@ -1035,7 +1045,8 @@
     "write-file",
     "ws:try-mutation"
   ],
-  "schema": 1,
+  "public_stats_via_add": 10,
+  "schema": 2,
   "stats_count": 390,
   "stats_names": [
     "arena:adaptive-stats",
@@ -1428,5 +1439,6 @@
     "query:zero-copy-framebuffer-stats",
     "seva:run-demo-with-metrics",
     "type-registry-stats"
-  ]
+  ],
+  "target_budget": 420
 }

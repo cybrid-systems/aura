@@ -146,6 +146,15 @@ public:
     void enable_metrics(bool on = true) { metrics_on_ = on; }
     bool metrics_enabled() const { return metrics_on_; }
 
+    // Issue #1443 AC3 follow-up + #1445 AC6: scheduler hook for long-mutation.
+    // Called from MutationBoundaryGuard dtor when an outermost Guard exits
+    // with hold duration > long_mutation_threshold_us. Default impl bumps
+    // starvation_mitigated_count (AdaptiveStealStats) so waiters can be
+    // priority-boosted. fiber_id is the outermost fiber; duration_us is the
+    // hold duration in microseconds.
+    void on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us);
+
+
 private:
     int num_workers_;
     std::vector<std::unique_ptr<WorkerThread>> workers_;
