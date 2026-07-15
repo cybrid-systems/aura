@@ -1386,17 +1386,32 @@ def cmd_primitive_surface():
 
 
 def cmd_test_binding():
-    """Issue #1452/#1453: production prim source changes must touch tests/."""
-    print(f"{B}═══ Test binding (prim sources ↔ tests/) ═══{N}")
-    script = ROOT / "scripts" / "check_test_binding.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
-    if r.returncode != 0:
-        fail("test binding failed — production primitive sources changed without tests/")
-        return 1
-    ok("test binding OK")
+    """Issue #1453: prim source ↔ tests/ binding + test-registry freshness."""
+    print(f"{B}═══ Test binding + coverage (#1453) ═══{N}")
+    # Unit tests for the gate itself
+    ut = ROOT / "tests" / "test_test_binding_gate.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
+        if r0.returncode != 0:
+            fail("test_test_binding_gate unit tests failed")
+            return 1
+    # Prefer umbrella script when present
+    coverage = ROOT / "scripts" / "check_test_coverage.py"
+    if coverage.exists():
+        r = subprocess.run([sys.executable, str(coverage)], cwd=ROOT)
+        if r.returncode != 0:
+            fail("test coverage/binding failed — prim sources without tests/ or stale registry")
+            return 1
+    else:
+        script = ROOT / "scripts" / "check_test_binding.py"
+        if not script.exists():
+            fail(f"missing {script}")
+            return 1
+        r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+        if r.returncode != 0:
+            fail("test binding failed — production primitive sources changed without tests/")
+            return 1
+    ok("test binding + coverage OK")
     return 0
 
 
