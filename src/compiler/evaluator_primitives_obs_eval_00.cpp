@@ -235,6 +235,143 @@ void ObservabilityPrims::register_eval_p2(PrimRegistrar add, Evaluator& ev) {
                  .category = "general",
                  .schema = "(string) -> pair"});
 
+    // Issue #1451: (primitive:validate-new name) — Agent-Proof proposal check.
+    // Does NOT register. Returns a hash: ok / blocked / already-registered /
+    // blocked-category / prefer-stdlib / requires-red-line / advice.
+    // Mirrors scripts/check_primitive_surface.py freeze patterns.
+    ev.primitives_.add(
+        "primitive:validate-new",
+        [&ev](const auto& a) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
+                std::uint64_t cap = 16;
+                while (cap < need)
+                    cap <<= 1;
+                auto* ht = FlatHashTable::create(cap);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            auto push_str = [&](std::string s) -> EvalValue {
+                auto i = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(s));
+                return make_string(i);
+            };
+
+            if (a.size() != 1 || !is_string(a[0])) {
+                return build_hash(std::vector<std::pair<std::string, EvalValue>>{
+                    {"schema", make_int(1)},
+                    {"ok", make_bool(false)},
+                    {"blocked", make_bool(true)},
+                    {"already-registered", make_bool(false)},
+                    {"prefer-stdlib", make_bool(true)},
+                    {"requires-red-line", make_bool(true)},
+                    {"advice", push_str("usage: (primitive:validate-new \"name\")")},
+                });
+            }
+            const auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_void();
+            const std::string name = ev.string_heap_[idx];
+
+            // Freeze categories — keep in sync with check_primitive_surface.py
+            auto blocked_category = [](std::string_view n) -> const char* {
+                if (n.ends_with("-stats") || n.ends_with("-stats-hash") ||
+                    n.find("-stats-") != std::string_view::npos)
+                    return "stats";
+                static constexpr const char* kPfx[] = {
+                    "string-", "string:", "json-", "json:", "math-", "math:",    "vector-",
+                    "vector:", "path-",   "path:", "time-", "time:", "ast:ref-",
+                };
+                static constexpr const char* kCat[] = {
+                    "string", "string", "json", "json", "math", "math",    "vector",
+                    "vector", "path",   "path", "time", "time", "ast:ref",
+                };
+                for (std::size_t i = 0; i < sizeof(kPfx) / sizeof(kPfx[0]); ++i) {
+                    const std::string_view pfx(kPfx[i]);
+                    if (n.size() >= pfx.size() && n.compare(0, pfx.size(), pfx) == 0)
+                        return kCat[i];
+                }
+                return nullptr;
+            };
+
+            const bool already = ev.primitives_.slot_for_name(name) < ev.primitives_.slot_count();
+            const char* cat = blocked_category(name);
+            const bool blocked = cat != nullptr;
+            const bool empty = name.empty();
+            const bool ok = !empty && !already && !blocked;
+            const bool prefer_stdlib = blocked || empty || !ok;
+
+            std::string advice;
+            if (empty) {
+                advice = "empty name rejected";
+            } else if (already) {
+                advice = "name already registered; use primitive:describe or extend existing API";
+            } else if (blocked) {
+                advice = std::string("freeze-blocked category '") + cat +
+                         "'; use CompilerMetrics+(engine:metrics)/lib/std instead of public add()";
+            } else {
+                advice = "name free of freeze patterns; still requires red-line citation in PR "
+                         "(see docs/design/primitive-vs-stdlib-decision-framework.md) before add()";
+            }
+
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(1)},
+                {"name", push_str(name)},
+                {"ok", make_bool(ok)},
+                {"already-registered", make_bool(already)},
+                {"blocked", make_bool(blocked || empty)},
+                {"prefer-stdlib", make_bool(prefer_stdlib)},
+                {"requires-red-line", make_bool(true)},
+                {"advice", push_str(std::move(advice))},
+            };
+            if (cat)
+                kv.push_back({"blocked-category", push_str(cat)});
+            else
+                kv.push_back({"blocked-category", make_void()});
+            return build_hash(kv);
+        },
+        PrimMeta{.arity = 1,
+                 .pure = true,
+                 .doc = "Issue #1451: validate a proposed public primitive name "
+                        "(freeze patterns + already-registered). Does not register.",
+                 .category = "general",
+                 .schema = "(string) -> hash"});
+
     // Issue #480: (query:primitive-list-with-meta) — list of
     // (name . meta-pair) for every registered primitive.
     ev.primitives_.add(

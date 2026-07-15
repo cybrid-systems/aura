@@ -118,7 +118,7 @@ These four issues do **not** duplicate any current open engine/Guard/SlimSurface
 
 ## 5. Execution Discipline
 
-- Every new primitive must first pass the red-line check in primitive-vs-stdlib-decision-framework + the governance policy.
+- Every new primitive must first pass `(primitive:validate-new)` + the red-line check in [primitive-vs-stdlib-decision-framework.md](primitive-vs-stdlib-decision-framework.md) + [primitive-governance-policy.md](primitive-governance-policy.md) (#1451).
 - Every demotion / Guard / atomic-batch change must update edsl_self_test + corresponding C++ tests and link the relevant issues.
 - Do not expand individual issue ACs or pseudo-code in this document (they already live in the issues). Keep the thematic aggregation style.
 - When updating this file, also update the P-series status in docs/roadmap.md.

@@ -4892,6 +4892,9 @@ aura_issue_test_link_llvm_jit(test_primitives_surface_convergence)
 # *-stats deprecation marks.
 aura_add_issue_test(test_issue_1450)
 aura_issue_test_link_llvm_jit(test_issue_1450)
+# Issue #1451: Primitives Governance Policy + (primitive:validate-new).
+aura_add_issue_test(test_issue_1451)
+aura_issue_test_link_llvm_jit(test_issue_1451)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
