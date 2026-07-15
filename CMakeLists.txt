@@ -4946,6 +4946,10 @@ aura_add_issue_test(test_issue_1471)
 # Issue #1461: Agent Decision Metrics contract liveness + inject/react
 aura_add_issue_test(test_issue_1461)
 aura_issue_test_link_llvm_jit(test_issue_1461)
+# Issue #1472: End-to-end atomic batch for complex mutate ops + index
+# sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
+# observability + MutationBoundaryGuard + lockless helper suppression.
+aura_add_issue_test(test_issue_1472)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
