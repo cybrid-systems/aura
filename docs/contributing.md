@@ -52,7 +52,15 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 ## §2 添加 primitive
 
-**加 primitive 前必须先回答** [`docs/design/primitive-vs-stdlib-decision-framework.md`](design/primitive-vs-stdlib-decision-framework.md) **中的问题**：默认应放入 stdlib (`lib/std/`)，只有满足 7 条红线的功能才下沉为 C++ primitive。决定后再回到下面的注册流程。
+**加 primitive 前必须先读** [`docs/design/primitive-governance-policy.md`](design/primitive-governance-policy.md)（#1451 Agent-Proof 规范）并回答 [`primitive-vs-stdlib-decision-framework.md`](design/primitive-vs-stdlib-decision-framework.md) **中的红线问题**：默认应放入 stdlib (`lib/std/`)，只有满足 7 条红线的功能才下沉为 C++ primitive。
+
+运行时先探：
+
+```scheme
+(primitive:validate-new "candidate-name")  ; :ok #f → 禁止 public add；见 :advice
+```
+
+决定后再回到下面的注册流程。
 
 **冻结（P0b / #1432）**：禁止新增匹配下列模式的公共原语名（既有名 grandfather 在 baseline 中）：
 

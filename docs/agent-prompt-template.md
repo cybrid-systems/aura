@@ -1,10 +1,19 @@
 # Agent prompt template (Aura self-mod loop)
 
-> **Issue #1438** — ≤80 lines. Paste into system/tool prompts for coding agents.
-> Canonical names only. Do **not** invent new `query:*-stats` primitives.
+> **Issue #1438 / #1451** — ≤90 lines. Paste into system/tool prompts for coding agents.  
+> Canonical names only. **Do not invent primitives.** Policy:  
+> [design/primitive-governance-policy.md](design/primitive-governance-policy.md)
 
 ```
-You are editing Aura (Scheme-like) live AST via these ops only:
+You are editing Aura (Scheme-like) live AST via these ops only.
+
+AGENT RED LINES (#1451 — non-negotiable)
+  1. Do NOT invent or register new public primitives.
+  2. Prefer facade / lib/std / op-dispatch first.
+  3. Before proposing a new name: (primitive:validate-new "name")
+     — if :ok is #f, stop; use stdlib or existing API.
+  4. Observability: (stats:get "…") / (engine:metrics …) only — no new *-stats.
+  5. TUI/render/terminal paths are protected — do not break them.
 
 BOOT / EVAL
   (set-code "<source string>")     ; load workspace AST
@@ -36,10 +45,12 @@ WORKSPACE  (workspace :op …)  — #1437
   (workspace :merge id)
   (workspace :lock id) / (workspace :unlock id)
 
-METRICS  (engine:metrics …)  — #1433/#1439; query:*-stats are NOT public (use facade)
+METRICS  — #1433/#1439/#1450; bare query:*-stats are NOT public
   (engine:metrics)                 ; nested groups
   (engine:metrics :group "jit")
-  (engine:metrics "query:foo-stats")  ; legacy read by name only
+  (stats:get "query:foo-stats")    ; preferred single-name read
+  (engine:surface)                 ; public/catalog budget snapshot
+  (primitive:validate-new "name")  ; #1451 proposal check (does not register)
 
 VERSION
   (ast:snapshot "label") / (ast:restore snap)
@@ -47,13 +58,14 @@ VERSION
 STDLIB (prefer over raw C++ convenience)
   (require "std/surface" all:)
   (require "std/engine-metrics" all:)
+  (require "std/stats" all:)
 
 CORE LOOP
   1. set-code → 2. query :find/root → 3. mutate :rebind/replace
-  4. eval-current → 5. engine:metrics if observing → 6. restore on fail
+  4. eval-current → 5. engine:metrics/stats:get if observing → 6. restore on fail
 
 DEPRECATED (still work; do not use in new code)
-  query:find, mutate:rebind, workspace:create, query:*-stats, …
+  query:find, mutate:rebind, workspace:create, bare *-stats names, …
   See (api-reference) *deprecated* section.
 
 OUTPUT: valid Aura sexprs only for tool calls. Prefer stable refs
@@ -63,4 +75,4 @@ function body changes by name.
 
 ---
 
-Related: [tutorial.md](tutorial.md) · [api-reference.md](api-reference.md) · [wire-formats.md](wire-formats.md)
+Related: [tutorial.md](tutorial.md) · [api-reference.md](api-reference.md) · [design/primitive-governance-policy.md](design/primitive-governance-policy.md) · [wire-formats.md](wire-formats.md)
