@@ -87,7 +87,7 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
     // This is the per-commit observability signal for the 4
     // candidates the issue body tracks. Returns 0 if no hook
     // is installed (e.g. unit-test Evaluator without a JIT).
-    add("jit:intrinsic-count", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("jit:intrinsic-count", [&ev](const auto&) -> EvalValue {
         if (!ev.get_intrinsic_count_fn_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.get_intrinsic_count_fn_()));
@@ -126,16 +126,17 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
     // exception stack depth. Reads from the per-fiber ExStack
     // via the JIT runtime's hook (aura_fiber_current_id).
     // Returns 0 if no exception state for the current fiber.
-    add("jit:exception-depth", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("jit:exception-depth", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(aura_exception_depth()));
     });
 
     // (jit:exception-fibers) — Issue #195: number of distinct
     // fiber ids that have exception state. Used for
     // observability of the per-fiber ExStack map size.
-    add("jit:exception-fibers", [&ev](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(aura_exception_fiber_count()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "jit:exception-fibers", [&ev](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(aura_exception_fiber_count()));
+        });
 }
 
 // Issue #909 part 1 (orig lines 11759-11884)

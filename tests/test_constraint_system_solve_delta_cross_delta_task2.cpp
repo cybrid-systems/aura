@@ -164,7 +164,7 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("\n--- AC6: occurrence-stale-count == 0 after re-narrow ---");
     (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
                   "\"issue-573-stale\")");
-    auto stale = cs.eval("(query:occurrence-stale-count)");
+    auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
     std::println("  occurrence-stale-count = {}", stale_count);
     CHECK(stale_count == 0, "no stale occurrence nodes after auto re-narrow");

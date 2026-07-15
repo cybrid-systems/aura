@@ -24,7 +24,7 @@
 //   `src/serve/metrics.h` (WorkerMetrics + GlobalMetrics) —
 //   steal attempts/successes, fibers spawned/completed/yielded,
 //   busy/idle ns, queue depth max/avg, JSON dump via
-//   `to_json()`, and the (orch:metrics) Aura primitive
+//   `to_json()`, and the (stats:get "orch:metrics") Aura primitive
 //   bridges the data to user code.
 //
 // **What this commit ships**: end-to-end verification that the

@@ -65,9 +65,10 @@ static void run_matrix(CompilerService& cs) {
           "current_defuse_version matches get_defuse_version");
 
     std::println("\n--- AC3: version snapshot stale detection ---");
-    auto snap = cs.eval("(concurrency:version-snapshot)");
+    auto snap = cs.eval("(stats:get \"concurrency:version-snapshot\")");
     CHECK(snap && is_int(*snap), "version-snapshot returns int");
-    auto fresh = cs.eval("(concurrency:version-current? (concurrency:version-snapshot))");
+    auto fresh =
+        cs.eval("(concurrency:version-current? (stats:get \"concurrency:version-snapshot\"))");
     CHECK(fresh && is_bool(*fresh), "version-current? returns bool");
 
     std::println("\n--- AC4: mutate bumps defuse epoch ---");

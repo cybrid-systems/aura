@@ -91,7 +91,7 @@ int main() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (g) 7)\")").has_value(), "set-code g");
         CHECK(eval_bool(cs, "(begin (aot:set-module-version 42) "
-                            "(= (aot:get-module-version) 42))"),
+                            "(= (stats:get \"aot:get-module-version\") 42))"),
               "set module version 42");
         CHECK(eval_bool(cs, "(begin (aot:set-region-mask 7) (= (aot:get-region-mask) 7))"),
               "set region mask 7");
@@ -101,7 +101,8 @@ int main() {
         CompilerService cs2;
         CHECK(eval_bool(cs2, std::format("(deserialize-workspace \"{}\")", kPath).c_str()),
               "deserialize into fresh service");
-        CHECK(eval_bool(cs2, "(= (aot:get-module-version) 42)"), "restored module version");
+        CHECK(eval_bool(cs2, "(= (stats:get \"aot:get-module-version\") 42)"),
+              "restored module version");
         CHECK(eval_bool(cs2, "(= (aot:get-region-mask) 7)"), "restored region mask");
         // Source restored via set-code — workspace should have g
         auto ev = cs2.eval("(eval-current)");

@@ -43,7 +43,7 @@ static void run_ac1_set_sandbox_mode_no_wildcard(aura::compiler::CompilerService
     const bool denied = !r || aura::compiler::types::is_error(*r);
     CHECK(denied, "security:set-sandbox-mode! #f in sandboxed mode without kCapWildcard → merr");
     // Sandbox mode should still be true (the deny didn't change state).
-    auto mode = cs.eval("(security:sandbox-mode?)");
+    auto mode = cs.eval("(stats:get \"security:sandbox-mode?\")");
     CHECK(mode && aura::compiler::types::is_bool(*mode) && aura::compiler::types::as_bool(*mode),
           "sandbox_mode still true after denied set-sandbox-mode! #f");
     cs.evaluator().set_sandbox_mode(false); // cleanup
@@ -81,7 +81,7 @@ static void run_ac4_with_wildcard_works(aura::compiler::CompilerService& cs) {
     auto r1 = cs.eval("(security:set-sandbox-mode! #f)");
     const bool r1_denied = !r1 || (r1 && aura::compiler::types::is_error(*r1));
     CHECK(!r1_denied, "security:set-sandbox-mode! #f with kCapWildcard succeeds (no merr)");
-    auto mode = cs.eval("(security:sandbox-mode?)");
+    auto mode = cs.eval("(stats:get \"security:sandbox-mode?\")");
     CHECK(mode && aura::compiler::types::is_bool(*mode) && !aura::compiler::types::as_bool(*mode),
           "sandbox_mode now false after kCapWildcard-granted set-sandbox-mode! #f");
     // Cleanup

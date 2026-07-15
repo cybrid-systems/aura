@@ -57,7 +57,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(s0 >= 0, "compaction stats non-negative");
 
     std::println("\n--- AC2: arena:estimate fragmentation signal ---");
-    auto est = cs.eval("(arena:estimate)");
+    auto est = cs.eval("(stats:get \"arena:estimate\")");
     CHECK(est && is_int(*est), "arena:estimate returns int");
 
     std::println("\n--- AC3: arena:compact bumps counters ---");
@@ -95,7 +95,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto ads = cs.eval("(stats:get \"arena:adaptive-stats\")");
-    auto est2 = cs.eval("(arena:estimate)");
+    auto est2 = cs.eval("(stats:get \"arena:estimate\")");
     CHECK(ads && is_pair(*ads), "arena:adaptive-stats regression");
     CHECK(est2 && is_int(*est2), "arena:estimate regression");
 }

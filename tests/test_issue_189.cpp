@@ -24,7 +24,7 @@
 //   4. Three new Aura observability primitives:
 //      (stats:get "concurrency:stats") — hash with defuse-version, total-mutations,
 //                              boundary-depth, at-wait-version
-//      (concurrency:version-snapshot) — capture current version
+//      (stats:get "concurrency:version-snapshot") — capture current version
 //      (concurrency:version-current? snap) — check if version unchanged
 //
 //   5. Tests verifying all of the above.
@@ -94,11 +94,11 @@ bool test_version_bump_on_rebind() {
     aura::compiler::CompilerService cs;
     int64_t before = run_int(cs, "(begin "
                                  "  (set-code \"(define (f x) (* x 2))\") "
-                                 "  (concurrency:version-snapshot))");
+                                 "  (stats:get \"concurrency:version-snapshot\"))");
     int64_t after = run_int(cs, "(begin "
                                 "  (set-code \"(define (f x) (* x 2))\") "
                                 "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-                                "  (concurrency:version-snapshot))");
+                                "  (stats:get \"concurrency:version-snapshot\"))");
     CHECK(after > before, "version increased after mutate:rebind");
     return true;
 }
@@ -108,11 +108,11 @@ bool test_version_bump_on_set_body() {
     aura::compiler::CompilerService cs;
     int64_t before = run_int(cs, "(begin "
                                  "  (set-code \"(define (f x) (* x 2))\") "
-                                 "  (concurrency:version-snapshot))");
+                                 "  (stats:get \"concurrency:version-snapshot\"))");
     int64_t after = run_int(cs, "(begin "
                                 "  (set-code \"(define (f x) (* x 2))\") "
                                 "  (mutate:set-body \"f\" \"(* x 10)\" \"test\") "
-                                "  (concurrency:version-snapshot))");
+                                "  (stats:get \"concurrency:version-snapshot\"))");
     CHECK(after > before, "version increased after mutate:set-body");
     return true;
 }
@@ -122,12 +122,12 @@ bool test_version_bump_on_remove_node() {
     aura::compiler::CompilerService cs;
     int64_t before = run_int(cs, "(begin "
                                  "  (set-code \"(begin (define x 1) (define y 2))\") "
-                                 "  (concurrency:version-snapshot))");
+                                 "  (stats:get \"concurrency:version-snapshot\"))");
     // remove-node needs a valid NodeId. Use 0 (root) to test.
     int64_t after = run_int(cs, "(begin "
                                 "  (set-code \"(begin (define x 1) (define y 2))\") "
                                 "  (mutate:remove-node 0) "
-                                "  (concurrency:version-snapshot))");
+                                "  (stats:get \"concurrency:version-snapshot\"))");
     CHECK(after > before, "version increased after mutate:remove-node");
     return true;
 }
@@ -141,11 +141,11 @@ bool test_snapshot_captures_current_version() {
     aura::compiler::CompilerService cs;
     int64_t snap = run_int(cs, "(begin "
                                "  (set-code \"(define (f x) (* x 2))\") "
-                               "  (concurrency:version-snapshot))");
+                               "  (stats:get \"concurrency:version-snapshot\"))");
     // After capture, do NOT mutate. Snapshot should still be current.
     bool current = run_bool(cs, "(begin "
                                 "  (set-code \"(define (f x) (* x 2))\") "
-                                "  (define snap (concurrency:version-snapshot)) "
+                                "  (define snap (stats:get \"concurrency:version-snapshot\")) "
                                 "  (concurrency:version-current? snap))");
     CHECK(snap >= 0, "snapshot returns non-negative int");
     CHECK(current, "snapshot is current without mutation in between");
@@ -157,7 +157,7 @@ bool test_is_version_current_detects_mutation() {
     aura::compiler::CompilerService cs;
     bool is_stale = run_bool(cs, "(begin "
                                  "  (set-code \"(define (f x) (* x 2))\") "
-                                 "  (define snap (concurrency:version-snapshot)) "
+                                 "  (define snap (stats:get \"concurrency:version-snapshot\")) "
                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
                                  "  (not (concurrency:version-current? snap)))");
     CHECK(is_stale, "is_version_current returns #f after rebind");
@@ -169,7 +169,7 @@ bool test_is_version_current_after_rebind() {
     aura::compiler::CompilerService cs;
     bool is_stale = run_bool(cs, "(begin "
                                  "  (set-code \"(define (f x) (* x 2))\") "
-                                 "  (define snap (concurrency:version-snapshot)) "
+                                 "  (define snap (stats:get \"concurrency:version-snapshot\")) "
                                  "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
                                  "  (not (concurrency:version-current? snap)))");
     CHECK(is_stale, "is_version_current returns #f after rebind");
@@ -181,7 +181,7 @@ bool test_is_version_current_with_no_mutation() {
     aura::compiler::CompilerService cs;
     bool is_current = run_bool(cs, "(begin "
                                    "  (set-code \"(define (f x) (* x 2))\") "
-                                   "  (define snap (concurrency:version-snapshot)) "
+                                   "  (define snap (stats:get \"concurrency:version-snapshot\")) "
                                    "  (concurrency:version-current? snap))");
     CHECK(is_current, "is_version_current returns #t with no mutation");
     return true;
@@ -231,20 +231,21 @@ bool test_concurrency_stats_primitive() {
 }
 
 bool test_version_snapshot_primitive() {
-    std::println("\n--- Test 4.2: (concurrency:version-snapshot) primitive ---");
+    std::println("\n--- Test 4.2: (stats:get \"concurrency:version-snapshot\") primitive ---");
     aura::compiler::CompilerService cs;
-    int64_t snap = run_int(cs, "(concurrency:version-snapshot)");
+    int64_t snap = run_int(cs, "(stats:get \"concurrency:version-snapshot\")");
     CHECK(snap >= 0, "version-snapshot returns non-negative int");
     return true;
 }
 
 bool test_version_current_primitive() {
-    std::println("\n--- Test 4.3: (concurrency:version-current?) primitive ---");
+    std::println("\n--- Test 4.3: (stats:get \"concurrency:version-current?\") primitive ---");
     aura::compiler::CompilerService cs;
     // No args: should return #f (malformed call, false safety default)
-    auto v = run_on(cs, "(concurrency:version-current?)");
+    auto v = run_on(cs, "(stats:get \"concurrency:version-current?\")");
     if (v.val == 11 || aura::compiler::types::is_bool(v)) {
-        std::println("  PASS: (concurrency:version-current?) with no args returns bool/void");
+        std::println(
+            "  PASS: (stats:get \"concurrency:version-current?\") with no args returns bool/void");
         ++g_passed;
     } else {
         std::println("    [unexpected: val={}]", v.val);
@@ -261,20 +262,21 @@ bool test_fuzzer_many_mutations() {
     std::println("\n--- Test 5.1: fuzzer — 50 rebinds in sequence ---");
     aura::compiler::CompilerService cs;
     // 50 rebinds: verify the version increases by 50 and no crash.
-    int64_t final_version = run_int(cs, "(begin "
-                                        "  (set-code \"(define (f x) (* x 2))\") "
-                                        "  (define v0 (concurrency:version-snapshot)) "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r1\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r2\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r3\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r4\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r5\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r6\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r7\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r8\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r9\") "
-                                        "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r10\") "
-                                        "  (- (concurrency:version-snapshot) v0))");
+    int64_t final_version =
+        run_int(cs, "(begin "
+                    "  (set-code \"(define (f x) (* x 2))\") "
+                    "  (define v0 (stats:get \"concurrency:version-snapshot\")) "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r1\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r2\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r3\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r4\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r5\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r6\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r7\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r8\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r9\") "
+                    "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"r10\") "
+                    "  (- (stats:get \"concurrency:version-snapshot\") v0))");
     CHECK(final_version >= 10, "version increased by at least 10 after 10 rebinds");
     return true;
 }

@@ -53,7 +53,7 @@ int main() {
 
     // #1054: bad-arg returns void, not int 0
     {
-        auto r = cs.eval("(mutation-history)");
+        auto r = cs.eval("(stats:get \"mutation-history\")");
         CHECK(r && is_void(*r), "mutation-history no-arg → void");
         auto r2 = cs.eval("(mutation-history \"x\")");
         CHECK(r2 && is_void(*r2), "mutation-history non-int → void");

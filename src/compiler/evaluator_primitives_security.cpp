@@ -87,7 +87,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(old);
     });
 
-    add("security:sandbox-mode?",
+    ObservabilityPrims::register_stats_impl(
+        "security:sandbox-mode?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.sandbox_mode()); });
 
     // Issue #1020: granting capabilities while sandboxed requires wildcard
@@ -3528,34 +3529,36 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
-    add("query:mutation-audit-log", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        std::size_t limit = 10;
-        if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
-            limit = static_cast<std::size_t>(as_int(a[0]));
-        const auto total = ev.mutation_audit_total();
-        const auto seq = ev.mutation_audit_seq();
-        EvalValue result = make_void();
-        std::size_t emitted = 0;
-        for (std::size_t i = 0; i < limit && i < Evaluator::kMutationAuditRingSize; ++i) {
-            if (seq <= i)
-                break;
-            const auto& entry = ev.mutation_audit_entry_at(seq - 1 - i);
-            if (entry.seq == 0)
-                continue;
-            auto line = std::format("seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={}",
-                                    entry.seq, entry.fiber_id, entry.op, entry.target_node,
-                                    entry.nodes_changed, entry.epoch_delta, entry.timestamp_ms);
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::move(line));
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sidx), result});
-            result = make_pair(pid);
-            ++emitted;
-        }
-        (void)total;
-        (void)emitted;
-        return result;
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-audit-log", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            std::size_t limit = 10;
+            if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
+                limit = static_cast<std::size_t>(as_int(a[0]));
+            const auto total = ev.mutation_audit_total();
+            const auto seq = ev.mutation_audit_seq();
+            EvalValue result = make_void();
+            std::size_t emitted = 0;
+            for (std::size_t i = 0; i < limit && i < Evaluator::kMutationAuditRingSize; ++i) {
+                if (seq <= i)
+                    break;
+                const auto& entry = ev.mutation_audit_entry_at(seq - 1 - i);
+                if (entry.seq == 0)
+                    continue;
+                auto line =
+                    std::format("seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={}",
+                                entry.seq, entry.fiber_id, entry.op, entry.target_node,
+                                entry.nodes_changed, entry.epoch_delta, entry.timestamp_ms);
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(line));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pid);
+                ++emitted;
+            }
+            (void)total;
+            (void)emitted;
+            return result;
+        });
 
     // Issue #668: query:primitives-regex-error-stats — math regex
     // primitive error observability (P1 stdlib-impl error

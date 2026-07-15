@@ -7,13 +7,13 @@
 // The intrinsic_count counter was already in place from
 // prior commits. This follow-up adds the Aura-level
 // observability primitives to surface the per-commit
-// migration count: (jit:intrinsic-count) and (jit:deopt-fn?
+// migration count: (stats:get "jit:intrinsic-count") and (jit:deopt-fn?
 // fn-name threshold). The (jit:deopt-fn?) primitive was
 // also added for Issue #193 since it shares the same
 // per-function hook infrastructure.
 //
 // Test strategy:
-//   - (jit:intrinsic-count) returns 0 when no hook installed
+//   - (stats:get "jit:intrinsic-count") returns 0 when no hook installed
 //   - (jit:deopt-fn? fn-name threshold) returns #f when
 //     the function has no unhandled opcodes
 //   - (jit:deopt-fn? fn-name threshold) threshold check works
@@ -68,39 +68,39 @@ static bool run_bool(aura::compiler::CompilerService& cs, std::string_view src) 
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC1: (jit:intrinsic-count) primitive is registered
+// AC1: (stats:get "jit:intrinsic-count") primitive is registered
 // ═════════════════════════════════════════════════════════════
 
 bool test_intrinsic_count_primitive_registered() {
-    std::println("\n--- Test 1.1: (jit:intrinsic-count) is registered ---");
+    std::println("\n--- Test 1.1: (stats:get \"jit:intrinsic-count\") is registered ---");
     aura::compiler::CompilerService cs;
-    auto v = run_on(cs, "(jit:intrinsic-count)");
+    auto v = run_on(cs, "(stats:get \"jit:intrinsic-count\")");
     if (v.val == 11) {
         std::println("    [expected int, got void]");
         ++g_failed;
     } else {
-        std::println("  PASS: (jit:intrinsic-count) is registered");
+        std::println("  PASS: (stats:get \"jit:intrinsic-count\") is registered");
         ++g_passed;
     }
     return true;
 }
 
 bool test_intrinsic_count_returns_int() {
-    std::println("\n--- Test 1.2: (jit:intrinsic-count) returns int ---");
+    std::println("\n--- Test 1.2: (stats:get \"jit:intrinsic-count\") returns int ---");
     aura::compiler::CompilerService cs;
-    int64_t n = run_int(cs, "(jit:intrinsic-count)");
-    CHECK(n >= 0, "(jit:intrinsic-count) returns non-negative int");
+    int64_t n = run_int(cs, "(stats:get \"jit:intrinsic-count\")");
+    CHECK(n >= 0, "(stats:get \"jit:intrinsic-count\") returns non-negative int");
     return true;
 }
 
 bool test_intrinsic_count_zero_without_jit() {
-    std::println("\n--- Test 1.3: (jit:intrinsic-count) is 0 without JIT ---");
+    std::println("\n--- Test 1.3: (stats:get \"jit:intrinsic-count\") is 0 without JIT ---");
     // The CompilerService has a JIT installed, but the intrinsic
     // counter starts at 0 and only increments when migrations
     // trigger. So 0 is the expected initial value.
     aura::compiler::CompilerService cs;
-    int64_t n = run_int(cs, "(jit:intrinsic-count)");
-    CHECK(n == 0, "(jit:intrinsic-count) is 0 at startup (no migrations yet)");
+    int64_t n = run_int(cs, "(stats:get \"jit:intrinsic-count\")");
+    CHECK(n == 0, "(stats:get \"jit:intrinsic-count\") is 0 at startup (no migrations yet)");
     return true;
 }
 
@@ -167,10 +167,10 @@ bool test_primitives_non_destructive() {
     // reading the count multiple times and checking it's the
     // same.
     aura::compiler::CompilerService cs;
-    int64_t n1 = run_int(cs, "(jit:intrinsic-count)");
-    int64_t n2 = run_int(cs, "(jit:intrinsic-count)");
-    int64_t n3 = run_int(cs, "(jit:intrinsic-count)");
-    CHECK(n1 == n2 && n2 == n3, "(jit:intrinsic-count) is read-only (n1==n2==n3)");
+    int64_t n1 = run_int(cs, "(stats:get \"jit:intrinsic-count\")");
+    int64_t n2 = run_int(cs, "(stats:get \"jit:intrinsic-count\")");
+    int64_t n3 = run_int(cs, "(stats:get \"jit:intrinsic-count\")");
+    CHECK(n1 == n2 && n2 == n3, "(stats:get \"jit:intrinsic-count\") is read-only (n1==n2==n3)");
     return true;
 }
 
@@ -180,7 +180,7 @@ bool test_primitives_non_destructive() {
 
 int run_tests() {
     std::println("═══ Issue #194 verification tests ═══\n");
-    std::println("AC #1: (jit:intrinsic-count) primitive");
+    std::println("AC #1: (stats:get \"jit:intrinsic-count\") primitive");
     test_intrinsic_count_primitive_registered();
     test_intrinsic_count_returns_int();
     test_intrinsic_count_zero_without_jit();

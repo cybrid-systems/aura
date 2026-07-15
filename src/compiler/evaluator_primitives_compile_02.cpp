@@ -539,7 +539,7 @@ void CompilePrims::register_compile_p21(PrimRegistrar add, Evaluator& ev) {
     //     :clean-nodes   — nodes that are up-to-date
     //     :generation    — FlatAST generation counter
     //     :mutation-count— total mutations applied
-    add("compile:status", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:status", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_void();
 
@@ -591,7 +591,7 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
     // currently in the ir_cache_v2_ map. Each entry corresponds
     // to a top-level define that has been compiled at least
     // once. Returns 0 if no hook is installed.
-    add("compile:cache-size", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:cache-size", [&ev](const auto&) -> EvalValue {
         if (!ev.get_incremental_stats_fn_)
             return make_int(0);
         auto packed = ev.get_incremental_stats_fn_();
@@ -602,7 +602,7 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
     // dirty entries in the ir_cache_v2_ map. A dirty entry
     // means the cached IR is stale and needs re-lower on next
     // access. Returns 0 if no hook is installed.
-    add("compile:dirty-count", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:dirty-count", [&ev](const auto&) -> EvalValue {
         if (!ev.get_incremental_stats_fn_)
             return make_int(0);
         auto packed = ev.get_incremental_stats_fn_();
@@ -660,7 +660,7 @@ void CompilePrims::register_compile_p23(PrimRegistrar add, Evaluator& ev) {
     // The epoch is bumped atomically on every mutation. Cache
     // entries that haven't seen the current epoch are stale.
     // Returns 0 if no hook is installed.
-    add("compile:epoch", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:epoch", [&ev](const auto&) -> EvalValue {
         if (!ev.get_incremental_stats_fn_)
             return make_int(0);
         auto packed = ev.get_incremental_stats_fn_();
@@ -680,52 +680,53 @@ void CompilePrims::register_compile_p23(PrimRegistrar add, Evaluator& ev) {
     //   6: kDefUseDirty      (0x40)
     //   7: kPpaHintDirty     (0x80)
     // Returns 0s when no workspace is loaded.
-    add("compile:dirty-reason-counts", [&ev](const auto&) -> EvalValue {
-        auto* ws = ev.workspace_flat();
-        if (!ws) {
-            // Return a 0/0/0/0/0/0/0/0 8-tuple
-            // (pair-of-pair-of-pair-of-pair). Cheap.
+    ObservabilityPrims::register_stats_impl(
+        "compile:dirty-reason-counts", [&ev](const auto&) -> EvalValue {
+            auto* ws = ev.workspace_flat();
+            if (!ws) {
+                // Return a 0/0/0/0/0/0/0/0 8-tuple
+                // (pair-of-pair-of-pair-of-pair). Cheap.
+                EvalValue out = make_void();
+                for (int i = 0; i < 8; ++i) {
+                    auto p_idx = ev.pairs_.size();
+                    Pair tmp{make_int(0), out};
+                    ev.pairs_.push_back(std::move(tmp));
+                    out = make_pair(p_idx);
+                }
+                return out;
+            }
+            // Walk the dirty_view (cheap, cache-friendly)
+            // and OR-accumulate the counts.
+            std::array<std::uint64_t, 8> counts = {0, 0, 0, 0, 0, 0, 0, 0};
+            const auto view = ws->dirty_view();
+            for (auto byte : view) {
+                if (byte & 0x01)
+                    ++counts[0];
+                if (byte & 0x02)
+                    ++counts[1];
+                if (byte & 0x04)
+                    ++counts[2];
+                if (byte & 0x08)
+                    ++counts[3];
+                if (byte & 0x10)
+                    ++counts[4];
+                if (byte & 0x20)
+                    ++counts[5];
+                if (byte & 0x40)
+                    ++counts[6];
+                if (byte & 0x80)
+                    ++counts[7];
+            }
+            // Build the 8-tuple (nested pairs, right-folded).
             EvalValue out = make_void();
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 7; i >= 0; --i) {
                 auto p_idx = ev.pairs_.size();
-                Pair tmp{make_int(0), out};
+                Pair tmp{make_int(static_cast<std::int64_t>(counts[i])), out};
                 ev.pairs_.push_back(std::move(tmp));
                 out = make_pair(p_idx);
             }
             return out;
-        }
-        // Walk the dirty_view (cheap, cache-friendly)
-        // and OR-accumulate the counts.
-        std::array<std::uint64_t, 8> counts = {0, 0, 0, 0, 0, 0, 0, 0};
-        const auto view = ws->dirty_view();
-        for (auto byte : view) {
-            if (byte & 0x01)
-                ++counts[0];
-            if (byte & 0x02)
-                ++counts[1];
-            if (byte & 0x04)
-                ++counts[2];
-            if (byte & 0x08)
-                ++counts[3];
-            if (byte & 0x10)
-                ++counts[4];
-            if (byte & 0x20)
-                ++counts[5];
-            if (byte & 0x40)
-                ++counts[6];
-            if (byte & 0x80)
-                ++counts[7];
-        }
-        // Build the 8-tuple (nested pairs, right-folded).
-        EvalValue out = make_void();
-        for (int i = 7; i >= 0; --i) {
-            auto p_idx = ev.pairs_.size();
-            Pair tmp{make_int(static_cast<std::int64_t>(counts[i])), out};
-            ev.pairs_.push_back(std::move(tmp));
-            out = make_pair(p_idx);
-        }
-        return out;
-    });
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

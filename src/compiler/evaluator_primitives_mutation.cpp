@@ -60,7 +60,7 @@ using types::make_void;
 
 void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
 
-    add("mutation-count", [&ev](const auto&) {
+    ObservabilityPrims::register_stats_impl("mutation-count", [&ev](const auto&) {
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
@@ -192,23 +192,24 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1054: bad-arg and empty-history both return void (list-or-void
     // contract). Never return make_int(0) on bad args (truthy, wrong type).
-    add("mutation-history", [&ev](std::span<const EvalValue> a) {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
-            return make_void();
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto hist = ev.workspace_flat_->mutation_history(node);
-        EvalValue result = make_void();
-        for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
-            auto& rec = *it;
-            auto sid = static_cast<std::uint64_t>(ev.push_string_heap(std::format(
-                "[{}] {}: {}{}", rec.mutation_id, rec.operator_name, rec.summary,
-                rec.status == aura::ast::MutationStatus::RolledBack ? " [rolled-back]" : "")));
-            auto pair_id = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sid), result});
-            result = make_pair(pair_id);
-        }
-        return result;
-    });
+    ObservabilityPrims::register_stats_impl(
+        "mutation-history", [&ev](std::span<const EvalValue> a) {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
+                return make_void();
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto hist = ev.workspace_flat_->mutation_history(node);
+            EvalValue result = make_void();
+            for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
+                auto& rec = *it;
+                auto sid = static_cast<std::uint64_t>(ev.push_string_heap(std::format(
+                    "[{}] {}: {}{}", rec.mutation_id, rec.operator_name, rec.summary,
+                    rec.status == aura::ast::MutationStatus::RolledBack ? " [rolled-back]" : "")));
+                auto pair_id = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sid), result});
+                result = make_pair(pair_id);
+            }
+            return result;
+        });
 
     add("rollback", [&ev](std::span<const EvalValue> a) {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)

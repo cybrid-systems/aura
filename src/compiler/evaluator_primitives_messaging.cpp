@@ -233,7 +233,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (mailbox-count) → number of pending messages in our mailbox
-    add("mailbox-count", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("mailbox-count", [&ev](const auto&) -> EvalValue {
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_count)
             return make_int(0);
@@ -565,7 +565,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     // Fields: fibers_spawned, fibers_completed, io_events,
     // steal_attempts, steal_successes, per-worker breakdown.
     // Returns empty string when not in serve-async mode.
-    add("orch:metrics", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("orch:metrics", [&ev](const auto&) -> EvalValue {
         // Issue #1147: wire orch_telemetry counters on the real orch path.
         ev.bump_orch_telemetry();
         if (!aura::messaging::g_get_scheduler_metrics) {

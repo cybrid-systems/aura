@@ -101,7 +101,7 @@ bool test_differential_marker_state() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     // Capture marker state before.
-    auto snap_before = cs.eval("(syntax-marker-counts)");
+    auto snap_before = cs.eval("(stats:get \"syntax-marker-counts\")");
     CHECK(snap_before.has_value(), "syntax-marker-counts observable pre-mutate");
     // Define a hygienic macro + invoke (introduces macro markers).
     (void)cs.eval("(set-code \""
@@ -109,7 +109,7 @@ bool test_differential_marker_state() {
                   "(mk 42) (mk 100))");
     (void)cs.eval("(eval-current)");
     // Capture marker state after.
-    auto snap_after = cs.eval("(syntax-marker-counts)");
+    auto snap_after = cs.eval("(stats:get \"syntax-marker-counts\")");
     CHECK(snap_after.has_value(), "syntax-marker-counts observable post-mutate");
     // The total-nodes counter should have increased (new bindings
     // introduced by the macro).

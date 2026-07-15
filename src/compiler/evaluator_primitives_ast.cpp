@@ -267,7 +267,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // mutate that mutates between defuse-version read and
     // dirty-list read would be racy in a non-locked
     // implementation; the shared_lock makes the read atomic.
-    add("ast:version", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("ast:version", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
@@ -329,7 +329,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     //   (ast:defs) as a core primitive, but it was never wired up.
     //   EDSL benchmark (edsl-snapshot-multi etc.) hits 'unbound
     //   variable: ast:defs' otherwise.
-    add("ast:defs", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("ast:defs", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
@@ -364,7 +364,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     //   → (node-id ...)  all node IDs in the workspace, in flat order.
     //   (#108 part 2) Same fix as ast:defs. Documented in
     //   adaptive.aura but never wired up.
-    add("ast:nodes", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("ast:nodes", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_)
             return make_void();
@@ -379,7 +379,7 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     });
     // (ast:list-snapshots)
     //   → ((id "name") ...)  list of (snapshot-id . name) pairs
-    add("ast:list-snapshots", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("ast:list-snapshots", [&ev](const auto&) -> EvalValue {
         EvalValue result = make_void();
         for (int i = static_cast<int>(ev.snapshot_sources_.size()) - 1; i >= 0; --i) {
             auto name_idx = ev.string_heap_.size();
@@ -537,178 +537,179 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     //     :defs           — total tracked definitions
     //     :uses           — total tracked variable uses
     //     :source-length  — source code character count
-    add("ast:summary", [&ev, str_list_to_pairs, defuse_summary_stats](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
-            return make_void();
+    ObservabilityPrims::register_stats_impl(
+        "ast:summary", [&ev, str_list_to_pairs, defuse_summary_stats](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_ || !ev.workspace_pool_)
+                return make_void();
 
-        auto& flat = *ev.workspace_flat_;
-        auto total_nodes = flat.size();
+            auto& flat = *ev.workspace_flat_;
+            auto total_nodes = flat.size();
 
-        // Count nodes by type
-        std::unordered_map<std::string, std::uint64_t> type_counts;
-        for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
-            auto v = flat.get(id);
-            auto& m = aura::ast::meta(v.tag);
-            if (m.name != "<gap>" && m.name != "LiteralInt") {
-                type_counts[std::string(m.name)]++;
-            } else if (m.name == "LiteralInt") {
-                type_counts["LiteralInt"]++;
-            }
-        }
-
-        // Ensure tag names that might map to wrong tag due to gap sentinels
-        // The gap entries use LiteralInt tag so they miscount; fix here.
-        // Actually, the meta function handles this correctly — it returns
-        // the meta for a specific tag, not for LiteralInt in general.
-        // Re-scan using tag value directly:
-        type_counts.clear();
-        for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
-            auto v = flat.get(id);
-            switch (v.tag) {
-                case aura::ast::NodeTag::LiteralInt:
+            // Count nodes by type
+            std::unordered_map<std::string, std::uint64_t> type_counts;
+            for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
+                auto v = flat.get(id);
+                auto& m = aura::ast::meta(v.tag);
+                if (m.name != "<gap>" && m.name != "LiteralInt") {
+                    type_counts[std::string(m.name)]++;
+                } else if (m.name == "LiteralInt") {
                     type_counts["LiteralInt"]++;
-                    break;
-                case aura::ast::NodeTag::LiteralFloat:
-                    type_counts["LiteralFloat"]++;
-                    break;
-                case aura::ast::NodeTag::LiteralString:
-                    type_counts["LiteralString"]++;
-                    break;
-                case aura::ast::NodeTag::Variable:
-                    type_counts["Variable"]++;
-                    break;
-                case aura::ast::NodeTag::Call:
-                    type_counts["Call"]++;
-                    break;
-                case aura::ast::NodeTag::IfExpr:
-                    type_counts["IfExpr"]++;
-                    break;
-                case aura::ast::NodeTag::Lambda:
-                    type_counts["Lambda"]++;
-                    break;
-                case aura::ast::NodeTag::Let:
-                    type_counts["Let"]++;
-                    break;
-                case aura::ast::NodeTag::LetRec:
-                    type_counts["LetRec"]++;
-                    break;
-                case aura::ast::NodeTag::Define:
-                    type_counts["Define"]++;
-                    break;
-                case aura::ast::NodeTag::Begin:
-                    type_counts["Begin"]++;
-                    break;
-                case aura::ast::NodeTag::Set:
-                    type_counts["Set"]++;
-                    break;
-                case aura::ast::NodeTag::Quote:
-                    type_counts["Quote"]++;
-                    break;
-                case aura::ast::NodeTag::Pair:
-                    type_counts["Pair"]++;
-                    break;
-                case aura::ast::NodeTag::Export:
-                    type_counts["Export"]++;
-                    break;
-                case aura::ast::NodeTag::TypeAnnotation:
-                    type_counts["TypeAnnotation"]++;
-                    break;
-                case aura::ast::NodeTag::Coercion:
-                    type_counts["Coercion"]++;
-                    break;
-                case aura::ast::NodeTag::Linear:
-                    type_counts["Linear"]++;
-                    break;
-                case aura::ast::NodeTag::Move:
-                    type_counts["Move"]++;
-                    break;
-                case aura::ast::NodeTag::Borrow:
-                    type_counts["Borrow"]++;
-                    break;
-                case aura::ast::NodeTag::MutBorrow:
-                    type_counts["MutBorrow"]++;
-                    break;
-                case aura::ast::NodeTag::Drop:
-                    type_counts["Drop"]++;
-                    break;
-                default:
-                    type_counts["Other"]++;
-                    break;
+                }
             }
-        }
 
-        // Get def-use index info if available
-        std::uint64_t n_scopes = 0, n_defs = 0, n_uses = 0;
-        if (auto stats = defuse_summary_stats()) {
-            n_scopes = std::get<0>(*stats);
-            n_defs = std::get<1>(*stats);
-            n_uses = std::get<2>(*stats);
-        }
-
-        // Get mutation count
-        auto n_mutations = flat.mutation_count();
-
-        // Get source length (via current-source)
-        std::uint64_t source_len = 0;
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (src_fn) {
-            auto src = (*src_fn)({});
-            if (is_string(src)) {
-                auto sidx = as_string_idx(src);
-                if (sidx < ev.string_heap_.size())
-                    source_len = ev.string_heap_[sidx].size();
+            // Ensure tag names that might map to wrong tag due to gap sentinels
+            // The gap entries use LiteralInt tag so they miscount; fix here.
+            // Actually, the meta function handles this correctly — it returns
+            // the meta for a specific tag, not for LiteralInt in general.
+            // Re-scan using tag value directly:
+            type_counts.clear();
+            for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
+                auto v = flat.get(id);
+                switch (v.tag) {
+                    case aura::ast::NodeTag::LiteralInt:
+                        type_counts["LiteralInt"]++;
+                        break;
+                    case aura::ast::NodeTag::LiteralFloat:
+                        type_counts["LiteralFloat"]++;
+                        break;
+                    case aura::ast::NodeTag::LiteralString:
+                        type_counts["LiteralString"]++;
+                        break;
+                    case aura::ast::NodeTag::Variable:
+                        type_counts["Variable"]++;
+                        break;
+                    case aura::ast::NodeTag::Call:
+                        type_counts["Call"]++;
+                        break;
+                    case aura::ast::NodeTag::IfExpr:
+                        type_counts["IfExpr"]++;
+                        break;
+                    case aura::ast::NodeTag::Lambda:
+                        type_counts["Lambda"]++;
+                        break;
+                    case aura::ast::NodeTag::Let:
+                        type_counts["Let"]++;
+                        break;
+                    case aura::ast::NodeTag::LetRec:
+                        type_counts["LetRec"]++;
+                        break;
+                    case aura::ast::NodeTag::Define:
+                        type_counts["Define"]++;
+                        break;
+                    case aura::ast::NodeTag::Begin:
+                        type_counts["Begin"]++;
+                        break;
+                    case aura::ast::NodeTag::Set:
+                        type_counts["Set"]++;
+                        break;
+                    case aura::ast::NodeTag::Quote:
+                        type_counts["Quote"]++;
+                        break;
+                    case aura::ast::NodeTag::Pair:
+                        type_counts["Pair"]++;
+                        break;
+                    case aura::ast::NodeTag::Export:
+                        type_counts["Export"]++;
+                        break;
+                    case aura::ast::NodeTag::TypeAnnotation:
+                        type_counts["TypeAnnotation"]++;
+                        break;
+                    case aura::ast::NodeTag::Coercion:
+                        type_counts["Coercion"]++;
+                        break;
+                    case aura::ast::NodeTag::Linear:
+                        type_counts["Linear"]++;
+                        break;
+                    case aura::ast::NodeTag::Move:
+                        type_counts["Move"]++;
+                        break;
+                    case aura::ast::NodeTag::Borrow:
+                        type_counts["Borrow"]++;
+                        break;
+                    case aura::ast::NodeTag::MutBorrow:
+                        type_counts["MutBorrow"]++;
+                        break;
+                    case aura::ast::NodeTag::Drop:
+                        type_counts["Drop"]++;
+                        break;
+                    default:
+                        type_counts["Other"]++;
+                        break;
+                }
             }
-        }
 
-        // Build by-tag list: ((tag-name . count) ...)
-        EvalValue by_tag_list = make_void();
-        // Sort tags alphabetically for deterministic output
-        std::vector<std::pair<std::string, std::uint64_t>> sorted_tags;
-        for (auto& [name, count] : type_counts)
-            sorted_tags.push_back({name, count});
-        std::sort(sorted_tags.begin(), sorted_tags.end());
-        for (auto it = sorted_tags.rbegin(); it != sorted_tags.rend(); ++it) {
-            auto name_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(it->first);
-            auto entry_pair = ev.pairs_.size();
-            ev.pairs_.push_back(
-                {make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
-            auto cons_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_pair(entry_pair), by_tag_list});
-            by_tag_list = make_pair(cons_pair);
-        }
+            // Get def-use index info if available
+            std::uint64_t n_scopes = 0, n_defs = 0, n_uses = 0;
+            if (auto stats = defuse_summary_stats()) {
+                n_scopes = std::get<0>(*stats);
+                n_defs = std::get<1>(*stats);
+                n_uses = std::get<2>(*stats);
+            }
 
-        // Build full result as alist: ((:key value) ...)
-        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-            auto key_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(key);
-            auto entry_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(key_idx), val});
-            return entry_pair;
-        };
+            // Get mutation count
+            auto n_mutations = flat.mutation_count();
 
-        auto cvt = [&](std::uint64_t n) -> EvalValue {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(n));
-            return make_string(idx);
-        };
-        std::uint64_t entry_ids[7];
-        entry_ids[0] = add_entry(":total-nodes", cvt(total_nodes));
-        entry_ids[1] = add_entry(":mutation-count", cvt(n_mutations));
-        entry_ids[2] = add_entry(":source-length", cvt(source_len));
-        entry_ids[3] = add_entry(":by-tag", by_tag_list);
-        entry_ids[4] = add_entry(":scopes", cvt(n_scopes));
-        entry_ids[5] = add_entry(":defs", cvt(n_defs));
-        entry_ids[6] = add_entry(":uses", cvt(n_uses));
+            // Get source length (via current-source)
+            std::uint64_t source_len = 0;
+            auto src_fn = ev.primitives_.lookup("current-source");
+            if (src_fn) {
+                auto src = (*src_fn)({});
+                if (is_string(src)) {
+                    auto sidx = as_string_idx(src);
+                    if (sidx < ev.string_heap_.size())
+                        source_len = ev.string_heap_[sidx].size();
+                }
+            }
 
-        EvalValue result = make_void();
-        for (int ei = 6; ei >= 0; --ei) {
-            auto cons_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_pair(entry_ids[ei]), result});
-            result = make_pair(cons_pair);
-        }
-        return result;
-    });
+            // Build by-tag list: ((tag-name . count) ...)
+            EvalValue by_tag_list = make_void();
+            // Sort tags alphabetically for deterministic output
+            std::vector<std::pair<std::string, std::uint64_t>> sorted_tags;
+            for (auto& [name, count] : type_counts)
+                sorted_tags.push_back({name, count});
+            std::sort(sorted_tags.begin(), sorted_tags.end());
+            for (auto it = sorted_tags.rbegin(); it != sorted_tags.rend(); ++it) {
+                auto name_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(it->first);
+                auto entry_pair = ev.pairs_.size();
+                ev.pairs_.push_back(
+                    {make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
+                auto cons_pair = ev.pairs_.size();
+                ev.pairs_.push_back({make_pair(entry_pair), by_tag_list});
+                by_tag_list = make_pair(cons_pair);
+            }
+
+            // Build full result as alist: ((:key value) ...)
+            auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+                auto key_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(key);
+                auto entry_pair = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(key_idx), val});
+                return entry_pair;
+            };
+
+            auto cvt = [&](std::uint64_t n) -> EvalValue {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::to_string(n));
+                return make_string(idx);
+            };
+            std::uint64_t entry_ids[7];
+            entry_ids[0] = add_entry(":total-nodes", cvt(total_nodes));
+            entry_ids[1] = add_entry(":mutation-count", cvt(n_mutations));
+            entry_ids[2] = add_entry(":source-length", cvt(source_len));
+            entry_ids[3] = add_entry(":by-tag", by_tag_list);
+            entry_ids[4] = add_entry(":scopes", cvt(n_scopes));
+            entry_ids[5] = add_entry(":defs", cvt(n_defs));
+            entry_ids[6] = add_entry(":uses", cvt(n_uses));
+
+            EvalValue result = make_void();
+            for (int ei = 6; ei >= 0; --ei) {
+                auto cons_pair = ev.pairs_.size();
+                ev.pairs_.push_back({make_pair(entry_ids[ei]), result});
+                result = make_pair(cons_pair);
+            }
+            return result;
+        });
 
     // (ast:validate-ownership) — Validate ownership invariants after mutations
     // Returns an alist: ((:pass true/false) (:notes (...)))
@@ -1030,51 +1031,53 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // Each input element must be a (id . gen) pair where both car
     // and cdr are integers (the shape returned by ast:stable-ref).
     // Malformed entries yield #f. Empty input returns ().
-    add("ast:stable-refs-valid?", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !ev.workspace_flat_)
-            return make_void();
-        auto& flat = *ev.workspace_flat_;
-        EvalValue result = make_void();
-        // Walk the input list. The list is structured as a chain of
-        // cons cells: each cons cell has car=element, cdr=next cons
-        // cell (or void for end-of-list). We process elements in
-        // forward order by collecting them in a vector first, then
-        // cons-ing the results in reverse.
-        std::vector<EvalValue> elements;
-        EvalValue cur = a[0];
-        while (is_pair(cur)) {
-            auto cons_idx = as_pair_idx(cur);
-            auto& cons = ev.pairs_[cons_idx];
-            // cons.car is the current element; cons.cdr is the rest.
-            elements.push_back(cons.car);
-            cur = cons.cdr;
-        }
-        // Build the result list by cons-ing in reverse (so order is preserved).
-        for (auto it = elements.rbegin(); it != elements.rend(); ++it) {
-            EvalValue valid_ev = make_bool(false);
-            // The element should be a (id . gen) pair where both
-            // car and cdr are integers. If it's anything else
-            // (e.g. a non-pair, or a pair of strings), yield #f.
-            if (is_pair(*it)) {
-                auto ref_idx = as_pair_idx(*it);
-                auto& ref = ev.pairs_[ref_idx];
-                if (is_int(ref.car) && is_int(ref.cdr)) {
-                    auto id = static_cast<aura::ast::NodeId>(as_int(ref.car));
-                    auto gen = static_cast<std::uint16_t>(as_int(ref.cdr));
-                    valid_ev = make_bool(flat.is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
-                }
+    ObservabilityPrims::register_stats_impl(
+        "ast:stable-refs-valid?", [&ev](const auto& a) -> EvalValue {
+            if (a.empty() || !ev.workspace_flat_)
+                return make_void();
+            auto& flat = *ev.workspace_flat_;
+            EvalValue result = make_void();
+            // Walk the input list. The list is structured as a chain of
+            // cons cells: each cons cell has car=element, cdr=next cons
+            // cell (or void for end-of-list). We process elements in
+            // forward order by collecting them in a vector first, then
+            // cons-ing the results in reverse.
+            std::vector<EvalValue> elements;
+            EvalValue cur = a[0];
+            while (is_pair(cur)) {
+                auto cons_idx = as_pair_idx(cur);
+                auto& cons = ev.pairs_[cons_idx];
+                // cons.car is the current element; cons.cdr is the rest.
+                elements.push_back(cons.car);
+                cur = cons.cdr;
             }
-            auto cons_pair = ev.pairs_.size();
-            ev.pairs_.push_back({valid_ev, result});
-            result = make_pair(cons_pair);
-        }
-        return result;
-    });
+            // Build the result list by cons-ing in reverse (so order is preserved).
+            for (auto it = elements.rbegin(); it != elements.rend(); ++it) {
+                EvalValue valid_ev = make_bool(false);
+                // The element should be a (id . gen) pair where both
+                // car and cdr are integers. If it's anything else
+                // (e.g. a non-pair, or a pair of strings), yield #f.
+                if (is_pair(*it)) {
+                    auto ref_idx = as_pair_idx(*it);
+                    auto& ref = ev.pairs_[ref_idx];
+                    if (is_int(ref.car) && is_int(ref.cdr)) {
+                        auto id = static_cast<aura::ast::NodeId>(as_int(ref.car));
+                        auto gen = static_cast<std::uint16_t>(as_int(ref.cdr));
+                        valid_ev =
+                            make_bool(flat.is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
+                    }
+                }
+                auto cons_pair = ev.pairs_.size();
+                ev.pairs_.push_back({valid_ev, result});
+                result = make_pair(cons_pair);
+            }
+            return result;
+        });
     // (ast:generation) — Issue #191: return the current
     // generation counter. Used to inspect when a structural
     // mutation has happened (compare the returned value to
     // a previously-captured one).
-    add("ast:generation", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("ast:generation", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->generation()));

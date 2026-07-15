@@ -95,7 +95,7 @@ int main() {
     {
         CompilerService sand;
         (void)sand.eval("(security:set-sandbox-mode! #t)");
-        auto mode = sand.eval("(security:sandbox-mode?)");
+        auto mode = sand.eval("(stats:get \"security:sandbox-mode?\")");
         if (mode && aura::compiler::types::is_bool(*mode) &&
             aura::compiler::types::as_bool(*mode)) {
             auto d1 = sand.eval("(compile:mark-narrowing-dirty! 0)");

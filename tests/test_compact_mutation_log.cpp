@@ -152,7 +152,7 @@ int main() {
         CompilerService cs;
         // Need a workspace for mutation-log-compact
         (void)cs.eval("(set-code \"(define x 1)\")");
-        auto c0 = cs.eval("(mutation-count)");
+        auto c0 = cs.eval("(stats:get \"mutation-count\")");
         CHECK(c0 && is_int(*c0), "mutation-count works");
 
         // Force some mutations if possible via mutate

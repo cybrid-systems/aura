@@ -156,15 +156,15 @@ bool test_macro_introduced_marker_preserved() {
     std::println("\n--- AC4: MacroIntroduced marker preserved across cycles ---");
     CompilerService cs;
     CHECK(setup_macro_workspace(cs), "macro workspace for marker check");
-    auto m0 = cs.eval("(syntax-marker-counts)");
-    CHECK(m0.has_value(), "(syntax-marker-counts) callable pre-mutate");
+    auto m0 = cs.eval("(stats:get \"syntax-marker-counts\")");
+    CHECK(m0.has_value(), "(stats:get \"syntax-marker-counts\") callable pre-mutate");
     for (int i = 0; i < 3; ++i) {
         (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(i) +
                       ") (define user-val " + std::to_string(50 + i) + "))");
         (void)cs.eval("(eval-current)");
     }
-    auto m1 = cs.eval("(syntax-marker-counts)");
-    CHECK(m1.has_value(), "(syntax-marker-counts) callable post-mutate");
+    auto m1 = cs.eval("(stats:get \"syntax-marker-counts\")");
+    CHECK(m1.has_value(), "(stats:get \"syntax-marker-counts\") callable post-mutate");
     auto by_marker = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(by_marker.has_value(), "(query:by-marker \"MacroIntroduced\") callable after cycles");
     return true;

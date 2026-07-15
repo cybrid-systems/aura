@@ -892,77 +892,78 @@ void register_workspace_query_primitives(
     //   tag-name, tag-id, marker, type-id, dirty, children-count
     // plus tag-specific members (sym for Define/Let, int-value for
     // LiteralInt, etc.).
-    add("query:reflect-node-members", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_int(a[0]))
-            return mev("bad-arg", "usage: (query:reflect-node-members node-id)");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto& flat = *ws.workspace_flat;
-        if (node >= flat.size())
-            return mev("out-of-range", "node ID >= flat size");
-        auto v = flat.get(node);
+    ObservabilityPrims::register_stats_impl(
+        "query:reflect-node-members", [ws, mev](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_int(a[0]))
+                return mev("bad-arg", "usage: (query:reflect-node-members node-id)");
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto& flat = *ws.workspace_flat;
+            if (node >= flat.size())
+                return mev("out-of-range", "node ID >= flat size");
+            auto v = flat.get(node);
 
-        auto marker_name = "User";
-        switch (flat.marker(node)) {
-            case aura::ast::SyntaxMarker::User:
-                marker_name = "User";
-                break;
-            case aura::ast::SyntaxMarker::MacroIntroduced:
-                marker_name = "MacroIntroduced";
-                break;
-            case aura::ast::SyntaxMarker::BoolLiteral:
-                marker_name = "BoolLiteral";
-                break;
-        }
+            auto marker_name = "User";
+            switch (flat.marker(node)) {
+                case aura::ast::SyntaxMarker::User:
+                    marker_name = "User";
+                    break;
+                case aura::ast::SyntaxMarker::MacroIntroduced:
+                    marker_name = "MacroIntroduced";
+                    break;
+                case aura::ast::SyntaxMarker::BoolLiteral:
+                    marker_name = "BoolLiteral";
+                    break;
+            }
 
-        EvalValue result = make_void();
-        auto append_field = [&](const std::string& fname, EvalValue val) {
-            auto nidx = ws.string_heap.size();
-            ws.string_heap.push_back(fname);
-            auto entry = ws.pairs.size();
-            ws.pairs.push_back({make_string(nidx), val});
-            auto cons = ws.pairs.size();
-            ws.pairs.push_back({make_pair(entry), result});
-            result = make_pair(cons);
-        };
+            EvalValue result = make_void();
+            auto append_field = [&](const std::string& fname, EvalValue val) {
+                auto nidx = ws.string_heap.size();
+                ws.string_heap.push_back(fname);
+                auto entry = ws.pairs.size();
+                ws.pairs.push_back({make_string(nidx), val});
+                auto cons = ws.pairs.size();
+                ws.pairs.push_back({make_pair(entry), result});
+                result = make_pair(cons);
+            };
 
-        append_field("tag-name", [&]() {
-            auto tidx = ws.string_heap.size();
-            ws.string_heap.push_back(std::string(aura::ast::meta(v.tag).name));
-            return make_string(tidx);
-        }());
-        append_field("tag-id", make_int(static_cast<std::int64_t>(v.tag)));
-        append_field("marker", [&]() {
-            auto midx = ws.string_heap.size();
-            ws.string_heap.push_back(marker_name);
-            return make_string(midx);
-        }());
-        append_field("type-id", make_int(static_cast<std::int64_t>(flat.type_id(node))));
-        append_field("dirty", make_int(static_cast<std::int64_t>(flat.dirty(node))));
-        append_field("children-count", make_int(static_cast<std::int64_t>(v.children.size())));
+            append_field("tag-name", [&]() {
+                auto tidx = ws.string_heap.size();
+                ws.string_heap.push_back(std::string(aura::ast::meta(v.tag).name));
+                return make_string(tidx);
+            }());
+            append_field("tag-id", make_int(static_cast<std::int64_t>(v.tag)));
+            append_field("marker", [&]() {
+                auto midx = ws.string_heap.size();
+                ws.string_heap.push_back(marker_name);
+                return make_string(midx);
+            }());
+            append_field("type-id", make_int(static_cast<std::int64_t>(flat.type_id(node))));
+            append_field("dirty", make_int(static_cast<std::int64_t>(flat.dirty(node))));
+            append_field("children-count", make_int(static_cast<std::int64_t>(v.children.size())));
 
-        if (v.has_name()) {
-            auto sym = std::string(ws.workspace_pool->resolve(v.sym_id));
-            auto sidx = ws.string_heap.size();
-            ws.string_heap.push_back(sym);
-            append_field("sym", make_string(sidx));
-        }
-        if (v.has_int() && v.tag == aura::ast::NodeTag::LiteralInt) {
-            append_field("int-value", make_int(v.int_value));
-        }
-        if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
-            append_field("body-node", make_int(static_cast<std::int64_t>(v.child(0))));
-        }
-        if ((v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec) &&
-            v.children.size() >= 2) {
-            append_field("init-node", make_int(static_cast<std::int64_t>(v.child(0))));
-            append_field("body-node", make_int(static_cast<std::int64_t>(v.child(1))));
-        }
+            if (v.has_name()) {
+                auto sym = std::string(ws.workspace_pool->resolve(v.sym_id));
+                auto sidx = ws.string_heap.size();
+                ws.string_heap.push_back(sym);
+                append_field("sym", make_string(sidx));
+            }
+            if (v.has_int() && v.tag == aura::ast::NodeTag::LiteralInt) {
+                append_field("int-value", make_int(v.int_value));
+            }
+            if (v.tag == aura::ast::NodeTag::Define && !v.children.empty()) {
+                append_field("body-node", make_int(static_cast<std::int64_t>(v.child(0))));
+            }
+            if ((v.tag == aura::ast::NodeTag::Let || v.tag == aura::ast::NodeTag::LetRec) &&
+                v.children.size() >= 2) {
+                append_field("init-node", make_int(static_cast<std::int64_t>(v.child(0))));
+                append_field("body-node", make_int(static_cast<std::int64_t>(v.child(1))));
+            }
 
-        return result;
-    });
+            return result;
+        });
 
     // Issue #278: (query:ref-counts node-id) — return the
     // number of AST nodes whose children include this node-id
@@ -971,28 +972,29 @@ void register_workspace_query_primitives(
     // node that's never embedded elsewhere). Used by AI agents
     // to gauge how "central" a node is before mutating it
     // (high ref-counts → wider invalidation potential).
-    add("query:ref-counts", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_int(a[0]))
-            return mev("bad-arg", "usage: (query:ref-counts node-id)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto& flat = *ws.workspace_flat;
-        if (target >= flat.size())
-            return make_int(0);
-        std::int64_t count = 0;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                if (v.child(ci) == target) {
-                    ++count;
-                    break; // each id counts at most once
+    ObservabilityPrims::register_stats_impl(
+        "query:ref-counts", [ws, mev](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_int(a[0]))
+                return mev("bad-arg", "usage: (query:ref-counts node-id)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto& flat = *ws.workspace_flat;
+            if (target >= flat.size())
+                return make_int(0);
+            std::int64_t count = 0;
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (v.child(ci) == target) {
+                        ++count;
+                        break; // each id counts at most once
+                    }
                 }
             }
-        }
-        return make_int(count);
-    });
+            return make_int(count);
+        });
 
     // Issue #278: (query:defines-by-marker marker-name) —
     // return all Define nodes whose SyntaxMarker matches
@@ -1267,91 +1269,93 @@ void register_workspace_query_primitives(
     // Note: this is the *observability* side of #248. The
     // enforcement side (using the schema to reject mutations
     // that would break macro type invariants) is deferred.
-    add("query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || a.size() > 2 || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
-                                  "(query:schema-of-marker marker-name limit-int)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        if (!ws.type_registry)
-            return mev("no-registry", "no type registry available");
+    ObservabilityPrims::register_stats_impl(
+        "query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || a.size() > 2 || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
+                                      "(query:schema-of-marker marker-name limit-int)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            if (!ws.type_registry)
+                return mev("no-registry", "no type registry available");
 
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "marker name string index out of range");
-        auto marker_name = ws.string_heap[idx];
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "marker name string index out of range");
+            auto marker_name = ws.string_heap[idx];
 
-        // Map name → SyntaxMarker enum
-        aura::ast::SyntaxMarker target;
-        if (marker_name == "User") {
-            target = aura::ast::SyntaxMarker::User;
-        } else if (marker_name == "MacroIntroduced") {
-            target = aura::ast::SyntaxMarker::MacroIntroduced;
-        } else if (marker_name == "BoolLiteral") {
-            target = aura::ast::SyntaxMarker::BoolLiteral;
-        } else {
-            return mev("unknown-marker", std::string("unknown marker name: \"") + marker_name +
-                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
-        }
-
-        std::int64_t limit = -1;
-        if (a.size() == 2) {
-            if (!is_int(a[1]))
-                return mev("bad-arg", "limit must be an integer");
-            limit = as_int(a[1]);
-            if (limit < 0)
-                return mev("bad-arg", "limit must be non-negative");
-        }
-
-        auto& flat = *ws.workspace_flat;
-        auto& treg = *static_cast<aura::core::TypeRegistry*>(ws.type_registry);
-        EvalValue result = make_void();
-        std::int64_t emitted = 0;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit)
-                break;
-            if (flat.marker(id) != target)
-                continue;
-            // Issue #248: only include nodes with a non-zero
-            // type_id_ (i.e., the type checker has inferred a
-            // type for them). Nodes with type_id_ == 0 haven't
-            // been typed yet — they're "schema-less" in the
-            // sense that we don't know their expected type.
-            const auto type_id_value = flat.type_id(id);
-            if (type_id_value == 0)
-                continue;
-            // Convert uint32_t to TypeId. The FlatAST stores
-            // just the index; TypeId requires (index, generation).
-            // The type checker uses generation=1 as a default
-            // (see type_checker_impl.cpp:1505: TypeId{index, 1}).
-            std::string type_name;
-            try {
-                auto tname = treg.name_of(aura::core::TypeId{type_id_value, 1});
-                type_name = std::string(tname);
-            } catch (...) {
-                // [SILENCE-PRIM-#615] type_name fallback for unknown
-                // / unregistered TypeId — display-only path; caller
-                // handles empty via the "<unnamed>" branch below.
-                type_name = "<unknown>";
+            // Map name → SyntaxMarker enum
+            aura::ast::SyntaxMarker target;
+            if (marker_name == "User") {
+                target = aura::ast::SyntaxMarker::User;
+            } else if (marker_name == "MacroIntroduced") {
+                target = aura::ast::SyntaxMarker::MacroIntroduced;
+            } else if (marker_name == "BoolLiteral") {
+                target = aura::ast::SyntaxMarker::BoolLiteral;
+            } else {
+                return mev("unknown-marker",
+                           std::string("unknown marker name: \"") + marker_name +
+                               "\" (expected User / MacroIntroduced / BoolLiteral)");
             }
-            if (type_name.empty())
-                type_name = "<unnamed>";
-            // Build the pair: (NodeId . type-name)
-            auto name_idx = ws.string_heap.size();
-            ws.string_heap.push_back(type_name);
-            auto name_ev = make_string(name_idx);
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), name_ev});
-            auto pair_ev = make_pair(pid);
-            // Prepend to result
-            auto list_pid = ws.pairs.size();
-            ws.pairs.push_back({pair_ev, result});
-            result = make_pair(list_pid);
-            ++emitted;
-        }
-        return result;
-    });
+
+            std::int64_t limit = -1;
+            if (a.size() == 2) {
+                if (!is_int(a[1]))
+                    return mev("bad-arg", "limit must be an integer");
+                limit = as_int(a[1]);
+                if (limit < 0)
+                    return mev("bad-arg", "limit must be non-negative");
+            }
+
+            auto& flat = *ws.workspace_flat;
+            auto& treg = *static_cast<aura::core::TypeRegistry*>(ws.type_registry);
+            EvalValue result = make_void();
+            std::int64_t emitted = 0;
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                if (limit >= 0 && emitted >= limit)
+                    break;
+                if (flat.marker(id) != target)
+                    continue;
+                // Issue #248: only include nodes with a non-zero
+                // type_id_ (i.e., the type checker has inferred a
+                // type for them). Nodes with type_id_ == 0 haven't
+                // been typed yet — they're "schema-less" in the
+                // sense that we don't know their expected type.
+                const auto type_id_value = flat.type_id(id);
+                if (type_id_value == 0)
+                    continue;
+                // Convert uint32_t to TypeId. The FlatAST stores
+                // just the index; TypeId requires (index, generation).
+                // The type checker uses generation=1 as a default
+                // (see type_checker_impl.cpp:1505: TypeId{index, 1}).
+                std::string type_name;
+                try {
+                    auto tname = treg.name_of(aura::core::TypeId{type_id_value, 1});
+                    type_name = std::string(tname);
+                } catch (...) {
+                    // [SILENCE-PRIM-#615] type_name fallback for unknown
+                    // / unregistered TypeId — display-only path; caller
+                    // handles empty via the "<unnamed>" branch below.
+                    type_name = "<unknown>";
+                }
+                if (type_name.empty())
+                    type_name = "<unnamed>";
+                // Build the pair: (NodeId . type-name)
+                auto name_idx = ws.string_heap.size();
+                ws.string_heap.push_back(type_name);
+                auto name_ev = make_string(name_idx);
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), name_ev});
+                auto pair_ev = make_pair(pid);
+                // Prepend to result
+                auto list_pid = ws.pairs.size();
+                ws.pairs.push_back({pair_ev, result});
+                result = make_pair(list_pid);
+                ++emitted;
+            }
+            return result;
+        });
 
     // ═══════════════════════════════════════════════════════════════
     // P8: Query/Transform EDSL 扩展 — pattern matching

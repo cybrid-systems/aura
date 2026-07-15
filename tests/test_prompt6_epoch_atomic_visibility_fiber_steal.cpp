@@ -160,7 +160,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: query regression ---");
     auto closure_stats = cs.eval("(engine:metrics \"query:closure-stats\")");
-    auto compile_epoch = cs.eval("(compile:epoch)");
+    auto compile_epoch = cs.eval("(stats:get \"compile:epoch\")");
     CHECK(closure_stats && is_hash(*closure_stats), "query:closure-stats regression");
     CHECK(compile_epoch && is_int(*compile_epoch), "compile:epoch regression");
 }

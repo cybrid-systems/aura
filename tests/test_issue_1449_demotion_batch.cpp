@@ -121,6 +121,25 @@ int main() {
         std::ifstream f("docs/design/epic-1449-surface-slim-v2.md");
         std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         CHECK(content.find("1449") != std::string::npos, "epic doc mentions 1449");
+        CHECK(content.find("412") != std::string::npos || content.find("core") != std::string::npos,
+              "epic doc tracks core budget");
+    }
+
+    // ── AC6: batch-3 samples not public ──
+    {
+        CompilerService cs;
+        auto& prims = cs.evaluator().primitives();
+        CHECK(prims.slot_for_name("compile:status") >= prims.slot_count(),
+              "compile:status not public");
+        CHECK(prims.slot_for_name("mutation-count") >= prims.slot_count(),
+              "mutation-count not public");
+        CHECK(prims.slot_for_name("ast:generation") >= prims.slot_count(),
+              "ast:generation not public");
+        // Control GC stays public (must not have been demoted to facade-only).
+        CHECK(prims.slot_for_name("gc-heap") < prims.slot_count(),
+              "gc-heap remains public control");
+        auto g = cs.eval("(gc-heap)");
+        CHECK(g.has_value(), "gc-heap still callable as control");
     }
 
     std::println("\n─── #1449 demotion batch: {}/{} passed, {} failed ───", g_passed,

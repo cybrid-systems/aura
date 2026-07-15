@@ -321,7 +321,7 @@ void ObservabilityPrims::register_jit_p10(PrimRegistrar add, Evaluator& ev) {
     //      overall-pct: 9}
     //
     //   All numeric values are in megabytes (MB). Pct values are integers 0-100.
-    add("gc-arena-info", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("gc-arena-info", [&ev](const auto&) -> EvalValue {
         // Snapshot arena state. Each entry: (short_name, used-MB, cap-MB, pct).
         struct Snap {
             std::string name;

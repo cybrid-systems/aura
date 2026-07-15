@@ -29,7 +29,7 @@ bool find_and_tweak(CompilerService& cs, int delta) {
 }
 
 std::int64_t lw_total(CompilerService& cs) {
-    auto r = cs.eval("(mutation-lightweight-total)");
+    auto r = cs.eval("(stats:get \"mutation-lightweight-total\")");
     return (r && is_int(*r)) ? as_int(*r) : -1;
 }
 
@@ -76,7 +76,7 @@ int main() {
     // Multiple hot-path field mutations: durable log does not grow 1:1
     {
         (void)cs.eval("(set-code \"(define (g) 10)\")");
-        auto log0 = cs.eval("(mutation-log-size)");
+        auto log0 = cs.eval("(stats:get \"mutation-log-size\")");
         CHECK(log0 && is_int(*log0), "mutation-log-size");
         const auto l0 = as_int(*log0);
         (void)cs.eval("(render-hotpath-enter)");
@@ -87,7 +87,7 @@ int main() {
         }
         (void)cs.eval("(render-hotpath-exit)");
         CHECK(ok_n >= 10, "multiple hot-path tweaks");
-        auto log1 = cs.eval("(mutation-log-size)");
+        auto log1 = cs.eval("(stats:get \"mutation-log-size\")");
         CHECK(log1 && is_int(*log1), "mutation-log-size after");
         // Field muts under lightweight skip durable log → growth << ok_n
         CHECK(as_int(*log1) - l0 < ok_n, "hot path does not fill durable log 1:1");

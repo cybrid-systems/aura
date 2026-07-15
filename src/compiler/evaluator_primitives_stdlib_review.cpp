@@ -503,9 +503,8 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
         });
 
     // Issue #1015: unified serve health / SLO surface (Phase 1).
-    ev.primitives().add(
-        "query:serve-health",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:serve-health", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1015)},
@@ -518,14 +517,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"slo-active", make_int(m ? load_u64(m, m->serve_health_slo_active) : 1)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Serve health / SLO Phase 1 (#1015).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1047–#1071: hygiene / type / mutate safety ──
     ObservabilityPrims::register_stats_impl(
@@ -763,9 +755,8 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
         });
 
     // Issue #1215 Phase 1: composite production-health query (SLO surface).
-    ev.primitives().add(
-        "query:production-health",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:production-health", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             const auto heal = m ? load_u64(m, m->longrunning_heal_triggers_total) : 0;
             const auto quota_v = m ? load_u64(m, m->longrunning_quota_violations_total) : 0;
@@ -783,14 +774,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"healthy", make_int(score >= 80 ? 1 : 0)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Composite production health / SLO surface (#1215).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1229–#1240 Phase 1 ──
     ObservabilityPrims::register_stats_impl(

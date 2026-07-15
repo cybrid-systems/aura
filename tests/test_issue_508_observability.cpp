@@ -56,7 +56,7 @@ int aura_issue_508_observability_run() {
     {
         std::println("\n--- AC2: compile:dead-coercion primitives ---");
         auto dcs = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
-        auto elapsed = cs.eval("(compile:dead-coercion-elapsed)");
+        auto elapsed = cs.eval("(stats:get \"compile:dead-coercion-elapsed\")");
         auto kept = cs.eval("(compile:dead-coercion-kept-for-debug)");
         CHECK(dcs && aura::compiler::types::is_int(*dcs), "compile:dead-coercion-stats int");
         CHECK(elapsed && aura::compiler::types::is_int(*elapsed),

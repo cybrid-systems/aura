@@ -195,11 +195,11 @@ bool test_existing_mutate_rebind_still_works() {
     // (define (f x) ...) then mutate:rebind then call f.
     int64_t g0 = run_int(cs, "(begin "
                              "  (set-code \"(define (f x) (* x 2))\") "
-                             "  (ast:generation))");
+                             "  (stats:get \"ast:generation\"))");
     int64_t g1 = run_int(cs, "(begin "
                              "  (set-code \"(define (f x) (* x 2))\") "
                              "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-                             "  (ast:generation))");
+                             "  (stats:get \"ast:generation\"))");
     CHECK(g1 > g0, "mutate:rebind still bumps generation (backward compat)");
     return true;
 }

@@ -20,7 +20,7 @@
 //     src/compiler/evaluator_primitives_memory.cpp L440.
 //   - Scenario 6: (arena:compact) + (arena:defrag) —
 //     same root cause as scenario 2.
-//   - Scenario 7: (arena:stats-json) — same root cause
+//   - Scenario 7: (stats:get "arena:stats-json") — same root cause
 //     as scenario 3 (returns the same Json build path).
 //   - Scenario 8: throws std::bad_alloc on iter #0 of
 //     mutate + compact loop. Likely the arena allocator

@@ -65,51 +65,52 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                                 std::function<void()> destroy_defuse_index) {
 
     // ── coverage-report — 编译器路径覆盖率 ──────────────────
-    add("coverage-report", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        std::string result = "#(coverage";
-        for (int i = 0; i < 16; i++) {
-            if (ev.coverage_counters_[i] > 0) {
-                std::string name;
-                switch (i) {
-                    case 0:
-                        name = "parser";
-                        break;
-                    case 1:
-                        name = "typecheck";
-                        break;
-                    case 2:
-                        name = "eval";
-                        break;
-                    case 3:
-                        name = "jit";
-                        break;
-                    case 4:
-                        name = "macro";
-                        break;
-                    case 5:
-                        name = "edsl-set-code";
-                        break;
-                    case 6:
-                        name = "edsl-query";
-                        break;
-                    case 7:
-                        name = "edsl-mutate";
-                        break;
-                    case 8:
-                        name = "ffi";
-                        break;
-                    default:
-                        name = "reserved-" + std::to_string(i);
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "coverage-report", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            std::string result = "#(coverage";
+            for (int i = 0; i < 16; i++) {
+                if (ev.coverage_counters_[i] > 0) {
+                    std::string name;
+                    switch (i) {
+                        case 0:
+                            name = "parser";
+                            break;
+                        case 1:
+                            name = "typecheck";
+                            break;
+                        case 2:
+                            name = "eval";
+                            break;
+                        case 3:
+                            name = "jit";
+                            break;
+                        case 4:
+                            name = "macro";
+                            break;
+                        case 5:
+                            name = "edsl-set-code";
+                            break;
+                        case 6:
+                            name = "edsl-query";
+                            break;
+                        case 7:
+                            name = "edsl-mutate";
+                            break;
+                        case 8:
+                            name = "ffi";
+                            break;
+                        default:
+                            name = "reserved-" + std::to_string(i);
+                            break;
+                    }
+                    result += " " + name + ":" + std::to_string(ev.coverage_counters_[i]);
                 }
-                result += " " + name + ":" + std::to_string(ev.coverage_counters_[i]);
             }
-        }
-        result += ")";
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
-        return types::make_string(sidx);
-    });
+            result += ")";
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(result);
+            return types::make_string(sidx);
+        });
 
     // (gc) — Reset arena to reclaim memory between benchmark tasks
     // Saves current source, resets arena, re-parses source into fresh arena.
@@ -278,9 +279,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
 
     // (gc-module-count) — Number of modules currently in the module cache.
-    add("gc-module-count", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(ev.modules_.size()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "gc-module-count", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(ev.modules_.size()));
+        });
 
     // (type-registry-stats) — Issue #78: TypeRegistry observability.
     // Returns a hash with current size, generation, and predefined count.
@@ -416,21 +418,23 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // query for whether the GC has registered a safepoint
     // callback. Operators can call this before requesting
     // defrag to decide whether to fall back to (arena:defrag-now).
-    add("arena:safepoint-registered?", [&ev](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_bool(false);
-        return make_bool(ev.arena_->safepoint_registered());
-    });
+    ObservabilityPrims::register_stats_impl("arena:safepoint-registered?",
+                                            [&ev](const auto&) -> EvalValue {
+                                                if (!ev.arena_)
+                                                    return make_bool(false);
+                                                return make_bool(ev.arena_->safepoint_registered());
+                                            });
     // (arena:warn-no-safepoint) — Issue #1390: returns true iff
     // the one-shot "no safepoint registered" stderr warning has
     // already fired (i.e., request_defrag() was called while no
     // safepoint was registered). Read-only side-effect: fires
     // the warning the first time it's true. Operators can poll
     // this primitive to detect the misconfiguration.
-    add("arena:warn-no-safepoint", [](const auto&) -> EvalValue {
-        bool was = aura::ast::was_no_safepoint_warned();
-        return make_bool(was);
-    });
+    ObservabilityPrims::register_stats_impl("arena:warn-no-safepoint",
+                                            [](const auto&) -> EvalValue {
+                                                bool was = aura::ast::was_no_safepoint_warned();
+                                                return make_bool(was);
+                                            });
 
     // ── Issue #1320 Phase 1: explicit live-defrag policy primitive ──
     // (arena:defrag-now) — always run defrag (even during render soft-gate
@@ -551,11 +555,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             static_cast<std::int64_t>(aura::core::arena_policy::g_render_hotpath_depth));
     });
     // Issue #1355: int probes for Agent/tests.
-    add("mutation-lightweight-total", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "mutation-lightweight-total", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total()));
+        });
     add("mutation-lightweight-commit", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_int(0);
@@ -567,12 +572,14 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(
             static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total()));
     });
-    add("mutation-lightweight-records", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total()));
-    });
-    add("mutation-log-size", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "mutation-lightweight-records", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(
+                static_cast<std::int64_t>(ev.workspace_flat_->lightweight_records_total()));
+        });
+    ObservabilityPrims::register_stats_impl("mutation-log-size", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
@@ -604,7 +611,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 hot_sz, hits, hits_r, cold, static_cast<std::int64_t>(p.hot_meta_count())));
             return types::make_string(sidx);
         });
-    add("prim-hot-table-size", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("prim-hot-table-size", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.primitives().hot_table_size()));
     });
     add("prim-hot-dispatch-hits", [&ev](const auto&) -> EvalValue {
@@ -725,11 +732,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // Returns #t if a defrag was requested and not yet acted on,
     // #f otherwise. Foundation for fiber-coordinated defrag —
     // the fiber safepoint can read this and yield if set.
-    add("arena:defrag-requested?", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_bool(false);
-        return make_bool(ev.arena_->defrag_requested());
-    });
+    ObservabilityPrims::register_stats_impl("arena:defrag-requested?",
+                                            [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+                                                if (!ev.arena_)
+                                                    return make_bool(false);
+                                                return make_bool(ev.arena_->defrag_requested());
+                                            });
     add("arena:compact-all", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_group_)
             return make_int(0);
@@ -803,15 +811,16 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // threshold. Used by the memory_pressure sampling
     // loop to decide whether to compact before the
     // critical threshold.
-    add("arena:should-auto-compact?", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]) || !ev.arena_group_)
-            return make_bool(false);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_bool(false);
-        const auto& name = ev.string_heap_[idx];
-        return make_bool(ev.arena_group_->should_auto_compact(name));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "arena:should-auto-compact?", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]) || !ev.arena_group_)
+                return make_bool(false);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& name = ev.string_heap_[idx];
+            return make_bool(ev.arena_group_->should_auto_compact(name));
+        });
     // (arena:adaptive-stats) — Issue #335: returns the
     // adaptive-compact counters as a 2-tuple
     // (trigger-count . skip-count). Stats-only.
@@ -845,11 +854,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     });
     // (arena:estimate) — Issue #187: bytes that could be reclaimed
     // by a (arena:compact). Cheap O(1) check, no side effects.
-    add("arena:estimate", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.arena_->compact_estimate()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "arena:estimate", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            if (!ev.arena_)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev.arena_->compact_estimate()));
+        });
     // (arena:defrag-stats) — Issue #300 (P1): live-object
     // defragmentation observability. Returns a 5-tuple:
     //   (compaction-count
@@ -920,30 +930,31 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (arena:stats-json) — Issue #187: JSON snapshot of all managed
     // arenas (capacity, used, fragmentation, compaction count). For
     // dashboards and auto-tuners. Returns the JSON as a string.
-    add("arena:stats-json", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        std::string out;
-        if (ev.arena_group_) {
-            out = ev.arena_group_->stats_json();
-        } else if (ev.arena_) {
-            // Single-arena fallback: emit a one-entry JSON manually.
-            auto s = ev.arena_->stats();
-            out =
-                std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
-                            "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
-                            "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
-                            "\"fragmentation_ratio\":{:.3f},"
-                            "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}],"
-                            "\"compact_threshold\":0.5}}",
-                            s.used, s.capacity, s.peak_used, s.allocation_count, s.compaction_count,
-                            s.last_compaction_saved, s.total_compaction_saved,
-                            s.fragmentation_ratio(), s.defrag_attempted_count, s.last_defrag_saved);
-        } else {
-            out = "{\"arenas\":[]}";
-        }
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(out);
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "arena:stats-json", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            std::string out;
+            if (ev.arena_group_) {
+                out = ev.arena_group_->stats_json();
+            } else if (ev.arena_) {
+                // Single-arena fallback: emit a one-entry JSON manually.
+                auto s = ev.arena_->stats();
+                out = std::format("{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
+                                  "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                                  "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                                  "\"fragmentation_ratio\":{:.3f},"
+                                  "\"defrag_attempted_count\":{},\"last_defrag_saved\":{}}}],"
+                                  "\"compact_threshold\":0.5}}",
+                                  s.used, s.capacity, s.peak_used, s.allocation_count,
+                                  s.compaction_count, s.last_compaction_saved,
+                                  s.total_compaction_saved, s.fragmentation_ratio(),
+                                  s.defrag_attempted_count, s.last_defrag_saved);
+            } else {
+                out = "{\"arenas\":[]}";
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(out);
+            return types::make_string(sidx);
+        });
     // (string-pool:compact) — Issue #187 (P0): rehash the workspace's
     // StringPool to the smallest power-of-2 capacity that still
     // holds all live entries. Reclaims hash_tbl_ memory. Returns

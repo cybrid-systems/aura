@@ -18,7 +18,7 @@
 //     policy override (#430)
 //   - (arena:should-auto-compact? name) — cheap O(1) probe (#335)
 //   - (stats:get \"arena:adaptive-stats\") — trigger/skip counters (#335)
-//   - (arena:stats-json) — JSON snapshot (#187)
+//   - (stats:get "arena:stats-json") — JSON snapshot (#187)
 //   - (engine:metrics \"query:arena-auto-stats\") — group-level guard/skip (#464)
 //   - (engine:metrics \"query:arena-auto-compact-stats\") — alloc-path policy (#685)
 //   - (query:arena-fragmentation-snapshot) — live point-in-time
@@ -151,8 +151,8 @@ int aura_issue_623_run() {
     // arena primitives remain reachable (back-compat).
     {
         std::println("\n--- AC4: existing arena primitives back-compat ---");
-        auto s_json = cs.eval("(arena:stats-json)");
-        CHECK(s_json.has_value(), "(arena:stats-json) reachable (#187 back-compat)");
+        auto s_json = cs.eval("(stats:get \"arena:stats-json\")");
+        CHECK(s_json.has_value(), "(stats:get \"arena:stats-json\") reachable (#187 back-compat)");
         auto s_def = cs.eval("(arena:defrag)");
         CHECK(s_def.has_value(), "(arena:defrag) reachable (#300 back-compat)");
         auto s_pol = cs.eval("(arena:compact-with-policy)");

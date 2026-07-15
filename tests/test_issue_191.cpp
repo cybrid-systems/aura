@@ -28,7 +28,7 @@
 //      (ast:stable-ref node-id) — capture (id . gen) pair
 //      (ast:ref-valid? id gen) — check if ref is still valid
 //      (ast:ref-get id gen) — safely get the node's tag name
-//      (ast:generation) — read the current generation
+//      (stats:get "ast:generation") — read the current generation
 //
 //   5. Tests verifying all of the above.
 //
@@ -210,17 +210,17 @@ bool test_add_node_does_not_bump_generation() {
 // ═════════════════════════════════════════════════════════════
 
 bool test_ast_generation_primitive() {
-    std::println("\n--- Test 3.1: (ast:generation) primitive ---");
+    std::println("\n--- Test 3.1: (stats:get \"ast:generation\") primitive ---");
     aura::compiler::CompilerService cs;
     int64_t g0 = run_int(cs, "(begin "
                              "  (set-code \"(define (f x) (* x x))\") "
-                             "  (ast:generation))");
+                             "  (stats:get \"ast:generation\"))");
     int64_t g1 = run_int(cs, "(begin "
                              "  (set-code \"(define (f x) (* x x))\") "
                              "  (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-                             "  (ast:generation))");
-    CHECK(g0 >= 0, "(ast:generation) returns non-negative");
-    CHECK(g1 > g0, "(ast:generation) increased after mutate:rebind");
+                             "  (stats:get \"ast:generation\"))");
+    CHECK(g0 >= 0, "(stats:get \"ast:generation\") returns non-negative");
+    CHECK(g1 > g0, "(stats:get \"ast:generation\") increased after mutate:rebind");
     return true;
 }
 
@@ -278,9 +278,9 @@ bool test_capture_ref_then_mutate_invalidates() {
     aura::compiler::CompilerService cs;
     int64_t result = run_int(cs, "(begin "
                                  "  (set-code \"(define (f x) (* x x))\") "
-                                 "  (let ((gen0 (ast:generation))) "
+                                 "  (let ((gen0 (stats:get \"ast:generation\"))) "
                                  "    (mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"test\") "
-                                 "    (let ((gen1 (ast:generation))) "
+                                 "    (let ((gen1 (stats:get \"ast:generation\"))) "
                                  "      (- gen1 gen0)))"
                                  ")");
     CHECK(result > 0, "generation increased by structural mutate");
@@ -298,13 +298,13 @@ bool test_fuzzer_many_structural_mutations() {
     // increases by 20 (one bump per structural mutate).
     int64_t g_final = run_int(cs, "(begin "
                                   "  (set-code \"(define (f x) (* x 2))\") "
-                                  "  (define g0 (ast:generation)) "
+                                  "  (define g0 (stats:get \"ast:generation\")) "
                                   "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"1\") "
                                   "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"2\") "
                                   "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"3\") "
                                   "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"4\") "
                                   "  (mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"5\") "
-                                  "  (- (ast:generation) g0))");
+                                  "  (- (stats:get \"ast:generation\") g0))");
     CHECK(g_final >= 5, "generation increased by at least 5 after 5 rebinds");
     return true;
 }

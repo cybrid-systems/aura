@@ -1221,24 +1221,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // current StaleRefPolicy as a string ("disabled" /
     // "warn" / "strict"). Used by the AI Agent to
     // verify the policy before a long mutating run.
-    add("query:stale-ref-policy", [&ev, safe_str](const auto& a) -> EvalValue {
-        (void)a;
-        const char* name = "warn";
-        switch (ev.get_stale_ref_policy()) {
-            case aura::compiler::Evaluator::StaleRefPolicy::Disabled:
-                name = "disabled";
-                break;
-            case aura::compiler::Evaluator::StaleRefPolicy::Warn:
-                name = "warn";
-                break;
-            case aura::compiler::Evaluator::StaleRefPolicy::Strict:
-                name = "strict";
-                break;
-        }
-        auto idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(name);
-        return make_string(static_cast<std::int32_t>(idx));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:stale-ref-policy", [&ev, safe_str](const auto& a) -> EvalValue {
+            (void)a;
+            const char* name = "warn";
+            switch (ev.get_stale_ref_policy()) {
+                case aura::compiler::Evaluator::StaleRefPolicy::Disabled:
+                    name = "disabled";
+                    break;
+                case aura::compiler::Evaluator::StaleRefPolicy::Warn:
+                    name = "warn";
+                    break;
+                case aura::compiler::Evaluator::StaleRefPolicy::Strict:
+                    name = "strict";
+                    break;
+            }
+            auto idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(name);
+            return make_string(static_cast<std::int32_t>(idx));
+        });
 
     // Issue #391: (query:stale-ref-stats) — return the
     // sum of stale_ref_blocked_count_ +
@@ -1277,25 +1278,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     });
 
     // Issue #490: (query:pattern-index-policy) — current rebuild policy string.
-    add("query:pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
-        (void)a;
-        const char* name = "lazy";
-        switch (ev.get_pattern_index_policy()) {
-            case Evaluator::PatternIndexPolicy::EagerAfterMutate:
-                name = "eager-after-mutate";
-                break;
-            case Evaluator::PatternIndexPolicy::EagerAfterCow:
-                name = "eager-after-cow";
-                break;
-            case Evaluator::PatternIndexPolicy::Lazy:
-            default:
-                name = "lazy";
-                break;
-        }
-        auto pidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(name);
-        return make_string(static_cast<std::int32_t>(pidx));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
+            (void)a;
+            const char* name = "lazy";
+            switch (ev.get_pattern_index_policy()) {
+                case Evaluator::PatternIndexPolicy::EagerAfterMutate:
+                    name = "eager-after-mutate";
+                    break;
+                case Evaluator::PatternIndexPolicy::EagerAfterCow:
+                    name = "eager-after-cow";
+                    break;
+                case Evaluator::PatternIndexPolicy::Lazy:
+                default:
+                    name = "lazy";
+                    break;
+            }
+            auto pidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(name);
+            return make_string(static_cast<std::int32_t>(pidx));
+        });
 
     // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
     add("query:as-stable-ref", [&ev, safe_str](const auto& a) -> EvalValue {

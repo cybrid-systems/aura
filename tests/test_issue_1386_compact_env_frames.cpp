@@ -55,10 +55,10 @@ static std::int64_t eval_int(aura::compiler::CompilerService& cs, const std::str
 }
 
 // Helper: parse "env_frames_size_total" out of the
-// (compiler:metrics) JSON string. Returns UINT64_MAX if key
+// (stats:get "compiler:metrics") JSON string. Returns UINT64_MAX if key
 // missing.
 static std::uint64_t parse_metric(aura::compiler::CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(compiler:metrics)");
+    auto r = cs.eval("(stats:get \"compiler:metrics\")");
     if (!r)
         return UINT64_MAX;
     if (!aura::compiler::types::is_string(*r))

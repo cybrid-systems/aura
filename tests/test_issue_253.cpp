@@ -19,7 +19,7 @@
 // Test cases:
 //   AC1: linear_elide_count starts at 0 on a fresh Evaluator
 //   AC2: linear_elide_count is queryable via the
-//        (compile:linear-elide-count) Aura primitive
+//        (stats:get "compile:linear-elide-count") Aura primitive
 //   AC3: TypeSpecializationWrap::linear_elide_count() accessor
 //        exists (compile-time check via compilation)
 //   AC4: after normal Aura eval (no linear-typed code emitted
@@ -77,9 +77,10 @@ bool test_initial_counter_zero() {
 }
 
 bool test_aura_primitive_returns_int() {
-    std::println("\n--- AC2: (compile:linear-elide-count) primitive returns an int ---");
+    std::println(
+        "\n--- AC2: (stats:get \"compile:linear-elide-count\") primitive returns an int ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define n (compile:linear-elide-count))\")");
+    auto r1 = cs.eval("(set-code \"(define n (stats:get " compile : linear - elide - count "))\")");
     if (!r1) {
         std::println("  FAIL: define n failed");
         ++g_failed;
@@ -104,9 +105,9 @@ bool test_aura_primitive_returns_int() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:linear-elide-count) returns a fixnum (pair? is #f)");
+    CHECK(true, "(stats:get \"compile:linear-elide-count\") returns a fixnum (pair? is #f)");
     // Also verify the value is 0 on a fresh evaluator
-    auto r4 = cs.eval("(compile:linear-elide-count)");
+    auto r4 = cs.eval("(stats:get \"compile:linear-elide-count\")");
     if (!r4 || !aura::compiler::types::is_int(*r4)) {
         std::println("  FAIL: primitive returned non-int (val={})", r4 ? r4->val : -1);
         ++g_failed;
@@ -153,7 +154,7 @@ bool test_no_false_elision_on_normal_code() {
     CHECK_EQ(snap.linear_elide_count, 0u,
              "linear_elide_count == 0 after 3 normal evals (no Owned MoveOp sources)");
     // Primitive should still return 0
-    auto r = cs.eval("(compile:linear-elide-count)");
+    auto r = cs.eval("(stats:get \"compile:linear-elide-count\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         std::println("  FAIL: primitive returned non-int");
         ++g_failed;
