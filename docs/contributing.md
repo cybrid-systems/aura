@@ -434,6 +434,51 @@ SOURCE_DATE_EPOCH=1704067200 ./scripts/release.sh 1.0.0
 - [ ] 更新 `docs/contributing.md` 本节，描述新规则的语义边界。
 - [ ] 跑 `./build.py check`（test_ir + test_issue_433 + test_issue_508 全绿）。
 
+## §X C++26 Contracts 使用规范（Issue #1466）
+
+Aura 在热路径上大规模使用 C++26 Contracts (`pre` / `post` / `contract_assert`) 与 `consteval` / `static_assert` 编译期保证。默认 semantic 是 **observe** — release 下零运行时开销，debug 下报错并 abort（由 `src/core/contract_handler.cpp` 的 handler 收口）。
+
+**什么放什么不放**：
+
+| 热路径 | 放什么 | 文件 |
+| --- | --- | --- |
+| shape dispatch (`inline_shape_of`) | `post(r : is_known_inline_shape_id(r))` | `src/compiler/shape.h` |
+| arena bump (`try_allocate` / `compact`) | `pre(size > 0) pre(size <= kMax)` / `post(stats_.compaction_count > 0)` | `src/core/arena.ixx` |
+| dirty cascade (`mark_dirty_upward`) | `pre(id < tag_.size()) post(mark_dirty_upward_call_count_ > 0)` | `src/core/ast.ixx` |
+| value as_* (`as_int` / `as_string_idx`) | `contract_assert(is_X(v))`（debug only） | `src/compiler/value.ixx` |
+| eval/lower 核心循环 | `pre` 边界 + `contract_assert` 不变式 | `evaluator_impl.cpp` / `lowering_impl.cpp` |
+
+**契约语法**：
+
+- **C++26 `pre(...)` / `post(...)`**：release observe 语义下零开销，debug 下通过 `handle_contract_violation` 报错。声明与定义的 post 必须一致，否则编译失败。
+- **`contract_assert(cond)`**：本质是 `[[assert: cond]]` 的 C++26 语法，debug 触发即 abort。比 `pre` 更轻量，适合 inline helper。
+- **`consteval` / `static_assert`**：编译期不变式，永远 0 开销。放在 `src/core/cxx26_invariants.ixx` 集中管理。
+
+**集中管理的位置**：
+
+- `src/core/cpp26_contract_stats.h` — 原子计数器（`hotpath_invariant_hits_total`、`consteval_invariants_total`、各 flag）。所有计数器都通过 `aura::core::cpp26::` namespace 访问。
+- `src/core/cxx26_invariants.ixx` — `consteval` / `static_assert` 不变式集中点。导出 `aura::core::kCpp26ConstevalChecksShipped` 给 runtime 用。
+- 改任一文件时**两边同步**：新增 consteval 不变式时同时 `record_consteval_invariant_added()` / `consteval_invariants_total++` / `kCpp26ConstevalChecksShipped++` / `kConstevalChecksTotal++`。
+
+**观测**：
+
+- `(query:cpp26-contracts-stats)` — `consteval_checks`、`hotpath_contracts_expanded_active`、`contract_violations_caught_total`、`hotpath_invariant_hits_total` 字段。
+- `(compile:cpp26-contracts-stats)` — 引擎层透传同上。
+
+**加新热路径契约时的检查清单**：
+
+- [ ] 在 `src/core/cpp26_contract_stats.h` 加 `<feature>_contracts_active{1}` 标志原子。
+- [ ] `tests/test_issue_1466.cpp` 加一个 AC 验证 flag 默认 1 + 函数仍正常返回。
+- [ ] 若新增 `consteval` 不变式，在 `src/core/cxx26_invariants.ixx` 加 + 同时 bump `kCpp26ConstevalChecksShipped` 与 `cpp26_contract_stats.h` 的 `kConstevalChecksTotal`。
+- [ ] 跑 `./build.py gate`（docs regen 自动同步 pre-commit hook）。
+
+**反模式**：
+
+- ❌ 在 impl 和 decl 两边写不同 post（编译失败）。
+- ❌ 用 `contract_assert` 替代 `pre` 做参数验证（应让 caller 在编译期被阻止）。
+- ❌ 把 runtime 计算放进 `post`（observe semantic 不保证执行 — 必须 cheap）。
+- ❌ 在高频 helper 里堆叠多层 post（每层都做 atomic load 成本）。
+
 ## §X Runtime.c 查找策略（Issue #237 v4 / #360 / #374）
 
 AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()`（`src/compiler/aura_jit_bridge.cpp`）按以下顺序试候选路径，返回第一个能 `fopen` 成功的：

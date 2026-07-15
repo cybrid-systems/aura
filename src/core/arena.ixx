@@ -511,7 +511,16 @@ public:
     // memory; we replace buffer_ with a fresh one and remap).
     //
     // Returns the number of bytes reclaimed.
-    [[nodiscard]] std::size_t compact() noexcept {
+    [[nodiscard]] std::size_t compact() noexcept
+        // Issue #1466 Phase 1: hot-path contracts on arena compaction.
+        // pre: used() can't exceed buffer — that's the entire invariant
+        // the rest of the class enforces (bump-allocator sub-used bound).
+        // post: compaction_count is bumped (one logical compact call).
+        // post: bytes reclaimed (r) <= buffer size before the call —
+        // we can never reclaim more than we had. Zero release cost under
+        // the observe semantic; debug builds catch monotonic-count drift.
+        pre(used() <= buffer_.size()) post(stats_.compaction_count > 0)
+            post(r : r <= buffer_.size()) {
         // Issue #604: fiber-context coordination. When compact()
         // runs inside a scheduled fiber, bump the yield-check
         // counter and hit the GC safepoint so a long compaction

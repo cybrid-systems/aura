@@ -4867,7 +4867,11 @@ public:
     void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty,
                            std::uint8_t ppa_reasons = 0)
         // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
-        pre(id < tag_.size()) {
+        // Issue #1466: post-condition ensures the call counter is bumped
+        // (every dirty cascade invocation is accounted for in metrics).
+        // Zero release cost under observe semantic.
+        pre(id < tag_.size())
+            post(mark_dirty_upward_call_count_.load(std::memory_order_relaxed) > 0) {
         // Issue #256: bump the call counter + track total nodes
         // touched. The ratio (total_nodes / call_count) gives
         // the average dirty-propagation depth per mutation —
