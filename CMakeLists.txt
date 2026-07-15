@@ -4938,6 +4938,11 @@ aura_add_issue_test(test_issue_1469)
 # Issue #1460: std/agent EDSL closed-loop + decision metrics
 aura_add_issue_test(test_issue_1460)
 aura_issue_test_link_llvm_jit(test_issue_1460)
+# Issue #1471: Deepen SyntaxMarker::MacroIntroduced hygiene in
+# query:pattern and matcher. Pure C++ (no CompilerService / LLVM JIT);
+# tests matcher hygiene counters + new detailed-list accessor +
+# code-presence checks for hygiene landmarks.
+aura_add_issue_test(test_issue_1471)
 # Issue #1414: ConstraintSolver engine-level cache + typed_mutation
 # epoch bump. Production code lives in
 # src/compiler/type_checker.ixx (ConstraintSystem public hash
