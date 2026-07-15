@@ -491,7 +491,12 @@ public:
     // Issue #258: forward the metrics pointer to the
     // ConstraintSystem so solve_delta timing accumulates
     // into CompilerMetrics::delta_solve_time_us.
-    void set_metrics(void* m) { cs_.set_metrics(m); }
+    // Issue #1420: also keep a local copy for bidirectional
+    // check_flat_call counters (compile_bidirectional_*).
+    void set_metrics(void* m) {
+        metrics_ = m;
+        cs_.set_metrics(m);
+    }
     // Issue #536: forward solve_delta observability hooks.
     void set_solve_delta_observability_hooks(std::function<void(std::size_t)> on_snapshot,
                                              std::function<void()> on_conflict) {
@@ -685,6 +690,9 @@ public:
     // branch. Used as a fast-path opt-out for workspaces
     // where bidirectional is too eager / slow.
     bool bidirectional_mode_ = true;
+    // Issue #1420: CompilerMetrics* for bidirectional check
+    // counters in check_flat_call (set via set_metrics).
+    void* metrics_ = nullptr;
     // Issue #466: incremental solve_delta path for
     // infer_flat_partial multi-node re-inference.
     bool incremental_delta_record_ = false;

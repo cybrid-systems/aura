@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Primitive surface inventory + freeze gate (P0b / Issue #1432).
+"""Primitive surface inventory + freeze gate + SlimSurface governance.
+
+Issues:
+  - #1432 / P0b: freeze blocked-pattern names vs baseline
+  - #1448 / SlimSurface: --strict budget + facade-only stats governance
 
 Scans C++ `add("name", …)` registrations in evaluator_primitives*.cpp and:
   1. Writes docs/generated/primitive-inventory.json (all names)
   2. Enforces freeze: no NEW blocked-pattern primitive names vs baseline
+  3. With --strict: budget check toward ≤ TARGET_BUDGET public names,
+     and zero *new* public *-stats via add() (facade-only observability)
 
 Blocked patterns (Issue #1432) — no new names matching these:
   - *-stats / *-stats-hash / *-stats-* (observability)
@@ -19,11 +25,12 @@ Existing matches are grandfathered in stats-primitives-baseline.json.
 Empty ALLOWLIST by default (zero exceptions).
 
 Usage:
-  python3 scripts/check_primitive_surface.py           # check (CI / gate)
-  python3 scripts/check_primitive_surface.py --write   # refresh inventory (+ baseline if missing)
-  python3 scripts/check_primitive_surface.py --update-baseline  # allow intentional growth
+  python3 scripts/check_primitive_surface.py              # check (CI / gate)
+  python3 scripts/check_primitive_surface.py --strict     # freeze + budget + facade-only
+  python3 scripts/check_primitive_surface.py --write      # refresh inventory
+  python3 scripts/check_primitive_surface.py --update-baseline  # intentional growth
 
-Exit 0 = OK, 1 = freeze violation or I/O error.
+Exit 0 = OK, 1 = freeze / strict violation or I/O error.
 """
 
 from __future__ import annotations
@@ -47,6 +54,14 @@ STATS_LIST_RE = re.compile(
 
 # Issue #1432: empty allowlist — zero exceptions without --update-baseline.
 ALLOWLIST: frozenset[str] = frozenset()
+
+# Issue #1448: SlimSurface target for public engine primitives (add() names).
+TARGET_BUDGET = 420
+# Interim hard ceiling until surface shrinks to TARGET_BUDGET.
+# Raised only with --update-baseline after explicit PR justification.
+# Current public add() surface is ~616; keep a soft ceiling above that
+# so --strict still catches *growth* while progress-reports toward 420.
+INTERIM_HARD_CEILING = 700
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
 BLOCKED_PREFIXES: tuple[str, ...] = (
@@ -130,9 +145,101 @@ def freeze_violations(current_frozen: list[str], baseline_names: list[str]) -> l
     return sorted(set(current_frozen) - set(baseline_names))
 
 
+def public_stats_via_add(all_names: list[str]) -> list[str]:
+    """Stats-like names still registered via public add() (not facade-only)."""
+    return sorted(n for n in all_names if is_stats_like(n))
+
+
 def write_json(path: Path, obj: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def classify_public(all_names: list[str]) -> dict[str, list[str]]:
+    """Bucket public add() names for stats:list-style reporting."""
+    buckets: dict[str, list[str]] = {
+        "stats-like": [],
+        "query": [],
+        "mutate": [],
+        "compile": [],
+        "workspace": [],
+        "engine": [],
+        "other": [],
+    }
+    for n in all_names:
+        if is_stats_like(n):
+            buckets["stats-like"].append(n)
+        elif n.startswith("query:") or n.startswith("query-"):
+            buckets["query"].append(n)
+        elif n.startswith("mutate:") or n.startswith("mutate-"):
+            buckets["mutate"].append(n)
+        elif n.startswith("compile:") or n.startswith("compile-"):
+            buckets["compile"].append(n)
+        elif n.startswith("workspace:") or n.startswith("workspace-"):
+            buckets["workspace"].append(n)
+        elif n.startswith("engine:") or n.startswith("stats:"):
+            buckets["engine"].append(n)
+        else:
+            buckets["other"].append(n)
+    return buckets
+
+
+def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
+    """Issue #1448 --strict: budget + facade-only + category report.
+
+    Returns 0 if OK, 1 if violation.
+    """
+    rc = 0
+    public_count = len(all_names)
+    public_stats = public_stats_via_add(all_names)
+    buckets = classify_public(all_names)
+
+    print("── SlimSurface --strict (Issue #1448) ──")
+    print(f"  public add() count : {public_count}")
+    print(f"  target budget      : {TARGET_BUDGET}")
+    print(f"  interim hard ceiling: {INTERIM_HARD_CEILING}")
+    print(f"  internal stats catalog (register_stats_impl / list): {len(stats_names)}")
+    print(f"  public add() *-stats remaining: {len(public_stats)}")
+    print("  categories:")
+    for k, v in buckets.items():
+        print(f"    {k:12s} {len(v)}")
+
+    # Hard ceiling — no growth past interim limit.
+    if public_count > INTERIM_HARD_CEILING:
+        print(
+            f"FAIL: public primitive count {public_count} exceeds interim hard ceiling "
+            f"{INTERIM_HARD_CEILING} (Issue #1448).",
+            file=sys.stderr,
+        )
+        rc = 1
+
+    # Progress toward target (informational; soft fail only if we grow
+    # above inventory snapshot — growth is already covered by freeze for
+    # blocked patterns; here we fail if over interim ceiling).
+    if public_count > TARGET_BUDGET:
+        print(
+            f"NOTE: public count {public_count} still above SlimSurface target "
+            f"{TARGET_BUDGET} (shrink in progress; hard fail only if > {INTERIM_HARD_CEILING})"
+        )
+    else:
+        print(f"OK: public count {public_count} ≤ target budget {TARGET_BUDGET}")
+
+    # Facade-only: public add() of new stats is already freeze-blocked.
+    # Strict additionally flags any remaining public stats via add() as
+    # debt (soft), and fails if count grows beyond grandfathered set.
+    if public_stats:
+        print(
+            f"NOTE: {len(public_stats)} public add() *-stats still registered "
+            f"(prefer register_stats_impl + engine:metrics). First 10:"
+        )
+        for n in public_stats[:10]:
+            print(f"  - {n}")
+        if len(public_stats) > 10:
+            print(f"  … +{len(public_stats) - 10} more")
+
+    if rc == 0:
+        print("OK: SlimSurface --strict checks passed")
+    return rc
 
 
 def main() -> int:
@@ -153,19 +260,32 @@ def main() -> int:
         default=True,
         help="Enforce freeze against baseline (default).",
     )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Issue #1448 SlimSurface governance: freeze + public budget "
+            f"(target ≤{TARGET_BUDGET}, hard ceiling {INTERIM_HARD_CEILING}) + "
+            "facade-only stats reporting."
+        ),
+    )
     args = ap.parse_args()
 
     all_names = scan_registered_names()
     stats_names = collect_stats_names(all_names)
     frozen_names = collect_frozen_names(all_names)
     inventory = {
-        "schema": 1,
+        "schema": 2,
         "count": len(all_names),
         "stats_count": len(stats_names),
         "frozen_count": len(frozen_names),
+        "target_budget": TARGET_BUDGET,
+        "interim_hard_ceiling": INTERIM_HARD_CEILING,
+        "public_stats_via_add": len(public_stats_via_add(all_names)),
         "names": all_names,
         "stats_names": stats_names,
         "frozen_names": frozen_names,
+        "categories": {k: len(v) for k, v in classify_public(all_names).items()},
     }
 
     if args.write or args.update_baseline or not INVENTORY_PATH.exists():
@@ -178,10 +298,11 @@ def main() -> int:
             {
                 "schema": 2,
                 "note": (
-                    "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b). "
+                    "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b / #1448). "
                     "No new *-stats, string-*/json-*/math-*/vector-*/path-*/time-* "
                     "(or : forms), or ast:ref-* without --update-baseline + PR justification. "
-                    "Prefer stdlib (lib/std/surface) and (engine:metrics)."
+                    "Prefer stdlib (lib/std/surface) and (engine:metrics). "
+                    f"SlimSurface target public budget: {TARGET_BUDGET}."
                 ),
                 "count": len(frozen_names),
                 "stats_count": len(stats_names),
@@ -215,7 +336,7 @@ def main() -> int:
             "  - ast:ref-* → StableRef API (Issue #393); no new names\n"
             "If growth is intentional, run:\n"
             "  python3 scripts/check_primitive_surface.py --update-baseline\n"
-            "and justify in the PR.",
+            "and justify in the PR (Issue #1448 governance).",
             file=sys.stderr,
         )
         return 1
@@ -232,6 +353,9 @@ def main() -> int:
         f"{len(stats_names)} stats, {len(frozen_names)} frozen-pattern, "
         f"0 new vs baseline)"
     )
+
+    if args.strict:
+        return run_strict_checks(all_names, stats_names)
     return 0
 
 

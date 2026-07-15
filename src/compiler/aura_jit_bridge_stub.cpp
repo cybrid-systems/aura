@@ -34,6 +34,99 @@ extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
 static void* g_aot_metrics_stub = nullptr;
 static std::uint64_t g_aot_metrics_lazy_stub = 0;
 static std::uint64_t g_aot_metrics_explicit_stub = 0;
+// Issue #243: aura_jit.cpp reads defuse epoch at emit time.
+// Full impl lives in aura_jit_bridge.cpp; light JIT test binaries
+// only need a process-local counter so the link succeeds.
+//
+// Weak: test_issues_light also compiles test_issue_243.cpp, which
+// provides its own strong definitions for the set/get round-trip
+// AC. Weak stubs lose when those are present, and still satisfy
+// aura_jit.cpp when they are not (test_spec_jit / test_jit_*).
+static std::uint64_t g_aot_defuse_version_stub = 0;
+
+extern "C" __attribute__((weak)) void aura_set_aot_defuse_version(std::uint64_t v) {
+    g_aot_defuse_version_stub = v;
+}
+
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_defuse_version(void) {
+    return g_aot_defuse_version_stub;
+}
+
+// ── Weak stubs for AOT region / module / eval isolation APIs ──
+// CompilerService (in aura_test_objects) references these; light
+// bundles don't link aura_jit_bridge.cpp. Weak so production bridge
+// (or test_issue_243 strong defs) wins when present.
+static std::uint64_t g_aot_region_mask_stub = 0;
+static std::uint64_t g_module_version_stub = 0;
+static aura_jit_unhandled_invalidate_fn_t g_jit_unhandled_invalidate_fn_stub = nullptr;
+
+extern "C" __attribute__((weak)) void aura_set_aot_region_mask(std::uint64_t mask) {
+    g_aot_region_mask_stub = mask;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_region_mask(void) {
+    return g_aot_region_mask_stub;
+}
+extern "C" __attribute__((weak)) void aura_set_aot_emit_region_mask(std::uint64_t mask) {
+    g_aot_region_mask_stub = mask;
+}
+extern "C" __attribute__((weak)) void aura_set_aot_region_mask_for_eval(void* /*eval*/,
+                                                                        std::uint64_t mask) {
+    g_aot_region_mask_stub = mask;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_region_mask_for_eval(void* /*eval*/) {
+    return g_aot_region_mask_stub;
+}
+extern "C" __attribute__((weak)) void aura_set_module_version(std::uint64_t v) {
+    g_module_version_stub = v;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_module_version(void) {
+    return g_module_version_stub;
+}
+extern "C" __attribute__((weak)) void aura_set_module_version_for_eval(void* /*eval*/,
+                                                                       std::uint64_t v) {
+    g_module_version_stub = v;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_module_version_for_eval(void* /*eval*/) {
+    return g_module_version_stub;
+}
+extern "C" __attribute__((weak)) void aura_set_aot_defuse_version_for_eval(void* /*eval*/,
+                                                                           std::uint64_t v) {
+    g_aot_defuse_version_stub = v;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_get_aot_defuse_version_for_eval(void* /*eval*/) {
+    return g_aot_defuse_version_stub;
+}
+extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_aot_state_map_size(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_aot_func_table_epoch(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) bool aura_reload_aot_module(const char* /*path*/,
+                                                             std::uint64_t /*v*/) {
+    return false;
+}
+extern "C" __attribute__((weak)) bool
+aura_reload_aot_module_for_eval(void* /*eval*/, const char* /*path*/, std::uint64_t /*v*/) {
+    return false;
+}
+extern "C" __attribute__((weak)) void aura_register_fn_tracked(std::int64_t /*id*/,
+                                                               std::int64_t /*ptr*/) {}
+extern "C" __attribute__((weak)) void
+aura_set_jit_unhandled_invalidate_fn(aura_jit_unhandled_invalidate_fn_t fn) {
+    g_jit_unhandled_invalidate_fn_stub = fn;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_fallback_count_v_read(void) {
+    return 0;
+}
 
 extern "C" void aura_set_aot_metrics(void* metrics) {
     g_aot_metrics_stub = metrics;

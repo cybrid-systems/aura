@@ -2965,16 +2965,40 @@ ScalarFn AuraJIT::compile(const FlatFunction&) {
 void* AuraJIT::get_function_ptr(const char*) {
     return nullptr;
 }
+std::string AuraJIT::compile_to_llvm_ir() {
+    return {};
+}
+bool AuraJIT::compile_to_object_file(const std::string&) {
+    return false;
+}
 void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*) {}
 void AuraJIT::invalidate(const char*) {}
+void AuraJIT::invalidate_prefix(const char*) {}
 std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char*) const {
     return 0;
 }
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     static std::vector<FunctionMeta> empty;
     return empty;
+}
+char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
+    if (!buf || buf_size == 0)
+        return buf;
+    // No-LLVM path: zeroed counters; keep a stable non-empty line
+    // so (jit:stats) / CompilerService hooks don't see an empty buffer.
+    if (buf_size >= 8) {
+        buf[0] = 'j';
+        buf[1] = 'i';
+        buf[2] = 't';
+        buf[3] = '=';
+        buf[4] = '0';
+        buf[5] = '\0';
+    } else {
+        buf[0] = '\0';
+    }
+    return buf;
 }
 
 

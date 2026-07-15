@@ -4884,6 +4884,9 @@ aura_issue_test_link_llvm_jit(test_capability_gating)
 # hit rate ≥ 80% (the issue's main perf AC), cache stability
 # across calls, clean state early-returns without cache touch.
 aura_add_issue_test(test_issue_1414)
+# CompilerService::solve_delta_cached + TypeChecker path needs
+# full JIT/runtime link set (same triangle as other CS tests).
+aura_issue_test_link_llvm_jit(test_issue_1414)
 # Issue #1411: DeadCoercionEliminationPass wire-up to pass_manager
 # pipeline. Production code is already wired in
 # service.ixx:run_coercion_elim_on_function (line 7390+); this test

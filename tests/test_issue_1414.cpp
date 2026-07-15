@@ -45,6 +45,8 @@ import aura.compiler.service;
 
 
 namespace aura_issue_1414_detail {
+// test_harness.hpp already defines CHECK — undef before local redef.
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (!(cond)) {                                                                             \
@@ -266,28 +268,6 @@ void test_clean_state_no_cache_touch() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AC #6: clean state (no dirty) returns SOLVED without cache
-// ═══════════════════════════════════════════════════════════════
-
-void test_clean_state_no_cache_touch() {
-    std::println("\n--- AC #6: clean state returns SOLVED without cache ---");
-    StableCS s;
-    aura::compiler::CompilerService svc;
-
-    // No add_delta — cs.is_dirty() == false.
-    const auto hits_before = svc.solve_delta_cache_hits();
-    const auto misses_before = svc.solve_delta_cache_misses();
-    const auto size_before = svc.solve_delta_cache_size();
-
-    auto r = svc.solve_delta_cached(s.tc);
-    CHECK(r == aura::compiler::SolveResult::SOLVED, "clean state returns SOLVED");
-    CHECK(svc.solve_delta_cache_hits() == hits_before, "no cache hit counted on clean state");
-    CHECK(svc.solve_delta_cache_misses() == misses_before,
-          "no cache miss counted on clean state (early return)");
-    CHECK(svc.solve_delta_cache_size() == size_before, "cache size unchanged on clean state");
-}
-
-// ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
 
@@ -320,4 +300,8 @@ int run_tests() {
 
 int aura_issue_1414_run() {
     return aura_issue_1414_detail::run_tests();
+}
+
+int main() {
+    return aura_issue_1414_run();
 }
