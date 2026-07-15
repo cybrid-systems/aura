@@ -59,10 +59,20 @@ STDLIB (prefer over raw C++ convenience)
   (require "std/surface" all:)
   (require "std/engine-metrics" all:)
   (require "std/stats" all:)
+  (require "std/agent" all:)          ; #1460 closed-loop
 
-CORE LOOP
-  1. set-code → 2. query :find/root → 3. mutate :rebind/replace
-  4. eval-current → 5. engine:metrics/stats:get if observing → 6. restore on fail
+CORE LOOP (#1460 default — not pure LLM)
+  1. set-code / current workspace
+  2. query :find / :root / :def-use
+  3. (agent:decision-metrics) / (agent:decide)  ; #1461 — before commit
+  4. (mutate :atomic ops) or agent:closed-loop-once / auto-grow
+  5. eval-current
+  6. re-check decision-metrics → commit | back-off | escalate
+  7. on fail: ast:restore / re-set-code; on escalate: stop (human)
+
+  (auto-grow task :source "..." :rebind "f" "(lambda …)")  ; EDSL default
+  (auto-grow task :prompt-only)   ; LLM-only compat — not default
+  (agent:decision-metrics) → hash schema 1461 (recommendation, panic, rollback, …)
 
 DEPRECATED (still work; do not use in new code)
   query:find, mutate:rebind, workspace:create, bare *-stats names, …

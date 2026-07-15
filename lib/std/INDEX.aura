@@ -44,8 +44,8 @@
       (list "Adaptive API discovery + diagnostics"
             "(get-api-ref stdlib-list)"))
     (list "agent"
-      (list "LLM agent helpers (extract-code, llm-ask)"
-            "(llm-ask \"Hello\")"))
+      (list "EDSL closed-loop auto-grow + decision-metrics (#1460)"
+            "(auto-grow \"task\" :source \"(define (f x) x)\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))
     (list "algorithm"
       (list "Algorithm utilities (sort, group, partition)"
             "(partition (lambda (x) (> x 0)) (list -1 2 -3))"))

@@ -1,4 +1,10 @@
 llm-ask: Any -> Any
 extract-code: Any -> Any
 safe-eval: Any -> Any
-auto-grow: Any Any -> Any
+auto-grow: Any -> Any
+edsl-fix: Any Any -> Any
+agent:decision-metrics: -> Any
+agent:decide: -> Any
+agent:loop-stats: -> Any
+agent:loop-stats-reset!: -> Any
+agent:closed-loop-once: -> Any
