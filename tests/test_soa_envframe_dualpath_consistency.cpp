@@ -279,15 +279,15 @@ bool test_regression_existing_primitives() {
     auto r1 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:envframe-dualpath-stats\") (new for #543)");
-    auto r2 = cs.eval("(query:mutation-coordination-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:mutation-coordination-stats) (regression for #448)");
-    auto r3 = cs.eval("(query:stale-ref-stats)");
+          "(engine:metrics \"query:mutation-coordination-stats\") (regression for #448)");
+    auto r3 = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:stale-ref-stats) (regression for #391)");
-    auto r4 = cs.eval("(query:fiber-migration-stats)");
+          "(engine:metrics \"query:stale-ref-stats\") (regression for #391)");
+    auto r4 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:fiber-migration-stats) (regression for #438)");
+          "(engine:metrics \"query:fiber-migration-stats\") (regression for #438)");
     return true;
 }
 

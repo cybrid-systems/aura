@@ -5,7 +5,7 @@
 ;   (aot:reload path [version])
 ;   (aot:set-region-mask mask) / (aot:get-region-mask)
 ;   (aot:set-module-version v) / (aot:get-module-version)
-;   (query:aot-stats) / (query:aot-reload-primitive-stats)
+;   (engine:metrics "query:aot-stats") / (engine:metrics "query:aot-reload-primitive-stats")
 ;
 ; Usage:
 ;   (require "std/hot-update" all:)
@@ -83,15 +83,15 @@
 ; ── Telemetry ──
 
 (define (hot-update:stats)
-  (query:aot-stats))
+  (engine:metrics "query:aot-stats"))
 
 (define (hot-update:reload-stats)
-  (query:aot-reload-primitive-stats))
+  (engine:metrics "query:aot-reload-primitive-stats"))
 
 ; Health: "unknown" | "healthy" | "warning" | "degraded"
 ; Uses real query:aot-stats keys (#452).
 (define (hot-update:health)
-  (let* ((stats (query:aot-stats))
+  (let* ((stats (engine:metrics "query:aot-stats"))
          (stale (hash-ref stats "aot-stale-reject-count"))
          (ok (hash-ref stats "aot-hot-update-success-count"))
          (stale-n (if stale stale 0))

@@ -119,10 +119,14 @@ bool test_combined_prompt6_stats_bundle() {
     CHECK(setup_closure_workspace(cs), "workspace for stats bundle");
     (void)cs.eval("(mutate:rebind \"base\" \"42\")");
     const char* stats[] = {
-        "(query:prompt6-violation-count)",     "(query:prompt6-safety-score)",
-        "(query:closure-env-safety-stats)",    "(engine:metrics \"query:envframe-dualpath-stats\")",
-        "(query:gc-safepoint-stats)",          "(query:fiber-migration-stats)",
-        "(query:mutation-coordination-stats)", "(query:self-evolution-stability-stats)",
+        "(query:prompt6-violation-count)",
+        "(query:prompt6-safety-score)",
+        "(query:closure-env-safety-stats)",
+        "(engine:metrics \"query:envframe-dualpath-stats\")",
+        "(engine:metrics \"query:gc-safepoint-stats\")",
+        "(engine:metrics \"query:fiber-migration-stats\")",
+        "(engine:metrics \"query:mutation-coordination-stats\")",
+        "(engine:metrics \"query:self-evolution-stability-stats\")",
     };
     for (const char* prim : stats) {
         auto r = cs.eval(prim);
@@ -354,21 +358,21 @@ bool test_long_running_memory_safety_stress() {
 bool test_regression_related_primitives() {
     std::println("\n--- AC12: regression — related Prompt6 primitives ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:closure-env-safety-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
-          "(query:closure-env-safety-stats) (regression for #531)");
+          "(engine:metrics \"query:closure-env-safety-stats\") (regression for #531)");
     auto r2 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");
-    auto r3 = cs.eval("(query:gc-safepoint-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:gc-safepoint-stats) (regression for #439)");
-    auto r4 = cs.eval("(query:fiber-migration-stats)");
+          "(engine:metrics \"query:gc-safepoint-stats\") (regression for #439)");
+    auto r4 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:fiber-migration-stats) (regression for #438)");
-    auto r5 = cs.eval("(query:macro-reflect-self-evo-stats)");
+          "(engine:metrics \"query:fiber-migration-stats\") (regression for #438)");
+    auto r5 = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
-          "(query:macro-reflect-self-evo-stats) (regression for #597)");
+          "(engine:metrics \"query:macro-reflect-self-evo-stats\") (regression for #597)");
     if (!cs.eval("(define reg-602-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

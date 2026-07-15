@@ -20,7 +20,7 @@ int main() {
 
     // Warmup
     (void)cs.eval("(engine:metrics)");
-    (void)cs.eval("(query:pattern-stats)");
+    (void)cs.eval("(engine:metrics \"query:pattern-stats\")");
 
     constexpr int kIters = 30;
     // Representative subset of the #1434 top-20 (keeps wall time CI-bounded).
@@ -34,7 +34,7 @@ int main() {
     auto t0 = Steady::now();
     for (int i = 0; i < kIters; ++i) {
         for (int j = 0; j < kNames; ++j) {
-            (void)cs.eval(std::format("({})", kTop[j]));
+            (void)cs.eval(aura::test::aura_call_expr(kTop[j]));
         }
     }
     auto t1 = Steady::now();
@@ -63,7 +63,8 @@ int main() {
     CHECK(group_us > 0, "facade :group path runs");
     CHECK(true, "stretch bench informational (not a hard 10x gate)");
 
-    // Deprecation metadata surfaces in api-reference (#1434 AC3).
+    // Issue #1439: query:*-stats are no longer public prims — api-reference
+    // must NOT list them; still document the metrics facade.
     {
         auto r = cs.eval("(api-reference)");
         CHECK(r && aura::compiler::types::is_string(*r), "api-reference returns string");
@@ -71,10 +72,10 @@ int main() {
             auto idx = aura::compiler::types::as_string_idx(*r);
             auto heap = cs.evaluator().string_heap();
             std::string s = idx < heap.size() ? heap[idx] : "";
-            CHECK(s.find("*deprecated*") != std::string::npos, "api-reference has *deprecated*");
-            CHECK(s.find("query:pattern-stats") != std::string::npos,
-                  "deprecated lists query:pattern-stats");
             CHECK(s.find("engine:metrics") != std::string::npos, "api-reference mentions facade");
+            // Public surface must not re-list removed stats names (v2.0 / #1439).
+            CHECK(s.find("query:pattern-stats") == std::string::npos,
+                  "api-reference omits query:pattern-stats (removed from public registry)");
         }
     }
 

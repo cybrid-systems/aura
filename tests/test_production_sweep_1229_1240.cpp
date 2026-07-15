@@ -32,7 +32,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1229-1240-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1229-1240-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1229-1240-stats", "schema") == 1229, "schema");
         CHECK(href(cs, "query:production-sweep-1229-1240-stats", "active") == 1, "active");
@@ -53,7 +53,7 @@ int main() {
 
     // #1231: stdlib dashboard surfaces EDA/FFI keys
     {
-        auto r = cs.eval("(query:stdlib-production-review-stats)");
+        auto r = cs.eval("(engine:metrics \"query:stdlib-production-review-stats\")");
         CHECK(r && is_hash(*r), "stdlib review is hash");
         CHECK(href(cs, "query:stdlib-production-review-stats", "eda-parse-total") >= 0,
               "eda-parse-total key");

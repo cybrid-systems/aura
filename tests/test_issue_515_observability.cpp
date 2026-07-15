@@ -52,7 +52,7 @@ int aura_issue_515_observability_run() {
     // AC1: query:consolidated-p0-production-stats returns hash
     {
         std::println("\n--- AC1: query:consolidated-p0-production-stats ---");
-        auto stats = cs.eval("(query:consolidated-p0-production-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:consolidated-p0-production-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:consolidated-p0-production-stats returns hash");
         CHECK(hash_int(cs, "checkpoint-save") >= 0, "checkpoint-save present");
@@ -104,10 +104,10 @@ int aura_issue_515_observability_run() {
         CHECK(total_after >= total_before,
               std::format("consolidated-p0-production-total monotonic ({} -> {})", total_before,
                           total_after));
-        auto wss = cs.eval("(query:workspace-snapshot-stats)");
+        auto wss = cs.eval("(engine:metrics \"query:workspace-snapshot-stats\")");
         CHECK(wss && aura::compiler::types::is_hash(*wss),
               "query:workspace-snapshot-stats hash regression");
-        auto ros = cs.eval("(query:runtime-orchestration-stats)");
+        auto ros = cs.eval("(engine:metrics \"query:runtime-orchestration-stats\")");
         CHECK(ros && aura::compiler::types::is_hash(*ros),
               "query:runtime-orchestration-stats hash regression");
     }
@@ -115,10 +115,10 @@ int aura_issue_515_observability_run() {
     // AC5: legacy int-sum meta trackers regression
     {
         std::println("\n--- AC5: meta tracker regression ---");
-        auto cpp = cs.eval("(query:consolidated-production-priority-stats)");
+        auto cpp = cs.eval("(engine:metrics \"query:consolidated-production-priority-stats\")");
         CHECK(cpp && aura::compiler::types::is_int(*cpp),
               "query:consolidated-production-priority-stats int regression");
-        auto roadmap = cs.eval("(query:production-roadmap-stats)");
+        auto roadmap = cs.eval("(engine:metrics \"query:production-roadmap-stats\")");
         CHECK(roadmap && aura::compiler::types::is_int(*roadmap),
               "query:production-roadmap-stats int regression");
     }

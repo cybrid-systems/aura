@@ -46,7 +46,7 @@ int aura_issue_513_observability_run() {
     // AC1: query:aot-hot-reload-stats returns hash with consolidated fields
     {
         std::println("\n--- AC1: query:aot-hot-reload-stats ---");
-        auto stats = cs.eval("(query:aot-hot-reload-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:aot-hot-reload-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:aot-hot-reload-stats returns hash");
         CHECK(hash_int(cs, "reload-attempts") >= 0, "reload-attempts present");
@@ -92,10 +92,10 @@ int aura_issue_513_observability_run() {
     // AC4: legacy AOT stats primitives regression
     {
         std::println("\n--- AC4: regression ---");
-        auto reload = cs.eval("(query:aot-reload-stats)");
+        auto reload = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
         CHECK(reload && aura::compiler::types::is_hash(*reload),
               "query:aot-reload-stats hash regression");
-        auto checkpoint = cs.eval("(query:aot-checkpoint-version-stats)");
+        auto checkpoint = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
         CHECK(checkpoint && aura::compiler::types::is_hash(*checkpoint),
               "query:aot-checkpoint-version-stats hash regression");
         const auto total_after = hash_int(cs, "aot-hot-reload-total");

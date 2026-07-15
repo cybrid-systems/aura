@@ -52,7 +52,7 @@ int aura_issue_557_observability_run() {
     // AC1: query:top5-commercial-coverage-stats returns hash
     {
         std::println("\n--- AC1: query:top5-commercial-coverage-stats ---");
-        auto stats = cs.eval("(query:top5-commercial-coverage-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:top5-commercial-coverage-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:top5-commercial-coverage-stats returns hash");
         CHECK(hash_int(cs, "closure-stale-refresh") >= 0, "closure-stale-refresh present");
@@ -120,11 +120,11 @@ int aura_issue_557_observability_run() {
     // AC4: related Top 5 pillar primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto closure = cs.eval("(query:closure-env-safety-stats)");
-        auto incr = cs.eval("(query:incremental-production-relower-stats)");
-        auto jit = cs.eval("(query:jit-consistency-stats)");
-        auto edsl = cs.eval("(query:edsl-concurrency-stats)");
-        auto batch = cs.eval("(query:mutation-log-stats)");
+        auto closure = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
+        auto incr = cs.eval("(engine:metrics \"query:incremental-production-relower-stats\")");
+        auto jit = cs.eval("(engine:metrics \"query:jit-consistency-stats\")");
+        auto edsl = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
+        auto batch = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
         CHECK(closure && aura::compiler::types::is_hash(*closure),
               "query:closure-env-safety-stats hash regression (#531)");
         CHECK(incr && aura::compiler::types::is_hash(*incr),

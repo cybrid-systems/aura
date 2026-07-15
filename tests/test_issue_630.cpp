@@ -31,9 +31,9 @@
 //   - (verify:parse-assert-failure) (#579) — assert parser
 //   - (verify:coverage-holes) (#318) — coverage-hole scan
 //   - (verify:suggest-constraint-refine) (#318) — refine hints
-//   - (query:eda-foundation-stats) (#499)
-//   - (query:eda-hw-stats) (#616)
-//   - (query:edsl-eda-sv-closedloop-stats) (#519)
+//   - (engine:metrics \"query:eda-foundation-stats\") (#499)
+//   - (engine:metrics \"query:eda-hw-stats\") (#616)
+//   - (engine:metrics \"query:edsl-eda-sv-closedloop-stats\") (#519)
 //   - feedback_mutate_hits_total / hardware_backend_hook_calls_total /
 //     commercial_reemits_total / verification_loop_success_total /
 //     sv_emit_parse_fail_total / ppa_savings_total (CompilerMetrics)
@@ -102,8 +102,9 @@ int aura_issue_630_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:sv-verification-closedloop-stats-hash) shape ---");
-        auto h = cs.eval("(query:sv-verification-closedloop-stats-hash)");
+        std::println("\n--- AC1: (engine:metrics \"query:sv-verification-closedloop-stats-hash\") "
+                     "shape ---");
+        auto h = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "sv-verification-closedloop-stats-hash returns a hash");
         const auto feedback = hash_int(cs, "feedback-to-mutate-cycles");
@@ -178,7 +179,8 @@ int aura_issue_630_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:sv-verification-closedloop-stats-hash)");
+                auto r =
+                    cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

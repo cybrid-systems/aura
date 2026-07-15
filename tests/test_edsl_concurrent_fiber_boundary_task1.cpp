@@ -5,15 +5,15 @@
 //
 // Non-duplicative refinement of #546/#332 focused on Task 1
 // EDSL locking + Guard/fiber paths. #438 added the
-// (query:fiber-migration-stats) primitive + mutation_steal_attempts_
+// (engine:metrics \"query:fiber-migration-stats\") primitive + mutation_steal_attempts_
 // + boundary_violation_count_; #556 adds unsafe_boundary_attempts_
-// + lock_contention_us_ + the new (query:edsl-concurrency-stats)
+// + lock_contention_us_ + the new (engine:metrics \"query:edsl-concurrency-stats\")
 // primitive summing all 4 counters for the AI Agent's
 // concurrency safety observability matrix.
 //
 //   - AC1: 2 new Task1 concurrency counters reachable
 //          + start at 0
-//   - AC2: (query:edsl-concurrency-stats) returns integer
+//   - AC2: (engine:metrics \"query:edsl-concurrency-stats\") returns integer
 //          sum of 4 counters (2 new + 2 from #438)
 //   - AC3: 8 std::threads × 100 mutate + query loop —
 //          no crash, no deadlock (lock_contention_us +
@@ -21,7 +21,7 @@
 //   - AC4: Scheduler + 8 fibers × 50 yields (no eval,
 //          avoids workspace-lock deadlock) — fiber + yield
 //          + per-fiber depth all consistent
-//   - AC5: (query:fiber-migration-stats) regression (#438)
+//   - AC5: (engine:metrics \"query:fiber-migration-stats\") regression (#438)
 //   - AC6: 1000+ iters stress under contention
 //   - AC7: (gc-heap) + concurrency-stats integration
 //   - AC8: lock_contention_us_bump test (verifies bump helper)
@@ -76,17 +76,19 @@ bool test_concurrency_counters_reachable() {
 
 // ── AC2: query:edsl-concurrency-stats returns integer sum
 bool test_query_edsl_concurrency_stats() {
-    std::println("\n--- AC2: (query:edsl-concurrency-stats) returns integer ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"query:edsl-concurrency-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:edsl-concurrency-stats)");
-    CHECK(r.has_value(), "(query:edsl-concurrency-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:edsl-concurrency-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:edsl-concurrency-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:edsl-concurrency-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:edsl-concurrency-stats = {}", v);
-        CHECK(v >= 0, "(query:edsl-concurrency-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0, "(engine:metrics \"query:edsl-concurrency-stats\") >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -180,15 +182,16 @@ bool test_scheduler_fiber_yield_concurrent() {
     return true;
 }
 
-// ── AC5: (query:fiber-migration-stats) regression (#438)
+// ── AC5: (engine:metrics \"query:fiber-migration-stats\") regression (#438)
 bool test_query_fiber_migration_stats_regression() {
-    std::println("\n--- AC5: (query:fiber-migration-stats) regression for #438 ---");
+    std::println(
+        "\n--- AC5: (engine:metrics \"query:fiber-migration-stats\") regression for #438 ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:fiber-migration-stats)");
+    auto r = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(query:fiber-migration-stats) returns (regression for #438)");
+          "(engine:metrics \"query:fiber-migration-stats\") returns (regression for #438)");
     return true;
 }
 
@@ -241,8 +244,8 @@ bool test_gc_heap_with_concurrency() {
     (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after concurrent mutate");
-    auto r2 = cs.eval("(query:edsl-concurrency-stats)");
-    CHECK(r2.has_value(), "(query:edsl-concurrency-stats) after gc-heap");
+    auto r2 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
+    CHECK(r2.has_value(), "(engine:metrics \"query:edsl-concurrency-stats\") after gc-heap");
     return true;
 }
 
@@ -263,9 +266,9 @@ bool test_lock_contention_us_bump() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — #555 + #554 primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:edsl-concurrency-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:edsl-concurrency-stats) (new for #556)");
+          "(engine:metrics \"query:edsl-concurrency-stats\") (new for #556)");
     auto r2 = cs.eval("(query:typed-mutation-stats-task1)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:typed-mutation-stats-task1) (regression for #555)");

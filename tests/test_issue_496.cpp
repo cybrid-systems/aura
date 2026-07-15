@@ -68,7 +68,7 @@ int aura_issue_496_run() {
     // AC1: query:sv-node-stats fields
     {
         std::println("\n--- AC1: query:sv-node-stats ---");
-        auto stats = cs.eval("(query:sv-node-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:sv-node-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats), "query:sv-node-stats returns hash");
         CHECK(snap_stat(cs, "interface-count") >= 0, "interface-count present");
         CHECK(snap_stat(cs, "modport-count") >= 0, "modport-count present");
@@ -137,7 +137,7 @@ int aura_issue_496_run() {
     // AC4: query:sv-sva-structure-stats regression
     {
         std::println("\n--- AC4: sv-sva-structure-stats regression ---");
-        auto sva = cs.eval("(query:sv-sva-structure-stats)");
+        auto sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
         CHECK(sva && aura::compiler::types::is_hash(*sva), "sv-sva-structure-stats regression");
     }
 

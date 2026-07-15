@@ -66,9 +66,9 @@
 //        recommendation transition correctly under
 //        bumps
 //   AC5: sibling observability regression — #478
-//        (query:primitive-error-stats) + #585
-//        (query:primitives-error-stats) + #751
-//        (query:primitives-contract-stats) primitives
+//        (engine:metrics \"query:primitive-error-stats\") + #585
+//        (engine:metrics \"query:primitives-error-stats\") + #751
+//        (engine:metrics \"query:primitives-contract-stats\") primitives
 //        still reachable
 
 #include <cstdint>
@@ -105,10 +105,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:primitive-error-unified-stats) hash shape ---");
-    auto r = cs.eval("(query:primitive-error-unified-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:primitive-error-unified-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:primitive-error-unified-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:primitive-error-unified-stats) returns a hash");
+          "(engine:metrics \"query:primitive-error-unified-stats\") returns a hash");
     const std::vector<std::string> keys = {
         "error-count-total",         "with-provenance",           "silent-fallback",
         "error-values-size",         "capture-violations",        "unified-path-pct",
@@ -124,8 +125,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (split-zero rule) ---");
     // 3 NEW #804 atomics — strict == 0.
-    const auto with_provenance =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "with-provenance");
+    const auto with_provenance = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "with-provenance");
     CHECK(with_provenance == 0,
           std::format("with-provenance = {} (expected == 0 on fresh service — NEW atomic #804 "
                       "primitive_error_with_provenance_total; bumped by "
@@ -134,8 +135,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "path the body asks for at 100% coverage; no PRIM_ERROR calls yet on "
                       "fresh service since the audit grep is Phase 2+)",
                       with_provenance));
-    const auto silent_fallback =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "silent-fallback");
+    const auto silent_fallback = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "silent-fallback");
     CHECK(silent_fallback == 0,
           std::format("silent-fallback = {} (expected == 0 on fresh service — NEW atomic #804 "
                       "primitive_error_silent_fallback_total; bumped by the Phase 2+ audit "
@@ -143,7 +144,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "primitives_*.cpp; no audit run yet)",
                       silent_fallback));
     const auto recovery_hook =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "recovery-hook-invocations");
+        hash_int_field(cs, "(engine:metrics \"query:primitive-error-unified-stats\")",
+                       "recovery-hook-invocations");
     CHECK(recovery_hook == 0,
           std::format("recovery-hook-invocations = {} (expected == 0 on fresh service — NEW "
                       "atomic #804 primitive_error_recovery_hook_invocations_total; bumped by "
@@ -151,30 +153,30 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       "retry path recovery-hook firings; no recovery hooks yet)",
                       recovery_hook));
     // Reused #478 + #751 atomics — >= 0 (split-zero rule).
-    const auto error_count =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "error-count-total");
+    const auto error_count = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "error-count-total");
     CHECK(error_count >= 0,
           std::format("error-count-total = {} (expected >= 0 — reused #478 primitive_error_"
                       "count_; bumped by bump_primitive_error_count() at every PRIM_ERROR / "
                       "make_primitive_error call)",
                       error_count));
-    const auto ev_size =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "error-values-size");
+    const auto ev_size = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "error-values-size");
     CHECK(ev_size >= 0,
           std::format("error-values-size = {} (expected >= 0 — reused #478 "
                       "get_primitive_error_values_size(); persistent error object arena "
                       "size; >= 0 baseline when no errors have been observed)",
                       ev_size));
-    const auto cap_violations =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "capture-violations");
+    const auto cap_violations = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "capture-violations");
     CHECK(cap_violations >= 0,
           std::format("capture-violations = {} (expected >= 0 — reused #751 primitive_capture_"
                       "violations_total; bumped by prim_record_capture_violation when no "
                       "error_counter on a mutate path)",
                       cap_violations));
     // Derived pct — vacuous-true 10000 baseline when error_count_total == 0.
-    const auto unified_pct =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "unified-path-pct");
+    const auto unified_pct = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "unified-path-pct");
     CHECK(unified_pct >= 0 && unified_pct <= 10000,
           std::format("unified-path-pct = {} (expected in [0, 10000] range — 0-10000 fixed-"
                       "point percent × 100; 10000 = 100.00% baseline when error_count_"
@@ -183,7 +185,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
                       unified_pct));
     // Hardcoded "not yet" flag — strict == 0.
     const auto path_active =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "unified-error-path-active");
+        hash_int_field(cs, "(engine:metrics \"query:primitive-error-unified-stats\")",
+                       "unified-error-path-active");
     CHECK(path_active == 0,
           std::format("unified-error-path-active = {} (expected == 0 — Phase 2+ deferred; the "
                       "actual PRIM_ERROR audit + make_primitive_error provenance enforcement + "
@@ -195,7 +198,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 804 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:primitive-error-unified-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "schema");
     CHECK(schema == 804, std::format("schema = {} (expected 804 — drift sentinel)", schema));
 }
 
@@ -203,12 +207,13 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto with_prov_before =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "with-provenance");
-    const auto silent_before =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "silent-fallback");
+    const auto with_prov_before = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "with-provenance");
+    const auto silent_before = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "silent-fallback");
     const auto recov_before =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "recovery-hook-invocations");
+        hash_int_field(cs, "(engine:metrics \"query:primitive-error-unified-stats\")",
+                       "recovery-hook-invocations");
 
     // Exercise the 3 NEW #804 per-Evaluator bump helpers via the
     // service's evaluator instance.
@@ -226,12 +231,13 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_primitive_error_recovery_hook();
     }
 
-    const auto with_prov_after =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "with-provenance");
-    const auto silent_after =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "silent-fallback");
+    const auto with_prov_after = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "with-provenance");
+    const auto silent_after = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "silent-fallback");
     const auto recov_after =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "recovery-hook-invocations");
+        hash_int_field(cs, "(engine:metrics \"query:primitive-error-unified-stats\")",
+                       "recovery-hook-invocations");
 
     std::println("  counts after AC4 bumps: with-provenance {} -> {}, silent-fallback {} -> {}, "
                  "recovery-hook {} -> {}",
@@ -254,8 +260,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
                       recov_before, recov_after, k_recovery));
 
     // The unified-path-pct stays in [0, 10000] range after bumps.
-    const auto unified_pct_after =
-        hash_int_field(cs, "(query:primitive-error-unified-stats)", "unified-path-pct");
+    const auto unified_pct_after = hash_int_field(
+        cs, "(engine:metrics \"query:primitive-error-unified-stats\")", "unified-path-pct");
     CHECK(unified_pct_after >= 0 && unified_pct_after <= 10000,
           std::format("unified-path-pct still in [0, 10000] range after bumps (was {})",
                       unified_pct_after));
@@ -265,23 +271,24 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: sibling observability regression (#478 / #585 / #751) "
                  "---");
 
-    // #478: (query:primitive-error-stats) — the canonical pair
+    // #478: (engine:metrics \"query:primitive-error-stats\") — the canonical pair
     // primitive (error-count . error-values-size). Returns a
     // pair, not a hash.
-    auto r478 = cs.eval("(query:primitive-error-stats)");
-    CHECK(r478, "#478 (query:primitive-error-stats) still returns a value");
+    auto r478 = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
+    CHECK(r478, "#478 (engine:metrics \"query:primitive-error-stats\") still returns a value");
 
-    // #585: (query:primitives-error-stats) — coarse hash from
+    // #585: (engine:metrics \"query:primitives-error-stats\") — coarse hash from
     // earlier sprint; no schema sentinel (pre-schema convention).
-    auto r585 = cs.eval("(query:primitives-error-stats)");
-    CHECK(r585, "#585 (query:primitives-error-stats) still returns a value");
+    auto r585 = cs.eval("(engine:metrics \"query:primitives-error-stats\")");
+    CHECK(r585, "#585 (engine:metrics \"query:primitives-error-stats\") still returns a value");
 
-    // #751: (query:primitives-contract-stats) — primary
+    // #751: (engine:metrics \"query:primitives-contract-stats\") — primary
     // contract enforcement primitive with schema 751.
-    auto r751 = cs.eval("(query:primitives-contract-stats)");
+    auto r751 = cs.eval("(engine:metrics \"query:primitives-contract-stats\")");
     CHECK(r751 && aura::compiler::types::is_hash(*r751),
-          "#751 (query:primitives-contract-stats) still returns a hash");
-    const auto schema_751 = hash_int_field(cs, "(query:primitives-contract-stats)", "schema");
+          "#751 (engine:metrics \"query:primitives-contract-stats\") still returns a hash");
+    const auto schema_751 =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-contract-stats\")", "schema");
     CHECK(schema_751 == 751, std::format("#751 schema = {} (expected 751)", schema_751));
     for (const auto& k : {"prim-error-counter", "prim-error-hits", "style-compliance-pct",
                           "capture-contract-version"}) {

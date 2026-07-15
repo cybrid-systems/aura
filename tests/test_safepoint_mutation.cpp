@@ -157,7 +157,7 @@ int main() {
     // ── Aura query ──
     {
         CompilerService cs;
-        auto s = cs.eval("(query:safepoint-mutation-stats)");
+        auto s = cs.eval("(engine:metrics \"query:safepoint-mutation-stats\")");
         CHECK(s && is_hash(*s), "query:safepoint-mutation-stats is hash");
         CHECK(href(cs, "query:safepoint-mutation-stats", "in-gc-safepoint") == 0,
               "in-gc-safepoint snapshot 0");

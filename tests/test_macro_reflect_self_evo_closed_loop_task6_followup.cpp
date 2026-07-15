@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t followup_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:macro-reflect-self-evo-followup-stats)");
+    auto r = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-followup-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(tc.has_value(), "typecheck-current after self-evo mutate");
 
     std::println("\n--- AC7: query regression ---");
-    auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
+    auto mrs = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(mrs && is_int(*mrs), "macro-reflect-self-evo-stats returns int");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats returns int");

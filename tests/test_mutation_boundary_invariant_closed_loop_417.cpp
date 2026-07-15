@@ -3,7 +3,7 @@
 // defuse_version_ + per-fiber stack invariant observability.
 //
 // Non-duplicative with #448 (mutation-coordination-stats),
-// #438 (fiber-migration-stats), #264 (compile:concurrency-stats).
+// #438 (fiber-migration-stats), #264 (engine:metrics \"compile:concurrency-stats\").
 //
 // AC1: query:mutation-boundary-invariant-stats reachable
 // AC2: mutate:rebind bumps boundary epoch counters
@@ -33,7 +33,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t boundary_invariant_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:mutation-boundary-invariant-stats)");
+    auto r = cs.eval("(engine:metrics \"query:mutation-boundary-invariant-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -95,8 +95,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(ev.get_total_invariant_violations() == 0, "matrix end: zero invariant violations");
 
     std::println("\n--- AC7: query regression ---");
-    auto mcs = cs.eval("(query:mutation-coordination-stats)");
-    auto fms = cs.eval("(query:fiber-migration-stats)");
+    auto mcs = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
+    auto fms = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(mcs && is_int(*mcs), "mutation-coordination-stats regression");
     CHECK(fms && is_int(*fms), "fiber-migration-stats regression");
 }

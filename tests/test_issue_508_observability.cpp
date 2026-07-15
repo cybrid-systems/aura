@@ -47,7 +47,7 @@ int aura_issue_508_observability_run() {
     // AC1: query:dead-coercion-zerooverhead-stats returns hash
     {
         std::println("\n--- AC1: query:dead-coercion-zerooverhead-stats ---");
-        auto stats = cs.eval("(query:dead-coercion-zerooverhead-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:dead-coercion-zerooverhead-stats returns hash");
     }
@@ -55,7 +55,7 @@ int aura_issue_508_observability_run() {
     // AC2: compile: primitives still return int
     {
         std::println("\n--- AC2: compile:dead-coercion primitives ---");
-        auto dcs = cs.eval("(compile:dead-coercion-stats)");
+        auto dcs = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
         auto elapsed = cs.eval("(compile:dead-coercion-elapsed)");
         auto kept = cs.eval("(compile:dead-coercion-kept-for-debug)");
         CHECK(dcs && aura::compiler::types::is_int(*dcs), "compile:dead-coercion-stats int");
@@ -75,7 +75,7 @@ int aura_issue_508_observability_run() {
         CHECK(elim1 >= elim0, std::format("eliminated monotonic ({} -> {})", elim0, elim1));
         CHECK(elapsed1 >= elapsed0,
               std::format("elapsed-us monotonic ({} -> {})", elapsed0, elapsed1));
-        auto stats = cs.eval("(query:dead-coercion-zerooverhead-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "zerooverhead-stats hash after cycle");
     }
@@ -86,7 +86,7 @@ int aura_issue_508_observability_run() {
         aura::compiler::CompilerService cs2;
         CHECK(setup_gradual_workspace(cs2), "fresh workspace");
         const auto elim_q0 = cs2.snapshot().dead_coercion_eliminated_total;
-        auto stats = cs2.eval("(query:dead-coercion-zerooverhead-stats)");
+        auto stats = cs2.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "zerooverhead-stats hash on query-only path");
         CHECK(cs2.snapshot().dead_coercion_eliminated_total == elim_q0,
@@ -96,8 +96,8 @@ int aura_issue_508_observability_run() {
     // AC5: related primitive regression
     {
         std::println("\n--- AC5: related stats regression ---");
-        auto czs = cs.eval("(query:coercion-zerooverhead-stats)");
-        auto ces = cs.eval("(query:coercion-elim-stats)");
+        auto czs = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
+        auto ces = cs.eval("(engine:metrics \"query:coercion-elim-stats\")");
         CHECK(czs && aura::compiler::types::is_int(*czs), "coercion-zerooverhead-stats regression");
         CHECK(ces && aura::compiler::types::is_int(*ces), "coercion-elim-stats regression");
     }

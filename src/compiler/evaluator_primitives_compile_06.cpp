@@ -94,113 +94,118 @@ void CompilePrims::register_compile_p48(PrimRegistrar add, Evaluator& ev) {
     //     DefUseIndex routing) will reduce this metric
     //     further by replacing the O(n) per_symbol walk
     //     with an O(uses) indexed lookup.
-    add("compile:per-symbol-reinfer-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Issue #411 fu1 follow-up #2: 10 keys now
-            // (4 raw per-symbol + 2 derived + 4 raw
-            // per-DefUseIndex). Cap 8 is too small — the
-            // insert loop would fail at the 9th key,
-            // destroy the table, and return make_void().
-            // Use cap = next_pow2(max(8, kv.size() * 2))
-            // so the open-addressing loop's
-            // `(h >> 1 + at) & (hcap - 1)` masking works
-            // correctly (the mask is only correct for
-            // power-of-2 caps).
-            std::size_t cap = std::max<std::size_t>(8, kv.size() * 2);
-            // Round up to next power of 2.
-            std::size_t p2 = 1;
-            while (p2 < cap)
-                p2 <<= 1;
-            cap = p2;
-            auto* ht = FlatHashTable::create(cap);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "compile:per-symbol-reinfer-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                // Issue #411 fu1 follow-up #2: 10 keys now
+                // (4 raw per-symbol + 2 derived + 4 raw
+                // per-DefUseIndex). Cap 8 is too small — the
+                // insert loop would fail at the 9th key,
+                // destroy the table, and return make_void().
+                // Use cap = next_pow2(max(8, kv.size() * 2))
+                // so the open-addressing loop's
+                // `(h >> 1 + at) & (hcap - 1)` masking works
+                // correctly (the mask is only correct for
+                // power-of-2 caps).
+                std::size_t cap = std::max<std::size_t>(8, kv.size() * 2);
+                // Round up to next power of 2.
+                std::size_t p2 = 1;
+                while (p2 < cap)
+                    p2 <<= 1;
+                cap = p2;
+                auto* ht = FlatHashTable::create(cap);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE; // avoid HASH_EMPTY collision
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::uint64_t per_symbol_used = 0, per_symbol_visited = 0;
-        std::uint64_t ancestor_used = 0, ancestor_visited = 0;
-        // Issue #411 fu1 follow-up #2: per-DefUseIndex
-        // tracker metrics (read from the same metrics
-        // pointer as the per_symbol / ancestor counters).
-        std::uint64_t per_defuse_index_used = 0;
-        std::uint64_t per_defuse_index_visited = 0;
-        std::uint64_t per_defuse_index_walk_fallback = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            per_symbol_used = m->per_symbol_reinfer_used_total.load(std::memory_order_relaxed);
-            per_symbol_visited =
-                m->per_symbol_reinfer_visited_total.load(std::memory_order_relaxed);
-            ancestor_used = m->ancestor_reinfer_used_total.load(std::memory_order_relaxed);
-            ancestor_visited = m->ancestor_reinfer_visited_total.load(std::memory_order_relaxed);
-            per_defuse_index_used = m->per_defuse_index_used_total.load(std::memory_order_relaxed);
-            per_defuse_index_visited =
-                m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
-            per_defuse_index_walk_fallback =
-                m->per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
-        }
-        const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
-        const std::uint64_t path_share_bp =
-            (total_visited > 0) ? (per_symbol_visited * 10000u) / total_visited : 0;
-        const std::uint64_t avg_per_symbol_bp =
-            (per_symbol_used > 0) ? (per_symbol_visited * 10000u) / per_symbol_used : 0;
-        const std::uint64_t per_defuse_index_visited_avg_bp =
-            (per_defuse_index_used > 0)
-                ? (per_defuse_index_visited * 10000u) / per_defuse_index_used
-                : 0;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"per-symbol-used-total", make_int(static_cast<std::int64_t>(per_symbol_used))},
-            {"per-symbol-visited-total", make_int(static_cast<std::int64_t>(per_symbol_visited))},
-            {"ancestor-used-total", make_int(static_cast<std::int64_t>(ancestor_used))},
-            {"ancestor-visited-total", make_int(static_cast<std::int64_t>(ancestor_visited))},
-            {"path-share-bp", make_int(static_cast<std::int64_t>(path_share_bp))},
-            {"avg-per-symbol-bp", make_int(static_cast<std::int64_t>(avg_per_symbol_bp))},
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::uint64_t per_symbol_used = 0, per_symbol_visited = 0;
+            std::uint64_t ancestor_used = 0, ancestor_visited = 0;
             // Issue #411 fu1 follow-up #2: per-DefUseIndex
-            // tracker observability (the underlying data
-            // structure for the per-symbol O(uses) path).
-            {"per-defuse-index-used-total",
-             make_int(static_cast<std::int64_t>(per_defuse_index_used))},
-            {"per-defuse-index-visited-total",
-             make_int(static_cast<std::int64_t>(per_defuse_index_visited))},
-            {"per-defuse-index-walk-fallback-total",
-             make_int(static_cast<std::int64_t>(per_defuse_index_walk_fallback))},
-            {"per-defuse-index-visited-avg-bp",
-             make_int(static_cast<std::int64_t>(per_defuse_index_visited_avg_bp))},
-        };
-        return build_hash(kv);
-    });
+            // tracker metrics (read from the same metrics
+            // pointer as the per_symbol / ancestor counters).
+            std::uint64_t per_defuse_index_used = 0;
+            std::uint64_t per_defuse_index_visited = 0;
+            std::uint64_t per_defuse_index_walk_fallback = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+                per_symbol_used = m->per_symbol_reinfer_used_total.load(std::memory_order_relaxed);
+                per_symbol_visited =
+                    m->per_symbol_reinfer_visited_total.load(std::memory_order_relaxed);
+                ancestor_used = m->ancestor_reinfer_used_total.load(std::memory_order_relaxed);
+                ancestor_visited =
+                    m->ancestor_reinfer_visited_total.load(std::memory_order_relaxed);
+                per_defuse_index_used =
+                    m->per_defuse_index_used_total.load(std::memory_order_relaxed);
+                per_defuse_index_visited =
+                    m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
+                per_defuse_index_walk_fallback =
+                    m->per_defuse_index_walk_fallback_total.load(std::memory_order_relaxed);
+            }
+            const std::uint64_t total_visited = per_symbol_visited + ancestor_visited;
+            const std::uint64_t path_share_bp =
+                (total_visited > 0) ? (per_symbol_visited * 10000u) / total_visited : 0;
+            const std::uint64_t avg_per_symbol_bp =
+                (per_symbol_used > 0) ? (per_symbol_visited * 10000u) / per_symbol_used : 0;
+            const std::uint64_t per_defuse_index_visited_avg_bp =
+                (per_defuse_index_used > 0)
+                    ? (per_defuse_index_visited * 10000u) / per_defuse_index_used
+                    : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"per-symbol-used-total", make_int(static_cast<std::int64_t>(per_symbol_used))},
+                {"per-symbol-visited-total",
+                 make_int(static_cast<std::int64_t>(per_symbol_visited))},
+                {"ancestor-used-total", make_int(static_cast<std::int64_t>(ancestor_used))},
+                {"ancestor-visited-total", make_int(static_cast<std::int64_t>(ancestor_visited))},
+                {"path-share-bp", make_int(static_cast<std::int64_t>(path_share_bp))},
+                {"avg-per-symbol-bp", make_int(static_cast<std::int64_t>(avg_per_symbol_bp))},
+                // Issue #411 fu1 follow-up #2: per-DefUseIndex
+                // tracker observability (the underlying data
+                // structure for the per-symbol O(uses) path).
+                {"per-defuse-index-used-total",
+                 make_int(static_cast<std::int64_t>(per_defuse_index_used))},
+                {"per-defuse-index-visited-total",
+                 make_int(static_cast<std::int64_t>(per_defuse_index_visited))},
+                {"per-defuse-index-walk-fallback-total",
+                 make_int(static_cast<std::int64_t>(per_defuse_index_walk_fallback))},
+                {"per-defuse-index-visited-avg-bp",
+                 make_int(static_cast<std::int64_t>(per_defuse_index_visited_avg_bp))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 49 (orig 4083-4191)
@@ -336,58 +341,60 @@ void CompilePrims::register_compile_p50(PrimRegistrar add, Evaluator& ev) {
     //   for debugging only). Used by
     //   test_issue_411_followup_2 to verify the tracker
     //   is wired into the service.
-    add("compile:per-defuse-index-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "compile:per-defuse-index-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        if (!ev.compiler_service_)
-            return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        const auto& tracker = svc->per_defuse_index_tracker();
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"total-size", make_int(static_cast<std::int64_t>(tracker.total_size()))},
-            {"index-count", make_int(static_cast<std::int64_t>(tracker.index_count()))},
-            {"defuse-service-ptr",
-             make_int(static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(svc)))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            if (!ev.compiler_service_)
+                return make_int(0);
+            auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+            const auto& tracker = svc->per_defuse_index_tracker();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"total-size", make_int(static_cast<std::int64_t>(tracker.total_size()))},
+                {"index-count", make_int(static_cast<std::int64_t>(tracker.index_count()))},
+                {"defuse-service-ptr",
+                 make_int(static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(svc)))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 51 (orig 4254-4322)
@@ -403,64 +410,66 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
     //   trace-size and records-total indicates how
     //   many traces were accumulated in prior
     //   workspaces that have since been swapped out.
-    add("compile:mutation-log-invalidation-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto cap = std::max<std::size_t>(8, kv.size() * 2);
-            // Round up to next power of 2.
-            std::size_t hcap = 8;
-            while (hcap < cap)
-                hcap *= 2;
-            auto* ht = FlatHashTable::create(hcap);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "compile:mutation-log-invalidation-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto cap = std::max<std::size_t>(8, kv.size() * 2);
+                // Round up to next power of 2.
+                std::size_t hcap = 8;
+                while (hcap < cap)
+                    hcap *= 2;
+                auto* ht = FlatHashTable::create(hcap);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            if (!ev.compiler_service_)
+                return make_int(0);
+            auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+            std::uint64_t trace_size = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                trace_size = static_cast<std::uint64_t>(ws->invalidation_trace_size());
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        if (!ev.compiler_service_)
-            return make_int(0);
-        auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        std::uint64_t trace_size = 0;
-        if (auto* ws = ev.workspace_flat()) {
-            trace_size = static_cast<std::uint64_t>(ws->invalidation_trace_size());
-        }
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"records-total",
-             make_int(static_cast<std::int64_t>(svc->snapshot().invalidation_trace_records_total))},
-            {"trace-size", make_int(static_cast<std::int64_t>(trace_size))},
-        };
-        return build_hash(kv);
-    });
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"records-total", make_int(static_cast<std::int64_t>(
+                                      svc->snapshot().invalidation_trace_records_total))},
+                {"trace-size", make_int(static_cast<std::int64_t>(trace_size))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 compile part 52 (orig 4323-4377)
@@ -557,83 +566,84 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
     //     :remove-child-failure  — RemoveChildMutator failures
     //   The AI agent reads this to see which strategies get
     //   the most traffic (and which always roll back).
-    add("compile:mutator-dispatch-stats", [&ev](const auto&) -> EvalValue {
-        auto& s = aura::ast::mutators::dispatch_stats();
+    ObservabilityPrims::register_stats_impl(
+        "compile:mutator-dispatch-stats", [&ev](const auto&) -> EvalValue {
+            auto& s = aura::ast::mutators::dispatch_stats();
 
-        auto cvt = [&](std::uint64_t n) -> EvalValue {
-            auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::to_string(n));
-            return make_string(idx);
-        };
+            auto cvt = [&](std::uint64_t n) -> EvalValue {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::to_string(n));
+                return make_string(idx);
+            };
 
-        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
-            auto key_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(key);
-            auto entry_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(key_idx), val});
-            return entry_pair;
-        };
+            auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+                auto key_idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(key);
+                auto entry_pair = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(key_idx), val});
+                return entry_pair;
+            };
 
-        EvalValue result = make_void();
-        auto cons = [&](std::uint64_t entry_id) {
-            auto cons_pair = ev.pairs_.size();
-            ev.pairs_.push_back({make_pair(entry_id), result});
-            result = make_pair(cons_pair);
-        };
+            EvalValue result = make_void();
+            auto cons = [&](std::uint64_t entry_id) {
+                auto cons_pair = ev.pairs_.size();
+                ev.pairs_.push_back({make_pair(entry_id), result});
+                result = make_pair(cons_pair);
+            };
 
-        // 12 entries: total + 3 dispatcher counters + 1 failure +
-        // 4 success + 3 failure-per-kind (NoOp never fails).
-        auto e_total = add_entry(":total", cvt(s.total()));
-        auto e_amut = add_entry(":apply-mutation-total",
-                                cvt(s.apply_mutation_total.load(std::memory_order_relaxed)));
-        auto e_aknd = add_entry(":apply-by-kind-total",
-                                cvt(s.apply_by_kind_total.load(std::memory_order_relaxed)));
-        auto e_anam = add_entry(":apply-by-name-total",
-                                cvt(s.apply_by_name_total.load(std::memory_order_relaxed)));
-        auto e_fail =
-            add_entry(":failure-total", cvt(s.failure_total.load(std::memory_order_relaxed)));
-        auto e_nsucc = add_entry(":noop-success",
-                                 cvt(s.kind_success[aura::ast::mutators::kind_index(
+            // 12 entries: total + 3 dispatcher counters + 1 failure +
+            // 4 success + 3 failure-per-kind (NoOp never fails).
+            auto e_total = add_entry(":total", cvt(s.total()));
+            auto e_amut = add_entry(":apply-mutation-total",
+                                    cvt(s.apply_mutation_total.load(std::memory_order_relaxed)));
+            auto e_aknd = add_entry(":apply-by-kind-total",
+                                    cvt(s.apply_by_kind_total.load(std::memory_order_relaxed)));
+            auto e_anam = add_entry(":apply-by-name-total",
+                                    cvt(s.apply_by_name_total.load(std::memory_order_relaxed)));
+            auto e_fail =
+                add_entry(":failure-total", cvt(s.failure_total.load(std::memory_order_relaxed)));
+            auto e_nsucc = add_entry(
+                ":noop-success", cvt(s.kind_success[aura::ast::mutators::kind_index(
                                                         aura::ast::mutators::StrategyKind::NoOp)]
                                          .load(std::memory_order_relaxed)));
-        auto e_rsucc =
-            add_entry(":replace-child-success",
-                      cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::ReplaceChild)]
-                              .load(std::memory_order_relaxed)));
-        auto e_isucc =
-            add_entry(":insert-child-success",
-                      cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::InsertChild)]
-                              .load(std::memory_order_relaxed)));
-        auto e_xsucc =
-            add_entry(":remove-child-success",
-                      cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::RemoveChild)]
-                              .load(std::memory_order_relaxed)));
-        auto e_rfail =
-            add_entry(":replace-child-failure",
-                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::ReplaceChild)]
-                              .load(std::memory_order_relaxed)));
-        auto e_ifail =
-            add_entry(":insert-child-failure",
-                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::InsertChild)]
-                              .load(std::memory_order_relaxed)));
-        auto e_xfail =
-            add_entry(":remove-child-failure",
-                      cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                             aura::ast::mutators::StrategyKind::RemoveChild)]
-                              .load(std::memory_order_relaxed)));
+            auto e_rsucc =
+                add_entry(":replace-child-success",
+                          cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::ReplaceChild)]
+                                  .load(std::memory_order_relaxed)));
+            auto e_isucc =
+                add_entry(":insert-child-success",
+                          cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::InsertChild)]
+                                  .load(std::memory_order_relaxed)));
+            auto e_xsucc =
+                add_entry(":remove-child-success",
+                          cvt(s.kind_success[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::RemoveChild)]
+                                  .load(std::memory_order_relaxed)));
+            auto e_rfail =
+                add_entry(":replace-child-failure",
+                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::ReplaceChild)]
+                                  .load(std::memory_order_relaxed)));
+            auto e_ifail =
+                add_entry(":insert-child-failure",
+                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::InsertChild)]
+                                  .load(std::memory_order_relaxed)));
+            auto e_xfail =
+                add_entry(":remove-child-failure",
+                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
+                                                 aura::ast::mutators::StrategyKind::RemoveChild)]
+                                  .load(std::memory_order_relaxed)));
 
-        // Cons them onto the result list (in reverse so the head is :total).
-        std::uint64_t entries[] = {e_xfail, e_ifail, e_rfail, e_xsucc, e_isucc, e_rsucc,
-                                   e_nsucc, e_fail,  e_anam,  e_aknd,  e_amut,  e_total};
-        for (auto eid : entries)
-            cons(eid);
-        return result;
-    });
+            // Cons them onto the result list (in reverse so the head is :total).
+            std::uint64_t entries[] = {e_xfail, e_ifail, e_rfail, e_xsucc, e_isucc, e_rsucc,
+                                       e_nsucc, e_fail,  e_anam,  e_aknd,  e_amut,  e_total};
+            for (auto eid : entries)
+                cons(eid);
+            return result;
+        });
 }
 
 // Issue #909 compile part 54 (orig 4488-4558)

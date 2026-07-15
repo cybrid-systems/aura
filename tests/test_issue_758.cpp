@@ -138,15 +138,17 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
               aura::compiler::types::is_hash(
                   *cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")")),
           "query:envframe-dualpath-policy-stats hash regression (#756)");
-    CHECK(cs.eval("(query:macro-hygiene-provenance-stats)") &&
-              aura::compiler::types::is_hash(*cs.eval("(query:macro-hygiene-provenance-stats)")),
+    CHECK(cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")") &&
+              aura::compiler::types::is_hash(
+                  *cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")")),
           "query:macro-hygiene-provenance-stats hash regression (#757)");
     CHECK(hash_int_field(cs, "(engine:metrics \"query:macro-provenance-stats\")", "schema") == 735,
           "macro-provenance schema 735");
     CHECK(hash_int_field(cs, "(engine:metrics \"query:envframe-dualpath-policy-stats\")",
                          "schema") == 756,
           "envframe-policy schema 756");
-    CHECK(hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema") == 757,
+    CHECK(hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")",
+                         "schema") == 757,
           "macro-hygiene-provenance schema 757");
 }
 

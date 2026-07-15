@@ -126,7 +126,7 @@ static void run_ac4_schema_669(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_stats_shape(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: query:primitives-meta-stats reachable with 4+ fields ---");
-    auto r = cs.eval("(query:primitives-meta-stats)");
+    auto r = cs.eval("(engine:metrics \"query:primitives-meta-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r), "query:primitives-meta-stats returns a hash");
     const std::vector<std::string> keys = {"meta-hits", "documented-count", "schema-documented",
                                            "total-registered", "schema"};

@@ -56,7 +56,7 @@ int main() {
     // AC1: query:primitives-ai-native-stats returns hash with #587 fields
     {
         std::println("\n--- AC1: query:primitives-ai-native-stats ---");
-        auto stats = cs.eval("(query:primitives-ai-native-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-ai-native-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-ai-native-stats returns hash");
         CHECK(hash_int(cs, "registry-slots") > 0, "registry-slots > 0");
@@ -121,9 +121,9 @@ int main() {
     {
         std::println("\n--- AC4: regression ---");
         auto metadata = cs.eval("(query:primitive-metadata)");
-        auto meta_stats = cs.eval("(query:primitive-meta-stats)");
+        auto meta_stats = cs.eval("(engine:metrics \"query:primitive-meta-stats\")");
         auto catalog = cs.eval("(query:primitives-meta-catalog)");
-        auto extension = cs.eval("(query:primitives-extension-stats)");
+        auto extension = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
         CHECK(metadata && aura::compiler::types::is_hash(*metadata),
               "query:primitive-metadata hash regression (#498)");
         CHECK(meta_stats && aura::compiler::types::is_int(*meta_stats),

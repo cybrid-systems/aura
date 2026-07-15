@@ -12,7 +12,7 @@
 //      (strategy:set-strategy name).
 //   2. Per-strategy pheromone counters (hits, successes) +
 //      escalation counter in CompilerMetrics.
-//   3. (query:strategy-evolution-stats) — 8-field hash
+//   3. (engine:metrics \"query:strategy-evolution-stats\") — 8-field hash
 //      primitive exposing the strategy pheromone state.
 //   4. Strategy primitives: strategy:set-strategy,
 //      strategy:active, strategy:report-success,
@@ -40,7 +40,7 @@
 //   AC5:  strategy:escalate bumps the escalation counter
 //   AC6:  invalid strategy name → no-op (void)
 //   AC7:  query:strategy-evolution-stats returns 8 fields
-//   AC8:  (query:strategy-evolution-stats) idempotence
+//   AC8:  (engine:metrics \"query:strategy-evolution-stats\") idempotence
 //   AC9:  Stats:list includes the new primitive
 //   AC10: Stats:count >= 44 (was 43 in #440, now 44 in #444)
 //   AC11: Synthetic coverage curve — set 3 strategies,

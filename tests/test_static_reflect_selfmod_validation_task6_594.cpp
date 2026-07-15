@@ -34,7 +34,7 @@ using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
 
 static std::int64_t selfmod_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:reflection-selfmod-stats)");
+    auto r = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -99,8 +99,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "selfmod stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto rps = cs.eval("(query:reflect-postmutate-stats)");
-    auto rbs = cs.eval("(query:reflect-edsl-bridge-stats)");
+    auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
+    auto rbs = cs.eval("(engine:metrics \"query:reflect-edsl-bridge-stats\")");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(rbs && is_int(*rbs), "reflect-edsl-bridge-stats regression");
 }

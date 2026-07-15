@@ -47,7 +47,8 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:per-fiber-stack-pool-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:per-fiber-stack-pool-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -65,7 +66,7 @@ static std::int64_t stats_sum(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:per-fiber-stack-pool-stats (schema 652) ---");
-    auto h = cs.eval("(query:per-fiber-stack-pool-stats)");
+    auto h = cs.eval("(engine:metrics \"query:per-fiber-stack-pool-stats\")");
     CHECK(h && is_hash(*h), "per-fiber-stack-pool-stats returns hash");
     CHECK(hash_int(cs, "schema") == 652, "schema == 652");
     CHECK(hash_int(cs, "pool-hits") >= 0, "pool-hits present");
@@ -174,8 +175,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "pool stats monotonic over extra wave");
 
     std::println("\n--- AC7: query regression ---");
-    auto steal = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
-    auto panic = cs.eval("(query:panic-checkpoint-fiber-stats)");
+    auto steal = cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
+    auto panic = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
     CHECK(steal && is_hash(*steal), "scheduler-stealbudget-adaptive-stats regression");
     CHECK(panic && is_hash(*panic), "panic-checkpoint-fiber-stats regression");
 }

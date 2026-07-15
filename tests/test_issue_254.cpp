@@ -15,7 +15,7 @@
 //    dual-emit is enabled. set_cur_function() mirrors the
 //    AoS function creation into the SoA module.
 // 3. enable_soa_dual_emit() resets the counters + V2 module.
-// 4. Observability: (compile:ir-soa-stats) Aura primitive
+// 4. Observability: (engine:metrics \"compile:ir-soa-stats\") Aura primitive
 //    returns a hash with instructions-emitted +
 //    functions-emitted counts.
 //
@@ -27,7 +27,7 @@
 //
 // Test cases:
 //   AC1: counters start at 0 on a fresh CompilerService
-//   AC2: (compile:ir-soa-stats) primitive returns a hash
+//   AC2: (engine:metrics \"compile:ir-soa-stats\") primitive returns a hash
 //        (counters are queryable via Aura API)
 //   AC3: LoweringState::enable_soa_dual_emit() works
 //        (flag flips, counters reset)
@@ -98,9 +98,10 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:ir-soa-stats) primitive returns a hash ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"compile:ir-soa-stats\") primitive returns a hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:ir-soa-stats))\")");
+    auto r1 = cs.eval("(set-code \"(define h (engine:metrics \"compile:ir-soa-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -119,14 +120,14 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:ir-soa-stats) returns a hash (hash? is #t)");
+    CHECK(true, "(engine:metrics \"compile:ir-soa-stats\") returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
     if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:ir-soa-stats) is not a pair (pair? is #f)");
+    CHECK(true, "(engine:metrics \"compile:ir-soa-stats\") is not a pair (pair? is #f)");
     return true;
 }
 

@@ -49,7 +49,7 @@ static bool load_workspace(CompilerService& cs) {
 }
 
 static std::int64_t occurrence_blame_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:occurrence-blame-stats)");
+    auto r = cs.eval("(engine:metrics \"query:occurrence-blame-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -156,8 +156,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats8b >= stats8a, "occurrence-blame-stats monotonic over matrix");
 
     std::println("\n--- AC9: query regression ---");
-    auto ons = cs.eval("(query:occurrence-narrow-stats)");
-    auto nbs = cs.eval("(query:narrow-blame-stats)");
+    auto ons = cs.eval("(engine:metrics \"query:occurrence-narrow-stats\")");
+    auto nbs = cs.eval("(engine:metrics \"query:narrow-blame-stats\")");
     CHECK(ons && is_int(*ons), "query:occurrence-narrow-stats returns int");
     CHECK(nbs && is_int(*nbs), "query:narrow-blame-stats returns int");
 

@@ -78,7 +78,7 @@ int aura_issue_679_run() {
     // AC3: query:nested-guard-atomic-stats hash
     {
         std::println("\n--- AC3: query:nested-guard-atomic-stats ---");
-        auto stats = cs.eval("(query:nested-guard-atomic-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:nested-guard-atomic-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:nested-guard-atomic-stats returns hash");
         CHECK(stat_int(cs, "nested-depth-max") >= 2, "nested-depth-max present");

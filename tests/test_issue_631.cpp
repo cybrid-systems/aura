@@ -12,12 +12,12 @@
 // both CompilerMetrics and FlatAST (added by #313/#368/#620).
 // Pre-existing primitives:
 //   - (query:stable-ref-provenance) (#620) — per-ref 9-field
-//   - (query:stable-ref-stats-hash) (#457) — lifetime 10-field
-//   - (query:stable-ref-lifecycle-stats) (#497) — lifecycle
-//   - (query:stable-ref-cow-fiber-stats) — fiber stats
-//   - (query:stable-ref-workspace-tree-stats) — workspace stats
-//   - (query:fiber-migration-stats) (#438) — fiber migration
-//   - (query:scheduler-mutation-coord-stats) (#618) — coord stats
+//   - (engine:metrics \"query:stable-ref-stats-hash\") (#457) — lifetime 10-field
+//   - (engine:metrics \"query:stable-ref-lifecycle-stats\") (#497) — lifecycle
+//   - (engine:metrics \"query:stable-ref-cow-fiber-stats\") — fiber stats
+//   - (engine:metrics \"query:stable-ref-workspace-tree-stats\") — workspace stats
+//   - (engine:metrics \"query:fiber-migration-stats\") (#438) — fiber migration
+//   - (engine:metrics \"query:scheduler-mutation-coord-stats\") (#618) — coord stats
 //
 // What the issue body AC3 specifies by **exact name + fields** —
 // `query:stable-ref-provenance-sv-stats` with
@@ -80,8 +80,9 @@ int aura_issue_631_run() {
 
     // AC1: hash returns a hash with the documented fields (5).
     {
-        std::println("\n--- AC1: (query:stable-ref-provenance-sv-stats-hash) shape ---");
-        auto h = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:stable-ref-provenance-sv-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "stable-ref-provenance-sv-stats-hash returns a hash");
         const auto cross = hash_int(cs, "cross-fiber-violations");
@@ -114,14 +115,15 @@ int aura_issue_631_run() {
         // is not removed/regressed.
         auto s_prov = cs.eval("(query:stable-ref-provenance 0)");
         CHECK(s_prov.has_value(), "(query:stable-ref-provenance) reachable (#620 back-compat)");
-        auto s_stat = cs.eval("(query:stable-ref-stats-hash)");
+        auto s_stat = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
         CHECK(s_stat && aura::compiler::types::is_hash(*s_stat),
-              "(query:stable-ref-stats-hash) returns a hash (#457 back-compat)");
-        auto s_life = cs.eval("(query:stable-ref-lifecycle-stats)");
+              "(engine:metrics \"query:stable-ref-stats-hash\") returns a hash (#457 back-compat)");
+        auto s_life = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
         CHECK(s_life.has_value(),
-              "(query:stable-ref-lifecycle-stats) reachable (#497 back-compat)");
-        auto s_mig = cs.eval("(query:fiber-migration-stats)");
-        CHECK(s_mig.has_value(), "(query:fiber-migration-stats) reachable (#438 back-compat)");
+              "(engine:metrics \"query:stable-ref-lifecycle-stats\") reachable (#497 back-compat)");
+        auto s_mig = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+        CHECK(s_mig.has_value(),
+              "(engine:metrics \"query:fiber-migration-stats\") reachable (#438 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -152,7 +154,7 @@ int aura_issue_631_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

@@ -147,7 +147,7 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #697 + #712 surfaces unaffected ---");
-    auto ext = cs.eval("(query:primitives-extension-stats)");
+    auto ext = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
     auto reflect = cs.eval("(engine:metrics \"query:macro-reflect-validation-stats\")");
     CHECK(ext && aura::compiler::types::is_hash(*ext),
           "query:primitives-extension-stats hash regression (#697)");

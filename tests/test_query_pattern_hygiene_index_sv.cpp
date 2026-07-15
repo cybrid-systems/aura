@@ -263,9 +263,9 @@ bool test_regression_existing_primitives() {
     auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:pattern-hygiene-stats\") (new for #547)");
-    auto r3 = cs.eval("(query:query-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:query-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:query-stats) (regression for #447)");
+          "(engine:metrics \"query:query-stats\") (regression for #447)");
     auto r4 = cs.eval("(query:tag-arity-count 32 0)");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(query:tag-arity-count) (regression for #447)");

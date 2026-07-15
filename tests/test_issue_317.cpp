@@ -86,7 +86,7 @@ void check_local_(bool cond, const char* msg, int line) {
 //     BitVector type side-table from #308, NOT for #317
 //   (query:def-use "Bus") — the AC we're testing
 //   (query:build-index) — force the DefUseIndex to build
-//   (query:index-stats) — see the size + rebuilds
+//   (engine:metrics \"query:index-stats\") — see the size + rebuilds
 //
 // To exercise the Scope-creator switch path we need an
 // Interface NodeId in the workspace. Since the parser may
@@ -144,15 +144,16 @@ bool test_index_rebuilds_after_mutation() {
     compiler::CompilerService cs;
     build_workspace_with_interface_ref(cs);
     cs.eval("(query:build-index)");
-    auto stats1_r = cs.eval("(query:index-stats)");
-    CHECK(stats1_r.has_value(), "(query:index-stats) runs after first build");
+    auto stats1_r = cs.eval("(engine:metrics \"query:index-stats\")");
+    CHECK(stats1_r.has_value(), "(engine:metrics \"query:index-stats\") runs after first build");
     // Mutate: replace the workspace code (this fires a
     // rebuild next time the index is touched).
     cs.set_code("(begin "
                 "  (define Bus_var 'v2) "
                 "  (define data 'v2))");
-    auto stats2_r = cs.eval("(query:index-stats)");
-    CHECK(stats2_r.has_value(), "(query:index-stats) runs after second build (rebuild happened)");
+    auto stats2_r = cs.eval("(engine:metrics \"query:index-stats\")");
+    CHECK(stats2_r.has_value(),
+          "(engine:metrics \"query:index-stats\") runs after second build (rebuild happened)");
     // query:def-use should still be responsive.
     auto def_r = cs.eval("(query:def-use \"Bus_var\")");
     CHECK(def_r.has_value(), "(query:def-use \"Bus_var\") works after workspace mutation");
@@ -167,7 +168,7 @@ bool test_index_rebuilds_after_mutation() {
 //
 // Direct test: build a 2-level hierarchy (root → Interface →
 // Modport) via the new add_interface / add_modport builders
-// from #311, then run (query:index-stats) on an
+// from #311, then run (engine:metrics \"query:index-stats\") on an
 // appropriately-set workspace. The scope count should be > 0
 // (Interface creates its own scope per #317) and a (query:
 // def-use "InterfaceName") should return the Interface node
@@ -184,8 +185,9 @@ bool test_interface_creates_scope() {
     cs.set_code("(begin "
                 "  (define Bus_var 'interface-mark) "
                 "  (define Bus (the (struct (data valid)) 'placeholder)))");
-    auto stats_r = cs.eval("(query:index-stats)");
-    CHECK(stats_r.has_value(), "(query:index-stats) runs on workspace with named definitions");
+    auto stats_r = cs.eval("(engine:metrics \"query:index-stats\")");
+    CHECK(stats_r.has_value(),
+          "(engine:metrics \"query:index-stats\") runs on workspace with named definitions");
     auto def_r = cs.eval("(query:def-use \"Bus\")");
     CHECK(def_r.has_value(), "(query:def-use \"Bus\") runs on the Bus symbol");
     // Confirm the Aura primitive flow doesn't error or

@@ -1,6 +1,6 @@
 # Primitives Surface Refactor — Minimal Public API + Progressive Delivery
 
-> **Status**: in progress — **P0b–P2b + P3 surface + P4 s0 CI landed**  
+> **Status**: in progress — **P0b–P4 + P5a/#1439 public stats removal landed**  
 > **Supersedes / extends**: [#558–#566 demotion epic](primitives-demotion-batch1.md),  
 > [primitive-vs-stdlib-decision-framework.md](primitive-vs-stdlib-decision-framework.md),  
 > [query-namespace-decision.md](query-namespace-decision.md),  
@@ -19,6 +19,8 @@
 > - P2b: s0 skips bulk eval/jit observability; registers `register_metrics_facade` only  
 > - P3: `lib/std/surface.aura` re-exports string/json/math convenience; `tests/suite/stdlib_surface.aura`  
 > - P4: `./build.py suite-s0` + CI job `s0-smoke` (curated SUITE_S0_FILES under `AURA_PRIMITIVES=s0`)  
+> - **P5a/#1439 (v2.0-prep)**: `query:`/`compile:*-stats` removed from **public** `Primitives` / `(api-reference)`; impls live in `ObservabilityPrims::register_stats_impl`; callers use `(engine:metrics "…")`. Migration: [migration-stats-to-metrics.md](../migration-stats-to-metrics.md)  
+> - **P5b/#1440**: gen_docs taxonomy fixed (convenience 170→~8); hot-path string/vector/json/hash/math reclassified **core** (stdlib composes on them); `lib/std/json` stringify fixed. Full delete of `string-append` class **blocked** by red-line #3 — see [CHANGELOG-v2.0-prep.md](../CHANGELOG-v2.0-prep.md)  
 > - baseline `docs/generated/stats-primitives-baseline.json`
 
 ---

@@ -33,7 +33,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t prod_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:compiler-runtime-production-readiness-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-runtime-production-readiness-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -46,16 +46,16 @@ static void run_matrix(CompilerService& cs) {
     CHECK(s0 >= 0, "consolidated stats non-negative");
 
     std::println("\n--- AC2: P0 #438 fiber-migration pillar ---");
-    auto fms = cs.eval("(query:fiber-migration-stats)");
+    auto fms = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(fms && is_int(*fms), "query:fiber-migration-stats returns int");
     const auto fiber0 = as_int(*fms);
     std::println("  fiber-migration-stats = {}", fiber0);
 
     std::println("\n--- AC3: P0 #439 gc-safepoint pillar ---");
-    const auto gc0 = cs.eval("(query:gc-safepoint-stats)");
+    const auto gc0 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc0 && is_int(*gc0), "query:gc-safepoint-stats returns int");
     (void)cs.eval("(mutate:request-gc-safepoint 50)");
-    const auto gc1 = cs.eval("(query:gc-safepoint-stats)");
+    const auto gc1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc1 && is_int(*gc1), "gc-safepoint-stats after request");
     CHECK(as_int(*gc1) > as_int(*gc0),
           "gc-safepoint-stats bumped after mutate:request-gc-safepoint");
@@ -68,14 +68,14 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(mutate:rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     CHECK(impact1 > impact0, "mutation_impact bumped after Guard mutate");
-    auto eds = cs.eval("(query:edsl-stability-stats)");
+    auto eds = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     CHECK(eds && is_int(*eds), "query:edsl-stability-stats returns int");
 
     std::println("\n--- AC5: P0 #437 EDA verify-dirty pillar ---");
-    auto vds = cs.eval("(query:verify-dirty-stats)");
+    auto vds = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(vds && is_int(*vds), "query:verify-dirty-stats returns int");
     (void)cs.eval("(verify:assertion-failed 0)");
-    auto vds1 = cs.eval("(query:verify-dirty-stats)");
+    auto vds1 = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(vds1 && is_int(*vds1), "verify-dirty-stats after assertion-failed");
 
     std::println("\n--- AC6: multi-round self-evo cycle ---");
@@ -91,10 +91,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "consolidated stats monotonic");
 
     std::println("\n--- AC7: query regression ---");
-    auto fms_r = cs.eval("(query:fiber-migration-stats)");
-    auto gcs_r = cs.eval("(query:gc-safepoint-stats)");
-    auto eds_r = cs.eval("(query:edsl-stability-stats)");
-    auto vds_r = cs.eval("(query:verify-dirty-stats)");
+    auto fms_r = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+    auto gcs_r = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
+    auto eds_r = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
+    auto vds_r = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(fms_r && is_int(*fms_r), "fiber-migration-stats regression");
     CHECK(gcs_r && is_int(*gcs_r), "gc-safepoint-stats regression");
     CHECK(eds_r && is_int(*eds_r), "edsl-stability-stats regression");

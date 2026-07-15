@@ -147,9 +147,10 @@ static void run_ac1_subtree_api() {
 
 static void run_ac2_fidelity_primitive(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: (query:type-incremental-fidelity-stats, schema 798) reachable ---");
-    auto r = cs.eval("(query:type-incremental-fidelity-stats)");
+    auto r = cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:type-incremental-fidelity-stats) returns a hash (#798 ship, items 2/3 metrics)");
+          "(engine:metrics \"query:type-incremental-fidelity-stats\") returns a hash (#798 ship, "
+          "items 2/3 metrics)");
     const std::vector<std::string> keys = {"cross-delta-blame-complete",
                                            "reverify-truncated-under-guard", "epoch-sync-hits",
                                            "blame-chain-length", "schema"};
@@ -158,7 +159,8 @@ static void run_ac2_fidelity_primitive(aura::compiler::CompilerService& cs) {
             "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
-    const auto schema = hash_int_field(cs, "(query:type-incremental-fidelity-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")", "schema");
     CHECK(schema == 798,
           std::format("schema = {} (expected 798, #798 primitive ship confirmed)", schema));
 }
@@ -166,9 +168,10 @@ static void run_ac2_fidelity_primitive(aura::compiler::CompilerService& cs) {
 static void run_ac3_reverify_occurrence_primitive(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC3: (query:constraint-reverify-occurrence-stats, schema 745) reachable ---");
-    auto r = cs.eval("(query:constraint-reverify-occurrence-stats)");
+    auto r = cs.eval("(engine:metrics \"query:constraint-reverify-occurrence-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:constraint-reverify-occurrence-stats) returns a hash (#745 ship, item 2)");
+          "(engine:metrics \"query:constraint-reverify-occurrence-stats\") returns a hash (#745 "
+          "ship, item 2)");
     const std::vector<std::string> keys = {"reverify-hits-on-narrow", "cross-delta-blame-complete",
                                            "timeout-prevented", "stale-blame-invalidation",
                                            "schema"};
@@ -177,8 +180,8 @@ static void run_ac3_reverify_occurrence_primitive(aura::compiler::CompilerServic
             "(hash-ref (engine:metrics \"query:constraint-reverify-occurrence-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
-    const auto schema =
-        hash_int_field(cs, "(query:constraint-reverify-occurrence-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:constraint-reverify-occurrence-stats\")", "schema");
     CHECK(schema == 745,
           std::format("schema = {} (expected 745, #745 primitive ship confirmed)", schema));
 }
@@ -198,21 +201,24 @@ static void run_ac4_no_truncation(aura::compiler::CompilerService& cs) {
     cs.eval(std::format("(set-code \"{}\")", src));
     cs.eval("(eval-current)");
     // Get baseline truncation counter
-    const auto trunc_before = hash_int_field(cs, "(query:type-incremental-fidelity-stats)",
-                                             "reverify-truncated-under-guard");
+    const auto trunc_before =
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")",
+                       "reverify-truncated-under-guard");
     // Heavy mutate
     cs.eval("(mutate:rebind \"deep-fn\" \"(lambda (x) 42)\" \"issue-770\")");
     cs.eval("(eval-current)");
     // Truncation should NOT have grown
-    const auto trunc_after = hash_int_field(cs, "(query:type-incremental-fidelity-stats)",
-                                            "reverify-truncated-under-guard");
+    const auto trunc_after =
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")",
+                       "reverify-truncated-under-guard");
     CHECK(trunc_after >= trunc_before,
           std::format("reverify-truncated-under-guard did not regress ({} → {} after heavy nested "
                       "mutate)",
                       trunc_before, trunc_after));
     // Cross-delta-blame should be reachable (>=0)
     const auto blame =
-        hash_int_field(cs, "(query:type-incremental-fidelity-stats)", "cross-delta-blame-complete");
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")",
+                       "cross-delta-blame-complete");
     CHECK(
         blame >= 0,
         std::format("cross-delta-blame-complete = {} (>=0, #798 fidelity primitive ships)", blame));
@@ -221,24 +227,26 @@ static void run_ac4_no_truncation(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #798/#745/#766/#767/#768 sibling primitives "
                  "unaffected ---");
-    auto shape_pass_hotpath = cs.eval("(query:shape-pass-hotpath-stats)");
+    auto shape_pass_hotpath = cs.eval("(engine:metrics \"query:shape-pass-hotpath-stats\")");
     auto arena_defrag_fiber =
         cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(shape_pass_hotpath && aura::compiler::types::is_hash(*shape_pass_hotpath),
           "query:shape-pass-hotpath-stats hash regression (#768)");
     CHECK(arena_defrag_fiber && aura::compiler::types::is_hash(*arena_defrag_fiber),
           "query:arena-auto-compact-defrag-fiber-stats hash regression (#767)");
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
-    const auto a768_schema = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "schema");
+    const auto a768_schema =
+        hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")", "schema");
     CHECK(a768_schema == 768,
           std::format("#768 schema = {} (expected 768, no drift)", a768_schema));
     const auto a767_schema = hash_int_field(
         cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
 }

@@ -12,13 +12,13 @@
 // via counters in src/compiler/pass_manager.ixx + CompilerMetrics
 // + ShapeWrap/LinearOwnershipWrap (added by #494 / #606 / #406 /
 // #686). Pre-existing primitives:
-//   - (query:pass-pipeline-stats) (#494/#606) — 10-field structured
+//   - (engine:metrics \"query:pass-pipeline-stats\") (#494/#606) — 10-field structured
 //     hash with pipeline-yield-count / passes-skipped-dirty /
 //     passes-skipped-type-dirty / relower-skipped / relower-per-fn
 //     / module-dirty-skips / pipeline-total / pure-delegation-shape
 //     / pure-delegation-linear / pure-delegation-total
-//   - (query:pass-contracts-stats) (#406) — int-sum of 7 counters
-//   - (query:soa-dirty-stats) (#600) — 8-field live SoA dirty view
+//   - (engine:metrics \"query:pass-contracts-stats\") (#406) — int-sum of 7 counters
+//   - (engine:metrics \"query:soa-dirty-stats\") (#600) — 8-field live SoA dirty view
 //   - ShapeWrap::pure_delegation_hits() /
 //     LinearOwnershipWrap::pure_delegation_hits()
 //   - Pass / AnalysisPass concepts (requires {p.run(m)} -> void)
@@ -85,8 +85,9 @@ int aura_issue_625_run() {
 
     // AC1: hash returns a hash with 6 fields (5 fields + schema).
     {
-        std::println("\n--- AC1: (query:pass-pipeline-incremental-stats-hash) shape ---");
-        auto h = cs.eval("(query:pass-pipeline-incremental-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:pass-pipeline-incremental-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:pass-pipeline-incremental-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "pass-pipeline-incremental-stats-hash returns a hash");
         const auto passes_run = hash_int(cs, "passes-run");
@@ -108,14 +109,16 @@ int aura_issue_625_run() {
     // reachable (back-compat — #625 doesn't disturb them).
     {
         std::println("\n--- AC2: existing pass primitives back-compat ---");
-        auto s_pipe = cs.eval("(query:pass-pipeline-stats)");
+        auto s_pipe = cs.eval("(engine:metrics \"query:pass-pipeline-stats\")");
         CHECK(s_pipe && aura::compiler::types::is_hash(*s_pipe),
-              "(query:pass-pipeline-stats) returns a hash (#494/#606 back-compat)");
-        auto s_cont = cs.eval("(query:pass-contracts-stats)");
+              "(engine:metrics \"query:pass-pipeline-stats\") returns a hash (#494/#606 "
+              "back-compat)");
+        auto s_cont = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
         CHECK(s_cont && aura::compiler::types::is_int(*s_cont),
-              "(query:pass-contracts-stats) returns an int (#406 back-compat)");
-        auto s_soa = cs.eval("(query:soa-dirty-stats)");
-        CHECK(s_soa.has_value(), "(query:soa-dirty-stats) reachable (#600 back-compat)");
+              "(engine:metrics \"query:pass-contracts-stats\") returns an int (#406 back-compat)");
+        auto s_soa = cs.eval("(engine:metrics \"query:soa-dirty-stats\")");
+        CHECK(s_soa.has_value(),
+              "(engine:metrics \"query:soa-dirty-stats\") reachable (#600 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh CompilerService.
@@ -154,7 +157,7 @@ int aura_issue_625_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:pass-pipeline-incremental-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:pass-pipeline-incremental-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

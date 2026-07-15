@@ -30,7 +30,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t loc_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:primitives-contract-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:primitives-contract-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -47,7 +48,7 @@ static std::int64_t stats_sum(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:primitives-contract-stats (schema 751) ---");
-    auto h = cs.eval("(query:primitives-contract-stats)");
+    auto h = cs.eval("(engine:metrics \"query:primitives-contract-stats\")");
     CHECK(h && is_hash(*h), "primitives-contract-stats returns hash");
     CHECK(loc_hash(cs, "schema") == 751, "schema == 751");
     CHECK(loc_hash(cs, "capture-violations") >= 0, "capture-violations present");
@@ -90,9 +91,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "stats monotonic over error+probe matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto consistency = cs.eval("(query:primitives-consistency-stats)");
-    auto errors = cs.eval("(query:primitives-error-stats)");
-    auto registry = cs.eval("(query:primitives-registry-stats)");
+    auto consistency = cs.eval("(engine:metrics \"query:primitives-consistency-stats\")");
+    auto errors = cs.eval("(engine:metrics \"query:primitives-error-stats\")");
+    auto registry = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
     CHECK(consistency && is_hash(*consistency), "primitives-consistency-stats regression");
     CHECK(errors && is_hash(*errors), "primitives-error-stats regression");
     CHECK(registry && is_hash(*registry), "primitives-registry-stats regression");

@@ -37,7 +37,7 @@ namespace aura_issue_439_detail {
 bool test_query_gc_safepoint_stats() {
     std::println("\n--- AC1: query:gc-safepoint-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:gc-safepoint-stats)");
+    auto r = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -68,7 +68,7 @@ bool test_request_gc_safepoint_no_guard() {
 bool test_request_gc_safepoint_with_timeout() {
     std::println("\n--- AC3: mutate:request-gc-safepoint with timeout ---");
     aura::compiler::CompilerService cs;
-    auto r_before = cs.eval("(query:gc-safepoint-stats)");
+    auto r_before = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     if (!r_before) {
         ++g_failed;
         return false;
@@ -79,7 +79,7 @@ bool test_request_gc_safepoint_with_timeout() {
         ++g_failed;
         return false;
     }
-    auto r_after = cs.eval("(query:gc-safepoint-stats)");
+    auto r_after = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     if (!r_after) {
         ++g_failed;
         return false;
@@ -93,7 +93,7 @@ bool test_request_gc_safepoint_with_timeout() {
 bool test_counter_monotonicity() {
     std::println("\n--- AC4: counter monotonicity ---");
     aura::compiler::CompilerService cs;
-    auto r0 = cs.eval("(query:gc-safepoint-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
@@ -103,7 +103,7 @@ bool test_counter_monotonicity() {
         ++g_failed;
         return false;
     }
-    auto r1 = cs.eval("(query:gc-safepoint-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     if (!r1) {
         ++g_failed;
         return false;
@@ -128,13 +128,13 @@ bool test_c_linkage_shim() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC6: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:fiber-migration-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:fiber-migration-stats (regression for #438)");
-    auto r2 = cs.eval("(query:query-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:query-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:query-stats (regression for #447)");
-    auto r3 = cs.eval("(query:mutation-coordination-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:mutation-coordination-stats (regression for #448)");
     return true;

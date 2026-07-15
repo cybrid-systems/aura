@@ -52,7 +52,7 @@ int main() {
     // AC1: query:scheduler-mutation-coord-stats returns hash with #591 fields
     {
         std::println("\n--- AC1: query:scheduler-mutation-coord-stats ---");
-        auto stats = cs.eval("(query:scheduler-mutation-coord-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:scheduler-mutation-coord-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:scheduler-mutation-coord-stats returns hash");
         CHECK(hash_int(cs, "gc-pauses-attributed-to-mutation") >= 0,
@@ -107,9 +107,10 @@ int main() {
     // AC4: related scheduler/orchestration primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto work_steal = cs.eval("(query:work-steal-stats)");
-        auto multi = cs.eval("(query:multi-fiber-orchestration-stats)");
-        auto stealbudget = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
+        auto work_steal = cs.eval("(engine:metrics \"query:work-steal-stats\")");
+        auto multi = cs.eval("(engine:metrics \"query:multi-fiber-orchestration-stats\")");
+        auto stealbudget =
+            cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
         auto legacy = cs.eval("(query:orchestration-metrics)");
         CHECK(work_steal && aura::compiler::types::is_hash(*work_steal),
               "query:work-steal-stats hash regression (#500)");

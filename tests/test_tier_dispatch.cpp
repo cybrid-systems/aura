@@ -40,7 +40,7 @@ int main() {
 
     // query:prim-dispatch-stats
     {
-        auto s = cs.eval("(query:prim-dispatch-stats)");
+        auto s = cs.eval("(engine:metrics \"query:prim-dispatch-stats\")");
         CHECK(s && is_string(*s), "query:prim-dispatch-stats string");
     }
 
@@ -65,7 +65,7 @@ int main() {
         (void)cs.eval("(render-hotpath-enter)");
         (void)cs.eval("(+ 1 1)");
         (void)cs.eval("(render-hotpath-exit)");
-        auto s = cs.eval("(query:prim-dispatch-stats)");
+        auto s = cs.eval("(engine:metrics \"query:prim-dispatch-stats\")");
         CHECK(s && is_string(*s), "stats after render hotpath");
     }
 
@@ -91,7 +91,7 @@ int main() {
 
     // Hot meta count matches or is >= table size (set_meta may lag until finalize)
     {
-        auto s = cs.eval("(query:prim-dispatch-stats)");
+        auto s = cs.eval("(engine:metrics \"query:prim-dispatch-stats\")");
         CHECK(s && is_string(*s), "stats final");
         // Ensure finalize left coherent size
         CHECK(ival(cs, "(prim-hot-table-size)") ==

@@ -24,7 +24,7 @@
 // (3) on_compact_hook_ Shape/Dirty integration (invoke hook to
 // invalidate ShapeProfiler versions + cascade dirty_ in affected
 // IR/FlatAST blocks; wire to mutation_epoch_ bump), (4) enhance
-// (query:arena-auto-compact-stats) returning (auto_compact_triggers,
+// (engine:metrics \"query:arena-auto-compact-stats\") returning (auto_compact_triggers,
 // frag_reduced_bp, live_defrag_savings, fiber_yield_during_compact,
 // shape_inval_count, defrag_blocked_fibers) — we ship a NEW
 // primitive (query:arena-auto-compact-defrag-fiber-stats, schema 767)
@@ -217,9 +217,9 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #685 + #642 sibling primitives unaffected ---");
-    auto arena_auto_compact = cs.eval("(query:arena-auto-compact-stats)");
-    auto arena_auto_compaction = cs.eval("(query:arena-auto-compaction-stats)");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto arena_auto_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+    auto arena_auto_compaction = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(arena_auto_compact && aura::compiler::types::is_hash(*arena_auto_compact),
           "query:arena-auto-compact-stats hash regression (#685)");
     CHECK(arena_auto_compaction && aura::compiler::types::is_hash(*arena_auto_compaction),
@@ -227,15 +227,17 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
     // Verify #685's existing fields are still reachable (>= 0)
-    const auto a685_auto = hash_int_field(cs, "(query:arena-auto-compact-stats)", "auto-triggers");
+    const auto a685_auto =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-stats\")", "auto-triggers");
     CHECK(a685_auto >= 0,
           std::format("#685 auto-triggers = {} (expected >= 0, no regression)", a685_auto));
-    const auto a685_yield =
-        hash_int_field(cs, "(query:arena-auto-compact-stats)", "yield-checks-hit");
+    const auto a685_yield = hash_int_field(
+        cs, "(engine:metrics \"query:arena-auto-compact-stats\")", "yield-checks-hit");
     CHECK(a685_yield >= 0,
           std::format("#685 yield-checks-hit = {} (expected >= 0, no regression)", a685_yield));
     // Verify #642 schema sentinel is intact
-    const auto a642_schema = hash_int_field(cs, "(query:arena-auto-compaction-stats)", "schema");
+    const auto a642_schema =
+        hash_int_field(cs, "(engine:metrics \"query:arena-auto-compaction-stats\")", "schema");
     CHECK(a642_schema == 642,
           std::format("#642 schema = {} (expected 642, no drift)", a642_schema));
 }

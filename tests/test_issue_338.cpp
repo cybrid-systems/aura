@@ -26,7 +26,7 @@
 //   AC4: typecheck on (or (number? x) (number? x)) →
 //        join-uses bumps (the join helper fired in the
 //        or branch). The refined type stays Number.
-//   AC5: (compile:and-or-precision-stats) returns
+//   AC5: (engine:metrics \"compile:and-or-precision-stats\") returns
 //        2-key hash
 //   AC6: existing eval still works (regression)
 
@@ -122,9 +122,10 @@ bool test_or_with_matching_types_bumps_join() {
 }
 
 bool test_and_or_precision_stats_primitive() {
-    std::println("\n--- AC5: (compile:and-or-precision-stats) returns 2-key hash ---");
+    std::println(
+        "\n--- AC5: (engine:metrics \"compile:and-or-precision-stats\") returns 2-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define aops (compile:and-or-precision-stats))\")");
+    cs.eval("(set-code \"(define aops (engine:metrics \"compile:and-or-precision-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"meet-uses-total", "join-uses-total"}) {
         std::string check = std::string("(hash-ref aops \"") + key + "\")";

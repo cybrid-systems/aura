@@ -114,7 +114,8 @@ bool test_aura_add_with_node_id() {
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(begin (compile:per-defuse-index-add \\\"foo\\\" 999))\")");
     cs.eval("(eval-current)");
-    auto rst = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"total-size\")");
+    auto rst =
+        cs.eval("(hash-ref (engine:metrics \"compile:per-defuse-index-stats\") \"total-size\")");
     if (rst && aura::compiler::types::is_int(*rst)) {
         std::int64_t v = aura::compiler::types::as_int(*rst);
         CHECK_EQ(v, 1, "per-defuse-index-add with NodeId int -> total-size == 1");

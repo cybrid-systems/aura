@@ -49,7 +49,7 @@ int aura_issue_505_run() {
     // AC1: query:closure-env-safety-stats returns hash
     {
         std::println("\n--- AC1: query:closure-env-safety-stats ---");
-        auto stats = cs.eval("(query:closure-env-safety-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:closure-env-safety-stats returns hash");
     }
@@ -67,7 +67,7 @@ int aura_issue_505_run() {
         const auto bh1 = cs.get_bridge_epoch_hit_count();
         CHECK(sr1 >= sr0, std::format("stale_refresh non-decreasing ({} -> {})", sr0, sr1));
         CHECK(bh1 >= bh0, std::format("bridge_hit non-decreasing ({} -> {})", bh0, bh1));
-        auto stats = cs.eval("(query:closure-env-safety-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "closure-env-safety-stats hash after mutate");
     }
@@ -92,7 +92,7 @@ int aura_issue_505_run() {
         CHECK(cs.eval("(mutate:rebind \"a\" \"10\")").has_value(), "mutate:rebind under Guard");
         (void)cs.eval("(query:pattern \"a\")");
         (void)cs.eval("(f 42)");
-        auto stats = cs.eval("(query:closure-env-safety-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "closure-env-safety-stats hash after query cycle");
     }
@@ -104,7 +104,7 @@ int aura_issue_505_run() {
         CHECK(setup_closure_workspace(cs2), "fresh workspace for query-only path");
         const auto sr_q0 = cs2.get_closure_stale_refresh_count();
         (void)cs2.eval("(query:pattern \"a\")");
-        auto stats = cs2.eval("(query:closure-env-safety-stats)");
+        auto stats = cs2.eval("(engine:metrics \"query:closure-env-safety-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "closure-env-safety-stats hash on query-only path");
         CHECK(cs2.get_closure_stale_refresh_count() == sr_q0,

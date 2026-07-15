@@ -96,67 +96,68 @@ void ObservabilityPrims::register_eval_p64(PrimRegistrar add, Evaluator& ev) {
     //   - deopt-targeted-skips     deopt_targeted_skips_total
     //   - concept-violations-caught concept_violations_caught_total
     //   - schema == 768
-    add("query:shape-pass-hotpath-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        const std::int64_t contract_checks_hotpath =
-            m ? static_cast<std::int64_t>(
-                    m->shape_pass_contract_checks_hotpath_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t shape_stability_transitions =
-            m ? static_cast<std::int64_t>(
-                    m->shape_stability_transitions_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t jit_epoch_sync_hits =
-            m ? static_cast<std::int64_t>(
-                    m->jit_epoch_sync_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t deopt_targeted_skips =
-            m ? static_cast<std::int64_t>(
-                    m->deopt_targeted_skips_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t concept_violations_caught =
-            m ? static_cast<std::int64_t>(
-                    m->concept_violations_caught_total.load(std::memory_order_relaxed))
-              : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:shape-pass-hotpath-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            const std::int64_t contract_checks_hotpath =
+                m ? static_cast<std::int64_t>(
+                        m->shape_pass_contract_checks_hotpath_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t shape_stability_transitions =
+                m ? static_cast<std::int64_t>(
+                        m->shape_stability_transitions_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t jit_epoch_sync_hits =
+                m ? static_cast<std::int64_t>(
+                        m->jit_epoch_sync_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t deopt_targeted_skips =
+                m ? static_cast<std::int64_t>(
+                        m->deopt_targeted_skips_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t concept_violations_caught =
+                m ? static_cast<std::int64_t>(
+                        m->concept_violations_caught_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("contract-checks-hotpath", contract_checks_hotpath);
-        insert_kv("shape-stability-transitions", shape_stability_transitions);
-        insert_kv("jit-epoch-sync-hits", jit_epoch_sync_hits);
-        insert_kv("deopt-targeted-skips", deopt_targeted_skips);
-        insert_kv("concept-violations-caught", concept_violations_caught);
-        insert_kv("schema", 768);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("contract-checks-hotpath", contract_checks_hotpath);
+            insert_kv("shape-stability-transitions", shape_stability_transitions);
+            insert_kv("jit-epoch-sync-hits", jit_epoch_sync_hits);
+            insert_kv("deopt-targeted-skips", deopt_targeted_skips);
+            insert_kv("concept-violations-caught", concept_violations_caught);
+            insert_kv("schema", 768);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 65 (orig lines 7709-7777)
@@ -175,61 +176,62 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     //                                       stable_ref_fiber_workspace_mismatch_prevented_total
     //   - steal-auto-refresh-hits           stable_ref_steal_auto_refresh_total
     //   - schema == 818
-    add("query:stable-ref-cross-cow-provenance-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::int64_t provenance_enforced =
-            m ? static_cast<std::int64_t>(
-                    m->stable_ref_provenance_enforced_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t cross_cow_refresh =
-            m ? static_cast<std::int64_t>(
-                    m->stable_ref_cross_cow_refresh_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t fiber_ws_mismatch =
-            m ? static_cast<std::int64_t>(
-                    m->stable_ref_fiber_workspace_mismatch_prevented_total.load(
-                        std::memory_order_relaxed))
-              : 0;
-        const std::int64_t steal_auto_refresh =
-            m ? static_cast<std::int64_t>(
-                    m->stable_ref_steal_auto_refresh_total.load(std::memory_order_relaxed))
-              : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:stable-ref-cross-cow-provenance-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            const std::int64_t provenance_enforced =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_provenance_enforced_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cross_cow_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_cross_cow_refresh_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t fiber_ws_mismatch =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_fiber_workspace_mismatch_prevented_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t steal_auto_refresh =
+                m ? static_cast<std::int64_t>(
+                        m->stable_ref_steal_auto_refresh_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("provenance-enforced-hits", provenance_enforced);
-        insert_kv("cross-cow-refresh-hits", cross_cow_refresh);
-        insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
-        insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
-        insert_kv("schema", 818);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("provenance-enforced-hits", provenance_enforced);
+            insert_kv("cross-cow-refresh-hits", cross_cow_refresh);
+            insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
+            insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
+            insert_kv("schema", 818);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 66 (orig lines 7778-7901)
@@ -404,103 +406,105 @@ void ObservabilityPrims::register_eval_p67(PrimRegistrar add, Evaluator& ev) {
     //                                workspace_closedloop_stale_ref_
     //                                prevented_eda_loops_total
     //   - schema == 773
-    add("query:workspace-closedloop-fiber-eda-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #762 atomics for derived pct fields
-        const std::uint64_t cq_query_mutate_total =
-            m ? m->workspace_closedloop_concurrent_query_mutate_total.load(
-                    std::memory_order_relaxed)
-              : 0;
-        // For pct derivation we use the #762 cumulative counts as a
-        // baseline; if no failure counter exists, use cq_query_mutate_total
-        // as a proxy (valid rate defaults to 100% when no failures).
-        // This avoids introducing a NEW concurrent_query_mutate_failure
-        // atomic and keeps the primitive non-duplicative with #762.
-        // In practice, the failure count can be derived from
-        // (total_attempts - success_count) where attempts is sampled
-        // by another mechanism. For this primitive we use 100% as
-        // the success_pct baseline when only success is counted.
-        std::int64_t cq_success_pct = 10000; // 100.00% default
-        if (cq_query_mutate_total > 0) {
-            // Heuristic: if cq_query_mutate_total > 0, assume 99.00%
-            // success rate (matches the body SLO of closedloop_fidelity
-            // >99.5%). This is a derived estimate; production wiring
-            // will add explicit failure counters in the
-            // evaluator_workspace_tree + primitives code paths.
-            cq_success_pct = 9900; // 99.00% baseline
-        }
-        // For cross-cow-ref-validity-pct: derived from #762 valid
-        // counter, baseline 100% when zero.
-        const std::uint64_t cq_cross_cow_ref_valid_total =
-            m ? m->workspace_closedloop_cross_cow_ref_valid_total.load(std::memory_order_relaxed)
-              : 0;
-        std::int64_t cross_cow_ref_validity_pct = 10000; // 100.00% default
-        if (cq_cross_cow_ref_valid_total > 0) {
-            // Same heuristic as above — 99.00% validity baseline when
-            // accessed.
-            cross_cow_ref_validity_pct = 9900; // 99.00% baseline
-        }
-        // Reused #762 atomic
-        const std::int64_t yield_points_hit =
-            m ? static_cast<std::int64_t>(
-                    m->workspace_closedloop_yield_points_hit_total.load(std::memory_order_relaxed))
-              : 0;
-        // NEW #773 atomics
-        const std::int64_t shared_mutex_contention_ns =
-            m ? static_cast<std::int64_t>(
-                    m->workspace_closedloop_shared_mutex_contention_ns_total.load(
-                        std::memory_order_relaxed))
-              : 0;
-        const std::int64_t multi_agent_edit_fidelity =
-            m ? static_cast<std::int64_t>(
-                    m->workspace_closedloop_multi_agent_edit_fidelity_pct.load(
-                        std::memory_order_relaxed))
-              : 0;
-        const std::int64_t stale_ref_prevented =
-            m ? static_cast<std::int64_t>(
-                    m->workspace_closedloop_stale_ref_prevented_eda_loops_total.load(
-                        std::memory_order_relaxed))
-              : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:workspace-closedloop-fiber-eda-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #762 atomics for derived pct fields
+            const std::uint64_t cq_query_mutate_total =
+                m ? m->workspace_closedloop_concurrent_query_mutate_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            // For pct derivation we use the #762 cumulative counts as a
+            // baseline; if no failure counter exists, use cq_query_mutate_total
+            // as a proxy (valid rate defaults to 100% when no failures).
+            // This avoids introducing a NEW concurrent_query_mutate_failure
+            // atomic and keeps the primitive non-duplicative with #762.
+            // In practice, the failure count can be derived from
+            // (total_attempts - success_count) where attempts is sampled
+            // by another mechanism. For this primitive we use 100% as
+            // the success_pct baseline when only success is counted.
+            std::int64_t cq_success_pct = 10000; // 100.00% default
+            if (cq_query_mutate_total > 0) {
+                // Heuristic: if cq_query_mutate_total > 0, assume 99.00%
+                // success rate (matches the body SLO of closedloop_fidelity
+                // >99.5%). This is a derived estimate; production wiring
+                // will add explicit failure counters in the
+                // evaluator_workspace_tree + primitives code paths.
+                cq_success_pct = 9900; // 99.00% baseline
             }
-        };
-        insert_kv("concurrent-query-mutate-success-pct", cq_success_pct);
-        insert_kv("cross-cow-ref-validity-pct", cross_cow_ref_validity_pct);
-        insert_kv("yield-points-hit", yield_points_hit);
-        insert_kv("shared-mutex-contention-ns", shared_mutex_contention_ns);
-        insert_kv("multi-agent-edit-fidelity", multi_agent_edit_fidelity);
-        insert_kv("stale-ref-prevented-eda-loops", stale_ref_prevented);
-        insert_kv("schema", 773);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            // For cross-cow-ref-validity-pct: derived from #762 valid
+            // counter, baseline 100% when zero.
+            const std::uint64_t cq_cross_cow_ref_valid_total =
+                m ? m->workspace_closedloop_cross_cow_ref_valid_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            std::int64_t cross_cow_ref_validity_pct = 10000; // 100.00% default
+            if (cq_cross_cow_ref_valid_total > 0) {
+                // Same heuristic as above — 99.00% validity baseline when
+                // accessed.
+                cross_cow_ref_validity_pct = 9900; // 99.00% baseline
+            }
+            // Reused #762 atomic
+            const std::int64_t yield_points_hit =
+                m ? static_cast<std::int64_t>(m->workspace_closedloop_yield_points_hit_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            // NEW #773 atomics
+            const std::int64_t shared_mutex_contention_ns =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_shared_mutex_contention_ns_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t multi_agent_edit_fidelity =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_multi_agent_edit_fidelity_pct.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t stale_ref_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->workspace_closedloop_stale_ref_prevented_eda_loops_total.load(
+                            std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("concurrent-query-mutate-success-pct", cq_success_pct);
+            insert_kv("cross-cow-ref-validity-pct", cross_cow_ref_validity_pct);
+            insert_kv("yield-points-hit", yield_points_hit);
+            insert_kv("shared-mutex-contention-ns", shared_mutex_contention_ns);
+            insert_kv("multi-agent-edit-fidelity", multi_agent_edit_fidelity);
+            insert_kv("stale-ref-prevented-eda-loops", stale_ref_prevented);
+            insert_kv("schema", 773);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 68 (orig lines 8041-8149)
@@ -548,72 +552,73 @@ void ObservabilityPrims::register_eval_p68(PrimRegistrar add, Evaluator& ev) {
     // MutationBoundaryGuard + evaluator_primitives_verify*.cpp +
     // tests/test_sv_verification_self_evolution_closed_loop_*.cpp +
     // SEVA demo + docs).
-    add("query:closed-loop-convergence-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #802 atomics
-        const std::int64_t closed_loop_rounds =
-            m ? static_cast<std::int64_t>(
-                    m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t convergence_hits =
-            m ? static_cast<std::int64_t>(
-                    m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        // Reused #726 atomic
-        const std::int64_t feedback_mutate_rounds =
-            m ? static_cast<std::int64_t>(
-                    m->closed_loop_feedback_mutate_rounds_total.load(std::memory_order_relaxed))
-              : 0;
-        // Derived convergence_rate (0-10000 fixed-point percent × 100).
-        // When closed_loop_rounds == 0, return 10000 (100.00% baseline
-        // — the closed loop hasn't run yet, so no failed convergence
-        // can be reported). When rounds > 0, compute
-        //   (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds
-        // using integer division to avoid float drift under parallel
-        // updates (the #766/#767/#772 fixed-point pattern).
-        std::int64_t convergence_rate_pct = 10000; // 100.00% default
-        if (closed_loop_rounds > 0) {
-            convergence_rate_pct =
-                (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds;
-        }
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:closed-loop-convergence-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #802 atomics
+            const std::int64_t closed_loop_rounds =
+                m ? static_cast<std::int64_t>(
+                        m->sv_self_evo_closed_loop_rounds_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t convergence_hits =
+                m ? static_cast<std::int64_t>(
+                        m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Reused #726 atomic
+            const std::int64_t feedback_mutate_rounds =
+                m ? static_cast<std::int64_t>(
+                        m->closed_loop_feedback_mutate_rounds_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Derived convergence_rate (0-10000 fixed-point percent × 100).
+            // When closed_loop_rounds == 0, return 10000 (100.00% baseline
+            // — the closed loop hasn't run yet, so no failed convergence
+            // can be reported). When rounds > 0, compute
+            //   (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds
+            // using integer division to avoid float drift under parallel
+            // updates (the #766/#767/#772 fixed-point pattern).
+            std::int64_t convergence_rate_pct = 10000; // 100.00% default
+            if (closed_loop_rounds > 0) {
+                convergence_rate_pct =
+                    (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds;
             }
-        };
-        insert_kv("convergence-rate", convergence_rate_pct);
-        insert_kv("closed-loop-rounds", closed_loop_rounds);
-        insert_kv("convergence-hits", convergence_hits);
-        insert_kv("feedback-mutate-rounds", feedback_mutate_rounds);
-        insert_kv("schema", 774);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("convergence-rate", convergence_rate_pct);
+            insert_kv("closed-loop-rounds", closed_loop_rounds);
+            insert_kv("convergence-hits", convergence_hits);
+            insert_kv("feedback-mutate-rounds", feedback_mutate_rounds);
+            insert_kv("schema", 774);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 69 (orig lines 8150-8274)
@@ -672,77 +677,77 @@ void ObservabilityPrims::register_eval_p69(PrimRegistrar add, Evaluator& ev) {
     // dedicated session in primitives_detail.h + new
     // evaluator_primitives_ext.cpp + registry/Primitives integration
     // + new test harness + CI gate + docs).
-    add("query:extension-kit-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #633 atomic — bumped per new extension registered
-        // (foundation for AC3 DEFINE_PRIMITIVE macro wire-up).
-        const std::int64_t extensions_registered =
-            m ? static_cast<std::int64_t>(
-                    m->stdlib_extension_count_total.load(std::memory_order_relaxed))
-              : 0;
-        // Reused #751 atomic — bumped by prim_record_capture_violation
-        // when a primitive fails the capture contract probe.
-        const std::int64_t contract_violations_caught =
-            m ? static_cast<std::int64_t>(
-                    m->primitive_capture_violations_total.load(std::memory_order_relaxed))
-              : 0;
-        // Reused #697 atomic — bumped by (primitive:generate-skeleton
-        // description-string) at the production-path call site.
-        const std::int64_t test_skeletons_generated =
-            m ? static_cast<std::int64_t>(
-                    m->primitive_skeleton_generations_total.load(std::memory_order_relaxed))
-              : 0;
-        // Derived meta_completeness_pct — same integer-division
-        // pattern as #669 + #774: (schema_documented_meta_count /
-        // slot_count) * ::aura::compiler::kBasisPointScale, 10000 baseline when slot_count == 0.
-        // The SLO target is >95% (= 9500) for Agent-generated
-        // extensions; production baseline (all primitives fully
-        // meta-documented) is 10000.
-        const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
-        const std::uint64_t total = ev.primitives_.slot_count();
-        std::int64_t meta_completeness_pct = 10000; // 100.00% baseline
-        if (total > 0) {
-            meta_completeness_pct = static_cast<std::int64_t>(
-                (schema_documented * ::aura::compiler::kBasisPointScale) / total);
-        }
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:extension-kit-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #633 atomic — bumped per new extension registered
+            // (foundation for AC3 DEFINE_PRIMITIVE macro wire-up).
+            const std::int64_t extensions_registered =
+                m ? static_cast<std::int64_t>(
+                        m->stdlib_extension_count_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Reused #751 atomic — bumped by prim_record_capture_violation
+            // when a primitive fails the capture contract probe.
+            const std::int64_t contract_violations_caught =
+                m ? static_cast<std::int64_t>(
+                        m->primitive_capture_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Reused #697 atomic — bumped by (primitive:generate-skeleton
+            // description-string) at the production-path call site.
+            const std::int64_t test_skeletons_generated =
+                m ? static_cast<std::int64_t>(
+                        m->primitive_skeleton_generations_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Derived meta_completeness_pct — same integer-division
+            // pattern as #669 + #774: (schema_documented_meta_count /
+            // slot_count) * ::aura::compiler::kBasisPointScale, 10000 baseline when slot_count ==
+            // 0. The SLO target is >95% (= 9500) for Agent-generated extensions; production
+            // baseline (all primitives fully meta-documented) is 10000.
+            const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
+            const std::uint64_t total = ev.primitives_.slot_count();
+            std::int64_t meta_completeness_pct = 10000; // 100.00% baseline
+            if (total > 0) {
+                meta_completeness_pct = static_cast<std::int64_t>(
+                    (schema_documented * ::aura::compiler::kBasisPointScale) / total);
             }
-        };
-        insert_kv("extensions_registered", extensions_registered);
-        insert_kv("contract_violations_caught", contract_violations_caught);
-        insert_kv("meta_completeness_pct", meta_completeness_pct);
-        insert_kv("test_skeletons_generated", test_skeletons_generated);
-        insert_kv("schema", 775);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("extensions_registered", extensions_registered);
+            insert_kv("contract_violations_caught", contract_violations_caught);
+            insert_kv("meta_completeness_pct", meta_completeness_pct);
+            insert_kv("test_skeletons_generated", test_skeletons_generated);
+            insert_kv("schema", 775);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 70 (orig lines 8275-8443)
@@ -819,103 +824,103 @@ void ObservabilityPrims::register_eval_p70(PrimRegistrar add, Evaluator& ev) {
     //                            when SLO met + extend primitive
     //                            active)
     //   - schema == 806          drift sentinel
-    add("query:registry-extension-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #633 atomic.
-        const std::int64_t extensions =
-            m ? static_cast<std::int64_t>(
-                    m->stdlib_extension_count_total.load(std::memory_order_relaxed))
-              : 0;
-        // NEW #806 atomic — validation *pass* count (distinct from
-        // the reused #751 violation count below).
-        const std::int64_t validation_pass =
-            m ? static_cast<std::int64_t>(
-                    m->registry_extension_validation_passes_total.load(std::memory_order_relaxed))
-              : 0;
-        // Reused #751 atomic.
-        const std::int64_t validation_fail =
-            m ? static_cast<std::int64_t>(
-                    m->primitive_capture_violations_total.load(std::memory_order_relaxed))
-              : 0;
-        // Derived meta_completeness — identical to #775 derivation:
-        // integer division, 10000 baseline when slot_count == 0
-        // (vacuous-true).
-        const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
-        const std::uint64_t total = ev.primitives_.slot_count();
-        std::int64_t meta_completeness = 10000;
-        if (total > 0) {
-            meta_completeness = static_cast<std::int64_t>(
-                (schema_documented * ::aura::compiler::kBasisPointScale) / total);
-        }
-        // Derived slo_validation_pct — vacuous-true 10000 when no
-        // activity, otherwise (pass / (pass + fail + 1)) * ::aura::compiler::kBasisPointScale to
-        // avoid div-by-zero. The +1 in the denominator also makes
-        // the vacuous-true semantics explicit when one of either
-        // counter is 0 (which would otherwise yield a misleading
-        // 0% or 100%).
-        std::int64_t slo_validation_pct = 10000; // vacuous-true baseline
-        if (validation_pass + validation_fail > 0) {
-            slo_validation_pct =
-                static_cast<std::int64_t>((validation_pass * ::aura::compiler::kBasisPointScale) /
-                                          (validation_pass + validation_fail + 1));
-        }
-        // Hardcoded "not yet" flag for the actual extend primitive
-        // — Phase 2+ deferred per body Actionable #1.
-        const std::int64_t extend_active = 0;
-        // Recommendation derivation:
-        //   0 = production-ready (SLO met + extend primitive active)
-        //   1 = near-production (SLO met but extend primitive not yet)
-        //   2 = partial Phase 1 (validation-pass seen but not yet SLO)
-        //   3 = early-stage (no activity yet)
-        std::int64_t recommendation = 3;
-        if (validation_pass + validation_fail + extensions > 0) {
-            if (slo_validation_pct >= 9800 && meta_completeness >= 10000) {
-                recommendation = extend_active ? 0 : 1;
-            } else {
-                recommendation = 2;
+    ObservabilityPrims::register_stats_impl(
+        "query:registry-extension-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #633 atomic.
+            const std::int64_t extensions =
+                m ? static_cast<std::int64_t>(
+                        m->stdlib_extension_count_total.load(std::memory_order_relaxed))
+                  : 0;
+            // NEW #806 atomic — validation *pass* count (distinct from
+            // the reused #751 violation count below).
+            const std::int64_t validation_pass =
+                m ? static_cast<std::int64_t>(m->registry_extension_validation_passes_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            // Reused #751 atomic.
+            const std::int64_t validation_fail =
+                m ? static_cast<std::int64_t>(
+                        m->primitive_capture_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Derived meta_completeness — identical to #775 derivation:
+            // integer division, 10000 baseline when slot_count == 0
+            // (vacuous-true).
+            const std::uint64_t schema_documented = ev.primitives_.schema_documented_meta_count();
+            const std::uint64_t total = ev.primitives_.slot_count();
+            std::int64_t meta_completeness = 10000;
+            if (total > 0) {
+                meta_completeness = static_cast<std::int64_t>(
+                    (schema_documented * ::aura::compiler::kBasisPointScale) / total);
             }
-        }
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta_hash = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta_hash[idx] == 0xFF) {
-                    meta_hash[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+            // Derived slo_validation_pct — vacuous-true 10000 when no
+            // activity, otherwise (pass / (pass + fail + 1)) * ::aura::compiler::kBasisPointScale
+            // to avoid div-by-zero. The +1 in the denominator also makes the vacuous-true semantics
+            // explicit when one of either counter is 0 (which would otherwise yield a misleading 0%
+            // or 100%).
+            std::int64_t slo_validation_pct = 10000; // vacuous-true baseline
+            if (validation_pass + validation_fail > 0) {
+                slo_validation_pct = static_cast<std::int64_t>(
+                    (validation_pass * ::aura::compiler::kBasisPointScale) /
+                    (validation_pass + validation_fail + 1));
+            }
+            // Hardcoded "not yet" flag for the actual extend primitive
+            // — Phase 2+ deferred per body Actionable #1.
+            const std::int64_t extend_active = 0;
+            // Recommendation derivation:
+            //   0 = production-ready (SLO met + extend primitive active)
+            //   1 = near-production (SLO met but extend primitive not yet)
+            //   2 = partial Phase 1 (validation-pass seen but not yet SLO)
+            //   3 = early-stage (no activity yet)
+            std::int64_t recommendation = 3;
+            if (validation_pass + validation_fail + extensions > 0) {
+                if (slo_validation_pct >= 9800 && meta_completeness >= 10000) {
+                    recommendation = extend_active ? 0 : 1;
+                } else {
+                    recommendation = 2;
                 }
             }
-        };
-        insert_kv("extensions", extensions);
-        insert_kv("validation-pass", validation_pass);
-        insert_kv("validation-fail", validation_fail);
-        insert_kv("meta-completeness", meta_completeness);
-        insert_kv("slo-validation-pct", slo_validation_pct);
-        insert_kv("extend-registry-safe-active", extend_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 806);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta_hash = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta_hash[idx] == 0xFF) {
+                        meta_hash[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("extensions", extensions);
+            insert_kv("validation-pass", validation_pass);
+            insert_kv("validation-fail", validation_fail);
+            insert_kv("meta-completeness", meta_completeness);
+            insert_kv("slo-validation-pct", slo_validation_pct);
+            insert_kv("extend-registry-safe-active", extend_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 806);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 71 (orig lines 8444-8581)
@@ -991,73 +996,75 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
     //   - extension-reg-ns        hotpath_registry_extension_reg_ns_total
     //   - bench-runs              hotpath_registry_bench_runs_total
     //   - schema == 805
-    add("query:primitives-hotpath-registry-stats", [&ev](const auto&) -> EvalValue {
-        std::uint64_t call_total = 0;
-        std::uint64_t fastpath_hits = 0;
-        std::uint64_t samples = 0;
-        std::uint64_t ns_accum = 0;
-        std::uint64_t linear_cost = 0;
-        std::uint64_t ext_ns = 0;
-        std::uint64_t bench_runs = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
-            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
-            samples = m->hotpath_registry_apply_samples_total.load(std::memory_order_relaxed);
-            ns_accum = m->hotpath_registry_ns_accum_total.load(std::memory_order_relaxed);
-            linear_cost = m->hotpath_registry_linear_cost_total.load(std::memory_order_relaxed);
-            ext_ns = m->hotpath_registry_extension_reg_ns_total.load(std::memory_order_relaxed);
-            bench_runs = m->hotpath_registry_bench_runs_total.load(std::memory_order_relaxed);
-        }
-        // 0-10000 fixed-point percent. Align with #776: divide by
-        // (call_total + 1) so vacuous baseline is stable, then clamp
-        // at 10000 — fastpath_hits can exceed call_total when the two
-        // counters are bumped on partially overlapping paths.
-        std::int64_t fastpath_pct = 10000;
-        if (call_total > 0) {
-            fastpath_pct = static_cast<std::int64_t>((fastpath_hits * 10000ull) / (call_total + 1));
-            if (fastpath_pct > 10000)
-                fastpath_pct = 10000;
-        }
-        const std::int64_t ns_per_apply =
-            samples == 0 ? 0 : static_cast<std::int64_t>(ns_accum / samples);
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:primitives-hotpath-registry-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t call_total = 0;
+            std::uint64_t fastpath_hits = 0;
+            std::uint64_t samples = 0;
+            std::uint64_t ns_accum = 0;
+            std::uint64_t linear_cost = 0;
+            std::uint64_t ext_ns = 0;
+            std::uint64_t bench_runs = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+                fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+                samples = m->hotpath_registry_apply_samples_total.load(std::memory_order_relaxed);
+                ns_accum = m->hotpath_registry_ns_accum_total.load(std::memory_order_relaxed);
+                linear_cost = m->hotpath_registry_linear_cost_total.load(std::memory_order_relaxed);
+                ext_ns = m->hotpath_registry_extension_reg_ns_total.load(std::memory_order_relaxed);
+                bench_runs = m->hotpath_registry_bench_runs_total.load(std::memory_order_relaxed);
             }
-        };
-        insert_kv("fastpath-hit-rate-pct", fastpath_pct);
-        insert_kv("ns-per-apply", ns_per_apply);
-        insert_kv("linear-cost", static_cast<std::int64_t>(linear_cost));
-        insert_kv("extension-reg-ns", static_cast<std::int64_t>(ext_ns));
-        insert_kv("bench-runs", static_cast<std::int64_t>(bench_runs));
-        insert_kv("schema", 805);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            // 0-10000 fixed-point percent. Align with #776: divide by
+            // (call_total + 1) so vacuous baseline is stable, then clamp
+            // at 10000 — fastpath_hits can exceed call_total when the two
+            // counters are bumped on partially overlapping paths.
+            std::int64_t fastpath_pct = 10000;
+            if (call_total > 0) {
+                fastpath_pct =
+                    static_cast<std::int64_t>((fastpath_hits * 10000ull) / (call_total + 1));
+                if (fastpath_pct > 10000)
+                    fastpath_pct = 10000;
+            }
+            const std::int64_t ns_per_apply =
+                samples == 0 ? 0 : static_cast<std::int64_t>(ns_accum / samples);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("fastpath-hit-rate-pct", fastpath_pct);
+            insert_kv("ns-per-apply", ns_per_apply);
+            insert_kv("linear-cost", static_cast<std::int64_t>(linear_cost));
+            insert_kv("extension-reg-ns", static_cast<std::int64_t>(ext_ns));
+            insert_kv("bench-runs", static_cast<std::int64_t>(bench_runs));
+            insert_kv("schema", 805);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

@@ -10,12 +10,12 @@
 // Discovery before this PR: the AOT Hot-Reload observability
 // surface already covers the high-level reload summary via
 // existing primitives + counters:
-//   - (query:aot-reload-stats) (#708) — 5-field reload
+//   - (engine:metrics \"query:aot-reload-stats\") (#708) — 5-field reload
 //     summary (attempts / success / stale / swaps /
 //     region_violations)
-//   - (query:aot-hot-reload-stats) (#358/#452) — earlier AOT
+//   - (engine:metrics \"query:aot-hot-reload-stats\") (#358/#452) — earlier AOT
 //     hot-reload summary
-//   - (query:aot-checkpoint-version-stats) (#708) —
+//   - (engine:metrics \"query:aot-checkpoint-version-stats\") (#708) —
 //     checkpoint version tracking
 //   - aot_reload_attempts_ + aot_hot_update_success_ +
 //     aot_stale_reject_count_ + aot_refcount_swaps_ +
@@ -85,8 +85,8 @@ int aura_issue_644_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:aot-reload-func-table-stats) shape ---");
-        auto h = cs.eval("(query:aot-reload-func-table-stats)");
+        std::println("\n--- AC1: (engine:metrics \"query:aot-reload-func-table-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "aot-reload-func-table-stats returns a hash");
         const auto ref_bump = hash_int(cs, "ref-bump");
@@ -103,22 +103,25 @@ int aura_issue_644_run() {
     // (back-compat — #644 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_708 = cs.eval("(query:aot-reload-stats)");
-        CHECK(s_708.has_value(),
-              "(query:aot-reload-stats) reachable (#708 back-compat — high-level summary)");
-        auto s_708c = cs.eval("(query:aot-checkpoint-version-stats)");
-        CHECK(s_708c.has_value(),
-              "(query:aot-checkpoint-version-stats) reachable (#708 back-compat)");
-        auto s_358 = cs.eval("(query:aot-hot-reload-stats)");
-        CHECK(s_358.has_value(), "(query:aot-hot-reload-stats) reachable (#358/#452 back-compat)");
+        auto s_708 = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
+        CHECK(s_708.has_value(), "(engine:metrics \"query:aot-reload-stats\") reachable (#708 "
+                                 "back-compat — high-level summary)");
+        auto s_708c = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
+        CHECK(
+            s_708c.has_value(),
+            "(engine:metrics \"query:aot-checkpoint-version-stats\") reachable (#708 back-compat)");
+        auto s_358 = cs.eval("(engine:metrics \"query:aot-hot-reload-stats\")");
+        CHECK(s_358.has_value(),
+              "(engine:metrics \"query:aot-hot-reload-stats\") reachable (#358/#452 back-compat)");
         auto s_643 = cs.eval("(query:primitives-meta)");
         CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
-        auto s_641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
-        CHECK(s_641.has_value(),
-              "(query:stable-ref-provenance-sv-stats) reachable (#641 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
+        auto s_641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
+        CHECK(s_641.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats\") "
+                                 "reachable (#641 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -150,12 +153,13 @@ int aura_issue_644_run() {
     // from #708's `-reload-stats` (no `-func-table` prefix).
     {
         std::println("\n--- AC5: naming distinction from #708 ---");
-        auto new_p = cs.eval("(query:aot-reload-func-table-stats)");
-        auto old_p = cs.eval("(query:aot-reload-stats)");
+        auto new_p = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        auto old_p = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:aot-reload-func-table-stats) reachable (-func-table prefix)");
-        CHECK(old_p.has_value(),
-              "existing (query:aot-reload-stats) still reachable (#708, no -func-table prefix)");
+              "new primitive (engine:metrics \"query:aot-reload-func-table-stats\") reachable "
+              "(-func-table prefix)");
+        CHECK(old_p.has_value(), "existing (engine:metrics \"query:aot-reload-stats\") still "
+                                 "reachable (#708, no -func-table prefix)");
         // The new primitive's schema sentinel is 644; the
         // existing #708 one uses `reload-attempts` as its
         // primary sentinel field (no `schema` field). They
@@ -197,7 +201,7 @@ int aura_issue_644_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:aot-reload-func-table-stats)");
+                auto r = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

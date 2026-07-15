@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // test_issue_788.cpp — Issue #788: P0 first-class
 // AI Agent primitives for macro policy tuning +
 // runtime EDSL struct definition/extension with
@@ -13,7 +14,7 @@
 // synergy in clone_macro_body or post-mutate on
 // DEFINE_STRUCT (auto-invoke hygiene invariant +
 // schema validate via reflected rules), (3)
-// observability via (query:ai-native-extension-stats)
+// observability via (engine:metrics \"query:ai-native-extension-stats\")
 // returning validation-pass-rate + policy-tuning-
 // success-rate + define-struct-success-rate +
 // contract-compliance-rate, (4) dedicated harness
@@ -90,6 +91,8 @@ namespace aura_issue_788_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -110,10 +113,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:ai-native-extension-stats) hash shape ---");
-    auto r = cs.eval("(query:ai-native-extension-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:ai-native-extension-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:ai-native-extension-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:ai-native-extension-stats) returns a hash");
+          "(engine:metrics \"query:ai-native-extension-stats\") returns a hash");
     const std::vector<std::string> keys = {
         "sub-primitive-coverage",        "found-sub-primitive-count",
         "validation-pass-rate",          "policy-tuning-success-rate",
@@ -128,8 +131,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service state (4 fidelity signals hardcoded 10000) ---");
-    const auto found =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "found-sub-primitive-count");
+    const auto found = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                      "found-sub-primitive-count");
     CHECK(found >= 0, std::format("found-sub-primitive-count = {} (expected >= 0 — live count of 5 "
                                   "expected sub-primitives registered)",
                                   found));
@@ -137,40 +140,40 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
           std::format("found-sub-primitive-count = {} (expected <= 5 — bounded by total "
                       "expected count)",
                       found));
-    const auto coverage =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "sub-primitive-coverage");
+    const auto coverage = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                         "sub-primitive-coverage");
     CHECK(coverage >= 0 && coverage <= 10000,
           std::format("sub-primitive-coverage = {} (expected 0..10000 fixed-point)", coverage));
     // 4 AI-extension fidelity signals hardcoded 10000 in Phase 1
     // (vacuously true — no measurements yet so can't fail).
-    const auto val_pass =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "validation-pass-rate");
+    const auto val_pass = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                         "validation-pass-rate");
     CHECK(val_pass == 10000,
           std::format("validation-pass-rate = {} (expected 10000 — Phase 2+ to wire to runtime "
                       "reflect validate hook for edsl:define-struct / extend-struct / "
                       "extend-kit)",
                       val_pass));
-    const auto policy =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "policy-tuning-success-rate");
+    const auto policy = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                       "policy-tuning-success-rate");
     CHECK(policy == 10000,
           std::format("policy-tuning-success-rate = {} (expected 10000 — Phase 2+ to wire to "
                       "macro:set-policy! hook)",
                       policy));
-    const auto def_struct =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "define-struct-success-rate");
+    const auto def_struct = hash_int_field(
+        cs, "(engine:metrics \"query:ai-native-extension-stats\")", "define-struct-success-rate");
     CHECK(def_struct == 10000,
           std::format("define-struct-success-rate = {} (expected 10000 — Phase 2+ to wire to "
                       "edsl:define-struct hook)",
                       def_struct));
-    const auto contract =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "contract-compliance-rate");
+    const auto contract = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                         "contract-compliance-rate");
     CHECK(contract == 10000,
           std::format("contract-compliance-rate = {} (expected 10000 — Phase 2+ to wire to "
                       "extend-kit auto-validation hook)",
                       contract));
     // Composite AI extension status derived from coverage + fidelity.
-    const auto comp =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "composite-ai-extension-status");
+    const auto comp = hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")",
+                                     "composite-ai-extension-status");
     if (found == 5) {
         CHECK(comp == 0,
               std::format("composite-ai-extension-status = {} (expected 0 = production-ready "
@@ -197,7 +200,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 788 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:ai-native-extension-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:ai-native-extension-stats\")", "schema");
     CHECK(schema == 788, std::format("schema = {} (expected 788)", schema));
 }
 
@@ -222,7 +226,7 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
     std::size_t edsl_reachable_count = 0;
     for (const auto& name : expected_sub_primitives) {
         try {
-            auto r = cs.eval(std::format("({})", name));
+            auto r = cs.eval(aura::test::aura_call_expr(name));
             if (r) {
                 ++edsl_reachable_count;
                 std::println("  [info] sub-primitive '{}' IS reachable via EDSL", name);
@@ -233,8 +237,8 @@ static void run_ac4_coverage_correctness(aura::compiler::CompilerService& cs) {
             std::println("  [info] sub-primitive '{}' threw (not registered)", name);
         }
     }
-    const auto primitive_count =
-        hash_int_field(cs, "(query:ai-native-extension-stats)", "found-sub-primitive-count");
+    const auto primitive_count = hash_int_field(
+        cs, "(engine:metrics \"query:ai-native-extension-stats\")", "found-sub-primitive-count");
     CHECK(static_cast<std::size_t>(primitive_count) == edsl_reachable_count,
           std::format("found-sub-primitive-count matches independent EDSL check: {} == {}",
                       primitive_count, edsl_reachable_count));

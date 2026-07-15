@@ -75,15 +75,18 @@ int aura_issue_485_run() {
     // AC1: consolidated production-readiness stats reachable
     {
         std::println("\n--- AC1: query:compiler-runtime-production-readiness-stats ---");
-        auto stats = cs.eval("(query:compiler-runtime-production-readiness-stats)");
+        auto stats =
+            cs.eval("(engine:metrics \"query:compiler-runtime-production-readiness-stats\")");
         CHECK(stats && aura::compiler::types::is_int(*stats),
               "query:compiler-runtime-production-readiness-stats returns int");
-        CHECK(eval_int(cs, "(query:compiler-runtime-production-readiness-stats)") >= 0,
+        CHECK(eval_int(cs,
+                       "(engine:metrics \"query:compiler-runtime-production-readiness-stats\")") >=
+                  0,
               "consolidated stats non-negative");
     }
 
-    const auto fms_before = eval_int(cs, "(query:fiber-migration-stats)");
-    const auto mcs_before = eval_int(cs, "(query:mutation-coordination-stats)");
+    const auto fms_before = eval_int(cs, "(engine:metrics \"query:fiber-migration-stats\")");
+    const auto mcs_before = eval_int(cs, "(engine:metrics \"query:mutation-coordination-stats\")");
     const auto eds_before = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
 
     // AC2: fiber migration stats monotonic after resume migration wiring
@@ -105,7 +108,7 @@ int aura_issue_485_run() {
         }
         sched.stop();
         io.join();
-        const auto fms_after = eval_int(cs, "(query:fiber-migration-stats)");
+        const auto fms_after = eval_int(cs, "(engine:metrics \"query:fiber-migration-stats\")");
         CHECK(fms_after > fms_before,
               std::format("fiber-migration-stats grew on resume migration ({} -> {})", fms_before,
                           fms_after));
@@ -115,8 +118,9 @@ int aura_issue_485_run() {
     {
         std::println("\n--- AC3: mutation-coordination-stats after defer wiring ---");
         aura_evaluator_bump_steal_deferred_violation();
-        const auto mcs_after = eval_int(cs, "(query:mutation-coordination-stats)");
-        const auto fms_after = eval_int(cs, "(query:fiber-migration-stats)");
+        const auto mcs_after =
+            eval_int(cs, "(engine:metrics \"query:mutation-coordination-stats\")");
+        const auto fms_after = eval_int(cs, "(engine:metrics \"query:fiber-migration-stats\")");
         CHECK(mcs_after > mcs_before,
               std::format("mutation-coordination-stats grew ({} -> {})", mcs_before, mcs_after));
         CHECK(fms_after > fms_before,
@@ -180,7 +184,7 @@ int aura_issue_485_run() {
     // AC5: scheduler steal budget adaptive stats reachable
     {
         std::println("\n--- AC5: query:scheduler-stealbudget-adaptive-stats ---");
-        auto stats = cs.eval("(query:scheduler-stealbudget-adaptive-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:scheduler-stealbudget-adaptive-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:scheduler-stealbudget-adaptive-stats returns hash");
         CHECK(steal_stat(cs, "mutation-bias-hits") >= 0, "mutation-bias-hits present");
@@ -191,7 +195,7 @@ int aura_issue_485_run() {
     // AC6: AOT checkpoint version drift probe
     {
         std::println("\n--- AC6: AOT checkpoint version drift probe ---");
-        auto stats = cs.eval("(query:aot-checkpoint-version-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:aot-checkpoint-version-stats returns hash");
         CHECK(aot_stat(cs, "checkpoint-version-drifts") >= 0, "checkpoint-version-drifts present");
@@ -254,8 +258,8 @@ int aura_issue_485_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                (void)cs.eval("(query:fiber-migration-stats)");
-                (void)cs.eval("(query:mutation-coordination-stats)");
+                (void)cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+                (void)cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
                 (void)cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
                 aura_evaluator_resume_fiber_migration();
                 ok_count.fetch_add(1, std::memory_order_relaxed);

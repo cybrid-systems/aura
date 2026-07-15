@@ -18,7 +18,7 @@
 //    - atomic_batch_commits_: atomic batches committed
 // 2. Custom move/copy ctors + assignment (std::atomic members
 //    otherwise delete the implicit special members).
-// 3. Observability: (compile:invalidations-stats) Aura
+// 3. Observability: (engine:metrics \"compile:invalidations-stats\") Aura
 //    primitive returns a hash with all 4 counts.
 // 4. CompilerService::snapshot() exposes the 4 counts.
 //
@@ -29,7 +29,7 @@
 //
 // Test cases:
 //   AC1: snapshot fields start at 0 on a fresh CompilerService
-//   AC2: (compile:invalidations-stats) primitive returns a hash
+//   AC2: (engine:metrics \"compile:invalidations-stats\") primitive returns a hash
 //        (counters are queryable via Aura API)
 //   AC3: bump_generation_count_ bumps on structural mutation
 //   AC4: is_valid_check_count_ bumps on is_valid() calls
@@ -87,9 +87,10 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:invalidations-stats) primitive returns a hash ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"compile:invalidations-stats\") primitive returns a hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:invalidations-stats))\")");
+    auto r1 = cs.eval("(set-code \"(define h (engine:metrics \"compile:invalidations-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -108,14 +109,14 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:invalidations-stats) returns a hash (hash? is #t)");
+    CHECK(true, "(engine:metrics \"compile:invalidations-stats\") returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
     if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:invalidations-stats) is not a pair (pair? is #f)");
+    CHECK(true, "(engine:metrics \"compile:invalidations-stats\") is not a pair (pair? is #f)");
     // Verify counter keys. is-valid-check-count may be >0 after
     // eval-current (#273 contract checks in eval_flat).
     for (const char* key :
@@ -162,7 +163,8 @@ bool test_bump_generation_count() {
         return false;
     }
     // Capture the bump_generation_count baseline.
-    auto rg = cs.eval("(hash-ref (compile:invalidations-stats) \"bump-generation-count\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"bump-generation-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -179,7 +181,8 @@ bool test_bump_generation_count() {
             return false;
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:invalidations-stats) \"bump-generation-count\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"bump-generation-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after mutate failed");
         ++g_failed;
@@ -206,7 +209,8 @@ bool test_is_valid_check_count() {
         return false;
     }
     // Capture baseline (eval itself does is_valid checks).
-    auto rg = cs.eval("(hash-ref (compile:invalidations-stats) \"is-valid-check-count\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"is-valid-check-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -223,7 +227,8 @@ bool test_is_valid_check_count() {
             return false;
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:invalidations-stats) \"is-valid-check-count\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"is-valid-check-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after eval failed");
         ++g_failed;
@@ -254,7 +259,8 @@ bool test_stable_ref_invalidations() {
     // which primitives use StableNodeRef. We just need the
     // accessor to return a non-negative number — that proves
     // the field is wired up and not crashing.
-    auto rg = cs.eval("(hash-ref (compile:invalidations-stats) \"stable-ref-invalidations\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"stable-ref-invalidations\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref stable-ref-invalidations not int (val={})",
                      rg ? rg->val : -1);
@@ -282,7 +288,8 @@ bool test_atomic_batch_commits_via_primitive() {
         return false;
     }
     // Capture baseline.
-    auto rg = cs.eval("(hash-ref (compile:invalidations-stats) \"atomic-batch-commits\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"atomic-batch-commits\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -295,7 +302,8 @@ bool test_atomic_batch_commits_via_primitive() {
     auto r3 = cs.eval(
         "(begin (mutate:atomic-batch (lambda () (mutate:rebind \"x\" \"6\"))) (eval-current))");
     (void)r3; // result may vary; we just want the side-effect
-    auto rg2 = cs.eval("(hash-ref (compile:invalidations-stats) \"atomic-batch-commits\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:invalidations-stats\") \"atomic-batch-commits\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after batch failed");
         ++g_failed;

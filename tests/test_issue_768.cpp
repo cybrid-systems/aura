@@ -100,10 +100,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:shape-pass-hotpath-stats) hash shape ---");
-    auto r = cs.eval("(query:shape-pass-hotpath-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:shape-pass-hotpath-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:shape-pass-hotpath-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:shape-pass-hotpath-stats) returns a hash");
+          "(engine:metrics \"query:shape-pass-hotpath-stats\") returns a hash");
     const std::vector<std::string> keys = {
         "contract-checks-hotpath", "shape-stability-transitions", "jit-epoch-sync-hits",
         "deopt-targeted-skips",    "concept-violations-caught",   "schema"};
@@ -116,26 +116,29 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto cch =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "contract-checks-hotpath");
+    const auto cch = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "contract-checks-hotpath");
     CHECK(cch == 0, std::format("contract-checks-hotpath = {} (expected 0 on fresh service)", cch));
-    const auto sst =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "shape-stability-transitions");
+    const auto sst = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "shape-stability-transitions");
     CHECK(sst == 0,
           std::format("shape-stability-transitions = {} (expected 0 on fresh service)", sst));
-    const auto jesh = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "jit-epoch-sync-hits");
+    const auto jesh = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                     "jit-epoch-sync-hits");
     CHECK(jesh == 0, std::format("jit-epoch-sync-hits = {} (expected 0 on fresh service)", jesh));
-    const auto dts = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "deopt-targeted-skips");
+    const auto dts = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "deopt-targeted-skips");
     CHECK(dts == 0, std::format("deopt-targeted-skips = {} (expected 0 on fresh service)", dts));
-    const auto cvc =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "concept-violations-caught");
+    const auto cvc = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "concept-violations-caught");
     CHECK(cvc == 0,
           std::format("concept-violations-caught = {} (expected 0 on fresh service)", cvc));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 768 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")", "schema");
     CHECK(schema == 768, std::format("schema = {} (expected 768)", schema));
 }
 
@@ -153,14 +156,16 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_deopt_targeted_skips(4);
     ev.bump_deopt_targeted_skips(8);
     ev.bump_concept_violations_caught(6);
-    const auto cch =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "contract-checks-hotpath");
-    const auto sst =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "shape-stability-transitions");
-    const auto jesh = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "jit-epoch-sync-hits");
-    const auto dts = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "deopt-targeted-skips");
-    const auto cvc =
-        hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "concept-violations-caught");
+    const auto cch = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "contract-checks-hotpath");
+    const auto sst = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "shape-stability-transitions");
+    const auto jesh = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                     "jit-epoch-sync-hits");
+    const auto dts = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "deopt-targeted-skips");
+    const auto cvc = hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")",
+                                    "concept-violations-caught");
     CHECK(cch == 10,
           std::format("after 3+7 contract-checks-hotpath bumps: contract-checks-hotpath = {} "
                       "(expected 10)",
@@ -183,10 +188,10 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #570 + #767 + #766 sibling primitives "
                  "unaffected ---");
-    auto shape_stability = cs.eval("(query:shape-stability-stats)");
+    auto shape_stability = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     auto arena_defrag_fiber =
         cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(shape_stability && aura::compiler::types::is_int(*shape_stability),
           "query:shape-stability-stats int regression (#570)");
     CHECK(arena_defrag_fiber && aura::compiler::types::is_hash(*arena_defrag_fiber),
@@ -197,7 +202,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
 }

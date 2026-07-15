@@ -95,10 +95,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:ffi-call-overhead-stats) hash shape ---");
-    auto r = cs.eval("(query:ffi-call-overhead-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:ffi-call-overhead-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:ffi-call-overhead-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:ffi-call-overhead-stats) returns a hash");
+          "(engine:metrics \"query:ffi-call-overhead-stats\") returns a hash");
     const std::vector<std::string> keys = {"ffi-call-count", "batch-ffi-supported",
                                            "terminal-batch-write-supported", "recommendation",
                                            "schema"};
@@ -111,20 +111,21 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-zero (no FFI usage yet + both batch flags = 0) ---");
-    const auto ffi_count = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "ffi-call-count");
+    const auto ffi_count =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "ffi-call-count");
     // FFI call count could be non-zero on fresh service if any
     // setup-time code paths call FFI primitives. We check >= 0
     // instead of strict == 0 (mirror #767 fresh-zero split rule).
     CHECK(ffi_count >= 0,
           std::format("ffi-call-count = {} (must be >= 0 on fresh service)", ffi_count));
-    const auto batch_ffi =
-        hash_int_field(cs, "(query:ffi-call-overhead-stats)", "batch-ffi-supported");
+    const auto batch_ffi = hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")",
+                                          "batch-ffi-supported");
     CHECK(batch_ffi == 0,
           std::format("batch-ffi-supported = {} (expected 0 — batch FFI primitive is "
                       "Phase 2+ deferred)",
                       batch_ffi));
-    const auto terminal_batch =
-        hash_int_field(cs, "(query:ffi-call-overhead-stats)", "terminal-batch-write-supported");
+    const auto terminal_batch = hash_int_field(
+        cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "terminal-batch-write-supported");
     CHECK(terminal_batch == 0,
           std::format("terminal-batch-write-supported = {} (expected 0 — terminal-batch-write "
                       "primitive is Phase 2+ deferred)",
@@ -132,7 +133,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     // Recommendation depends on FFI usage:
     //   - If ffi_call_count > 0: recommendation = 2 (missing-primitive)
     //   - If ffi_call_count == 0: recommendation = 3 (early-stage)
-    const auto rec = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "recommendation");
+    const auto rec =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "recommendation");
     if (ffi_count == 0) {
         CHECK(rec == 3,
               std::format("recommendation = {} (expected 3 = early-stage when ffi_call_count "
@@ -147,7 +149,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 778 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "schema");
     CHECK(schema == 778, std::format("schema = {} (expected 778)", schema));
 }
 
@@ -158,7 +161,7 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
 
     // Read initial ffi-call-count.
     const auto initial_ffi_count =
-        hash_int_field(cs, "(query:ffi-call-overhead-stats)", "ffi-call-count");
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "ffi-call-count");
     std::println("  [info] initial ffi-call-count = {}", initial_ffi_count);
 
     // Production-path bumps: call c-alloc + c-opaque via EDSL.
@@ -175,7 +178,7 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
         CHECK(r2, std::format("(c-opaque 4096) call {} returns non-void", i + 1));
     }
     const auto after_10_ffi_count =
-        hash_int_field(cs, "(query:ffi-call-overhead-stats)", "ffi-call-count");
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "ffi-call-count");
     // 20 FFI calls (10 c-alloc + 10 c-opaque) should bump the counter
     // by 20 (each call increments coverage_counters_[8] by 1).
     CHECK(after_10_ffi_count == initial_ffi_count + 20,
@@ -185,7 +188,8 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
 
     // Recommendation should now be 2 (missing-primitive) because
     // FFI is being used but neither batch flag is set.
-    const auto rec_after = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "recommendation");
+    const auto rec_after =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("after FFI usage: recommendation = {} (expected 2 = missing-primitive)",
                       rec_after));
@@ -217,7 +221,7 @@ static void run_ac4_production_path_bumps_and_benchmark(aura::compiler::Compiler
     // primitives are counted. So each iteration of the loop
     // bumps the counter by exactly 2.
     const auto after_bench_ffi_count =
-        hash_int_field(cs, "(query:ffi-call-overhead-stats)", "ffi-call-count");
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "ffi-call-count");
     CHECK(after_bench_ffi_count == after_10_ffi_count + 2 * kBenchmarkIters,
           std::format("after benchmark loop: ffi-call-count = {} (expected {} = after_10 + {})",
                       after_bench_ffi_count, after_10_ffi_count + 2 * kBenchmarkIters,

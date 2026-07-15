@@ -30,7 +30,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:primitives-hotpath-registry-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:primitives-hotpath-registry-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -38,7 +39,7 @@ static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:primitives-hotpath-registry-stats (schema 805) ---");
-    auto h = cs.eval("(query:primitives-hotpath-registry-stats)");
+    auto h = cs.eval("(engine:metrics \"query:primitives-hotpath-registry-stats\")");
     CHECK(h && is_hash(*h), "primitives-hotpath-registry-stats returns hash");
     CHECK(stat_int(cs, "schema") == 805, "schema == 805");
     CHECK(stat_int(cs, "fastpath-hit-rate-pct") >= 0, "fastpath-hit-rate-pct non-negative");
@@ -87,8 +88,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(fpr >= 0 && fpr <= 10000, std::format("fastpath-hit-rate-pct in range (got {})", fpr));
 
     std::println("\n--- AC8: query regression ---");
-    auto slo776 = cs.eval("(query:primitives-hotpath-slo-stats)");
-    auto reg709 = cs.eval("(query:primitives-registry-stats)");
+    auto slo776 = cs.eval("(engine:metrics \"query:primitives-hotpath-slo-stats\")");
+    auto reg709 = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
     CHECK(slo776 && is_hash(*slo776), "primitives-hotpath-slo-stats regression (#776)");
     CHECK(reg709 && is_hash(*reg709), "primitives-registry-stats regression (#709)");
 }

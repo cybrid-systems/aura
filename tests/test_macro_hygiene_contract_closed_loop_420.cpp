@@ -35,7 +35,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t macro_hygiene_contract_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:macro-hygiene-contract-stats)");
+    auto r = cs.eval("(engine:metrics \"query:macro-hygiene-contract-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -106,7 +106,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    auto ihs = cs.eval("(query:ir-hygiene-stats)");
+    auto ihs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(ihs && is_hash(*ihs), "ir-hygiene-stats regression");
 }

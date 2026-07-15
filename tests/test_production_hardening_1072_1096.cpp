@@ -32,7 +32,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-hardening-1072-1096-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-hardening-1072-1096-stats\")");
         CHECK(r && is_hash(*r), "hardening stats is hash");
         CHECK(href(cs, "query:production-hardening-1072-1096-stats", "schema") == 1072,
               "schema 1072");
@@ -59,14 +59,16 @@ int main() {
 
     // #1079 recovery-success never exceeds 100
     {
-        auto r = cs.eval("(hash-ref (query:primitives-error-stats) \"recovery-success\")");
+        auto r = cs.eval(
+            "(hash-ref (engine:metrics \"query:primitives-error-stats\") \"recovery-success\")");
         CHECK(r && is_int(*r) && as_int(*r) >= 0 && as_int(*r) <= 100,
               "recovery-success in [0,100]");
     }
 
     // #1078 eda concurrency atomic-batch-sv-success is non-neg
     {
-        auto r = cs.eval("(hash-ref (query:eda-concurrency-stats) \"atomic-batch-sv-success\")");
+        auto r = cs.eval("(hash-ref (engine:metrics \"query:eda-concurrency-stats\") "
+                         "\"atomic-batch-sv-success\")");
         CHECK(r && is_int(*r) && as_int(*r) >= 0, "atomic-batch-sv-success >= 0");
     }
 
@@ -78,8 +80,8 @@ int main() {
 
     // #1080 efficiency clamped when no arena
     {
-        auto r = cs.eval(
-            "(hash-ref (query:arena-production-compaction-stats) \"compaction-efficiency-pct\")");
+        auto r = cs.eval("(hash-ref (engine:metrics \"query:arena-production-compaction-stats\") "
+                         "\"compaction-efficiency-pct\")");
         if (r && is_int(*r))
             CHECK(as_int(*r) >= 0 && as_int(*r) <= 100, "efficiency_pct in [0,100]");
         else

@@ -91,10 +91,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:jit-rendering-coverage-stats) hash shape ---");
-    auto r = cs.eval("(query:jit-rendering-coverage-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:jit-rendering-coverage-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:jit-rendering-coverage-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:jit-rendering-coverage-stats) returns a hash");
+          "(engine:metrics \"query:jit-rendering-coverage-stats\") returns a hash");
     const std::vector<std::string> keys = {
         "hotpath-eval-flat-calls",        "hotpath-lowering-calls", "rendering-path-jit-supported",
         "hot-update-rendering-optimized", "recommendation",         "schema"};
@@ -107,8 +108,8 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no JIT activity + both flags == 0) ---");
-    const auto eval_flat =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-eval-flat-calls");
+    const auto eval_flat = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-eval-flat-calls");
     // hotpath-eval-flat-calls could be non-zero on fresh
     // service if any setup-time code paths exercise the JIT
     // hot path. We check >= 0 instead of strict == 0 (mirror
@@ -116,18 +117,20 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     // pattern).
     CHECK(eval_flat >= 0,
           std::format("hotpath-eval-flat-calls = {} (must be >= 0 on fresh service)", eval_flat));
-    const auto lowering =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-lowering-calls");
+    const auto lowering = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-lowering-calls");
     CHECK(lowering >= 0,
           std::format("hotpath-lowering-calls = {} (must be >= 0 on fresh service)", lowering));
     const auto rendering_jit =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "rendering-path-jit-supported");
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")",
+                       "rendering-path-jit-supported");
     CHECK(rendering_jit == 0,
           std::format("rendering-path-jit-supported = {} (expected 0 — rendering-path JIT is "
                       "Phase 2+ deferred)",
                       rendering_jit));
-    const auto hot_update = hash_int_field(cs, "(query:jit-rendering-coverage-stats)",
-                                           "hot-update-rendering-optimized");
+    const auto hot_update =
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")",
+                       "hot-update-rendering-optimized");
     CHECK(hot_update == 0,
           std::format("hot-update-rendering-optimized = {} (expected 0 — hot-update rendering "
                       "optimization is Phase 2+ deferred)",
@@ -136,7 +139,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     //   - If jit_activity > 0: recommendation = 2 (missing-optimization)
     //   - If jit_activity == 0: recommendation = 3 (early-stage)
     const auto jit_activity = eval_flat + lowering;
-    const auto rec = hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "recommendation");
+    const auto rec = hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")",
+                                    "recommendation");
     if (jit_activity == 0) {
         CHECK(rec == 3,
               std::format("recommendation = {} (expected 3 = early-stage when jit_activity "
@@ -151,7 +155,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 780 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "schema");
     CHECK(schema == 780, std::format("schema = {} (expected 780)", schema));
 }
 
@@ -160,16 +165,16 @@ static void run_ac4_jit_path_bumps_and_benchmark(aura::compiler::CompilerService
                  "benchmark ---");
 
     // Read initial hotpath counters.
-    const auto initial_eval_flat =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-eval-flat-calls");
-    const auto initial_lowering =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-lowering-calls");
+    const auto initial_eval_flat = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-eval-flat-calls");
+    const auto initial_lowering = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-lowering-calls");
     std::println("  [info] initial hotpath-eval-flat-calls = {}, hotpath-lowering-calls = {}",
                  initial_eval_flat, initial_lowering);
 
     // Verify the existing JIT-related primitives are reachable.
-    auto jit_stats = cs.eval("(query:jit-stats)");
-    CHECK(jit_stats, "(query:jit-stats) is reachable (#427 baseline)");
+    auto jit_stats = cs.eval("(engine:metrics \"query:jit-stats\")");
+    CHECK(jit_stats, "(engine:metrics \"query:jit-stats\") is reachable (#427 baseline)");
 
     // Rendering-like hot path benchmark: measure ns/op for
     // 100 iterations of (vector-set! v i 42) — a
@@ -197,10 +202,10 @@ static void run_ac4_jit_path_bumps_and_benchmark(aura::compiler::CompilerService
     // path may or may not be triggered during vector-set!
     // calls — the test just verifies the counters are
     // reachable and >= the initial values.
-    const auto after_eval_flat =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-eval-flat-calls");
-    const auto after_lowering =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "hotpath-lowering-calls");
+    const auto after_eval_flat = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-eval-flat-calls");
+    const auto after_lowering = hash_int_field(
+        cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")", "hotpath-lowering-calls");
     CHECK(after_eval_flat >= initial_eval_flat,
           std::format("after benchmark: hotpath-eval-flat-calls = {} (>= initial {})",
                       after_eval_flat, initial_eval_flat));
@@ -211,13 +216,15 @@ static void run_ac4_jit_path_bumps_and_benchmark(aura::compiler::CompilerService
     // Verify the 2 hardcoded optimization flags are still 0
     // (sanity check that nothing accidentally flipped them).
     const auto rendering_jit_after =
-        hash_int_field(cs, "(query:jit-rendering-coverage-stats)", "rendering-path-jit-supported");
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")",
+                       "rendering-path-jit-supported");
     CHECK(rendering_jit_after == 0,
           std::format("rendering-path-jit-supported after benchmark: {} (expected 0; the flag "
                       "should not flip during EDSL eval)",
                       rendering_jit_after));
-    const auto hot_update_after = hash_int_field(cs, "(query:jit-rendering-coverage-stats)",
-                                                 "hot-update-rendering-optimized");
+    const auto hot_update_after =
+        hash_int_field(cs, "(engine:metrics \"query:jit-rendering-coverage-stats\")",
+                       "hot-update-rendering-optimized");
     CHECK(hot_update_after == 0,
           std::format("hot-update-rendering-optimized after benchmark: {} (expected 0; the "
                       "flag should not flip during EDSL eval)",
@@ -226,16 +233,18 @@ static void run_ac4_jit_path_bumps_and_benchmark(aura::compiler::CompilerService
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #778 + #779 sibling primitives unaffected ---");
-    auto ffi_overhead = cs.eval("(query:ffi-call-overhead-stats)");
-    auto dirty_region = cs.eval("(query:dirty-region-rendering-stats)");
+    auto ffi_overhead = cs.eval("(engine:metrics \"query:ffi-call-overhead-stats\")");
+    auto dirty_region = cs.eval("(engine:metrics \"query:dirty-region-rendering-stats\")");
     CHECK(ffi_overhead && aura::compiler::types::is_hash(*ffi_overhead),
           "query:ffi-call-overhead-stats hash regression (#778)");
     CHECK(dirty_region && aura::compiler::types::is_hash(*dirty_region),
           "query:dirty-region-rendering-stats hash regression (#779)");
-    const auto a778_schema = hash_int_field(cs, "(query:ffi-call-overhead-stats)", "schema");
+    const auto a778_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ffi-call-overhead-stats\")", "schema");
     CHECK(a778_schema == 778,
           std::format("#778 schema = {} (expected 778, no drift)", a778_schema));
-    const auto a779_schema = hash_int_field(cs, "(query:dirty-region-rendering-stats)", "schema");
+    const auto a779_schema =
+        hash_int_field(cs, "(engine:metrics \"query:dirty-region-rendering-stats\")", "schema");
     CHECK(a779_schema == 779,
           std::format("#779 schema = {} (expected 779, no drift)", a779_schema));
 }

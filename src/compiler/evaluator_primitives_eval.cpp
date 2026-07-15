@@ -617,8 +617,14 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             if (!root_v.children.empty()) {
                 last_form = root_v.child(root_v.children.size() - 1);
             }
+            // Issue #1441: also require FlatAST generation match — rollback
+            // paths bump generation while restoring children; without this,
+            // a clean last_form + stale last_eval_current_result_ would skip
+            // re-eval and leave Env bindings (e.g. x after rebind) stale.
+            const auto gen = ev.workspace_flat_->generation();
             if (last_form != aura::ast::NULL_NODE &&
-                !ev.workspace_flat_->has_dirty_subtree(last_form) && ev.last_eval_current_result_) {
+                !ev.workspace_flat_->has_dirty_subtree(last_form) && ev.last_eval_current_result_ &&
+                gen == ev.last_eval_current_generation_) {
                 return *ev.last_eval_current_result_;
             }
         }
@@ -626,8 +632,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
 
         // Cache successful results for incremental reuse
-        if (result)
+        if (result) {
             ev.last_eval_current_result_ = *result;
+            if (ev.workspace_flat_)
+                ev.last_eval_current_generation_ = ev.workspace_flat_->generation();
+        }
 
         // Issue #420: post-expand hygiene contract probe.
         ev.ensure_macro_hygiene_contract();

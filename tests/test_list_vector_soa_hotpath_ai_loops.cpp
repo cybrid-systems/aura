@@ -31,7 +31,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:list-soa-hotpath-stats) '{}')", key));
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:list-soa-hotpath-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -55,7 +56,7 @@ static std::int64_t events_total(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:list-soa-hotpath-stats (schema 752) ---");
-    auto h = cs.eval("(query:list-soa-hotpath-stats)");
+    auto h = cs.eval("(engine:metrics \"query:list-soa-hotpath-stats\")");
     CHECK(h && is_hash(*h), "list-soa-hotpath-stats returns hash");
     CHECK(stat_int(cs, "schema") == 752, "schema == 752");
     const auto c = chain_traversals(cs);
@@ -155,9 +156,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b > stats7a, "hotpath-events-total monotonic over AI-loop matrix");
 
     std::println("\n--- AC8: query regression ---");
-    auto apply_stats = cs.eval("(query:primitives-apply-stats)");
-    auto soa_adopt = cs.eval("(query:soa-hotpath-adoption-stats)");
-    auto prim_perf = cs.eval("(query:primitive-perf-stats)");
+    auto apply_stats = cs.eval("(engine:metrics \"query:primitives-apply-stats\")");
+    auto soa_adopt = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
+    auto prim_perf = cs.eval("(engine:metrics \"query:primitive-perf-stats\")");
     CHECK(apply_stats && is_hash(*apply_stats), "primitives-apply-stats regression");
     CHECK(soa_adopt && is_int(*soa_adopt), "soa-hotpath-adoption-stats regression");
     CHECK(prim_perf && is_hash(*prim_perf), "primitive-perf-stats regression");

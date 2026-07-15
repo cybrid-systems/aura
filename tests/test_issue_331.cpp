@@ -5,8 +5,8 @@
 // integration scenarios where:
 //   - Hygienic macro expansion + query:pattern
 //   - mutate:query-and-replace on macro-introduced nodes
-//   - Targeted dirty bit precision via (compile:ast-ops-stats)
-//     and (query:compiler-cache-stats)
+//   - Targeted dirty bit precision via (engine:metrics \"compile:ast-ops-stats\")
+//     and (engine:metrics \"query:compiler-cache-stats\")
 //   - Cache invalidation observability via
 //     (query:incremental-effectiveness)
 //
@@ -75,19 +75,19 @@ bool test_mutate_triggers_dirty() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
     (void)cs.eval("(eval-current)");
 
-    // Read dirty stats before mutate. (compile:ast-ops-stats)
+    // Read dirty stats before mutate. (engine:metrics \"compile:ast-ops-stats\")
     // returns a hash with mark-dirty-upward-call-count and
     // mark-dirty-total-nodes.
-    auto before = cs.eval("(compile:ast-ops-stats)");
-    CHECK(before.has_value(), "(compile:ast-ops-stats) callable pre-mutate");
+    auto before = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
+    CHECK(before.has_value(), "(engine:metrics \"compile:ast-ops-stats\") callable pre-mutate");
 
     // Mutate a single binding.
     auto r = cs.eval("(mutate:query-and-replace a 999)");
     CHECK(r.has_value(), "mutate:query-and-replace succeeds");
 
     // Read dirty stats after — should reflect the mutate.
-    auto after = cs.eval("(compile:ast-ops-stats)");
-    CHECK(after.has_value(), "(compile:ast-ops-stats) callable post-mutate");
+    auto after = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
+    CHECK(after.has_value(), "(engine:metrics \"compile:ast-ops-stats\") callable post-mutate");
     return true;
 }
 
@@ -97,7 +97,7 @@ bool test_compiler_cache_stats_shape() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define x 1) (define y 2) (define z 3)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:compiler-cache-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     CHECK(r.has_value(), "query:compiler-cache-stats returns a result");
     CHECK(is_pair_result(r), "query:compiler-cache-stats result is a pair (3-tuple shape)");
     return true;
@@ -187,7 +187,7 @@ bool test_multiple_dirty_reasons() {
     (void)cs.eval("(mutate:replace-value (define a 999) (define a 999))");
     (void)cs.eval("(mutate:replace-value (define b 999) (define b 999))");
     (void)cs.eval("(mutate:replace-value (define a 111) (define a 111))");
-    auto r = cs.eval("(compile:ast-ops-stats)");
+    auto r = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(r.has_value(), "dirty-stats observable after multiple mutates");
     return true;
 }

@@ -32,7 +32,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1311-1315-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1311-1315-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1311-1315-stats", "schema") == 1311, "schema");
         CHECK(href(cs, "query:production-sweep-1311-1315-stats", "active") == 1, "active");
@@ -76,7 +76,7 @@ int main() {
     {
         auto r = cs.eval("(arena-render-frame-reset)");
         CHECK(r && is_int(*r) && as_int(*r) >= 0, "arena-render-frame-reset");
-        auto st = cs.eval("(query:render-arena-frame-stats)");
+        auto st = cs.eval("(engine:metrics \"query:render-arena-frame-stats\")");
         CHECK(st && is_string(*st), "query:render-arena-frame-stats string");
         auto resets =
             href(cs, "query:production-sweep-1311-1315-stats", "render-frame-reset-total");

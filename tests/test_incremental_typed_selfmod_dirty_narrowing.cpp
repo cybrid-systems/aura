@@ -229,12 +229,12 @@ bool test_regression_existing_primitives() {
     auto r2 = cs.eval("(query:dirty-impact)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(query:dirty-impact) (new for #550)");
-    auto r3 = cs.eval("(query:self-evolution-stability-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:self-evolution-stability-stats) (regression for #549)");
-    auto r4 = cs.eval("(query:stable-ref-stats)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
+    auto r4 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:stable-ref-stats) (regression for #457)");
+          "(engine:metrics \"query:stable-ref-stats\") (regression for #457)");
     auto r5 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r5.has_value() && aura::compiler::types::is_int(*r5),
           "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");

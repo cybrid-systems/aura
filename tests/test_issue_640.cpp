@@ -10,9 +10,9 @@
 // Discovery before this PR: the EDA-SV verification feedback
 // closed-loop observability surface already covers ~80% of the
 // AC4 surface via existing primitives + counters:
-//   - (query:verification-feedback-loop-stats) (#579) — 8-field
+//   - (engine:metrics \"query:verification-feedback-loop-stats\") (#579) — 8-field
 //     feedback → mutate closed-loop hash
-//   - (query:sv-verification-closedloop-stats-hash) (#630) —
+//   - (engine:metrics \"query:sv-verification-closedloop-stats-hash\") (#630) —
 //     historical hash primitive (different naming; -hash suffix
 //     from the pre-enforcement era)
 //   - hardware_backend_hook_calls_total (#693) +
@@ -85,8 +85,9 @@ int aura_issue_640_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:sv-verification-closedloop-stats) shape ---");
-        auto h = cs.eval("(query:sv-verification-closedloop-stats)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:sv-verification-closedloop-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "sv-verification-closedloop-stats returns a hash");
         const auto fb_apply = hash_int(cs, "feedback-apply");
@@ -103,23 +104,25 @@ int aura_issue_640_run() {
     // (back-compat — #640 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_579 = cs.eval("(query:verification-feedback-loop-stats)");
-        CHECK(s_579.has_value(),
-              "(query:verification-feedback-loop-stats) reachable (#579 back-compat)");
-        auto s_630 = cs.eval("(query:sv-verification-closedloop-stats-hash)");
-        CHECK(s_630.has_value(), "(query:sv-verification-closedloop-stats-hash) reachable (#630 "
-                                 "back-compat — historical hash primitive)");
-        auto s_637 = cs.eval("(query:closure-bridge-safety-stats-hash)");
-        CHECK(s_637.has_value(),
-              "(query:closure-bridge-safety-stats-hash) reachable (#637 back-compat)");
-        auto s_633 = cs.eval("(query:stdlib-compiler-demands-stats-hash)");
-        CHECK(s_633.has_value(),
-              "(query:stdlib-compiler-demands-stats-hash) reachable (#633 back-compat)");
-        auto s_632 = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        CHECK(s_632.has_value(), "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
-        auto s_631 = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
-        CHECK(s_631.has_value(),
-              "(query:stable-ref-provenance-sv-stats-hash) reachable (#631 back-compat)");
+        auto s_579 = cs.eval("(engine:metrics \"query:verification-feedback-loop-stats\")");
+        CHECK(s_579.has_value(), "(engine:metrics \"query:verification-feedback-loop-stats\") "
+                                 "reachable (#579 back-compat)");
+        auto s_630 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
+        CHECK(s_630.has_value(),
+              "(engine:metrics \"query:sv-verification-closedloop-stats-hash\") reachable (#630 "
+              "back-compat — historical hash primitive)");
+        auto s_637 = cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
+        CHECK(s_637.has_value(), "(engine:metrics \"query:closure-bridge-safety-stats-hash\") "
+                                 "reachable (#637 back-compat)");
+        auto s_633 = cs.eval("(engine:metrics \"query:stdlib-compiler-demands-stats-hash\")");
+        CHECK(s_633.has_value(), "(engine:metrics \"query:stdlib-compiler-demands-stats-hash\") "
+                                 "reachable (#633 back-compat)");
+        auto s_632 = cs.eval("(engine:metrics \"query:atomic-batch-sv-stats-hash\")");
+        CHECK(s_632.has_value(),
+              "(engine:metrics \"query:atomic-batch-sv-stats-hash\") reachable (#632 back-compat)");
+        auto s_631 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\")");
+        CHECK(s_631.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\") "
+                                 "reachable (#631 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -152,12 +155,14 @@ int aura_issue_640_run() {
     // the historical #630 primitive that does have `-hash`.
     {
         std::println("\n--- AC5: naming distinction from #630 ---");
-        auto new_p = cs.eval("(query:sv-verification-closedloop-stats)");
-        auto old_p = cs.eval("(query:sv-verification-closedloop-stats-hash)");
+        auto new_p = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        auto old_p = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:sv-verification-closedloop-stats) reachable (no -hash suffix)");
+              "new primitive (engine:metrics \"query:sv-verification-closedloop-stats\") reachable "
+              "(no -hash suffix)");
         CHECK(old_p.has_value(),
-              "historical primitive (query:sv-verification-closedloop-stats-hash) still reachable");
+              "historical primitive (engine:metrics "
+              "\"query:sv-verification-closedloop-stats-hash\") still reachable");
         // The new primitive's schema sentinel is 640; the
         // historical one's is 630 — they should NOT collide.
         const auto new_schema = hash_int(cs, "schema");
@@ -183,7 +188,7 @@ int aura_issue_640_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:sv-verification-closedloop-stats)");
+                auto r = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

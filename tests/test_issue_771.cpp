@@ -65,7 +65,7 @@
 //   AC2: (query:linear-occurrence-mutate-stats, schema 747) +
 //        (query:linear-postmutate-fidelity-stats, schema 800)
 //        primitives reachable (items 1-3 metrics ship)
-//   AC3: (query:linear-ownership-runtime-stats) +
+//   AC3: (engine:metrics \"query:linear-ownership-runtime-stats\") +
 //        (query:linear-ownership-gc-compiler-stats, schema 763)
 //        primitives reachable (item 4 metrics ship, runtime
 //        linear metadata)
@@ -122,9 +122,10 @@ static void run_ac1_escape_analysis_api() {
 static void run_ac2_linear_primitives(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC2: linear-occurrence-mutate-stats + linear-postmutate-fidelity-stats ---");
-    auto r1 = cs.eval("(query:linear-occurrence-mutate-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:linear-occurrence-mutate-stats\")");
     CHECK(r1 && aura::compiler::types::is_hash(*r1),
-          "(query:linear-occurrence-mutate-stats) returns a hash (#747 ship, item 1)");
+          "(engine:metrics \"query:linear-occurrence-mutate-stats\") returns a hash (#747 ship, "
+          "item 1)");
     const std::vector<std::string> keys_747 = {"revalidate-hits", "escape-violations-prevented",
                                                "predicate-branch-linear-safe", "schema"};
     for (const auto& k : keys_747) {
@@ -132,26 +133,30 @@ static void run_ac2_linear_primitives(aura::compiler::CompilerService& cs) {
             "(hash-ref (engine:metrics \"query:linear-occurrence-mutate-stats\") '{}')", k));
         CHECK(f, std::format("#747 field '{}' present", k));
     }
-    const auto schema_747 = hash_int_field(cs, "(query:linear-occurrence-mutate-stats)", "schema");
+    const auto schema_747 =
+        hash_int_field(cs, "(engine:metrics \"query:linear-occurrence-mutate-stats\")", "schema");
     CHECK(schema_747 == 747, std::format("#747 schema = {} (expected 747)", schema_747));
 
-    auto r2 = cs.eval("(query:linear-postmutate-fidelity-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:linear-postmutate-fidelity-stats\")");
     CHECK(r2 && aura::compiler::types::is_hash(*r2),
-          "(query:linear-postmutate-fidelity-stats) returns a hash (#800 ship, item 1)");
+          "(engine:metrics \"query:linear-postmutate-fidelity-stats\") returns a hash (#800 ship, "
+          "item 1)");
     const auto schema_800 =
-        hash_int_field(cs, "(query:linear-postmutate-fidelity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:linear-postmutate-fidelity-stats\")", "schema");
     CHECK(schema_800 == 800, std::format("#800 schema = {} (expected 800)", schema_800));
 }
 
 static void run_ac3_runtime_linear_primitives(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: linear-ownership-runtime-stats + linear-ownership-gc-compiler-stats "
                  "---");
-    auto r1 = cs.eval("(query:linear-ownership-runtime-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:linear-ownership-runtime-stats\")");
     CHECK(r1 && aura::compiler::types::is_int(*r1),
-          "(query:linear-ownership-runtime-stats) returns an int (#598 ship, item 4)");
-    auto r2 = cs.eval("(query:linear-ownership-gc-compiler-stats)");
+          "(engine:metrics \"query:linear-ownership-runtime-stats\") returns an int (#598 ship, "
+          "item 4)");
+    auto r2 = cs.eval("(engine:metrics \"query:linear-ownership-gc-compiler-stats\")");
     CHECK(r2 && aura::compiler::types::is_hash(*r2),
-          "(query:linear-ownership-gc-compiler-stats) returns a hash (#763 ship, item 4)");
+          "(engine:metrics \"query:linear-ownership-gc-compiler-stats\") returns a hash (#763 "
+          "ship, item 4)");
     const std::vector<std::string> keys_763 = {"root-registrations", "root-stale-hits",
                                                "runtime-linear-violations", "env-version-sync",
                                                "schema"};
@@ -160,8 +165,8 @@ static void run_ac3_runtime_linear_primitives(aura::compiler::CompilerService& c
             "(hash-ref (engine:metrics \"query:linear-ownership-gc-compiler-stats\") '{}')", k));
         CHECK(f, std::format("#763 field '{}' present", k));
     }
-    const auto schema_763 =
-        hash_int_field(cs, "(query:linear-ownership-gc-compiler-stats)", "schema");
+    const auto schema_763 = hash_int_field(
+        cs, "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")", "schema");
     CHECK(schema_763 == 763, std::format("#763 schema = {} (expected 763)", schema_763));
 }
 
@@ -169,21 +174,23 @@ static void run_ac4_ownershipenv_reachable(aura::compiler::CompilerService& cs) 
     std::println("\n--- AC4: OwnershipEnv + linear-ownership-safety-stats (#638) regression ---");
     // Verify OwnershipEnv + linear-ownership-safety-stats primitives reachable
     // (item 1 ship — OwnershipEnv mutation-aware flow tracking).
-    auto r = cs.eval("(query:linear-ownership-safety-stats)");
-    CHECK(r, "(query:linear-ownership-safety-stats) reachable (#638 ship, item 1)");
-    auto r2 = cs.eval("(query:linear-occurrence-mutate-stats)");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-safety-stats\")");
+    CHECK(r,
+          "(engine:metrics \"query:linear-ownership-safety-stats\") reachable (#638 ship, item 1)");
+    auto r2 = cs.eval("(engine:metrics \"query:linear-occurrence-mutate-stats\")");
     CHECK(r2 && aura::compiler::types::is_hash(*r2),
-          "(query:linear-occurrence-mutate-stats) regression (item 1)");
+          "(engine:metrics \"query:linear-occurrence-mutate-stats\") regression (item 1)");
 }
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: sibling observability regression — #770/#768/#767/#766 schemas "
                  "intact ---");
-    auto type_incremental_fidelity = cs.eval("(query:type-incremental-fidelity-stats)");
-    auto shape_pass_hotpath = cs.eval("(query:shape-pass-hotpath-stats)");
+    auto type_incremental_fidelity =
+        cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
+    auto shape_pass_hotpath = cs.eval("(engine:metrics \"query:shape-pass-hotpath-stats\")");
     auto arena_defrag_fiber =
         cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(type_incremental_fidelity && aura::compiler::types::is_hash(*type_incremental_fidelity),
           "query:type-incremental-fidelity-stats hash regression (#770/#798)");
     CHECK(shape_pass_hotpath && aura::compiler::types::is_hash(*shape_pass_hotpath),
@@ -193,17 +200,19 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
     const auto a770_schema =
-        hash_int_field(cs, "(query:type-incremental-fidelity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")", "schema");
     CHECK(a770_schema == 798,
           std::format("#770/#798 schema = {} (expected 798, no drift)", a770_schema));
-    const auto a768_schema = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "schema");
+    const auto a768_schema =
+        hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")", "schema");
     CHECK(a768_schema == 768,
           std::format("#768 schema = {} (expected 768, no drift)", a768_schema));
     const auto a767_schema = hash_int_field(
         cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
 }

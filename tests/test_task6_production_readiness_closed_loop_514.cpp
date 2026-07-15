@@ -33,21 +33,22 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t reflect_postmutate_total(CompilerService& cs) {
-    auto r = cs.eval("(hash-ref (query:reflect-postmutate-stats) 'reflect-postmutate-total')");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:reflect-postmutate-stats\") "
+                     "'reflect-postmutate-total')");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
 }
 
 static std::int64_t ir_hygiene_total(CompilerService& cs) {
-    auto r = cs.eval("(hash-ref (query:ir-hygiene-stats) 'ir-hygiene-total')");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:ir-hygiene-stats\") 'ir-hygiene-total')");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
 }
 
 static std::int64_t prod_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:task6-production-readiness-stats)");
+    auto r = cs.eval("(engine:metrics \"query:task6-production-readiness-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -74,8 +75,8 @@ static void run_matrix(CompilerService& cs) {
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
     (void)cs.eval("(query:pattern \"v\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
-    auto irs = cs.eval("(query:ir-hygiene-stats)");
-    auto pms = cs.eval("(query:pattern-marker-stats)");
+    auto irs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
+    auto pms = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
     std::println("  hygiene_skips: {} -> {} ir-hygiene={} pattern-marker-hash={}", skips0, skips1,
                  irs && is_hash(*irs) ? ir_hygiene_total(cs) : 0, pms && is_hash(*pms) ? 1 : 0);
     CHECK(skips1 > skips0, "MacroIntroduced filtered in query:pattern");
@@ -99,11 +100,11 @@ static void run_matrix(CompilerService& cs) {
     std::println("  dirty-impact={} typed-mutation-stats={}", as_int(*dirty), as_int(*typed));
 
     std::println("\n--- AC5: query:ir-hygiene-stats ---");
-    auto ir0 = cs.eval("(query:ir-hygiene-stats)");
+    auto ir0 = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(ir0 && is_hash(*ir0) && ir_hygiene_total(cs) >= 0, "ir-hygiene-stats non-negative");
 
     std::println("\n--- AC6: query:pattern-marker-stats ---");
-    auto pm0 = cs.eval("(query:pattern-marker-stats)");
+    auto pm0 = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
     CHECK(pm0 && is_hash(*pm0), "pattern-marker-stats hash after macro+query");
 
     std::println("\n--- AC7: multi-round self-evo cycle ---");
@@ -119,7 +120,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC8: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    auto rps = cs.eval("(query:reflect-postmutate-stats)");
+    auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");

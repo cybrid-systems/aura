@@ -4,7 +4,7 @@
 //
 // Non-duplicative with #518 (test_occurrence_mutate_narrowing),
 // #576 (occurrence-blame-stats Task2), #609 (occurrence-narrow-stats),
-// #434 (compile:occurrence-dirty-stats), #339 (occurrence-stale).
+// #434 (engine:metrics \"compile:occurrence-dirty-stats\"), #339 (occurrence-stale).
 //
 // AC1: query:occurrence-stats reachable + non-negative
 // AC2: if-predicate mutate → narrow eval correct
@@ -47,7 +47,7 @@ static bool load_workspace(CompilerService& cs) {
 }
 
 static std::int64_t occurrence_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:occurrence-stats)");
+    auto r = cs.eval("(engine:metrics \"query:occurrence-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -112,8 +112,8 @@ static void run_matrix(CompilerService& cs) {
           "blame chain path bumped on predicate swap");
 
     std::println("\n--- AC7: query regression ---");
-    auto obs = cs.eval("(query:occurrence-blame-stats)");
-    auto ons = cs.eval("(query:occurrence-narrow-stats)");
+    auto obs = cs.eval("(engine:metrics \"query:occurrence-blame-stats\")");
+    auto ons = cs.eval("(engine:metrics \"query:occurrence-narrow-stats\")");
     CHECK(obs && is_int(*obs), "query:occurrence-blame-stats returns int");
     CHECK(ons && is_int(*ons), "query:occurrence-narrow-stats returns int");
 

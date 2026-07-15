@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t commercial_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:macro-reflect-self-evo-commercial-stats)");
+    auto r = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-commercial-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -72,7 +72,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats3b > stats3a, "Guard mutate bumps reflect/guard/dirty commercial counters");
 
     std::println("\n--- AC4: compile:macro-dirty-stats regression ---");
-    auto mds = cs.eval("(compile:macro-dirty-stats)");
+    auto mds = cs.eval("(engine:metrics \"compile:macro-dirty-stats\")");
     CHECK(mds && is_int(*mds), "compile:macro-dirty-stats returns int");
 
     std::println("\n--- AC5: multi-round self-evo cycle monotonic ---");
@@ -87,9 +87,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "commercial-stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
-    auto cpr = cs.eval("(query:commercial-production-readiness-stats)");
-    auto fus = cs.eval("(query:macro-reflect-self-evo-followup-stats)");
+    auto mrs = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
+    auto cpr = cs.eval("(engine:metrics \"query:commercial-production-readiness-stats\")");
+    auto fus = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-followup-stats\")");
     CHECK(mrs && is_int(*mrs), "macro-reflect-self-evo-stats regression");
     CHECK(cpr && is_int(*cpr), "commercial-production-readiness-stats regression");
     CHECK(fus && is_int(*fus), "macro-reflect-self-evo-followup-stats regression");

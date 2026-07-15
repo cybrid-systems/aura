@@ -293,7 +293,7 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
     // measurement. Multiple calls during a session return
     // fresh stats from the last compiled module (set by
     // CompilerService::last_ir_module()).
-    add("compile:ir-stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("compile:ir-stats", [&ev](const auto&) -> EvalValue {
         if (!ev.compiler_service_) {
             return make_void();
         }

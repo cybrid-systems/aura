@@ -617,86 +617,87 @@ void ObservabilityPrims::register_eval_p6(PrimRegistrar add, Evaluator& ev) {
     // invasive C++ + stdlib + reflect work that needs
     // benchmarking + perf regression coverage alongside the
     // existing AI/JSON/SoA initiatives — separate follow-ups.
-    add("query:stdlib-compiler-demands-stats-hash", [&ev](const auto&) -> EvalValue {
-        // hotpath-calls: sum of all hot-path counters.
-        const std::uint64_t dispatch_hits =
-            types::value_dispatch_hit_count.load(std::memory_order_relaxed);
-        const std::uint64_t fastpath_hits =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->primitive_fastpath_hits_total.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t hotpath_eval =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->hotpath_eval_flat_calls.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t hotpath_lowering =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->hotpath_lowering_calls.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t soa_dual_emit =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->hotpath_soa_dual_emit_hits.load(std::memory_order_relaxed)
-                : 0;
-        const std::uint64_t hotpath_calls =
-            dispatch_hits + fastpath_hits + hotpath_eval + hotpath_lowering + soa_dual_emit;
-        // error-consistency: existing value_contract_violation_count.
-        const std::uint64_t error_consistency =
-            types::value_contract_violation_count.load(std::memory_order_relaxed);
-        // extension-count: new foundation atomic (0 until AC3 macro).
-        const std::uint64_t extension_count =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->stdlib_extension_count_total.load(std::memory_order_relaxed)
-                : 0;
-        // ai-native-hits: new foundation atomic (0 until AC4 wire-up).
-        const std::uint64_t ai_native_hits =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->ai_native_primitive_hits_total.load(std::memory_order_relaxed)
-                : 0;
-        // soa-jit-win: existing primitive_fastpath_hits_total proxy.
-        const std::uint64_t soa_jit_win = fastpath_hits;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:stdlib-compiler-demands-stats-hash", [&ev](const auto&) -> EvalValue {
+            // hotpath-calls: sum of all hot-path counters.
+            const std::uint64_t dispatch_hits =
+                types::value_dispatch_hit_count.load(std::memory_order_relaxed);
+            const std::uint64_t fastpath_hits =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->primitive_fastpath_hits_total.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_eval =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->hotpath_eval_flat_calls.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_lowering =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->hotpath_lowering_calls.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t soa_dual_emit =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->hotpath_soa_dual_emit_hits.load(std::memory_order_relaxed)
+                    : 0;
+            const std::uint64_t hotpath_calls =
+                dispatch_hits + fastpath_hits + hotpath_eval + hotpath_lowering + soa_dual_emit;
+            // error-consistency: existing value_contract_violation_count.
+            const std::uint64_t error_consistency =
+                types::value_contract_violation_count.load(std::memory_order_relaxed);
+            // extension-count: new foundation atomic (0 until AC3 macro).
+            const std::uint64_t extension_count =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->stdlib_extension_count_total.load(std::memory_order_relaxed)
+                    : 0;
+            // ai-native-hits: new foundation atomic (0 until AC4 wire-up).
+            const std::uint64_t ai_native_hits =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->ai_native_primitive_hits_total.load(std::memory_order_relaxed)
+                    : 0;
+            // soa-jit-win: existing primitive_fastpath_hits_total proxy.
+            const std::uint64_t soa_jit_win = fastpath_hits;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
-        insert_kv("error-consistency", static_cast<std::int64_t>(error_consistency));
-        insert_kv("extension-count", static_cast<std::int64_t>(extension_count));
-        insert_kv("ai-native-hits", static_cast<std::int64_t>(ai_native_hits));
-        insert_kv("soa-jit-win", static_cast<std::int64_t>(soa_jit_win));
-        insert_kv("schema", 633);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
+            insert_kv("error-consistency", static_cast<std::int64_t>(error_consistency));
+            insert_kv("extension-count", static_cast<std::int64_t>(extension_count));
+            insert_kv("ai-native-hits", static_cast<std::int64_t>(ai_native_hits));
+            insert_kv("soa-jit-win", static_cast<std::int64_t>(soa_jit_win));
+            insert_kv("schema", 633);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 7 (orig lines 1768-1890)
@@ -764,66 +765,67 @@ void ObservabilityPrims::register_eval_p7(PrimRegistrar add, Evaluator& ev) {
     // is invasive C++ on the hot path + needs the 10k+ fiber
     // stress + TSan coverage from the issue body — separate
     // follow-ups.
-    add("query:closure-bridge-safety-stats-hash", [&ev](const auto&) -> EvalValue {
-        // invalidations-post-mutate: new foundation atomic
-        // (0 until AC1 invalidate_function wire-up).
-        const std::uint64_t invalidations_post_mutate =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->closure_invalidation_post_mutate_total.load(std::memory_order_relaxed)
-                : 0;
-        // version-mismatches-caught: new foundation atomic
-        // (0 until AC2 apply_closure + materialize_call_env
-        // wire-up).
-        const std::uint64_t version_mismatches_caught =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->closure_version_mismatch_caught_total.load(std::memory_order_relaxed)
-                : 0;
-        // safe-rebuilds: new foundation atomic
-        // (0 until AC2/AC3 Guard dtor wire-up).
-        const std::uint64_t safe_rebuilds =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->closure_safe_rebuild_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:closure-bridge-safety-stats-hash", [&ev](const auto&) -> EvalValue {
+            // invalidations-post-mutate: new foundation atomic
+            // (0 until AC1 invalidate_function wire-up).
+            const std::uint64_t invalidations_post_mutate =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->closure_invalidation_post_mutate_total.load(std::memory_order_relaxed)
+                    : 0;
+            // version-mismatches-caught: new foundation atomic
+            // (0 until AC2 apply_closure + materialize_call_env
+            // wire-up).
+            const std::uint64_t version_mismatches_caught =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->closure_version_mismatch_caught_total.load(std::memory_order_relaxed)
+                    : 0;
+            // safe-rebuilds: new foundation atomic
+            // (0 until AC2/AC3 Guard dtor wire-up).
+            const std::uint64_t safe_rebuilds =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->closure_safe_rebuild_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("invalidations-post-mutate",
-                  static_cast<std::int64_t>(invalidations_post_mutate));
-        insert_kv("version-mismatches-caught",
-                  static_cast<std::int64_t>(version_mismatches_caught));
-        insert_kv("safe-rebuilds", static_cast<std::int64_t>(safe_rebuilds));
-        insert_kv("schema", 637);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("invalidations-post-mutate",
+                      static_cast<std::int64_t>(invalidations_post_mutate));
+            insert_kv("version-mismatches-caught",
+                      static_cast<std::int64_t>(version_mismatches_caught));
+            insert_kv("safe-rebuilds", static_cast<std::int64_t>(safe_rebuilds));
+            insert_kv("schema", 637);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

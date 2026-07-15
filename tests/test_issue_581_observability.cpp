@@ -88,7 +88,7 @@ int main() {
     // AC1: query:stable-ref-sv-scale-stats returns hash
     {
         std::println("\n--- AC1: query:stable-ref-sv-scale-stats ---");
-        auto stats = cs.eval("(query:stable-ref-sv-scale-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:stable-ref-sv-scale-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:stable-ref-sv-scale-stats returns hash");
         CHECK(hash_int(cs, "wrap-events") >= 0, "wrap-events present");
@@ -163,10 +163,10 @@ int main() {
     // AC4: related stability primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto eda_stab = cs.eval("(query:eda-stability-stats)");
-        auto lifecycle = cs.eval("(query:stable-ref-lifecycle-stats)");
-        auto legacy = cs.eval("(query:stable-ref-stats-hash)");
-        auto workspace = cs.eval("(query:stable-ref-workspace-tree-stats)");
+        auto eda_stab = cs.eval("(engine:metrics \"query:eda-stability-stats\")");
+        auto lifecycle = cs.eval("(engine:metrics \"query:stable-ref-lifecycle-stats\")");
+        auto legacy = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
+        auto workspace = cs.eval("(engine:metrics \"query:stable-ref-workspace-tree-stats\")");
         CHECK(eda_stab && aura::compiler::types::is_hash(*eda_stab),
               "query:eda-stability-stats hash regression (#540)");
         CHECK(lifecycle && aura::compiler::types::is_hash(*lifecycle),

@@ -53,7 +53,7 @@ int aura_issue_680_run() {
     // AC1: baseline stats hash
     {
         std::println("\n--- AC1: query:define-mutate-ir-invalidation-stats ---");
-        auto stats = cs.eval("(query:define-mutate-ir-invalidation-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:define-mutate-ir-invalidation-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:define-mutate-ir-invalidation-stats returns hash");
         CHECK(stat_int(cs, "precise-inval-hits") >= 0, "precise-inval-hits present");

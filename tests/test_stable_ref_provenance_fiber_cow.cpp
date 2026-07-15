@@ -10,7 +10,7 @@
 //
 //   - AC1: 4 new self-evolution-stability counters reachable
 //          + monotonic
-//   - AC2: (query:self-evolution-stability-stats) returns
+//   - AC2: (engine:metrics \"query:self-evolution-stability-stats\") returns
 //          integer sum of 4 counters
 //   - AC3: validate_stable_ref classification — captured_gen
 //          != current generation_ bumps cross_cow_invalidations_
@@ -75,17 +75,20 @@ bool test_self_evolution_counters_reachable() {
 // ── AC2: query:self-evolution-stability-stats returns
 //         integer sum ───────────────────────────────────────
 bool test_query_self_evolution_stability_stats() {
-    std::println("\n--- AC2: (query:self-evolution-stability-stats) returns integer ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"query:self-evolution-stability-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:self-evolution-stability-stats)");
-    CHECK(r.has_value(), "(query:self-evolution-stability-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:self-evolution-stability-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:self-evolution-stability-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:self-evolution-stability-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:self-evolution-stability-stats = {}", v);
-        CHECK(v >= 0, "(query:self-evolution-stability-stats) >= 0 (4 counters sum)");
+        CHECK(v >= 0,
+              "(engine:metrics \"query:self-evolution-stability-stats\") >= 0 (4 counters sum)");
     }
     return true;
 }
@@ -257,15 +260,15 @@ bool test_gc_heap_with_stable_ref() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:self-evolution-stability-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:self-evolution-stability-stats) (new for #549)");
-    auto r2 = cs.eval("(query:stable-ref-stats)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (new for #549)");
+    auto r2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:stable-ref-stats) (regression for #457)");
-    auto r3 = cs.eval("(query:stale-ref-stats)");
+          "(engine:metrics \"query:stable-ref-stats\") (regression for #457)");
+    auto r3 = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:stale-ref-stats) (regression for #391)");
+          "(engine:metrics \"query:stale-ref-stats\") (regression for #391)");
     auto r4 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");

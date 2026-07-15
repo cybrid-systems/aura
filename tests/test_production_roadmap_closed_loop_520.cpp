@@ -34,7 +34,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t roadmap_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:production-roadmap-stats)");
+    auto r = cs.eval("(engine:metrics \"query:production-roadmap-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -71,7 +71,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(as_int(*pcs2) >= as_int(*pcs), "checkpoint save bumps persistence counters");
 
     std::println("\n--- AC4: P3 Memory safety regression ---");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");
 
     std::println("\n--- AC5: P4 SoA hotpath regression ---");
@@ -98,9 +98,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b >= stats7a, "roadmap stats monotonic over matrix");
 
     std::println("\n--- AC8: query regression ---");
-    auto t6 = cs.eval("(query:task6-production-readiness-stats)");
-    auto cpr = cs.eval("(query:commercial-production-readiness-stats)");
-    auto vls = cs.eval("(query:verification-loop-stats)");
+    auto t6 = cs.eval("(engine:metrics \"query:task6-production-readiness-stats\")");
+    auto cpr = cs.eval("(engine:metrics \"query:commercial-production-readiness-stats\")");
+    auto vls = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
     CHECK(t6 && is_int(*t6), "task6-production-readiness-stats regression");
     CHECK(cpr && is_int(*cpr), "commercial-production-readiness-stats regression");
     CHECK(vls && is_int(*vls), "verification-loop-stats regression");

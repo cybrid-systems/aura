@@ -83,10 +83,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:closed-loop-convergence-stats) hash shape ---");
-    auto r = cs.eval("(query:closed-loop-convergence-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:closed-loop-convergence-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:closed-loop-convergence-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:closed-loop-convergence-stats) returns a hash");
+          "(engine:metrics \"query:closed-loop-convergence-stats\") returns a hash");
     const std::vector<std::string> keys = {"convergence-rate", "closed-loop-rounds",
                                            "convergence-hits", "feedback-mutate-rounds", "schema"};
     for (const auto& k : keys) {
@@ -98,25 +99,26 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_baseline(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service baseline (rate = 10000 / 100.00% when rounds == 0) ---");
-    const auto rate =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-rate");
+    const auto rate = hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")",
+                                     "convergence-rate");
     CHECK(rate == 10000,
           std::format("convergence-rate = {} (expected 10000 = 100.00% on fresh service)", rate));
-    const auto rounds =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "closed-loop-rounds");
+    const auto rounds = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "closed-loop-rounds");
     CHECK(rounds == 0,
           std::format("closed-loop-rounds = {} (expected 0 on fresh service)", rounds));
-    const auto hits =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-hits");
+    const auto hits = hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")",
+                                     "convergence-hits");
     CHECK(hits == 0, std::format("convergence-hits = {} (expected 0 on fresh service)", hits));
-    const auto fmr =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "feedback-mutate-rounds");
+    const auto fmr = hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")",
+                                    "feedback-mutate-rounds");
     CHECK(fmr == 0, std::format("feedback-mutate-rounds = {} (expected 0 on fresh service)", fmr));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 774 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:closed-loop-convergence-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "schema");
     CHECK(schema == 774, std::format("schema = {} (expected 774)", schema));
 }
 
@@ -127,12 +129,12 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
     // Scenario 1: 10 closed_loop_rounds, 9 convergence_hits → 9000 (90.00%)
     ev.bump_sv_self_evo_closed_loop_rounds(10);
     ev.bump_sv_self_evo_convergence_hits(9);
-    const auto rate1 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-rate");
-    const auto rounds1 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "closed-loop-rounds");
-    const auto hits1 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-hits");
+    const auto rate1 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-rate");
+    const auto rounds1 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "closed-loop-rounds");
+    const auto hits1 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-hits");
     CHECK(rounds1 == 10,
           std::format("after 10 rounds bump: closed-loop-rounds = {} (expected 10)", rounds1));
     CHECK(hits1 == 9, std::format("after 9 hits bump: convergence-hits = {} (expected 9)", hits1));
@@ -141,15 +143,15 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
 
     // Scenario 2: bump hits to 10/10 → 10000 (100.00%)
     ev.bump_sv_self_evo_convergence_hits(1);
-    const auto rate2 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-rate");
+    const auto rate2 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-rate");
     CHECK(rate2 == 10000,
           std::format("after 10/10 hits: convergence-rate = {} (expected 10000 = 100.00%)", rate2));
 
     // Scenario 3: bump more rounds (no more hits) → 10/15 = 6666 (66.66%)
     ev.bump_sv_self_evo_closed_loop_rounds(5);
-    const auto rate3 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-rate");
+    const auto rate3 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-rate");
     CHECK(rate3 == 6666,
           std::format("after 10/15 hits/rounds: convergence-rate = {} (expected 6666 = 66.66%)",
                       rate3));
@@ -160,8 +162,8 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
     // 4583 (integer division of 4583.33...). Verify truncation behavior.
     ev.bump_sv_self_evo_closed_loop_rounds(9); // 15 + 9 = 24
     ev.bump_sv_self_evo_convergence_hits(1);   // 10 + 1 = 11
-    const auto rate4 =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "convergence-rate");
+    const auto rate4 = hash_int_field(
+        cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-rate");
     CHECK(rate4 == 4583,
           std::format("after 11/24 hits/rounds: convergence-rate = {} (expected 4583 = 45.83%)",
                       rate4));
@@ -170,8 +172,8 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
     ev.bump_closed_loop_feedback_mutate_round();
     ev.bump_closed_loop_feedback_mutate_round();
     ev.bump_closed_loop_feedback_mutate_round();
-    const auto fmr =
-        hash_int_field(cs, "(query:closed-loop-convergence-stats)", "feedback-mutate-rounds");
+    const auto fmr = hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")",
+                                    "feedback-mutate-rounds");
     CHECK(fmr == 3,
           std::format("after 3 #726 feedback-mutate-round bumps: feedback-mutate-rounds = {} "
                       "(expected 3)",
@@ -183,8 +185,8 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
         aura::compiler::CompilerService cs2;
         auto& ev2 = cs2.evaluator();
         ev2.bump_sv_self_evo_convergence_hits(5); // hits > 0, but rounds == 0
-        const auto rate_fresh =
-            hash_int_field(cs2, "(query:closed-loop-convergence-stats)", "convergence-rate");
+        const auto rate_fresh = hash_int_field(
+            cs2, "(engine:metrics \"query:closed-loop-convergence-stats\")", "convergence-rate");
         CHECK(rate_fresh == 10000,
               std::format("fresh service with hits>0 but rounds==0: convergence-rate = {} "
                           "(expected 10000 = 100.00% baseline)",
@@ -195,10 +197,11 @@ static void run_ac4_derivation_correctness(aura::compiler::CompilerService& cs) 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #726 + #802 + #772 + #773 sibling primitives "
                  "unaffected ---");
-    auto closed726 = cs.eval("(query:closed-loop-reliability-stats)");
-    auto self_evo802 = cs.eval("(query:sv-verification-self-evolution-stats)");
+    auto closed726 = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
+    auto self_evo802 = cs.eval("(engine:metrics \"query:sv-verification-self-evolution-stats\")");
     auto sv_closedloop_slo772 = cs.eval("(query:sv-closedloop-slo)");
-    auto workspace_closedloop773 = cs.eval("(query:workspace-closedloop-fiber-eda-stats)");
+    auto workspace_closedloop773 =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")");
     CHECK(closed726 && aura::compiler::types::is_hash(*closed726),
           "query:closed-loop-reliability-stats hash regression (#726)");
     CHECK(self_evo802 && aura::compiler::types::is_hash(*self_evo802),
@@ -207,18 +210,19 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:sv-closedloop-slo hash regression (#772)");
     CHECK(workspace_closedloop773 && aura::compiler::types::is_hash(*workspace_closedloop773),
           "query:workspace-closedloop-fiber-eda-stats hash regression (#773)");
-    const auto a726_schema = hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
+    const auto a726_schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(a726_schema == 726,
           std::format("#726 schema = {} (expected 726, no drift)", a726_schema));
-    const auto a802_schema =
-        hash_int_field(cs, "(query:sv-verification-self-evolution-stats)", "schema");
+    const auto a802_schema = hash_int_field(
+        cs, "(engine:metrics \"query:sv-verification-self-evolution-stats\")", "schema");
     CHECK(a802_schema == 802,
           std::format("#802 schema = {} (expected 802, no drift)", a802_schema));
     const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
-    const auto a773_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)", "schema");
+    const auto a773_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")", "schema");
     CHECK(a773_schema == 773,
           std::format("#773 schema = {} (expected 773, no drift)", a773_schema));
 }

@@ -64,7 +64,7 @@ int main() {
     // AC1: query:sv-structured-edsl-stats returns hash
     {
         std::println("\n--- AC1: query:sv-structured-edsl-stats ---");
-        auto stats = cs.eval("(query:sv-structured-edsl-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:sv-structured-edsl-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:sv-structured-edsl-stats returns hash");
         CHECK(hash_int(cs, "sv-struct-pattern-hits") >= 0, "sv-struct-pattern-hits present");
@@ -133,10 +133,10 @@ int main() {
     // AC4: related SV/EDA primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto sva = cs.eval("(query:sv-sva-structure-stats)");
-        auto prod = cs.eval("(query:sv-production-verification-stats)");
-        auto pattern = cs.eval("(query:pattern-sv-verification-stats)");
-        auto closed = cs.eval("(query:sv-verification-closedloop-stats-hash)");
+        auto sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+        auto prod = cs.eval("(engine:metrics \"query:sv-production-verification-stats\")");
+        auto pattern = cs.eval("(engine:metrics \"query:pattern-sv-verification-stats\")");
+        auto closed = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
         CHECK(sva && aura::compiler::types::is_hash(*sva),
               "query:sv-sva-structure-stats hash regression (#694)");
         CHECK(prod && aura::compiler::types::is_hash(*prod),

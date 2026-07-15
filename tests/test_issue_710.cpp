@@ -63,7 +63,7 @@ int aura_issue_710_run() {
     // AC1: query:verify-tool-guard-stats hash fields
     {
         std::println("\n--- AC1: query:verify-tool-guard-stats ---");
-        auto stats = cs.eval("(query:verify-tool-guard-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:verify-tool-guard-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:verify-tool-guard-stats returns hash");
         CHECK(guard_stat(cs, "guard-captures") >= 0, "guard-captures present");
@@ -152,7 +152,7 @@ int aura_issue_710_run() {
                                           static_cast<int>(property_id)));
                 (void)cs.eval("(eda:run-verification-feedback \"coverage.log\" \"0 stress\")");
                 (void)cs.eval("(mutate:request-gc-safepoint)");
-                auto r = cs.eval("(query:verify-tool-guard-stats)");
+                auto r = cs.eval("(engine:metrics \"query:verify-tool-guard-stats\")");
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

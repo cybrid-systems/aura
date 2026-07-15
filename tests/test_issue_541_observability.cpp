@@ -73,7 +73,7 @@ int aura_issue_541_observability_run() {
     // AC1: query:pattern-sv-verification-stats returns hash
     {
         std::println("\n--- AC1: query:pattern-sv-verification-stats ---");
-        auto stats = cs.eval("(query:pattern-sv-verification-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pattern-sv-verification-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pattern-sv-verification-stats returns hash");
         CHECK(hash_int(cs, "defuse-index-used") >= 0, "defuse-index-used present");
@@ -145,7 +145,7 @@ int aura_issue_541_observability_run() {
     // AC4: related pattern index/hygiene primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto prod = cs.eval("(query:pattern-production-index-stats)");
+        auto prod = cs.eval("(engine:metrics \"query:pattern-production-index-stats\")");
         auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         CHECK(prod && aura::compiler::types::is_hash(*prod),

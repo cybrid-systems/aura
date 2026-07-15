@@ -1,6 +1,6 @@
 // @category: unit
 // @reason: pure C++ test of StableNodeRef generation
-//          observability + (query:stable-ref-stats-hash)
+//          observability + (engine:metrics \"query:stable-ref-stats-hash\")
 //          primitive + wrap detection
 
 // test_issue_470_stable_ref_sv_scale.cpp — Issue #470:
@@ -14,7 +14,7 @@
 //
 // Scope-limited close ships the OBSERVABILITY +
 // PRIMITIVE LAYER (precondition for the rest):
-//   1. (query:stable-ref-stats-hash) Aura primitive —
+//   1. (engine:metrics \"query:stable-ref-stats-hash\") Aura primitive —
 //      4-field hash: generation-wrap-count /
 //      stable-ref-invalidations / node-gen-stale-
 //      accesses / recommendation (int 0/1/2).
@@ -28,7 +28,7 @@
 //      (already shipped in #457).
 //
 // Test cases:
-//   AC1:  (query:stable-ref-stats-hash) returns a hash
+//   AC1:  (engine:metrics \"query:stable-ref-stats-hash\") returns a hash
 //   AC2:  4 fields present
 //   AC3:  Fresh service: all 3 counters == 0
 //   AC4:  recommendation == 0 (healthy) when no wraps
@@ -74,17 +74,18 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
     return aura::compiler::types::as_int(*r);
 }
 
-// ── AC1: (query:stable-ref-stats-hash) returns a hash
+// ── AC1: (engine:metrics \"query:stable-ref-stats-hash\") returns a hash
 bool test_primitive_returns_hash() {
     std::println("\n--- AC1: primitive returns hash ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:stable-ref-stats-hash)");
+    auto r = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v), "(query:stable-ref-stats-hash) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v),
+          "(engine:metrics \"query:stable-ref-stats-hash\") returns a hash");
     return true;
 }
 

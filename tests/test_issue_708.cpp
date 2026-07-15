@@ -67,7 +67,7 @@ int aura_issue_708_run() {
     // AC1: query:aot-reload-stats hash fields
     {
         std::println("\n--- AC1: query:aot-reload-stats ---");
-        auto stats = cs.eval("(query:aot-reload-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:aot-reload-stats returns hash");
         CHECK(reload_stat(cs, "reload-attempts") >= 0, "reload-attempts present");
@@ -82,7 +82,7 @@ int aura_issue_708_run() {
     // AC2: query:aot-checkpoint-version-stats hash fields
     {
         std::println("\n--- AC2: query:aot-checkpoint-version-stats ---");
-        auto stats = cs.eval("(query:aot-checkpoint-version-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:aot-checkpoint-version-stats returns hash");
         CHECK(checkpoint_stat(cs, "checkpoint-version-drifts") >= 0,
@@ -197,8 +197,8 @@ int aura_issue_708_run() {
                 std::lock_guard<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(typecheck-current)");
                 (void)cs.eval("(mutate:request-gc-safepoint)");
-                auto r1 = cs.eval("(query:aot-reload-stats)");
-                auto r2 = cs.eval("(query:aot-checkpoint-version-stats)");
+                auto r1 = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
+                auto r2 = cs.eval("(engine:metrics \"query:aot-checkpoint-version-stats\")");
                 if (r1 && aura::compiler::types::is_hash(*r1) && r2 &&
                     aura::compiler::types::is_hash(*r2)) {
                     ok_count.fetch_add(1, std::memory_order_relaxed);

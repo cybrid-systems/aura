@@ -52,7 +52,7 @@ int main() {
     // AC1: query:arena-auto-compact-defrag-stats returns hash
     {
         std::println("\n--- AC1: query:arena-auto-compact-defrag-stats ---");
-        auto stats = cs.eval("(query:arena-auto-compact-defrag-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:arena-auto-compact-defrag-stats returns hash");
         CHECK(hash_int(cs, "fragmentation-ratio-pct") >= 0, "fragmentation-ratio-pct present");
@@ -104,9 +104,9 @@ int main() {
     // AC4: related arena primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto production = cs.eval("(query:arena-production-compaction-stats)");
-        auto auto_compact = cs.eval("(query:arena-auto-compact-stats)");
-        auto auto_stats = cs.eval("(query:arena-auto-stats)");
+        auto production = cs.eval("(engine:metrics \"query:arena-production-compaction-stats\")");
+        auto auto_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        auto auto_stats = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
         auto frag_snap = cs.eval("(query:arena-fragmentation-snapshot)");
         CHECK(production && aura::compiler::types::is_hash(*production),
               "query:arena-production-compaction-stats hash regression (#534)");

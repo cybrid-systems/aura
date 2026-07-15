@@ -1,5 +1,5 @@
 // @category: integration
-// @reason: verifies the (compile:occ-cache-stats)
+// @reason: verifies the (engine:metrics \"compile:occ-cache-stats\")
 //          primitive + the pre-existing
 //          predicate_memo_ cache infrastructure
 // test_issue_340.cpp — Verify Issue #340 acceptance
@@ -17,18 +17,18 @@
 //      existing cache_hits/stale_cache
 //
 // This PR ships:
-//   1. (compile:occ-cache-stats) Aura primitive that
+//   1. (engine:metrics \"compile:occ-cache-stats\") Aura primitive that
 //      returns the predicate_memo_ counters as a
 //      3-tuple. The pre-existing predicate_memo_
 //      (from #281) already does steps 1-4 (it's the
 //      cache the issue describes); the primitive
 //      closes the observability gap (step 5).
-//   2. (compile:occ-cache-stats) test that
+//   2. (engine:metrics \"compile:occ-cache-stats\") test that
 //      verifies the primitive returns the right
 //      shape + is callable from Aura.
 //
 // 3 ACs:
-//   AC1 (compile:occ-cache-stats) returns a 3-tuple
+//   AC1 (engine:metrics \"compile:occ-cache-stats\") returns a 3-tuple
 //       (predicate_memo_hits . predicate_memo_misses
 //       . predicate_memo_evictions)
 //   AC2 the memo infrastructure exists
@@ -69,21 +69,21 @@ static int build_workspace(aura::compiler::CompilerService& cs) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AC1: (compile:occ-cache-stats) returns a 3-tuple
+// AC1: (engine:metrics \"compile:occ-cache-stats\") returns a 3-tuple
 // ═══════════════════════════════════════════════════════════════
 
 bool test_occ_cache_stats_primitive() {
-    std::println("\n--- AC1: (compile:occ-cache-stats) returns 3-tuple ---");
+    std::println("\n--- AC1: (engine:metrics \"compile:occ-cache-stats\") returns 3-tuple ---");
     using namespace aura;
     compiler::CompilerService cs;
     if (!build_workspace(cs)) {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r.has_value(), "(compile:occ-cache-stats) returns a value");
+    auto r = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"compile:occ-cache-stats\") returns a value");
     CHECK(aura::compiler::types::is_pair(*r),
-          "(compile:occ-cache-stats) returns a pair (outer of the 3-tuple)");
+          "(engine:metrics \"compile:occ-cache-stats\") returns a pair (outer of the 3-tuple)");
     // The 3-tuple is encoded as (hits . (misses . evictions))
     // — a pair-of-pairs (the simplest 3-tuple in
     // flat-eval). The car/cdr accessors aren't
@@ -120,8 +120,9 @@ bool test_memo_infrastructure_exists() {
     }
     // The primitive should still return a value
     // after the workspace is built.
-    auto r = cs.eval("(compile:occ-cache-stats)");
-    CHECK(r.has_value(), "post-build: (compile:occ-cache-stats) returns a value");
+    auto r = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
+    CHECK(r.has_value(),
+          "post-build: (engine:metrics \"compile:occ-cache-stats\") returns a value");
     return true;
 }
 
@@ -139,16 +140,16 @@ bool test_end_to_end_primitive_callable() {
     // No workspace — primitive should still
     // return a value (with 0/0/0 — there's no
     // memo to observe).
-    auto r1 = cs.eval("(compile:occ-cache-stats)");
+    auto r1 = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
     CHECK(r1.has_value(), "no-workspace: primitive returns a value");
     // With a workspace.
     build_workspace(cs);
-    auto r2 = cs.eval("(compile:occ-cache-stats)");
+    auto r2 = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
     CHECK(r2.has_value(), "with-workspace: primitive returns a value");
     // Call the primitive multiple times —
     // should be idempotent (stats-only).
     for (int i = 0; i < 3; ++i) {
-        auto r = cs.eval("(compile:occ-cache-stats)");
+        auto r = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
         CHECK(r.has_value(), "repeat call: primitive returns a value");
     }
     return true;

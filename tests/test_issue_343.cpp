@@ -16,7 +16,7 @@
 // Pre-#343, the 3 lifetime stable-ref counters
 // (bump_generation_count, generation_wrap_count,
 // node_gen_stale_access_count) were only accessible
-// via (query:stable-ref-stats) which returns the
+// via (engine:metrics \"query:stable-ref-stats\") which returns the
 // SUM. Post-#343 the (ast:generation-stats) primitive
 // exposes each category individually so the AI Agent
 // can react to each independently (e.g. checkpoint

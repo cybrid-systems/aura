@@ -1,0 +1,13 @@
+; lib/std/mutation/atomic.aura — Issue #1442 convenience over (typed-mutate-atomic)
+;
+; (require "std/mutation/atomic" all:)
+;
+; Wraps the engine primitive for Agent / app code. Prefer this module
+; when composing lists of mutation sexprs in Aura.
+
+(export typed-mutate-atomic-all)
+
+; (typed-mutate-atomic-all sexpr-list) → #t | #f
+; sexpr-list: list of strings, each a full mutate sexpr.
+(define (typed-mutate-atomic-all mutations)
+  (typed-mutate-atomic mutations))

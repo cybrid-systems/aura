@@ -49,7 +49,7 @@ static SolveResult solve_delta_with(ConstraintSystem& cs, Constraint c) {
 }
 
 static std::int64_t task2_refinement_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:task2-refinement-stats)");
+    auto r = cs.eval("(engine:metrics \"query:task2-refinement-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -82,22 +82,22 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(s0 >= 0, "task2-refinement-stats non-negative");
 
     std::println("\n--- AC3: coercion pillar ---");
-    auto ces = cs.eval("(query:coercion-elim-stats)");
+    auto ces = cs.eval("(engine:metrics \"query:coercion-elim-stats\")");
     CHECK(ces && is_int(*ces), "query:coercion-elim-stats returns int");
     std::println("  coercion-elim-stats = {}", ces && is_int(*ces) ? as_int(*ces) : -1);
 
     std::println("\n--- AC4: occurrence pillar ---");
-    const auto stats4a = cs.eval("(query:occurrence-stats)");
+    const auto stats4a = cs.eval("(engine:metrics \"query:occurrence-stats\")");
     (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
                   "\"issue-495-occ\")");
-    auto stats4b = cs.eval("(query:occurrence-stats)");
+    auto stats4b = cs.eval("(engine:metrics \"query:occurrence-stats\")");
     CHECK(stats4a && is_int(*stats4a), "occurrence-stats before mutate");
     CHECK(stats4b && is_int(*stats4b), "occurrence-stats after mutate");
     if (stats4a && stats4b && is_int(*stats4a) && is_int(*stats4b))
         CHECK(as_int(*stats4b) >= as_int(*stats4a), "occurrence-stats monotonic after if mutate");
 
     std::println("\n--- AC5: JIT elision pillar ---");
-    auto zos = cs.eval("(query:coercion-zerooverhead-stats)");
+    auto zos = cs.eval("(engine:metrics \"query:coercion-zerooverhead-stats\")");
     CHECK(zos && is_int(*zos), "query:coercion-zerooverhead-stats returns int");
 
     std::println("\n--- AC6: integrated mutate eval semantics ---");
@@ -107,7 +107,7 @@ static void run_integration_matrix(CompilerService& cs) {
         CHECK(as_int(*r6) == 13, "narrow-dependent (+ x 8) correct");
 
     std::println("\n--- AC7: query regression ---");
-    auto cds = cs.eval("(query:constraint-delta-stats)");
+    auto cds = cs.eval("(engine:metrics \"query:constraint-delta-stats\")");
     CHECK(cds && is_int(*cds), "query:constraint-delta-stats returns int");
 
     std::println("\n--- AC8: multi-round mutate stats monotonic ---");

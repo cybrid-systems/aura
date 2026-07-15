@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // @category: integration
 // @reason: Issue #671 — primitives_detail lambda capture discipline
 //  + style compliance observability (P1 stdlib-impl consistency).
@@ -30,7 +31,7 @@
 //   - AC6:  recommended-action is 0 on fresh CS (no violations,
 //           documented == slots by default? — depends on
 //           backfill state)
-//   - AC7:  regression — (query:primitives-registry-stats) (#709)
+//   - AC7:  regression — (engine:metrics \"query:primitives-registry-stats\") (#709)
 //           still reachable with its existing fields
 
 #include <iostream>
@@ -46,6 +47,8 @@ namespace aura_issue_671_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -59,7 +62,7 @@ static int g_failed = 0;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::string& prim,
                              const std::string& key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", prim, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(prim), key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -67,7 +70,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::str
 
 static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:primitives-consistency-stats reachable (schema 671) ---");
-    auto r = cs.eval("(query:primitives-consistency-stats)");
+    auto r = cs.eval("(engine:metrics \"query:primitives-consistency-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "query:primitives-consistency-stats returns a hash");
     auto schema = hash_int(cs, "query:primitives-consistency-stats", "schema");
@@ -120,7 +123,7 @@ static void run_ac6_recommended_action(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: regression — registry-stats (#709) still reachable ---");
-    auto r = cs.eval("(query:primitives-registry-stats)");
+    auto r = cs.eval("(engine:metrics \"query:primitives-registry-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "query:primitives-registry-stats (#709) returns a hash");
     // Verify the existing capture-violations field still surfaces

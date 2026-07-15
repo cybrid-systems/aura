@@ -94,10 +94,10 @@ bool test_stats_list_entries_invocable() {
     CHECK(r1.has_value(), "(engine:metrics \"query:envframe-dualpath-stats\") invocable");
     auto r2 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r2.has_value(), "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") invocable");
-    auto r3 = cs.eval("(query:self-evolution-stability-stats)");
-    CHECK(r3.has_value(), "(query:self-evolution-stability-stats) invocable");
-    auto r4 = cs.eval("(query:edsl-concurrency-stats)");
-    CHECK(r4.has_value(), "(query:edsl-concurrency-stats) invocable");
+    auto r3 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
+    CHECK(r3.has_value(), "(engine:metrics \"query:self-evolution-stability-stats\") invocable");
+    auto r4 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
+    CHECK(r4.has_value(), "(engine:metrics \"query:edsl-concurrency-stats\") invocable");
     return true;
 }
 
@@ -249,14 +249,17 @@ bool test_regression_prior_primitives() {
     auto r3 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r3.has_value(),
           "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") (regression for #548)");
-    auto r4 = cs.eval("(query:self-evolution-stability-stats)");
-    CHECK(r4.has_value(), "(query:self-evolution-stability-stats) (regression for #549)");
+    auto r4 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
+    CHECK(r4.has_value(),
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
     auto r5 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r5.has_value(), "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
-    auto r6 = cs.eval("(query:edsl-concurrency-stats)");
-    CHECK(r6.has_value(), "(query:edsl-concurrency-stats) (regression for #556)");
-    auto r7 = cs.eval("(query:closure-env-safety-stats)");
-    CHECK(r7.has_value(), "(query:closure-env-safety-stats) (regression for #531)");
+    auto r6 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
+    CHECK(r6.has_value(),
+          "(engine:metrics \"query:edsl-concurrency-stats\") (regression for #556)");
+    auto r7 = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
+    CHECK(r7.has_value(),
+          "(engine:metrics \"query:closure-env-safety-stats\") (regression for #531)");
     if (!cs.eval("(define reg-560-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

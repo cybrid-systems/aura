@@ -32,7 +32,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
 static std::int64_t meta_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:primitive-meta-stats)");
+    auto r = cs.eval("(engine:metrics \"query:primitive-meta-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -86,8 +86,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "meta-stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto ps = cs.eval("(query:primitives-stats)");
-    auto pes = cs.eval("(query:primitive-error-stats)");
+    auto ps = cs.eval("(engine:metrics \"query:primitives-stats\")");
+    auto pes = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
     CHECK(ps && is_int(*ps), "primitives-stats regression");
     CHECK(pes && is_pair(*pes), "primitive-error-stats regression");
 }

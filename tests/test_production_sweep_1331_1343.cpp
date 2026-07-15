@@ -41,7 +41,7 @@ int main() {
     constexpr auto Q = "query:production-sweep-1331-1343-stats";
 
     {
-        auto r = cs.eval(std::format("({})", Q));
+        auto r = cs.eval(aura::test::aura_call_expr(Q));
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, Q, "schema") == 1331, "schema");
         CHECK(href(cs, Q, "active") == 1, "active");

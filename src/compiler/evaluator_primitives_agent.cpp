@@ -373,76 +373,78 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //   - bugfix-hits / bugfix-successes
     //   - minimal-hits / minimal-successes
     //   - escalations
-    add("query:strategy-evolution-stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:strategy-evolution-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::uint64_t greedy_h = 0, greedy_s = 0;
+            std::uint64_t bugfix_h = 0, bugfix_s = 0;
+            std::uint64_t minimal_h = 0, minimal_s = 0;
+            std::uint64_t escalations = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                greedy_h = m->strategy_greedy_hits.load(std::memory_order_relaxed);
+                greedy_s = m->strategy_greedy_successes.load(std::memory_order_relaxed);
+                bugfix_h = m->strategy_bugfix_hits.load(std::memory_order_relaxed);
+                bugfix_s = m->strategy_bugfix_successes.load(std::memory_order_relaxed);
+                minimal_h = m->strategy_minimal_hits.load(std::memory_order_relaxed);
+                minimal_s = m->strategy_minimal_successes.load(std::memory_order_relaxed);
+                escalations = m->strategy_escalations.load(std::memory_order_relaxed);
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::uint64_t greedy_h = 0, greedy_s = 0;
-        std::uint64_t bugfix_h = 0, bugfix_s = 0;
-        std::uint64_t minimal_h = 0, minimal_s = 0;
-        std::uint64_t escalations = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            greedy_h = m->strategy_greedy_hits.load(std::memory_order_relaxed);
-            greedy_s = m->strategy_greedy_successes.load(std::memory_order_relaxed);
-            bugfix_h = m->strategy_bugfix_hits.load(std::memory_order_relaxed);
-            bugfix_s = m->strategy_bugfix_successes.load(std::memory_order_relaxed);
-            minimal_h = m->strategy_minimal_hits.load(std::memory_order_relaxed);
-            minimal_s = m->strategy_minimal_successes.load(std::memory_order_relaxed);
-            escalations = m->strategy_escalations.load(std::memory_order_relaxed);
-        }
-        // active-strategy as a string field.
-        std::string active = ev.active_strategy_;
-        auto active_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(active);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"active-strategy", make_string(active_idx)},
-            {"greedy-hits", make_int(static_cast<std::int64_t>(greedy_h))},
-            {"greedy-successes", make_int(static_cast<std::int64_t>(greedy_s))},
-            {"bugfix-hits", make_int(static_cast<std::int64_t>(bugfix_h))},
-            {"bugfix-successes", make_int(static_cast<std::int64_t>(bugfix_s))},
-            {"minimal-hits", make_int(static_cast<std::int64_t>(minimal_h))},
-            {"minimal-successes", make_int(static_cast<std::int64_t>(minimal_s))},
-            {"escalations", make_int(static_cast<std::int64_t>(escalations))},
-        };
-        return build_hash(kv);
-    });
+            // active-strategy as a string field.
+            std::string active = ev.active_strategy_;
+            auto active_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(active);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"active-strategy", make_string(active_idx)},
+                {"greedy-hits", make_int(static_cast<std::int64_t>(greedy_h))},
+                {"greedy-successes", make_int(static_cast<std::int64_t>(greedy_s))},
+                {"bugfix-hits", make_int(static_cast<std::int64_t>(bugfix_h))},
+                {"bugfix-successes", make_int(static_cast<std::int64_t>(bugfix_s))},
+                {"minimal-hits", make_int(static_cast<std::int64_t>(minimal_h))},
+                {"minimal-successes", make_int(static_cast<std::int64_t>(minimal_s))},
+                {"escalations", make_int(static_cast<std::int64_t>(escalations))},
+            };
+            return build_hash(kv);
+        });
 }
 
 void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,

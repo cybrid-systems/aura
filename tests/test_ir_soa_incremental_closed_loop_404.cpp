@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t incremental_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:ir-soa-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:ir-soa-incremental-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -90,7 +90,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "incremental stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto soa = cs.eval("(query:soa-hotpath-adoption-stats)");
+    auto soa = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
     auto clw = cs.eval("(query:task4-cache-locality-win)");
     CHECK(soa && is_int(*soa), "soa-hotpath-adoption-stats regression");
     CHECK(clw && is_int(*clw), "task4-cache-locality-win regression");

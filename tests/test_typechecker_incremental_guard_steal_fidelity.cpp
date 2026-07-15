@@ -38,7 +38,8 @@ using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:type-incremental-fidelity-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -97,7 +98,7 @@ static void run_unit_ac6(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:type-incremental-fidelity-stats (schema 798) ---");
-    auto h = cs.eval("(query:type-incremental-fidelity-stats)");
+    auto h = cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
     CHECK(h && is_hash(*h), "type-incremental-fidelity-stats returns hash");
     CHECK(stat_int(cs, "schema") == 798, "schema == 798");
     CHECK(cross_delta_blame(cs) >= 0, "cross-delta-blame-complete non-negative");
@@ -139,8 +140,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(agg7b >= agg7a + 4, "aggregate fidelity counters monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto inc608 = cs.eval("(query:type-incremental-stats)");
-    auto delta509 = cs.eval("(query:constraint-delta-stats)");
+    auto inc608 = cs.eval("(engine:metrics \"query:type-incremental-stats\")");
+    auto delta509 = cs.eval("(engine:metrics \"query:constraint-delta-stats\")");
     CHECK(inc608 && is_int(*inc608), "type-incremental-stats regression (#608)");
     CHECK(delta509 && is_int(*delta509), "constraint-delta-stats regression (#509)");
 }

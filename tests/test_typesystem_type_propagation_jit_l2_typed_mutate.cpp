@@ -30,7 +30,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t jit_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:jit-typed-mutation-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:jit-typed-mutation-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -59,7 +60,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:jit-typed-mutation-stats (schema 746) ---");
     CHECK(setup_workspace(cs), "gradual typing workspace setup");
-    auto h = cs.eval("(query:jit-typed-mutation-stats)");
+    auto h = cs.eval("(engine:metrics \"query:jit-typed-mutation-stats\")");
     CHECK(h && is_hash(*h), "jit-typed-mutation-stats returns hash");
     CHECK(jit_hash(cs, "schema") == 746, "schema == 746");
     CHECK(jit_hash(cs, "narrow-evidence-hits") >= 0, "narrow-evidence-hits present");
@@ -126,9 +127,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "stats monotonic over predicate mutate matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto dco = cs.eval("(query:dead-coercion-zerooverhead-stats)");
-    auto irmd = cs.eval("(query:ir-metadata-stats)");
-    auto tsm = cs.eval("(query:typesystem-typed-mutate-stats)");
+    auto dco = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
+    auto irmd = cs.eval("(engine:metrics \"query:ir-metadata-stats\")");
+    auto tsm = cs.eval("(engine:metrics \"query:typesystem-typed-mutate-stats\")");
     CHECK(dco && is_hash(*dco), "dead-coercion-zerooverhead-stats regression");
     CHECK(irmd && is_int(*irmd), "ir-metadata-stats regression");
     CHECK(tsm && is_hash(*tsm), "typesystem-typed-mutate-stats regression");

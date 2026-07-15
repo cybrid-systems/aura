@@ -12,7 +12,7 @@
 // observability surface already covers the high-level panic
 // transport via #648 + the high-level panic checkpoint
 // lifecycle summary + yield checkpoint foundation:
-//   - (query:panic-checkpoint-fiber-stats) (#648) — fiber
+//   - (engine:metrics \"query:panic-checkpoint-fiber-stats\") (#648) — fiber
 //     resume panic checkpoint transfer (transport layer)
 //   - (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") — high-level
 //     panic checkpoint lifecycle summary
@@ -96,8 +96,9 @@ int aura_issue_649_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:yield-checkpoint-panic-stats) shape ---");
-        auto h = cs.eval("(query:yield-checkpoint-panic-stats)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:yield-checkpoint-panic-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "yield-checkpoint-panic-stats returns a hash");
         const auto xfer_restamp = hash_int(cs, "transfer-with-restamp");
@@ -114,23 +115,28 @@ int aura_issue_649_run() {
     // (back-compat — #649 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_648 = cs.eval("(query:panic-checkpoint-fiber-stats)");
-        CHECK(s_648.has_value(), "(query:panic-checkpoint-fiber-stats) reachable (#648 back-compat "
-                                 "— panic transfer transport layer)");
-        auto s_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        CHECK(s_647.has_value(),
-              "(query:envframe-dualpath-stale-stats-hash) reachable (#647 back-compat)");
-        auto s_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
-        CHECK(s_646.has_value(),
-              "(query:gc-safepoint-deferral-stats) reachable (#646 back-compat)");
-        auto s_645 = cs.eval("(query:scheduler-steal-bias-stats)");
-        CHECK(s_645.has_value(), "(query:scheduler-steal-bias-stats) reachable (#645 back-compat)");
-        auto s_644 = cs.eval("(query:aot-reload-func-table-stats)");
-        CHECK(s_644.has_value(),
-              "(query:aot-reload-func-table-stats) reachable (#644 back-compat)");
-        auto s_642 = cs.eval("(query:arena-auto-compaction-stats)");
-        CHECK(s_642.has_value(),
-              "(query:arena-auto-compaction-stats) reachable (#642 back-compat)");
+        auto s_648 = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
+        CHECK(s_648.has_value(),
+              "(engine:metrics \"query:panic-checkpoint-fiber-stats\") reachable (#648 back-compat "
+              "— panic transfer transport layer)");
+        auto s_647 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
+        CHECK(s_647.has_value(), "(engine:metrics \"query:envframe-dualpath-stale-stats-hash\") "
+                                 "reachable (#647 back-compat)");
+        auto s_646 = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        CHECK(
+            s_646.has_value(),
+            "(engine:metrics \"query:gc-safepoint-deferral-stats\") reachable (#646 back-compat)");
+        auto s_645 = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        CHECK(s_645.has_value(),
+              "(engine:metrics \"query:scheduler-steal-bias-stats\") reachable (#645 back-compat)");
+        auto s_644 = cs.eval("(engine:metrics \"query:aot-reload-func-table-stats\")");
+        CHECK(
+            s_644.has_value(),
+            "(engine:metrics \"query:aot-reload-func-table-stats\") reachable (#644 back-compat)");
+        auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(
+            s_642.has_value(),
+            "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -167,12 +173,14 @@ int aura_issue_649_run() {
     // distinct.
     {
         std::println("\n--- AC5: naming + field-set distinction from #648 ---");
-        auto new_p = cs.eval("(query:yield-checkpoint-panic-stats)");
-        auto old_p = cs.eval("(query:panic-checkpoint-fiber-stats)");
-        CHECK(new_p.has_value(), "new primitive (query:yield-checkpoint-panic-stats) reachable "
-                                 "(yield-checkpoint- prefix)");
-        CHECK(old_p.has_value(), "existing (query:panic-checkpoint-fiber-stats) still reachable "
-                                 "(#648, panic-checkpoint- prefix)");
+        auto new_p = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
+        auto old_p = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
+        CHECK(new_p.has_value(),
+              "new primitive (engine:metrics \"query:yield-checkpoint-panic-stats\") reachable "
+              "(yield-checkpoint- prefix)");
+        CHECK(old_p.has_value(),
+              "existing (engine:metrics \"query:panic-checkpoint-fiber-stats\") still reachable "
+              "(#648, panic-checkpoint- prefix)");
         // Both primitives use `schema` as primary sentinel
         // — distinct values (649 vs 648). The new primitive
         // should NOT have #648's fields (transport-layer
@@ -206,7 +214,7 @@ int aura_issue_649_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:yield-checkpoint-panic-stats)");
+                auto r = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

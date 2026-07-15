@@ -60,7 +60,7 @@ int aura_issue_503_run() {
     // AC1: query:pattern-marker-stats returns hash
     {
         std::println("\n--- AC1: query:pattern-marker-stats ---");
-        auto stats = cs.eval("(query:pattern-marker-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pattern-marker-stats returns hash");
     }
@@ -96,7 +96,7 @@ int aura_issue_503_run() {
         (void)cs.eval("(query:pattern \"*\" :allow-macro-introduced #f)");
         auto user_pat = cs.eval("(query:pattern \"base\")");
         CHECK(user_pat.has_value(), "query:pattern finds user binding after mutate");
-        auto stats = cs.eval("(query:pattern-marker-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "pattern-marker-stats hash after cycle");
         CHECK(cs.evaluator().get_macro_markers_in_snapshot() >= markers_before,
@@ -111,7 +111,7 @@ int aura_issue_503_run() {
         CHECK(cs2.eval("(eval-current)").has_value(), "user-only eval");
         const auto cnt = result_count(cs2, "(query:pattern \"x\")");
         CHECK(cnt >= 0, "query:pattern works on user-only path");
-        auto stats = cs2.eval("(query:pattern-marker-stats)");
+        auto stats = cs2.eval("(engine:metrics \"query:pattern-marker-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "pattern-marker-stats hash on user-only path");
     }
@@ -122,7 +122,7 @@ int aura_issue_503_run() {
         aura::compiler::CompilerService cs3;
         CHECK(setup_macro_workspace(cs3), "regression workspace setup");
         auto phs = cs3.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-        auto pms = cs3.eval("(query:pattern-marker-stats)");
+        auto pms = cs3.eval("(engine:metrics \"query:pattern-marker-stats\")");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
         CHECK(pms && aura::compiler::types::is_hash(*pms), "pattern-marker-stats regression");
     }

@@ -2,6 +2,13 @@
 struct ObservabilityPrims {
     static EvalValue meta_to_pair(Evaluator& ev, const PrimMeta& m);
     static const std::vector<std::string>& stats_primitives();
+    // Issue #1439: internal-only stats impl table (not public primitives).
+    // (engine:metrics "name") / :all / :prefix resolve via lookup_stats_impl.
+    static void register_stats_impl(std::string name, PrimFn fn);
+    [[nodiscard]] static std::optional<PrimFn> lookup_stats_impl(std::string_view name);
+    [[nodiscard]] static bool is_legacy_stats_name(std::string_view name);
+    // True if name is in the internal stats table (or still public for non-#1439 names).
+    [[nodiscard]] static bool stats_impl_registered(std::string_view name);
     using PrimRegistrar = std::function<void(std::string, PrimFn)>;
     static void register_eval_p0(PrimRegistrar add, Evaluator& ev);
     static void register_eval_p1(PrimRegistrar add, Evaluator& ev);

@@ -53,7 +53,7 @@ int aura_issue_686_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:shape-value-pass-stats ---");
-        auto stats = cs.eval("(query:shape-value-pass-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:shape-value-pass-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:shape-value-pass-stats returns hash");
         CHECK(stat_int(cs, "history-jitter-reduction") >= 0, "history-jitter-reduction present");

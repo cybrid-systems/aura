@@ -52,7 +52,7 @@ int aura_issue_489_run() {
     // AC1: query:stability-stats hash fields
     {
         std::println("\n--- AC1: query:stability-stats ---");
-        auto stats = cs.eval("(query:stability-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:stability-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:stability-stats returns hash");
         CHECK(snap_stat(cs, "raw-nodeid-usage") >= 0, "raw-nodeid-usage present");
@@ -132,10 +132,10 @@ int aura_issue_489_run() {
     // AC5: existing stable-ref primitives regression
     {
         std::println("\n--- AC5: stable-ref primitive regression ---");
-        auto srs = cs.eval("(query:stable-ref-stats)");
-        auto srh = cs.eval("(query:stable-ref-stats-hash)");
+        auto srs = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+        auto srh = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
         auto sref = cs.eval("(query:as-stable-ref 2)");
-        auto stale = cs.eval("(query:stale-ref-stats)");
+        auto stale = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
         CHECK(srs && aura::compiler::types::is_int(*srs), "query:stable-ref-stats regression");
         CHECK(srh && aura::compiler::types::is_hash(*srh),
               "query:stable-ref-stats-hash regression");

@@ -80,8 +80,9 @@ int aura_issue_637_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:closure-bridge-safety-stats-hash) shape ---");
-        auto h = cs.eval("(query:closure-bridge-safety-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:closure-bridge-safety-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "closure-bridge-safety-stats-hash returns a hash");
         const auto inval_pm = hash_int(cs, "invalidations-post-mutate");
@@ -98,23 +99,25 @@ int aura_issue_637_run() {
     // (back-compat — #637 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_633 = cs.eval("(query:stdlib-compiler-demands-stats-hash)");
-        CHECK(s_633.has_value(),
-              "(query:stdlib-compiler-demands-stats-hash) reachable (#633 back-compat)");
-        auto s_632 = cs.eval("(query:atomic-batch-sv-stats-hash)");
-        CHECK(s_632.has_value(), "(query:atomic-batch-sv-stats-hash) reachable (#632 back-compat)");
-        auto s_631 = cs.eval("(query:stable-ref-provenance-sv-stats-hash)");
-        CHECK(s_631.has_value(),
-              "(query:stable-ref-provenance-sv-stats-hash) reachable (#631 back-compat)");
-        auto s_630 = cs.eval("(query:sv-verification-closedloop-stats-hash)");
-        CHECK(s_630.has_value(),
-              "(query:sv-verification-closedloop-stats-hash) reachable (#630 back-compat)");
-        auto s_626 = cs.eval("(query:contracts-hotpath-stats-hash)");
-        CHECK(s_626.has_value(),
-              "(query:contracts-hotpath-stats-hash) reachable (#626 back-compat)");
-        auto s_625 = cs.eval("(query:primitives-hotpath-stats)");
-        CHECK(s_625.has_value(),
-              "(query:primitives-hotpath-stats) reachable (#625/#479 back-compat)");
+        auto s_633 = cs.eval("(engine:metrics \"query:stdlib-compiler-demands-stats-hash\")");
+        CHECK(s_633.has_value(), "(engine:metrics \"query:stdlib-compiler-demands-stats-hash\") "
+                                 "reachable (#633 back-compat)");
+        auto s_632 = cs.eval("(engine:metrics \"query:atomic-batch-sv-stats-hash\")");
+        CHECK(s_632.has_value(),
+              "(engine:metrics \"query:atomic-batch-sv-stats-hash\") reachable (#632 back-compat)");
+        auto s_631 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\")");
+        CHECK(s_631.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats-hash\") "
+                                 "reachable (#631 back-compat)");
+        auto s_630 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats-hash\")");
+        CHECK(s_630.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats-hash\") "
+                                 "reachable (#630 back-compat)");
+        auto s_626 = cs.eval("(engine:metrics \"query:contracts-hotpath-stats-hash\")");
+        CHECK(
+            s_626.has_value(),
+            "(engine:metrics \"query:contracts-hotpath-stats-hash\") reachable (#626 back-compat)");
+        auto s_625 = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
+        CHECK(s_625.has_value(), "(engine:metrics \"query:primitives-hotpath-stats\") reachable "
+                                 "(#625/#479 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -153,7 +156,7 @@ int aura_issue_637_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:closure-bridge-safety-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -183,7 +186,8 @@ int aura_issue_637_run() {
         // Re-probe the hash after the closure activity — all
         // 3 foundation counters must remain 0 (no enforcement
         // yet), but the primitive must remain reachable.
-        auto still_reachable = cs.eval("(query:closure-bridge-safety-stats-hash)");
+        auto still_reachable =
+            cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
         CHECK(still_reachable.has_value(),
               "closure-bridge-safety-stats-hash still reachable post-closure-activity");
         const auto rebuilds = hash_int(cs, "safe-rebuilds");

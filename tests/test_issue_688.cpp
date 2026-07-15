@@ -54,7 +54,7 @@ int aura_issue_688_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:linear-ownership-typed-mutate-stats ---");
-        auto stats = cs.eval("(query:linear-ownership-typed-mutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:linear-ownership-typed-mutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:linear-ownership-typed-mutate-stats returns hash");
         CHECK(stat_int(cs, "post-mutate-revalidates") >= 0, "post-mutate-revalidates present");

@@ -53,7 +53,7 @@ int aura_issue_533_observability_run() {
     // AC1: query:soa-production-columnar-stats returns hash
     {
         std::println("\n--- AC1: query:soa-production-columnar-stats ---");
-        auto stats = cs.eval("(query:soa-production-columnar-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:soa-production-columnar-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:soa-production-columnar-stats returns hash");
         CHECK(hash_int(cs, "children-call-count") >= 0, "children-call-count present");
@@ -111,9 +111,9 @@ int aura_issue_533_observability_run() {
     // AC4: related SoA primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto adoption = cs.eval("(query:soa-adoption-stats)");
-        auto hotpath = cs.eval("(query:soa-hotpath-adoption-stats)");
-        auto incremental = cs.eval("(query:ir-soa-incremental-stats)");
+        auto adoption = cs.eval("(engine:metrics \"query:soa-adoption-stats\")");
+        auto hotpath = cs.eval("(engine:metrics \"query:soa-hotpath-adoption-stats\")");
+        auto incremental = cs.eval("(engine:metrics \"query:ir-soa-incremental-stats\")");
         CHECK(adoption && aura::compiler::types::is_hash(*adoption),
               "query:soa-adoption-stats hash regression");
         CHECK(hotpath && aura::compiler::types::is_int(*hotpath),

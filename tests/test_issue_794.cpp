@@ -104,10 +104,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:full-closedloop-compiler-edsl-fidelity-stats) hash shape ---");
-    auto r = cs.eval("(query:full-closedloop-compiler-edsl-fidelity-stats)");
+    std::println("\n--- AC1: (engine:metrics "
+                 "\"query:full-closedloop-compiler-edsl-fidelity-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:full-closedloop-compiler-edsl-fidelity-stats) returns a hash");
+          "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\") returns a hash");
     const std::vector<std::string> keys = {"cross-layer-guardshape-deopt-hits-total",
                                            "cross-layer-linear-enforce-success-total",
                                            "cross-layer-epoch-sync-total",
@@ -127,47 +128,54 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no closed-loop fidelity activity) ---");
-    const auto deopt = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                      "cross-layer-guardshape-deopt-hits-total");
+    const auto deopt = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-guardshape-deopt-hits-total");
     CHECK(deopt == 0,
           std::format("cross-layer-guardshape-deopt-hits-total = {} (expected 0 on fresh "
                       "service — Phase 2+ deferred to wire tests/test_full_compiler_edsl_"
                       "closedloop_fidelity.cpp + integrated fidelity assertion path)",
                       deopt));
-    const auto linear = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                       "cross-layer-linear-enforce-success-total");
+    const auto linear = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-linear-enforce-success-total");
     CHECK(linear == 0, std::format("cross-layer-linear-enforce-success-total = {} (expected 0 on "
                                    "fresh service — Phase 2+ deferred to wire harness's linear "
                                    "integrity assertion path)",
                                    linear));
-    const auto epoch = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                      "cross-layer-epoch-sync-total");
+    const auto epoch = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-epoch-sync-total");
     CHECK(epoch == 0,
           std::format("cross-layer-epoch-sync-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire harness's epoch consistency assertion "
                       "path)",
                       epoch));
-    const auto drift = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                      "cross-layer-drift-detections-total");
+    const auto drift = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-drift-detections-total");
     CHECK(drift == 0,
           std::format("cross-layer-drift-detections-total = {} (expected 0 on fresh "
                       "service — the negative signal; Phase 2+ deferred to wire harness's "
                       "drift detection path)",
                       drift));
-    const auto harness = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                        "full-closedloop-harness-active");
+    const auto harness = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "full-closedloop-harness-active");
     CHECK(harness == 0,
           std::format("full-closedloop-harness-active = {} (expected 0 — Phase 2+ deferred "
                       "to implement tests/test_full_compiler_edsl_closedloop_fidelity.cpp)",
                       harness));
-    const auto slo = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                    "slo-gate-active");
+    const auto slo = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "slo-gate-active");
     CHECK(slo == 0,
           std::format("slo-gate-active = {} (expected 0 — Phase 2+ deferred to wire CI gate "
                       "+ trend dashboard + self-heal hooks)",
                       slo));
-    const auto rec = hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                                    "recommendation");
+    const auto rec = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "recommendation");
     CHECK(rec == 3, std::format("recommendation = {} (expected 3 = early-stage when both deferred "
                                 "flags == 0 AND no activity)",
                                 rec));
@@ -175,8 +183,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 794 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")", "schema");
     CHECK(schema == 794, std::format("schema = {} (expected 794)", schema));
 }
 
@@ -184,17 +192,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto deopt_before =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-guardshape-deopt-hits-total");
-    const auto linear_before =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-linear-enforce-success-total");
+    const auto deopt_before = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-guardshape-deopt-hits-total");
+    const auto linear_before = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-linear-enforce-success-total");
     const auto epoch_before = hash_int_field(
-        cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)", "cross-layer-epoch-sync-total");
-    const auto drift_before =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-drift-detections-total");
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-epoch-sync-total");
+    const auto drift_before = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-drift-detections-total");
 
     // Exercise the 4 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -209,17 +218,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_cross_layer_drift_detection();
     }
 
-    const auto deopt_after =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-guardshape-deopt-hits-total");
-    const auto linear_after =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-linear-enforce-success-total");
+    const auto deopt_after = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-guardshape-deopt-hits-total");
+    const auto linear_after = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-linear-enforce-success-total");
     const auto epoch_after = hash_int_field(
-        cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)", "cross-layer-epoch-sync-total");
-    const auto drift_after =
-        hash_int_field(cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)",
-                       "cross-layer-drift-detections-total");
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-epoch-sync-total");
+    const auto drift_after = hash_int_field(
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "cross-layer-drift-detections-total");
 
     std::println("  counts after AC4 bumps: deopt {} -> {}, linear {} -> {}, epoch {} -> {}, "
                  "drift {} -> {}",
@@ -248,7 +258,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     // Recommendation should now be 2 (Phase 1 only —
     // both deferred flags == 0 BUT activity > 0).
     const auto rec_after = hash_int_field(
-        cs, "(query:full-closedloop-compiler-edsl-fidelity-stats)", "recommendation");
+        cs, "(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")",
+        "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with both deferred flags == 0)",
@@ -257,13 +268,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #793 + #787 sibling primitives unaffected ---");
-    auto a793 = cs.eval("(query:jit-aot-hotswap-fidelity-stats)");
+    auto a793 = cs.eval("(engine:metrics \"query:jit-aot-hotswap-fidelity-stats\")");
     auto a787 = cs.eval("(query:task6-concurrent-fidelity)");
     CHECK(a793 && aura::compiler::types::is_hash(*a793),
           "query:jit-aot-hotswap-fidelity-stats hash regression (#793)");
     CHECK(a787 && aura::compiler::types::is_hash(*a787),
           "query:task6-concurrent-fidelity hash regression (#787)");
-    const auto a793_schema = hash_int_field(cs, "(query:jit-aot-hotswap-fidelity-stats)", "schema");
+    const auto a793_schema =
+        hash_int_field(cs, "(engine:metrics \"query:jit-aot-hotswap-fidelity-stats\")", "schema");
     CHECK(a793_schema == 793,
           std::format("#793 schema = {} (expected 793, no drift)", a793_schema));
     const auto a787_schema = hash_int_field(cs, "(query:task6-concurrent-fidelity)", "schema");

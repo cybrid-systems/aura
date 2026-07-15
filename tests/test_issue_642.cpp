@@ -10,12 +10,12 @@
 // Discovery before this PR: the Arena Auto-Compaction
 // observability surface already covers ~70% of the AC4 surface
 // via existing primitives:
-//   - (query:arena-auto-stats) — broader arena stats
-//   - (query:arena-auto-compact-stats) — earlier auto-compact
+//   - (engine:metrics \"query:arena-auto-stats\") — broader arena stats
+//   - (engine:metrics \"query:arena-auto-compact-stats\") — earlier auto-compact
 //     trigger primitive
-//   - (query:arena-auto-compact-defrag-stats) (#569) — defrag
+//   - (engine:metrics \"query:arena-auto-compact-defrag-stats\") (#569) — defrag
 //     breakdown primitive
-//   - (query:arena-compaction-stats) — base compaction summary
+//   - (engine:metrics \"query:arena-compaction-stats\") — base compaction summary
 //   - (query:arena-fragmentation-snapshot) — snapshot primitive
 //
 // What the issue body AC4 specifies by **exact name + fields** —
@@ -79,8 +79,8 @@ int aura_issue_642_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:arena-auto-compaction-stats) shape ---");
-        auto h = cs.eval("(query:arena-auto-compaction-stats)");
+        std::println("\n--- AC1: (engine:metrics \"query:arena-auto-compaction-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "arena-auto-compaction-stats returns a hash");
         const auto auto_trigger = hash_int(cs, "auto-trigger");
@@ -97,24 +97,25 @@ int aura_issue_642_run() {
     // (back-compat — #642 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_acd = cs.eval("(query:arena-auto-compact-defrag-stats)");
-        CHECK(s_acd.has_value(),
-              "(query:arena-auto-compact-defrag-stats) reachable (#569 back-compat)");
-        auto s_ac = cs.eval("(query:arena-auto-compact-stats)");
-        CHECK(s_ac.has_value(), "(query:arena-auto-compact-stats) reachable (earlier auto-compact "
-                                "primitive back-compat)");
-        auto s_as = cs.eval("(query:arena-auto-stats)");
-        CHECK(s_as.has_value(),
-              "(query:arena-auto-stats) reachable (broader arena stats back-compat)");
-        auto s_641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
-        CHECK(s_641.has_value(),
-              "(query:stable-ref-provenance-sv-stats) reachable (#641 back-compat)");
-        auto s_640 = cs.eval("(query:sv-verification-closedloop-stats)");
-        CHECK(s_640.has_value(),
-              "(query:sv-verification-closedloop-stats) reachable (#640 back-compat)");
-        auto s_637 = cs.eval("(query:closure-bridge-safety-stats-hash)");
-        CHECK(s_637.has_value(),
-              "(query:closure-bridge-safety-stats-hash) reachable (#637 back-compat)");
+        auto s_acd = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
+        CHECK(s_acd.has_value(), "(engine:metrics \"query:arena-auto-compact-defrag-stats\") "
+                                 "reachable (#569 back-compat)");
+        auto s_ac = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        CHECK(s_ac.has_value(),
+              "(engine:metrics \"query:arena-auto-compact-stats\") reachable (earlier auto-compact "
+              "primitive back-compat)");
+        auto s_as = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+        CHECK(s_as.has_value(), "(engine:metrics \"query:arena-auto-stats\") reachable (broader "
+                                "arena stats back-compat)");
+        auto s_641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
+        CHECK(s_641.has_value(), "(engine:metrics \"query:stable-ref-provenance-sv-stats\") "
+                                 "reachable (#641 back-compat)");
+        auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        CHECK(s_640.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats\") "
+                                 "reachable (#640 back-compat)");
+        auto s_637 = cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
+        CHECK(s_637.has_value(), "(engine:metrics \"query:closure-bridge-safety-stats-hash\") "
+                                 "reachable (#637 back-compat)");
     }
 
     // AC3: derived-metric invariants.
@@ -152,16 +153,18 @@ int aura_issue_642_run() {
     // `-compact-defrag-stats` primitives.
     {
         std::println("\n--- AC5: naming distinction from existing arena primitives ---");
-        auto new_p = cs.eval("(query:arena-auto-compaction-stats)");
-        auto old_compact = cs.eval("(query:arena-auto-compact-stats)");
-        auto old_defrag = cs.eval("(query:arena-auto-compact-defrag-stats)");
-        CHECK(
-            new_p.has_value(),
-            "new primitive (query:arena-auto-compaction-stats) reachable (-compaction with -ion)");
+        auto new_p = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        auto old_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        auto old_defrag = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
+        CHECK(new_p.has_value(),
+              "new primitive (engine:metrics \"query:arena-auto-compaction-stats\") reachable "
+              "(-compaction with -ion)");
         CHECK(old_compact.has_value(),
-              "existing (query:arena-auto-compact-stats) still reachable (-compact, no -ion)");
+              "existing (engine:metrics \"query:arena-auto-compact-stats\") still reachable "
+              "(-compact, no -ion)");
         CHECK(old_defrag.has_value(),
-              "existing (query:arena-auto-compact-defrag-stats) still reachable (#569)");
+              "existing (engine:metrics \"query:arena-auto-compact-defrag-stats\") still reachable "
+              "(#569)");
         // The new primitive's schema sentinel is 642; the
         // existing ones have different schemas — they should
         // NOT collide.
@@ -181,7 +184,7 @@ int aura_issue_642_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:arena-auto-compaction-stats)");
+                auto r = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

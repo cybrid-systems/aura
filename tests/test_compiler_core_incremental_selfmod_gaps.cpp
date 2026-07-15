@@ -33,7 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:compiler-core-incremental-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:compiler-core-incremental-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -63,7 +64,7 @@ static bool setup_recursive_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:compiler-core-incremental-stats (schema 657) ---");
     CHECK(setup_recursive_workspace(cs), "recursive closure workspace setup");
-    auto h = cs.eval("(query:compiler-core-incremental-stats)");
+    auto h = cs.eval("(engine:metrics \"query:compiler-core-incremental-stats\")");
     CHECK(h && is_hash(*h), "compiler-core-incremental-stats returns hash");
     CHECK(hash_int(cs, "schema") == 657, "schema == 657");
 
@@ -113,8 +114,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(quote >= 0, "quote-fallback-refreshes readable");
 
     std::println("\n--- AC7: query regression ---");
-    auto icl = cs.eval("(query:incremental-closure-stats)");
-    auto edsl = cs.eval("(query:edsl-core-stability-stats)");
+    auto icl = cs.eval("(engine:metrics \"query:incremental-closure-stats\")");
+    auto edsl = cs.eval("(engine:metrics \"query:edsl-core-stability-stats\")");
     auto pindex = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(icl && is_hash(*icl), "incremental-closure-stats regression");
     CHECK(edsl && is_hash(*edsl), "edsl-core-stability-stats regression");

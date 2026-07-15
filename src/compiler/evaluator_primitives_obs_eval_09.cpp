@@ -81,89 +81,92 @@ using types::make_void;
 // Issue #909 part 72 (orig lines 8582-8661)
 void ObservabilityPrims::register_eval_p72(PrimRegistrar add, Evaluator& ev) {
 
-    add("query:primitives-hotpath-slo-stats", [&ev](const auto&) -> EvalValue {
-        std::uint64_t call_total = 0;
-        std::uint64_t pair_total = 0;
-        std::uint64_t fastpath_hits = 0;
-        std::uint64_t depth_max = 0;
-        std::uint64_t contract_viol = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            call_total = m->primitive_call_total.load(std::memory_order_relaxed);
-            pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
-            fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
-            depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
-            contract_viol = m->primitive_capture_violations_total.load(std::memory_order_relaxed);
-        }
-        // Reuse the #614 stability-score formula: alloc_per_call
-        // (integer division) + cdr_depth penalty capped at < 50
-        // before regression flag. Same computation, exposed as a
-        // 0-10000 fixed-point pct via × 100.
-        const std::int64_t alloc_per_call =
-            static_cast<std::int64_t>(pair_total / (call_total + 1));
-        const std::int64_t stability_penalty =
-            static_cast<std::int64_t>(alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
-        const std::int64_t stability_score = stability_penalty >= 100 ? 0 : 100 - stability_penalty;
-        // current-vs-baseline-pct: stability_score × 100 = 0-10000
-        // fixed-point percent. 10000 = 100.00% baseline (no load,
-        // no regression). The body SLO target is "no regression
-        // >5%" which maps to current-vs-baseline-pct >= 9500
-        // (i.e., stability_score >= 95).
-        const std::int64_t current_vs_baseline_pct = stability_score * 100;
-        // fastpath-hit-rate-pct: 10000 baseline when call_total == 0
-        // (vacuously true, mirror #774 convergence_rate). Otherwise
-        // compute (fastpath_hits / (call_total + 1)) × 10000.
-        // The +1 in the denominator avoids divide-by-zero AND
-        // matches the #614 alloc_per_call formula.
-        std::int64_t fastpath_hit_rate_pct = 10000; // 100.00% baseline
-        if (call_total > 0) {
-            fastpath_hit_rate_pct = static_cast<std::int64_t>(
-                (fastpath_hits * ::aura::compiler::kBasisPointScale) / (call_total + 1));
-        }
-        // regression-flag: 1 if current-vs-baseline-pct < 5000
-        // (= stability_score < 50, the #614 "regression" threshold
-        // that recommends action 3). Otherwise 0.
-        const std::int64_t regression_flag = current_vs_baseline_pct < 5000 ? 1 : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
-
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:primitives-hotpath-slo-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t call_total = 0;
+            std::uint64_t pair_total = 0;
+            std::uint64_t fastpath_hits = 0;
+            std::uint64_t depth_max = 0;
+            std::uint64_t contract_viol = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                call_total = m->primitive_call_total.load(std::memory_order_relaxed);
+                pair_total = m->pair_alloc_total.load(std::memory_order_relaxed);
+                fastpath_hits = m->primitive_fastpath_hits_total.load(std::memory_order_relaxed);
+                depth_max = m->cdr_depth_max.load(std::memory_order_relaxed);
+                contract_viol =
+                    m->primitive_capture_violations_total.load(std::memory_order_relaxed);
             }
-        };
-        insert_kv("current-vs-baseline-pct", current_vs_baseline_pct);
-        insert_kv("contract-violations", static_cast<std::int64_t>(contract_viol));
-        insert_kv("fastpath-hit-rate-pct", fastpath_hit_rate_pct);
-        insert_kv("regression-flag", regression_flag);
-        insert_kv("schema", 776);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            // Reuse the #614 stability-score formula: alloc_per_call
+            // (integer division) + cdr_depth penalty capped at < 50
+            // before regression flag. Same computation, exposed as a
+            // 0-10000 fixed-point pct via × 100.
+            const std::int64_t alloc_per_call =
+                static_cast<std::int64_t>(pair_total / (call_total + 1));
+            const std::int64_t stability_penalty = static_cast<std::int64_t>(
+                alloc_per_call * 3 + (depth_max > 32 ? depth_max / 8 : 0));
+            const std::int64_t stability_score =
+                stability_penalty >= 100 ? 0 : 100 - stability_penalty;
+            // current-vs-baseline-pct: stability_score × 100 = 0-10000
+            // fixed-point percent. 10000 = 100.00% baseline (no load,
+            // no regression). The body SLO target is "no regression
+            // >5%" which maps to current-vs-baseline-pct >= 9500
+            // (i.e., stability_score >= 95).
+            const std::int64_t current_vs_baseline_pct = stability_score * 100;
+            // fastpath-hit-rate-pct: 10000 baseline when call_total == 0
+            // (vacuously true, mirror #774 convergence_rate). Otherwise
+            // compute (fastpath_hits / (call_total + 1)) × 10000.
+            // The +1 in the denominator avoids divide-by-zero AND
+            // matches the #614 alloc_per_call formula.
+            std::int64_t fastpath_hit_rate_pct = 10000; // 100.00% baseline
+            if (call_total > 0) {
+                fastpath_hit_rate_pct = static_cast<std::int64_t>(
+                    (fastpath_hits * ::aura::compiler::kBasisPointScale) / (call_total + 1));
+            }
+            // regression-flag: 1 if current-vs-baseline-pct < 5000
+            // (= stability_score < 50, the #614 "regression" threshold
+            // that recommends action 3). Otherwise 0.
+            const std::int64_t regression_flag = current_vs_baseline_pct < 5000 ? 1 : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
+
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("current-vs-baseline-pct", current_vs_baseline_pct);
+            insert_kv("contract-violations", static_cast<std::int64_t>(contract_viol));
+            insert_kv("fastpath-hit-rate-pct", fastpath_hit_rate_pct);
+            insert_kv("regression-flag", regression_flag);
+            insert_kv("schema", 776);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 73 (orig lines 8662-8828)
@@ -245,7 +248,8 @@ void ObservabilityPrims::register_eval_p73(PrimRegistrar add, Evaluator& ev) {
                 return 10000; // vacuously true (100.00% baseline)
             std::size_t found = 0;
             for (const char* name : expected) {
-                if (ev.primitives_.lookup(name).has_value())
+                if (ObservabilityPrims::stats_impl_registered(name) ||
+                    ev.primitives_.lookup(name).has_value())
                     ++found;
             }
             return static_cast<std::int64_t>((found * ::aura::compiler::kBasisPointScale) / total);
@@ -391,66 +395,67 @@ void ObservabilityPrims::register_eval_p74(PrimRegistrar add, Evaluator& ev) {
     //                              3=early-stage (both = 0
     //                              and no FFI usage yet)
     //   - schema == 778
-    add("query:ffi-call-overhead-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t ffi_call_count = static_cast<std::int64_t>(ev.get_ffi_call_count());
-        // Hardcoded flags for the deferred batch-FFI primitives.
-        // When the actual batch FFI primitive + terminal-batch-
-        // write primitive ship (Phase 2+ per body), these will
-        // be derived from a primitive existence check (mirror
-        // #777's live lookup pattern).
-        const std::int64_t batch_ffi_supported = 0;
-        const std::int64_t terminal_batch_write_supported = 0;
-        // Recommendation: derived from the 2 supported flags +
-        // FFI usage signal.
-        std::int64_t recommendation = 3;
-        if (batch_ffi_supported == 1 && terminal_batch_write_supported == 1)
-            recommendation = 0; // production-ready
-        else if (batch_ffi_supported == 1 || terminal_batch_write_supported == 1)
-            recommendation = 1; // partial
-        else if (ffi_call_count > 0)
-            recommendation = 2; // missing-primitive (Agent is using FFI)
-        else
-            recommendation = 3; // early-stage (no FFI usage yet)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
+    ObservabilityPrims::register_stats_impl(
+        "query:ffi-call-overhead-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t ffi_call_count = static_cast<std::int64_t>(ev.get_ffi_call_count());
+            // Hardcoded flags for the deferred batch-FFI primitives.
+            // When the actual batch FFI primitive + terminal-batch-
+            // write primitive ship (Phase 2+ per body), these will
+            // be derived from a primitive existence check (mirror
+            // #777's live lookup pattern).
+            const std::int64_t batch_ffi_supported = 0;
+            const std::int64_t terminal_batch_write_supported = 0;
+            // Recommendation: derived from the 2 supported flags +
+            // FFI usage signal.
+            std::int64_t recommendation = 3;
+            if (batch_ffi_supported == 1 && terminal_batch_write_supported == 1)
+                recommendation = 0; // production-ready
+            else if (batch_ffi_supported == 1 || terminal_batch_write_supported == 1)
+                recommendation = 1; // partial
+            else if (ffi_call_count > 0)
+                recommendation = 2; // missing-primitive (Agent is using FFI)
+            else
+                recommendation = 3; // early-stage (no FFI usage yet)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("ffi-call-count", ffi_call_count);
-        insert_kv("batch-ffi-supported", batch_ffi_supported);
-        insert_kv("terminal-batch-write-supported", terminal_batch_write_supported);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 778);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("ffi-call-count", ffi_call_count);
+            insert_kv("batch-ffi-supported", batch_ffi_supported);
+            insert_kv("terminal-batch-write-supported", terminal_batch_write_supported);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 778);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 75 (orig lines 8933-9033)
@@ -500,66 +505,67 @@ void ObservabilityPrims::register_eval_p75(PrimRegistrar add, Evaluator& ev) {
     //                                AND no dirty region
     //                                activity)
     //   - schema == 779
-    add("query:dirty-region-rendering-stats", [&ev](const auto&) -> EvalValue {
-        // No existing counter for dirty regions on main; the
-        // (terminal-dirty-region) primitive + the dirty-region
-        // counter will be added when Phase 2 ships.
-        const std::int64_t dirty_region_count = 0;
-        // Hardcoded flags for the deferred primitives (mirror
-        // #778 batch-ffi-supported pattern).
-        const std::int64_t present_delta_supported = 0;
-        const std::int64_t terminal_dirty_region_supported = 0;
-        // Recommendation: derived from the 2 supported flags +
-        // dirty-region-count signal.
-        std::int64_t recommendation = 3;
-        if (present_delta_supported == 1 && terminal_dirty_region_supported == 1)
-            recommendation = 0; // production-ready
-        else if (present_delta_supported == 1 || terminal_dirty_region_supported == 1)
-            recommendation = 1; // partial
-        else if (dirty_region_count > 0)
-            recommendation = 2; // missing-primitive (rendering active)
-        else
-            recommendation = 3; // early-stage (no rendering yet)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
+    ObservabilityPrims::register_stats_impl(
+        "query:dirty-region-rendering-stats", [&ev](const auto&) -> EvalValue {
+            // No existing counter for dirty regions on main; the
+            // (terminal-dirty-region) primitive + the dirty-region
+            // counter will be added when Phase 2 ships.
+            const std::int64_t dirty_region_count = 0;
+            // Hardcoded flags for the deferred primitives (mirror
+            // #778 batch-ffi-supported pattern).
+            const std::int64_t present_delta_supported = 0;
+            const std::int64_t terminal_dirty_region_supported = 0;
+            // Recommendation: derived from the 2 supported flags +
+            // dirty-region-count signal.
+            std::int64_t recommendation = 3;
+            if (present_delta_supported == 1 && terminal_dirty_region_supported == 1)
+                recommendation = 0; // production-ready
+            else if (present_delta_supported == 1 || terminal_dirty_region_supported == 1)
+                recommendation = 1; // partial
+            else if (dirty_region_count > 0)
+                recommendation = 2; // missing-primitive (rendering active)
+            else
+                recommendation = 3; // early-stage (no rendering yet)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("dirty-region-count", dirty_region_count);
-        insert_kv("present-delta-supported", present_delta_supported);
-        insert_kv("terminal-dirty-region-supported", terminal_dirty_region_supported);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 779);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("dirty-region-count", dirty_region_count);
+            insert_kv("present-delta-supported", present_delta_supported);
+            insert_kv("terminal-dirty-region-supported", terminal_dirty_region_supported);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 779);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 76 (orig lines 9034-9154)
@@ -615,80 +621,82 @@ void ObservabilityPrims::register_eval_p76(PrimRegistrar add, Evaluator& ev) {
     //                              3=early-stage (both = 0
     //                              AND no JIT activity)
     //   - schema == 780
-    add("query:jit-rendering-coverage-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #441 atomics — the JIT hot path counters.
-        const std::int64_t hotpath_eval_flat_calls =
-            m ? static_cast<std::int64_t>(
-                    m->hotpath_eval_flat_calls.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t hotpath_lowering_calls =
-            m ? static_cast<std::int64_t>(m->hotpath_lowering_calls.load(std::memory_order_relaxed))
-              : 0;
-        // Hardcoded flags for the deferred rendering-path
-        // optimizations. When the actual JIT rendering-path
-        // + hot-update rendering optimization ship
-        // (Phase 2+ per body), these will be derived from
-        // a primitive existence check (mirror #777's live
-        // lookup pattern).
-        const std::int64_t rendering_path_jit_supported = 0;
-        const std::int64_t hot_update_rendering_optimized = 0;
-        // Recommendation: derived from the 2 optimization
-        // flags + JIT activity signal (sum of both hotpath
-        // counters).
-        const std::int64_t jit_activity = hotpath_eval_flat_calls + hotpath_lowering_calls;
-        std::int64_t recommendation = 3;
-        if (rendering_path_jit_supported == 1 && hot_update_rendering_optimized == 1)
-            recommendation = 0; // production-ready
-        else if (rendering_path_jit_supported == 1 || hot_update_rendering_optimized == 1)
-            recommendation = 1; // partial
-        else if (jit_activity > 0)
-            recommendation = 2; // missing-optimization (JIT active)
-        else
-            recommendation = 3; // early-stage (no JIT activity)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-rendering-coverage-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #441 atomics — the JIT hot path counters.
+            const std::int64_t hotpath_eval_flat_calls =
+                m ? static_cast<std::int64_t>(
+                        m->hotpath_eval_flat_calls.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t hotpath_lowering_calls =
+                m ? static_cast<std::int64_t>(
+                        m->hotpath_lowering_calls.load(std::memory_order_relaxed))
+                  : 0;
+            // Hardcoded flags for the deferred rendering-path
+            // optimizations. When the actual JIT rendering-path
+            // + hot-update rendering optimization ship
+            // (Phase 2+ per body), these will be derived from
+            // a primitive existence check (mirror #777's live
+            // lookup pattern).
+            const std::int64_t rendering_path_jit_supported = 0;
+            const std::int64_t hot_update_rendering_optimized = 0;
+            // Recommendation: derived from the 2 optimization
+            // flags + JIT activity signal (sum of both hotpath
+            // counters).
+            const std::int64_t jit_activity = hotpath_eval_flat_calls + hotpath_lowering_calls;
+            std::int64_t recommendation = 3;
+            if (rendering_path_jit_supported == 1 && hot_update_rendering_optimized == 1)
+                recommendation = 0; // production-ready
+            else if (rendering_path_jit_supported == 1 || hot_update_rendering_optimized == 1)
+                recommendation = 1; // partial
+            else if (jit_activity > 0)
+                recommendation = 2; // missing-optimization (JIT active)
+            else
+                recommendation = 3; // early-stage (no JIT activity)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("hotpath-eval-flat-calls", hotpath_eval_flat_calls);
-        insert_kv("hotpath-lowering-calls", hotpath_lowering_calls);
-        insert_kv("rendering-path-jit-supported", rendering_path_jit_supported);
-        insert_kv("hot-update-rendering-optimized", hot_update_rendering_optimized);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 780);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("hotpath-eval-flat-calls", hotpath_eval_flat_calls);
+            insert_kv("hotpath-lowering-calls", hotpath_lowering_calls);
+            insert_kv("rendering-path-jit-supported", rendering_path_jit_supported);
+            insert_kv("hot-update-rendering-optimized", hot_update_rendering_optimized);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 780);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 77 (orig lines 9155-9276)
@@ -750,83 +758,86 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
     //                              (all = 0 AND no allocation
     //                              activity)
     //   - schema == 781
-    add("query:zero-copy-framebuffer-stats", [&ev](const auto&) -> EvalValue {
-        const auto* m = ev.compiler_metrics()
-                            ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                            : nullptr;
-        // Reused #491 atomic — the pair allocation counter
-        // the body identifies as the "unnecessary allocations
-        // and copies" pressure signal.
-        const std::int64_t pair_alloc_total =
-            m ? static_cast<std::int64_t>(m->pair_alloc_total.load(std::memory_order_relaxed)) : 0;
-        // Issues #1178/#1181/#1184 Phase 1: real support flags.
-        // zero_copy_output.ixx + batch_terminal ANSI helpers + render
-        // memory-profiling metrics are now scaffolded / active.
-        const std::int64_t zero_copy_supported =
-            m ? static_cast<std::int64_t>(
-                    m->zero_copy_framebuffer_supported.load(std::memory_order_relaxed))
-              : 1;
-        const std::int64_t ansi_helper_supported =
-            m ? static_cast<std::int64_t>(m->ansi_helper_supported.load(std::memory_order_relaxed))
-              : 1;
-        const std::int64_t memory_profiling_supported =
-            m ? static_cast<std::int64_t>(
-                    m->render_memory_profiling_supported.load(std::memory_order_relaxed))
-              : 1;
-        // Recommendation: derived from the 3 support flags +
-        // pair_alloc_total signal.
-        std::int64_t recommendation = 3;
-        if (zero_copy_supported == 1 && ansi_helper_supported == 1 &&
-            memory_profiling_supported == 1)
-            recommendation = 0; // production-ready
-        else if (zero_copy_supported == 1 || ansi_helper_supported == 1 ||
-                 memory_profiling_supported == 1)
-            recommendation = 1; // partial
-        else if (pair_alloc_total > 0)
-            recommendation = 2; // missing-primitive (allocations happening)
-        else
-            recommendation = 3; // early-stage (no allocation activity)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
+    ObservabilityPrims::register_stats_impl(
+        "query:zero-copy-framebuffer-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = ev.compiler_metrics()
+                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
+                                : nullptr;
+            // Reused #491 atomic — the pair allocation counter
+            // the body identifies as the "unnecessary allocations
+            // and copies" pressure signal.
+            const std::int64_t pair_alloc_total =
+                m ? static_cast<std::int64_t>(m->pair_alloc_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Issues #1178/#1181/#1184 Phase 1: real support flags.
+            // zero_copy_output.ixx + batch_terminal ANSI helpers + render
+            // memory-profiling metrics are now scaffolded / active.
+            const std::int64_t zero_copy_supported =
+                m ? static_cast<std::int64_t>(
+                        m->zero_copy_framebuffer_supported.load(std::memory_order_relaxed))
+                  : 1;
+            const std::int64_t ansi_helper_supported =
+                m ? static_cast<std::int64_t>(
+                        m->ansi_helper_supported.load(std::memory_order_relaxed))
+                  : 1;
+            const std::int64_t memory_profiling_supported =
+                m ? static_cast<std::int64_t>(
+                        m->render_memory_profiling_supported.load(std::memory_order_relaxed))
+                  : 1;
+            // Recommendation: derived from the 3 support flags +
+            // pair_alloc_total signal.
+            std::int64_t recommendation = 3;
+            if (zero_copy_supported == 1 && ansi_helper_supported == 1 &&
+                memory_profiling_supported == 1)
+                recommendation = 0; // production-ready
+            else if (zero_copy_supported == 1 || ansi_helper_supported == 1 ||
+                     memory_profiling_supported == 1)
+                recommendation = 1; // partial
+            else if (pair_alloc_total > 0)
+                recommendation = 2; // missing-primitive (allocations happening)
+            else
+                recommendation = 3; // early-stage (no allocation activity)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("pair-alloc-total", pair_alloc_total);
-        insert_kv("zero-copy-supported", zero_copy_supported);
-        insert_kv("ansi-helper-supported", ansi_helper_supported);
-        insert_kv("memory-profiling-supported", memory_profiling_supported);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 781);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("pair-alloc-total", pair_alloc_total);
+            insert_kv("zero-copy-supported", zero_copy_supported);
+            insert_kv("ansi-helper-supported", ansi_helper_supported);
+            insert_kv("memory-profiling-supported", memory_profiling_supported);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 781);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 78 (orig lines 9277-9426)
@@ -913,78 +924,80 @@ void ObservabilityPrims::register_eval_p78(PrimRegistrar add, Evaluator& ev) {
     //                              core-primitive-count
     //                              == 0)
     //   - schema == 782
-    add("query:terminal-rendering-module-stats", [&ev](const auto&) -> EvalValue {
-        // Live primitive lookup: count how many of the
-        // expected core rendering primitives are
-        // registered. Mirror #777 milestone_pct pattern.
-        const std::vector<const char*> expected_core_primitives = {"clear", "draw-batch", "present",
-                                                                   "dirty-tracking"};
-        std::size_t found_count = 0;
-        for (const char* name : expected_core_primitives) {
-            if (ev.primitives_.lookup(name).has_value())
-                ++found_count;
-        }
-        const std::int64_t core_primitive_count = static_cast<std::int64_t>(found_count);
-        // Hardcoded flags for the deferred module + profiler
-        // integration + example renderer (mirror
-        // #778-#781 hardcoded "not yet" flag pattern).
-        const std::int64_t terminal_module_available = 0;
-        const std::int64_t shape_profiler_integration_available = 0;
-        const std::int64_t example_renderer_available = 0;
-        // Recommendation: derived from the 3 module flags +
-        // core-primitive-count signal.
-        std::int64_t recommendation = 3;
-        if (terminal_module_available == 1 && shape_profiler_integration_available == 1 &&
-            example_renderer_available == 1 && core_primitive_count == 4)
-            recommendation = 0; // production-ready
-        else if (terminal_module_available == 1 || shape_profiler_integration_available == 1 ||
-                 example_renderer_available == 1 || core_primitive_count > 0)
-            recommendation = 1; // partial
-        else if (core_primitive_count > 0)
-            recommendation = 2; // missing-module (core primitives exist without module wrapper)
-        else
-            recommendation = 3; // early-stage (no core primitives, no module)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
-
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
-                }
+    ObservabilityPrims::register_stats_impl(
+        "query:terminal-rendering-module-stats", [&ev](const auto&) -> EvalValue {
+            // Live primitive lookup: count how many of the
+            // expected core rendering primitives are
+            // registered. Mirror #777 milestone_pct pattern.
+            const std::vector<const char*> expected_core_primitives = {"clear", "draw-batch",
+                                                                       "present", "dirty-tracking"};
+            std::size_t found_count = 0;
+            for (const char* name : expected_core_primitives) {
+                if (ObservabilityPrims::stats_impl_registered(name) ||
+                    ev.primitives_.lookup(name).has_value())
+                    ++found_count;
             }
-        };
-        insert_kv("core-primitive-count", core_primitive_count);
-        insert_kv("terminal-module-available", terminal_module_available);
-        insert_kv("shape-profiler-integration-available", shape_profiler_integration_available);
-        insert_kv("example-renderer-available", example_renderer_available);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 782);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            const std::int64_t core_primitive_count = static_cast<std::int64_t>(found_count);
+            // Hardcoded flags for the deferred module + profiler
+            // integration + example renderer (mirror
+            // #778-#781 hardcoded "not yet" flag pattern).
+            const std::int64_t terminal_module_available = 0;
+            const std::int64_t shape_profiler_integration_available = 0;
+            const std::int64_t example_renderer_available = 0;
+            // Recommendation: derived from the 3 module flags +
+            // core-primitive-count signal.
+            std::int64_t recommendation = 3;
+            if (terminal_module_available == 1 && shape_profiler_integration_available == 1 &&
+                example_renderer_available == 1 && core_primitive_count == 4)
+                recommendation = 0; // production-ready
+            else if (terminal_module_available == 1 || shape_profiler_integration_available == 1 ||
+                     example_renderer_available == 1 || core_primitive_count > 0)
+                recommendation = 1; // partial
+            else if (core_primitive_count > 0)
+                recommendation = 2; // missing-module (core primitives exist without module wrapper)
+            else
+                recommendation = 3; // early-stage (no core primitives, no module)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
+
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("core-primitive-count", core_primitive_count);
+            insert_kv("terminal-module-available", terminal_module_available);
+            insert_kv("shape-profiler-integration-available", shape_profiler_integration_available);
+            insert_kv("example-renderer-available", example_renderer_available);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 782);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 79 (orig lines 9427-9551)
@@ -1044,80 +1057,81 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
     //                                    the 3 deferred flags +
     //                                    activity signal
     //   - schema == 783
-    add("query:orchestration-steal-outermost-stats", [&ev](const auto&) -> EvalValue {
-        // Read the 3 NEW static aggregates (Issue #783).
-        const std::uint64_t outermost_total =
-            aura_fiber_static_steal_outermost_mutation_boundary_total();
-        const std::uint64_t inner_deferred_total =
-            aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
-        const std::uint64_t cross_fiber_total =
-            aura_fiber_static_cross_fiber_mutation_safe_steal_total();
-        // 3 hardcoded "not yet" flags for Phase 2+ deferred
-        // work (mirror #778/#779/#780/#781/#782 hardcoded
-        // flag pattern).
-        const std::int64_t strict_stable_ref_refresh = 0;
-        const std::int64_t envframe_version_refresh = 0;
-        const std::int64_t bias_deferred_outermost_total = 0;
-        // Recommendation: derived from the 3 deferred flags
-        // + activity signal. Note: the existing
-        // is_at_mutation_boundary_safe() already enforces
-        // depth==0 (Phase 1), so even with all 3 deferred
-        // flags == 0, the steal path is safe — just without
-        // the additional StableRef/EnvFrame safety nets.
-        std::int64_t recommendation = 3;
-        if (strict_stable_ref_refresh == 1 && envframe_version_refresh == 1 &&
-            bias_deferred_outermost_total == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (strict_stable_ref_refresh == 1 || envframe_version_refresh == 1 ||
-                 bias_deferred_outermost_total == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (outermost_total > 0 || inner_deferred_total > 0 || cross_fiber_total > 0)
-            recommendation = 2; // Phase 1 only (steal split shipped)
-        else
-            recommendation = 3; // early-stage (no steal activity yet)
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    // Issue #1397: string_heap_ push_back atomic
+    ObservabilityPrims::register_stats_impl(
+        "query:orchestration-steal-outermost-stats", [&ev](const auto&) -> EvalValue {
+            // Read the 3 NEW static aggregates (Issue #783).
+            const std::uint64_t outermost_total =
+                aura_fiber_static_steal_outermost_mutation_boundary_total();
+            const std::uint64_t inner_deferred_total =
+                aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
+            const std::uint64_t cross_fiber_total =
+                aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+            // 3 hardcoded "not yet" flags for Phase 2+ deferred
+            // work (mirror #778/#779/#780/#781/#782 hardcoded
+            // flag pattern).
+            const std::int64_t strict_stable_ref_refresh = 0;
+            const std::int64_t envframe_version_refresh = 0;
+            const std::int64_t bias_deferred_outermost_total = 0;
+            // Recommendation: derived from the 3 deferred flags
+            // + activity signal. Note: the existing
+            // is_at_mutation_boundary_safe() already enforces
+            // depth==0 (Phase 1), so even with all 3 deferred
+            // flags == 0, the steal path is safe — just without
+            // the additional StableRef/EnvFrame safety nets.
+            std::int64_t recommendation = 3;
+            if (strict_stable_ref_refresh == 1 && envframe_version_refresh == 1 &&
+                bias_deferred_outermost_total == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (strict_stable_ref_refresh == 1 || envframe_version_refresh == 1 ||
+                     bias_deferred_outermost_total == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (outermost_total > 0 || inner_deferred_total > 0 || cross_fiber_total > 0)
+                recommendation = 2; // Phase 1 only (steal split shipped)
+            else
+                recommendation = 3; // early-stage (no steal activity yet)
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        // Issue #1397: string_heap_ push_back atomic
 
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("outermost-steal-total", static_cast<std::int64_t>(outermost_total));
-        insert_kv("inner-deferred-total", static_cast<std::int64_t>(inner_deferred_total));
-        insert_kv("cross-fiber-safe-steal-total", static_cast<std::int64_t>(cross_fiber_total));
-        insert_kv("strict-stable-ref-refresh", strict_stable_ref_refresh);
-        insert_kv("envframe-version-refresh", envframe_version_refresh);
-        insert_kv("bias-deferred-outermost-total", bias_deferred_outermost_total);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 783);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("outermost-steal-total", static_cast<std::int64_t>(outermost_total));
+            insert_kv("inner-deferred-total", static_cast<std::int64_t>(inner_deferred_total));
+            insert_kv("cross-fiber-safe-steal-total", static_cast<std::int64_t>(cross_fiber_total));
+            insert_kv("strict-stable-ref-refresh", strict_stable_ref_refresh);
+            insert_kv("envframe-version-refresh", envframe_version_refresh);
+            insert_kv("bias-deferred-outermost-total", bias_deferred_outermost_total);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 783);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

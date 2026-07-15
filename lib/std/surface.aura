@@ -22,8 +22,8 @@
   string-pad-left string-pad-right string-reverse string-repeat
   string->chars chars->string string-take string-drop
 
-  ; ── json ──
-  json-parse json-stringify json-escape json-value
+  ; ── json (parse/encode are engine prims; stringify is stdlib alias) ──
+  json-stringify json-escape json-value
   json-arr-items json-obj-items
 
   ; ── math ──

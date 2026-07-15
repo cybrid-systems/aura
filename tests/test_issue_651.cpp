@@ -12,11 +12,11 @@
 // Discovery before this PR: the GC + panic observability
 // surface already covers the high-level GC + panic summary via
 // existing primitives:
-//   - (query:gc-safepoint-stats) — base GC safepoint primitive
-//   - (query:gc-safepoint-deferral-stats) (#646) — deferral +
+//   - (engine:metrics \"query:gc-safepoint-stats\") — base GC safepoint primitive
+//   - (engine:metrics \"query:gc-safepoint-deferral-stats\") (#646) — deferral +
 //     backoff for outermost-vs-inner MutationBoundary (no
 //     panic-specific breakdown)
-//   - (query:panic-checkpoint-fiber-stats) (#648) — fiber
+//   - (engine:metrics \"query:panic-checkpoint-fiber-stats\") (#648) — fiber
 //     resume panic transfer (no GC-deferral wire-up)
 //   - (engine:metrics \"query:panic-checkpoint-lifecycle-stats\") — high-level
 //     panic lifecycle summary
@@ -97,8 +97,8 @@ int aura_issue_651_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:gc-panic-deferral-stats) shape ---");
-        auto h = cs.eval("(query:gc-panic-deferral-stats)");
+        std::println("\n--- AC1: (engine:metrics \"query:gc-panic-deferral-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "gc-panic-deferral-stats returns a hash");
         const auto pp_deferral = hash_int(cs, "pending-panic-deferral");
         const auto gc_blocked = hash_int(cs, "gc-blocked-by-panic");
@@ -114,23 +114,28 @@ int aura_issue_651_run() {
     // (back-compat — #651 doesn't disturb them).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_648 = cs.eval("(query:panic-checkpoint-fiber-stats)");
-        CHECK(s_648.has_value(),
-              "(query:panic-checkpoint-fiber-stats) reachable (#648 back-compat)");
-        auto s_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
-        CHECK(s_646.has_value(),
-              "(query:gc-safepoint-deferral-stats) reachable (#646 back-compat)");
-        auto s_650 = cs.eval("(query:scheduler-stealbudget-yield-class-stats)");
+        auto s_648 = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
+        CHECK(
+            s_648.has_value(),
+            "(engine:metrics \"query:panic-checkpoint-fiber-stats\") reachable (#648 back-compat)");
+        auto s_646 = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        CHECK(
+            s_646.has_value(),
+            "(engine:metrics \"query:gc-safepoint-deferral-stats\") reachable (#646 back-compat)");
+        auto s_650 = cs.eval("(engine:metrics \"query:scheduler-stealbudget-yield-class-stats\")");
         CHECK(s_650.has_value(),
-              "(query:scheduler-stealbudget-yield-class-stats) reachable (#650 back-compat)");
-        auto s_649 = cs.eval("(query:yield-checkpoint-panic-stats)");
-        CHECK(s_649.has_value(),
-              "(query:yield-checkpoint-panic-stats) reachable (#649 back-compat)");
-        auto s_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        CHECK(s_647.has_value(),
-              "(query:envframe-dualpath-stale-stats-hash) reachable (#647 back-compat)");
-        auto s_645 = cs.eval("(query:scheduler-steal-bias-stats)");
-        CHECK(s_645.has_value(), "(query:scheduler-steal-bias-stats) reachable (#645 back-compat)");
+              "(engine:metrics \"query:scheduler-stealbudget-yield-class-stats\") reachable (#650 "
+              "back-compat)");
+        auto s_649 = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
+        CHECK(
+            s_649.has_value(),
+            "(engine:metrics \"query:yield-checkpoint-panic-stats\") reachable (#649 back-compat)");
+        auto s_647 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
+        CHECK(s_647.has_value(), "(engine:metrics \"query:envframe-dualpath-stale-stats-hash\") "
+                                 "reachable (#647 back-compat)");
+        auto s_645 = cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")");
+        CHECK(s_645.has_value(),
+              "(engine:metrics \"query:scheduler-steal-bias-stats\") reachable (#645 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -172,16 +177,17 @@ int aura_issue_651_run() {
     //     coordination layer (fills the TODO).
     {
         std::println("\n--- AC5: naming distinction from #646 + #648 ---");
-        auto new_p = cs.eval("(query:gc-panic-deferral-stats)");
-        auto old_646 = cs.eval("(query:gc-safepoint-deferral-stats)");
-        auto old_648 = cs.eval("(query:panic-checkpoint-fiber-stats)");
-        CHECK(new_p.has_value(),
-              "new primitive (query:gc-panic-deferral-stats) reachable (-panic- midfix)");
-        CHECK(old_646.has_value(), "existing #646 (query:gc-safepoint-deferral-stats) still "
-                                   "reachable (no -panic- midfix)");
-        CHECK(
-            old_648.has_value(),
-            "existing #648 (query:panic-checkpoint-fiber-stats) still reachable (-fiber- midfix)");
+        auto new_p = cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")");
+        auto old_646 = cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")");
+        auto old_648 = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
+        CHECK(new_p.has_value(), "new primitive (engine:metrics \"query:gc-panic-deferral-stats\") "
+                                 "reachable (-panic- midfix)");
+        CHECK(old_646.has_value(),
+              "existing #646 (engine:metrics \"query:gc-safepoint-deferral-stats\") still "
+              "reachable (no -panic- midfix)");
+        CHECK(old_648.has_value(),
+              "existing #648 (engine:metrics \"query:panic-checkpoint-fiber-stats\") still "
+              "reachable (-fiber- midfix)");
         // The new primitive uses `schema` as its primary
         // sentinel — distinct from #646 (no schema field) and
         // #648 (schema==648). Verify schema==651 path and
@@ -212,7 +218,7 @@ int aura_issue_651_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:gc-panic-deferral-stats)");
+                auto r = cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

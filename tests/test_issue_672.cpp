@@ -1,3 +1,4 @@
+#include "test_harness.hpp"
 // @category: integration
 // @reason: Issue #672 — Linear ownership + GuardShape runtime
 //  invariants enforcement under concurrent fiber mutation (P0
@@ -70,6 +71,8 @@ namespace aura_issue_672_detail {
 static int g_passed = 0;
 static int g_failed = 0;
 
+// Avoid redefinition vs test_harness.hpp (bundle builds include both).
+#undef CHECK
 #define CHECK(cond, msg)                                                                           \
     do {                                                                                           \
         if (cond) {                                                                                \
@@ -83,7 +86,7 @@ static int g_failed = 0;
 
 static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::string& prim,
                              const std::string& key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", prim, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(prim), key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -91,7 +94,7 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, const std::str
 
 static void run_ac1_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:linear-ownership-enforcement-stats reachable (schema 672) ---");
-    auto r = cs.eval("(query:linear-ownership-enforcement-stats)");
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-enforcement-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
           "query:linear-ownership-enforcement-stats returns a hash");
     auto schema = hash_int(cs, "query:linear-ownership-enforcement-stats", "schema");
@@ -178,8 +181,8 @@ static void run_ac7_recommended_action_fresh(aura::compiler::CompilerService& cs
 static void run_ac8_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC8: regression — adjacent linear-ownership primitives reachable ---");
     // #610 returns int (aggregate sum), #683 returns hash.
-    auto mutation_stats = cs.eval("(query:linear-ownership-mutation-stats)");
-    auto gc_stats = cs.eval("(query:linear-ownership-gc-stats)");
+    auto mutation_stats = cs.eval("(engine:metrics \"query:linear-ownership-mutation-stats\")");
+    auto gc_stats = cs.eval("(engine:metrics \"query:linear-ownership-gc-stats\")");
     CHECK(mutation_stats && aura::compiler::types::is_int(*mutation_stats),
           "query:linear-ownership-mutation-stats (#610) regression [int]");
     CHECK(gc_stats && aura::compiler::types::is_hash(*gc_stats),

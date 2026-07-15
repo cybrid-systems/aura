@@ -115,10 +115,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:primitives-hotpath-slo-stats) hash shape ---");
-    auto r = cs.eval("(query:primitives-hotpath-slo-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:primitives-hotpath-slo-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:primitives-hotpath-slo-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:primitives-hotpath-slo-stats) returns a hash");
+          "(engine:metrics \"query:primitives-hotpath-slo-stats\") returns a hash");
     const std::vector<std::string> keys = {"current-vs-baseline-pct", "contract-violations",
                                            "fastpath-hit-rate-pct", "regression-flag", "schema"};
     for (const auto& k : keys) {
@@ -132,17 +133,17 @@ static void run_ac2_fresh_baseline(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service 100.00% baseline (no load → no regression) ---");
     // Read the actual initial primitive_call_total from #614 so we
     // know what the fresh-service baseline is.
-    const auto initial_call_total =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "primitive-call-total");
+    const auto initial_call_total = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "primitive-call-total");
     std::println("  [info] fresh-service primitive_call_total = {}", initial_call_total);
-    const auto cvb =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "current-vs-baseline-pct");
+    const auto cvb = hash_int_field(cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")",
+                                    "current-vs-baseline-pct");
     CHECK(cvb == 10000,
           std::format("current-vs-baseline-pct = {} (expected 10000 = 100.00% on fresh service "
                       "when stability_score == 100, which holds because pair_total=0)",
                       cvb));
-    const auto contract_viol =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "contract-violations");
+    const auto contract_viol = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "contract-violations");
     CHECK(contract_viol == 0,
           std::format("contract-violations = {} (expected 0 on fresh service)", contract_viol));
     // fastpath-hit-rate-pct: 0 because fastpath_hits == 0 on fresh
@@ -150,14 +151,14 @@ static void run_ac2_fresh_baseline(aura::compiler::CompilerService& cs) {
     // construction do not hit the fast-path (they are meta/registration
     // paths, not user-facing primitive calls). The derivation is
     // (0 * 10000) / (call_total + 1) = 0.
-    const auto fastpath =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "fastpath-hit-rate-pct");
+    const auto fastpath = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "fastpath-hit-rate-pct");
     CHECK(fastpath == 0,
           std::format("fastpath-hit-rate-pct = {} (expected 0 on fresh service because "
                       "fastpath_hits == 0; the {}+1 setup-time calls don't hit fastpath)",
                       fastpath, initial_call_total));
-    const auto reg_flag =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "regression-flag");
+    const auto reg_flag = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "regression-flag");
     CHECK(reg_flag == 0,
           std::format("regression-flag = {} (expected 0 when current-vs-baseline-pct >= 5000)",
                       reg_flag));
@@ -165,7 +166,8 @@ static void run_ac2_fresh_baseline(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 776 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "schema");
     CHECK(schema == 776, std::format("schema = {} (expected 776)", schema));
 }
 
@@ -175,10 +177,10 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
 
     // Read the actual initial primitive_call_total from #614 so we
     // can compute the expected values dynamically.
-    const auto initial_call_total =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "primitive-call-total");
-    const auto initial_pair_total =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "pair-alloc-total");
+    const auto initial_call_total = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "primitive-call-total");
+    const auto initial_pair_total = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "pair-alloc-total");
     std::println("  [info] initial primitive_call_total = {}, pair_alloc_total = {}",
                  initial_call_total, initial_pair_total);
 
@@ -195,7 +197,7 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // bumps to ensure regression triggers regardless of how much
     // call_total grows during the test.
     //
-    // IMPORTANT: We call (query:primitives-hotpath-slo-stats) ONCE
+    // IMPORTANT: We call (engine:metrics \"query:primitives-hotpath-slo-stats\") ONCE
     // and read all fields from the SAME hash. If we call it
     // multiple times, call_total grows between calls and the
     // returned values become inconsistent (the race condition
@@ -209,10 +211,10 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // if call_total grows by 50+ between subsequent primitive calls.
     // The cross-check with #614 stability-score is the strongest
     // invariant.
-    const std::int64_t cvb1 =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "current-vs-baseline-pct");
-    const std::int64_t reg_flag1 =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "regression-flag");
+    const std::int64_t cvb1 = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "current-vs-baseline-pct");
+    const std::int64_t reg_flag1 = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "regression-flag");
     CHECK(cvb1 < 10000,
           std::format("after {} pair_alloc bumps: current-vs-baseline-pct = {} (expected < "
                       "10000 because pair_total > 0 introduces penalty)",
@@ -227,8 +229,8 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // stability-score (0-100). Our #776 primitive multiplies it
     // by 100 to get 0-10000 fixed-point pct. So
     // #614.stability-score * 100 == #776.current-vs-baseline-pct.
-    const auto stability_614 =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "stability-score");
+    const auto stability_614 = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "stability-score");
     CHECK(stability_614 * 100 == cvb1,
           std::format("cross-check: #614 stability-score ({}) × 100 == #776 current-vs-baseline-"
                       "pct ({}), diff = {}",
@@ -246,17 +248,17 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // Read pair_alloc_total and call_total from #614 (which has
     // the most up-to-date view of these atomics) to compute the
     // expected value.
-    const auto new_pair_total =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "pair-alloc-total");
-    const auto new_call_total_v2 =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "primitive-call-total");
+    const auto new_pair_total = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "pair-alloc-total");
+    const auto new_call_total_v2 = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "primitive-call-total");
     const auto new_alloc_per_call =
         static_cast<std::int64_t>(new_pair_total / (new_call_total_v2 + 1));
     const auto new_stability_penalty = new_alloc_per_call * 3;
     const auto new_stability_score = new_stability_penalty >= 100 ? 0 : 100 - new_stability_penalty;
     const auto new_cvb = new_stability_score * 100;
-    const auto cvb2 =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "current-vs-baseline-pct");
+    const auto cvb2 = hash_int_field(cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")",
+                                     "current-vs-baseline-pct");
     CHECK(cvb2 == new_cvb,
           std::format("after {} pair_alloc + {} call_count bumps: current-vs-baseline-pct = {} "
                       "(expected {} = stability_score {} × 100, regression diluted by more "
@@ -264,8 +266,8 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
                       kRegressionBumps, kCallBumps, cvb2, new_cvb, new_stability_score));
     // The reg_flag should remain 1 if stability_score < 50, else 0.
     const auto new_reg_flag = new_cvb < 5000 ? 1 : 0;
-    const auto reg_flag2 =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "regression-flag");
+    const auto reg_flag2 = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "regression-flag");
     CHECK(reg_flag2 == new_reg_flag,
           std::format("regression-flag after dilution: {} (expected {})", reg_flag2, new_reg_flag));
 
@@ -274,8 +276,8 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // bumped by prim_record_capture_violation in primitives_detail
     // .h which is hard to trigger from a test). Verify reachability
     // + == 0.
-    const auto contract_viol =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "contract-violations");
+    const auto contract_viol = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "contract-violations");
     CHECK(contract_viol == 0,
           std::format("contract-violations = {} (expected 0; no public bump helper for "
                       "primitive_capture_violations_total)",
@@ -284,8 +286,8 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
     // Scenario 4: fastpath-hit-rate-pct remains 0 because we
     // didn't bump fastpath_hits (no public bump helper for
     // primitive_fastpath_hits_total).
-    const auto fastpath =
-        hash_int_field(cs, "(query:primitives-hotpath-slo-stats)", "fastpath-hit-rate-pct");
+    const auto fastpath = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-slo-stats\")", "fastpath-hit-rate-pct");
     CHECK(fastpath == 0,
           std::format("fastpath-hit-rate-pct = {} (expected 0 because fastpath_hits == 0; no "
                       "public bump helper for primitive_fastpath_hits_total)",
@@ -295,10 +297,10 @@ static void run_ac4_derived_slo_correctness(aura::compiler::CompilerService& cs)
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #614/#584 + #751 + #774 + #775 sibling primitives "
                  "unaffected ---");
-    auto hotpath614 = cs.eval("(query:primitives-hotpath-stats)");
-    auto contract751 = cs.eval("(query:primitives-contract-stats)");
-    auto convergence774 = cs.eval("(query:closed-loop-convergence-stats)");
-    auto extension775 = cs.eval("(query:extension-kit-stats)");
+    auto hotpath614 = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
+    auto contract751 = cs.eval("(engine:metrics \"query:primitives-contract-stats\")");
+    auto convergence774 = cs.eval("(engine:metrics \"query:closed-loop-convergence-stats\")");
+    auto extension775 = cs.eval("(engine:metrics \"query:extension-kit-stats\")");
     CHECK(hotpath614 && aura::compiler::types::is_hash(*hotpath614),
           "query:primitives-hotpath-stats hash regression (#614/#584)");
     CHECK(contract751 && aura::compiler::types::is_hash(*contract751),
@@ -307,17 +309,20 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:closed-loop-convergence-stats hash regression (#774)");
     CHECK(extension775 && aura::compiler::types::is_hash(*extension775),
           "query:extension-kit-stats hash regression (#775)");
-    const auto a614_stability =
-        hash_int_field(cs, "(query:primitives-hotpath-stats)", "stability-score");
+    const auto a614_stability = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-hotpath-stats\")", "stability-score");
     CHECK(a614_stability >= 0 && a614_stability <= 100,
           std::format("#614 stability-score = {} (must be in [0, 100] range)", a614_stability));
-    const auto a751_schema = hash_int_field(cs, "(query:primitives-contract-stats)", "schema");
+    const auto a751_schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-contract-stats\")", "schema");
     CHECK(a751_schema == 751,
           std::format("#751 schema = {} (expected 751, no drift)", a751_schema));
-    const auto a774_schema = hash_int_field(cs, "(query:closed-loop-convergence-stats)", "schema");
+    const auto a774_schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "schema");
     CHECK(a774_schema == 774,
           std::format("#774 schema = {} (expected 774, no drift)", a774_schema));
-    const auto a775_schema = hash_int_field(cs, "(query:extension-kit-stats)", "schema");
+    const auto a775_schema =
+        hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")", "schema");
     CHECK(a775_schema == 775,
           std::format("#775 schema = {} (expected 775, no drift)", a775_schema));
 }

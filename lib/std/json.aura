@@ -1,14 +1,17 @@
-; Aura JSON library -- delegates to built-in json-parse / json-encode
-; Built-in versions are O(n), no recursion depth limit.
-; (require "std/json" all:) -- json-parse + json-stringify
+; Aura JSON library -- product names over C++ hot-path prims (#1440).
+; Engine registers (json-parse) / (json-encode); this module re-exports
+; stable names for Agent / app code. Prefer (require "std/json" all:).
+;
+; (json-stringify v) is the product alias of (json-encode v).
 
-(export json-parse json-stringify json-escape json-value c2s json-arr-items json-obj-items)
+; json-parse / json-encode stay engine prims (available without require).
+; This module adds product helpers + (json-stringify) alias.
+(export json-stringify json-escape json-value c2s json-arr-items json-obj-items)
 
 (define (c2s c) (list->string (list c)))
 
-; ── Delegated to built-in primitives ──────────────────────────
-(define (json-parse s)   (builtin:json-parse s))
-(define (json-stringify v) (builtin:json-encode v))
+; ── Product alias for encode ──
+(define (json-stringify v) (json-encode v))
 
 ; ── json-escape -- string → JSON-safe string ───────────────────
 (define (json-escape s)

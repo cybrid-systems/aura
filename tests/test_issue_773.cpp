@@ -77,10 +77,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:workspace-closedloop-fiber-eda-stats) hash shape ---");
-    auto r = cs.eval("(query:workspace-closedloop-fiber-eda-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:workspace-closedloop-fiber-eda-stats\") hash "
+                 "shape ---");
+    auto r = cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:workspace-closedloop-fiber-eda-stats) returns a hash");
+          "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\") returns a hash");
     const std::vector<std::string> keys = {"concurrent-query-mutate-success-pct",
                                            "cross-cow-ref-validity-pct",
                                            "yield-points-hit",
@@ -98,38 +99,43 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: NEW counters == 0 on fresh service ---");
     // 3 NEW atomics must be 0 on fresh service
-    const auto smc = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "shared-mutex-contention-ns");
+    const auto smc =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "shared-mutex-contention-ns");
     CHECK(smc == 0,
           std::format("shared-mutex-contention-ns = {} (expected 0 on fresh service)", smc));
-    const auto mae = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "multi-agent-edit-fidelity");
+    const auto mae =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "multi-agent-edit-fidelity");
     CHECK(mae == 0,
           std::format("multi-agent-edit-fidelity = {} (expected 0 on fresh service)", mae));
-    const auto srp = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "stale-ref-prevented-eda-loops");
+    const auto srp =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "stale-ref-prevented-eda-loops");
     CHECK(srp == 0,
           std::format("stale-ref-prevented-eda-loops = {} (expected 0 on fresh service)", srp));
     // Reused #762 atomic: yield-points-hit should be 0 on fresh service
-    const auto yph =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)", "yield-points-hit");
+    const auto yph = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")", "yield-points-hit");
     CHECK(yph == 0, std::format("yield-points-hit = {} (expected 0 on fresh service)", yph));
     // pct fields: derived — should be 10000 (100.00%) on fresh service (no failures)
-    const auto cqs = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "concurrent-query-mutate-success-pct");
+    const auto cqs =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "concurrent-query-mutate-success-pct");
     CHECK(cqs == 10000,
           std::format(
               "concurrent-query-mutate-success-pct = {} (expected 10000 = 100.00% on fresh)", cqs));
-    const auto ccv = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "cross-cow-ref-validity-pct");
+    const auto ccv =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "cross-cow-ref-validity-pct");
     CHECK(ccv == 10000,
           std::format("cross-cow-ref-validity-pct = {} (expected 10000 = 100.00% on fresh)", ccv));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 773 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")", "schema");
     CHECK(schema == 773, std::format("schema = {} (expected 773)", schema));
 }
 
@@ -142,12 +148,15 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.set_workspace_closedloop_multi_agent_edit_fidelity_pct(9876);
     ev.bump_workspace_closedloop_stale_ref_prevented_eda_loops(7);
     ev.bump_workspace_closedloop_stale_ref_prevented_eda_loops(3);
-    const auto smc = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "shared-mutex-contention-ns");
-    const auto mae = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "multi-agent-edit-fidelity");
-    const auto srp = hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)",
-                                    "stale-ref-prevented-eda-loops");
+    const auto smc =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "shared-mutex-contention-ns");
+    const auto mae =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "multi-agent-edit-fidelity");
+    const auto srp =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")",
+                       "stale-ref-prevented-eda-loops");
     CHECK(smc == 4000,
           std::format("after 1500+2500 ns bumps: shared-mutex-contention-ns = {} (expected 4000)",
                       smc));
@@ -162,10 +171,13 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #762 + #772 + #771/#770 sibling primitives "
                  "unaffected ---");
-    auto workspace_closedloop = cs.eval("(query:workspace-closedloop-orchestration-stats)");
+    auto workspace_closedloop =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-orchestration-stats\")");
     auto sv_closedloop_slo = cs.eval("(query:sv-closedloop-slo)");
-    auto type_incremental_fidelity = cs.eval("(query:type-incremental-fidelity-stats)");
-    auto linear_occurrence_mutate = cs.eval("(query:linear-occurrence-mutate-stats)");
+    auto type_incremental_fidelity =
+        cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
+    auto linear_occurrence_mutate =
+        cs.eval("(engine:metrics \"query:linear-occurrence-mutate-stats\")");
     CHECK(workspace_closedloop && aura::compiler::types::is_hash(*workspace_closedloop),
           "query:workspace-closedloop-orchestration-stats hash regression (#762)");
     CHECK(sv_closedloop_slo && aura::compiler::types::is_hash(*sv_closedloop_slo),
@@ -174,18 +186,19 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:type-incremental-fidelity-stats hash regression (#770/#798)");
     CHECK(linear_occurrence_mutate && aura::compiler::types::is_hash(*linear_occurrence_mutate),
           "query:linear-occurrence-mutate-stats hash regression (#771/#747)");
-    const auto a762_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "schema");
+    const auto a762_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")", "schema");
     CHECK(a762_schema == 762,
           std::format("#762 schema = {} (expected 762, no drift)", a762_schema));
     const auto a772_schema = hash_int_field(cs, "(query:sv-closedloop-slo)", "schema");
     CHECK(a772_schema == 772,
           std::format("#772 schema = {} (expected 772, no drift)", a772_schema));
     const auto a798_schema =
-        hash_int_field(cs, "(query:type-incremental-fidelity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")", "schema");
     CHECK(a798_schema == 798,
           std::format("#798 schema = {} (expected 798, no drift)", a798_schema));
-    const auto a747_schema = hash_int_field(cs, "(query:linear-occurrence-mutate-stats)", "schema");
+    const auto a747_schema =
+        hash_int_field(cs, "(engine:metrics \"query:linear-occurrence-mutate-stats\")", "schema");
     CHECK(a747_schema == 747,
           std::format("#747 schema = {} (expected 747, no drift)", a747_schema));
 }

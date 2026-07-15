@@ -6,7 +6,7 @@
 // binary focuses on the EDA-specific observability surface for
 // TypePropagationPass + bit-width inference:
 //   - AC1: 4 new type_propagation counters reachable + start at 0
-//   - AC2: (query:type-propagation-stats) returns integer sum
+//   - AC2: (engine:metrics \"query:type-propagation-stats\") returns integer sum
 //   - AC3: TypePropagationPass has propagated_count() accessor
 //          (already exists per source code review)
 //   - AC4: bump_type_propagation_runs + total bumpers work
@@ -65,19 +65,21 @@ bool test_type_propagation_counters_reachable() {
     return true;
 }
 
-// ── AC2: (query:type-propagation-stats) returns integer sum
+// ── AC2: (engine:metrics \"query:type-propagation-stats\") returns integer sum
 bool test_query_type_propagation_stats() {
-    std::println("\n--- AC2: (query:type-propagation-stats) returns integer ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"query:type-propagation-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:type-propagation-stats)");
-    CHECK(r.has_value(), "(query:type-propagation-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:type-propagation-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:type-propagation-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:type-propagation-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:type-propagation-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:type-propagation-stats = {}", v);
-        CHECK(v >= 0, "(query:type-propagation-stats) >= 0 (sum of 4 counters)");
+        CHECK(v >= 0, "(engine:metrics \"query:type-propagation-stats\") >= 0 (sum of 4 counters)");
     }
     return true;
 }
@@ -212,9 +214,9 @@ bool test_gc_heap_with_type_propagation() {
     (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after mutate");
-    auto r2 = cs.eval("(query:type-propagation-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:type-propagation-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:type-propagation-stats) after gc-heap");
+          "(engine:metrics \"query:type-propagation-stats\") after gc-heap");
     return true;
 }
 
@@ -255,15 +257,15 @@ bool test_regression_existing_primitives() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    auto r1 = cs.eval("(query:type-propagation-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:type-propagation-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:type-propagation-stats) (new for #305)");
+          "(engine:metrics \"query:type-propagation-stats\") (new for #305)");
     auto r2 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
-    auto r3 = cs.eval("(query:self-evolution-stability-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:self-evolution-stability-stats) (regression for #549)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
     auto r4 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
           "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");

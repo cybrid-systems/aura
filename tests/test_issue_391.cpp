@@ -8,7 +8,7 @@
 //              "disabled"|"warn"|"strict") works
 //            - (query:stale-ref-policy) returns the
 //              current policy
-//            - (query:stale-ref-stats) returns the sum
+//            - (engine:metrics \"query:stale-ref-stats\") returns the sum
 //              of blocked + warned counts
 //            - (mutate:check-stable-ref) in Strict
 //              mode returns tagged "stale-ref" error
@@ -53,7 +53,7 @@ bool test_query_stale_ref_policy() {
 bool test_query_stale_ref_stats() {
     std::println("\n--- AC2: query:stale-ref-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:stale-ref-stats)");
+    auto r = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -144,7 +144,7 @@ bool test_warn_warned_counter_bumps() {
     //  mev path — the bump still happens).
     // Verify the policy settable + the stats primitive
     // is reachable + returns an integer.
-    auto r_stats = cs.eval("(query:stale-ref-stats)");
+    auto r_stats = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     if (!r_stats || !aura::compiler::types::is_int(*r_stats)) {
         ++g_failed;
         return false;
@@ -159,7 +159,7 @@ bool test_warn_warned_counter_bumps() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC8: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:compiler-cache-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     // #426 ships the primitive as a 3-tuple
     // ((dirty-blocks . dirty-functions) .
     //   incremental-candidates); the regression check
@@ -170,10 +170,10 @@ bool test_regression_prior_primitives() {
     CHECK(r1.has_value() &&
               (aura::compiler::types::is_int(*r1) || aura::compiler::types::is_pair(*r1)),
           "query:compiler-cache-stats (regression for #426)");
-    auto r2 = cs.eval("(query:stable-ref-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:stable-ref-stats (regression for #457)");
-    auto r3 = cs.eval("(query:mutation-coordination-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:mutation-coordination-stats (regression for #448)");
     return true;

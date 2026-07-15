@@ -48,7 +48,7 @@ static bool load_workspace(CompilerService& cs) {
 }
 
 static std::int64_t adt_exhaustiveness_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:adt-exhaustiveness-stats)");
+    auto r = cs.eval("(engine:metrics \"query:adt-exhaustiveness-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -126,8 +126,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "adt-exhaustiveness-stats monotonic over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto ams = cs.eval("(query:adt-match-exhaust-stats)");
-    auto mns = cs.eval("(compile:match-narrowing-stats)");
+    auto ams = cs.eval("(engine:metrics \"query:adt-match-exhaust-stats\")");
+    auto mns = cs.eval("(engine:metrics \"compile:match-narrowing-stats\")");
     CHECK(ams && is_int(*ams), "query:adt-match-exhaust-stats returns int");
     CHECK(mns.has_value(), "compile:match-narrowing-stats returns value");
 

@@ -100,9 +100,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:extension-kit-stats) hash shape ---");
-    auto r = cs.eval("(query:extension-kit-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:extension-kit-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:extension-kit-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:extension-kit-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:extension-kit-stats\") returns a hash");
     const std::vector<std::string> keys = {"extensions_registered", "contract_violations_caught",
                                            "meta_completeness_pct", "test_skeletons_generated",
                                            "schema"};
@@ -116,16 +117,17 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println(
         "\n--- AC2: fresh-service state (counters == 0, meta_completeness_pct in [0, 10000]) ---");
-    const auto ext_reg = hash_int_field(cs, "(query:extension-kit-stats)", "extensions_registered");
+    const auto ext_reg = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                        "extensions_registered");
     CHECK(ext_reg == 0,
           std::format("extensions_registered = {} (expected 0 on fresh service)", ext_reg));
-    const auto contract_viol =
-        hash_int_field(cs, "(query:extension-kit-stats)", "contract_violations_caught");
+    const auto contract_viol = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                              "contract_violations_caught");
     CHECK(contract_viol == 0,
           std::format("contract_violations_caught = {} (expected 0 on fresh service)",
                       contract_viol));
-    const auto test_skel =
-        hash_int_field(cs, "(query:extension-kit-stats)", "test_skeletons_generated");
+    const auto test_skel = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                          "test_skeletons_generated");
     CHECK(test_skel == 0,
           std::format("test_skeletons_generated = {} (expected 0 on fresh service)", test_skel));
     // meta_completeness_pct = (schema_documented / slot_count) * 10000.
@@ -134,15 +136,16 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     // schema in PrimMeta), so the pct is < 10000. The body SLO of
     // meta_completeness >95% applies to the EXTENSION KIT (Agent-
     // generated extensions), not the overall registry baseline.
-    const auto meta_pct =
-        hash_int_field(cs, "(query:extension-kit-stats)", "meta_completeness_pct");
+    const auto meta_pct = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                         "meta_completeness_pct");
     CHECK(meta_pct >= 0 && meta_pct <= 10000,
           std::format("meta_completeness_pct = {} (must be in [0, 10000] range)", meta_pct));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 775 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:extension-kit-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")", "schema");
     CHECK(schema == 775, std::format("schema = {} (expected 775)", schema));
 }
 
@@ -151,14 +154,14 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
 
     // Scenario 1: Call (primitive:generate-skeleton "...") — production
     // path that bumps test_skeletons_generated.
-    const auto test_skel_before =
-        hash_int_field(cs, "(query:extension-kit-stats)", "test_skeletons_generated");
+    const auto test_skel_before = hash_int_field(
+        cs, "(engine:metrics \"query:extension-kit-stats\")", "test_skeletons_generated");
     auto sk1 = cs.eval("(primitive:generate-skeleton "
                        "\"description: add coverpoint bin to covergroup\")");
     CHECK(sk1 && aura::compiler::types::is_hash(*sk1),
           "primitive:generate-skeleton returns hash bundle");
-    const auto test_skel_after1 =
-        hash_int_field(cs, "(query:extension-kit-stats)", "test_skeletons_generated");
+    const auto test_skel_after1 = hash_int_field(
+        cs, "(engine:metrics \"query:extension-kit-stats\")", "test_skeletons_generated");
     CHECK(test_skel_after1 == test_skel_before + 1,
           std::format("after 1 (primitive:generate-skeleton) call: test_skeletons_generated = "
                       "{} (expected {})",
@@ -168,8 +171,8 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
     cs.eval("(primitive:generate-skeleton \"description: weaken SVA property\")");
     cs.eval("(primitive:generate-skeleton \"description: add coverpoint\")");
     cs.eval("(primitive:generate-skeleton \"description: domain-specific\")");
-    const auto test_skel_after4 =
-        hash_int_field(cs, "(query:extension-kit-stats)", "test_skeletons_generated");
+    const auto test_skel_after4 = hash_int_field(
+        cs, "(engine:metrics \"query:extension-kit-stats\")", "test_skeletons_generated");
     CHECK(test_skel_after4 == test_skel_before + 4,
           std::format("after 4 (primitive:generate-skeleton) calls: test_skeletons_generated = "
                       "{} (expected {})",
@@ -180,8 +183,8 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
     // remain in the [0, 10000] range after production-path bumps (the
     // bumps don't affect the schema_documented count, so the pct is
     // stable under (primitive:generate-skeleton) calls).
-    const auto meta_pct =
-        hash_int_field(cs, "(query:extension-kit-stats)", "meta_completeness_pct");
+    const auto meta_pct = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                         "meta_completeness_pct");
     CHECK(meta_pct >= 0 && meta_pct <= 10000,
           std::format("meta_completeness_pct = {} (must be in [0, 10000] range)", meta_pct));
     // Cross-check: query:primitives-meta-stats (the #669 primitive)
@@ -190,9 +193,9 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
     // within 1% of the #669-derived calculation (which uses an
     // independent derivation path).
     const auto meta669_schema_doc =
-        hash_int_field(cs, "(query:primitives-meta-stats)", "schema-documented");
+        hash_int_field(cs, "(engine:metrics \"query:primitives-meta-stats\")", "schema-documented");
     const auto meta669_total =
-        hash_int_field(cs, "(query:primitives-meta-stats)", "total-registered");
+        hash_int_field(cs, "(engine:metrics \"query:primitives-meta-stats\")", "total-registered");
     if (meta669_total > 0) {
         const std::int64_t expected_pct =
             static_cast<std::int64_t>((meta669_schema_doc * 10000) / meta669_total);
@@ -210,12 +213,13 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
     // remain 0 because the actual (primitive:extend-kit) generative
     // primitive + capture contract probe aren't shipped in this PR
     // (Phase 2+ deferred). The counters are reachable + == 0.
-    const auto ext_reg = hash_int_field(cs, "(query:extension-kit-stats)", "extensions_registered");
+    const auto ext_reg = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                        "extensions_registered");
     CHECK(ext_reg == 0,
           std::format("extensions_registered = {} (expected 0 until AC3 DEFINE_PRIMITIVE wire-up)",
                       ext_reg));
-    const auto contract_viol =
-        hash_int_field(cs, "(query:extension-kit-stats)", "contract_violations_caught");
+    const auto contract_viol = hash_int_field(cs, "(engine:metrics \"query:extension-kit-stats\")",
+                                              "contract_violations_caught");
     CHECK(contract_viol == 0,
           std::format("contract_violations_caught = {} (expected 0 on fresh service — capture "
                       "contract probe is Phase 2+ work)",
@@ -225,10 +229,10 @@ static void run_ac4_production_path_bumps(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #697 + #751 + #669 + #774 sibling primitives "
                  "unaffected ---");
-    auto ext697 = cs.eval("(query:primitives-extension-stats)");
-    auto contract751 = cs.eval("(query:primitives-contract-stats)");
-    auto meta669 = cs.eval("(query:primitives-meta-stats)");
-    auto convergence774 = cs.eval("(query:closed-loop-convergence-stats)");
+    auto ext697 = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
+    auto contract751 = cs.eval("(engine:metrics \"query:primitives-contract-stats\")");
+    auto meta669 = cs.eval("(engine:metrics \"query:primitives-meta-stats\")");
+    auto convergence774 = cs.eval("(engine:metrics \"query:closed-loop-convergence-stats\")");
     CHECK(ext697 && aura::compiler::types::is_hash(*ext697),
           "query:primitives-extension-stats hash regression (#697)");
     CHECK(contract751 && aura::compiler::types::is_hash(*contract751),
@@ -237,19 +241,22 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:primitives-meta-stats hash regression (#669)");
     CHECK(convergence774 && aura::compiler::types::is_hash(*convergence774),
           "query:closed-loop-convergence-stats hash regression (#774)");
-    const auto a751_schema = hash_int_field(cs, "(query:primitives-contract-stats)", "schema");
+    const auto a751_schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-contract-stats\")", "schema");
     CHECK(a751_schema == 751,
           std::format("#751 schema = {} (expected 751, no drift)", a751_schema));
-    const auto a669_schema = hash_int_field(cs, "(query:primitives-meta-stats)", "schema");
+    const auto a669_schema =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-meta-stats\")", "schema");
     CHECK(a669_schema == 669,
           std::format("#669 schema = {} (expected 669, no drift)", a669_schema));
-    const auto a774_schema = hash_int_field(cs, "(query:closed-loop-convergence-stats)", "schema");
+    const auto a774_schema =
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-convergence-stats\")", "schema");
     CHECK(a774_schema == 774,
           std::format("#774 schema = {} (expected 774, no drift)", a774_schema));
     // #697 doesn't have a schema sentinel field (it's an int sum
     // tracker); verify the field is reachable + non-negative.
-    const auto a697_ext_count =
-        hash_int_field(cs, "(query:primitives-extension-stats)", "registry-slots");
+    const auto a697_ext_count = hash_int_field(
+        cs, "(engine:metrics \"query:primitives-extension-stats\")", "registry-slots");
     CHECK(a697_ext_count > 0,
           std::format("#697 registry-slots = {} (expected > 0 on built service)", a697_ext_count));
 }

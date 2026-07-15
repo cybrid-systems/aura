@@ -58,7 +58,7 @@ bool test_query_ir_marker_stats() {
         ++g_failed;
         return false;
     }
-    auto r = cs.eval("(query:ir-marker-stats)");
+    auto r = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -80,7 +80,7 @@ bool test_query_ir_marker_stats_after_macro() {
     // may or may not be supported; the simpler define macro
     // is the safe path). If neither works, we just verify
     // the primitive still returns a value.
-    auto r = cs.eval("(query:ir-marker-stats)");
+    auto r = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -154,7 +154,7 @@ bool test_macro_expansion_smoke() {
 bool test_jit_fallback_regression() {
     std::println("\n--- AC6: #461 fallback stats primitive still callable ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:jit-fallback-stats)");
+    auto r = cs.eval("(engine:metrics \"query:jit-fallback-stats\")");
     if (!r) {
         ++g_failed;
         return false;

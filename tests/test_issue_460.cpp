@@ -63,7 +63,7 @@ bool test_impact_metrics_bump() {
 bool test_query_compiler_incremental_stats() {
     std::println("\n--- AC3: query:compiler-incremental-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:compiler-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     if (!r) {
         ++g_failed;
         return false;

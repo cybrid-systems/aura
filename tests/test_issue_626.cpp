@@ -15,11 +15,11 @@
 //   - (query:task4-hotpath-contracts) — 10-field structured hash
 //     with per-site constants + consteval-hits +
 //     task4-contracts-total + task4-contracts-recommendation
-//   - (query:pass-pipeline-incremental-stats-hash) from #625
+//   - (engine:metrics \"query:pass-pipeline-incremental-stats-hash\") from #625
 //     — 6-field hash with contracts-checked (synthetic from
 //     zerooverhead_wins + dispatch_miss)
-//   - (query:pass-contracts-stats) from #406 — int-sum of 7 counters
-//   - (query:dead-coercion-zerooverhead-stats) from #508 —
+//   - (engine:metrics \"query:pass-contracts-stats\") from #406 — int-sum of 7 counters
+//   - (engine:metrics \"query:dead-coercion-zerooverhead-stats\") from #508 —
 //     zerooverhead-wins
 //   - shape::value_contract_violation_count —
 //     violations-in-debug field
@@ -83,8 +83,9 @@ int aura_issue_626_run() {
 
     // AC1: hash returns a hash with the 8 documented fields.
     {
-        std::println("\n--- AC1: (query:contracts-hotpath-stats-hash) shape ---");
-        auto h = cs.eval("(query:contracts-hotpath-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:contracts-hotpath-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:contracts-hotpath-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "contracts-hotpath-stats-hash returns a hash");
         const auto contracts_checked = hash_int(cs, "contracts-checked");
@@ -115,15 +116,16 @@ int aura_issue_626_run() {
         auto s_task4 = cs.eval("(query:task4-hotpath-contracts)");
         CHECK(s_task4 && aura::compiler::types::is_hash(*s_task4),
               "(query:task4-hotpath-contracts) returns a hash (existing)");
-        auto s_pipe = cs.eval("(query:pass-pipeline-incremental-stats-hash)");
+        auto s_pipe = cs.eval("(engine:metrics \"query:pass-pipeline-incremental-stats-hash\")");
         CHECK(s_pipe && aura::compiler::types::is_hash(*s_pipe),
-              "(query:pass-pipeline-incremental-stats-hash) returns a hash (#625 back-compat)");
-        auto s_cont = cs.eval("(query:pass-contracts-stats)");
+              "(engine:metrics \"query:pass-pipeline-incremental-stats-hash\") returns a hash "
+              "(#625 back-compat)");
+        auto s_cont = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
         CHECK(s_cont && aura::compiler::types::is_int(*s_cont),
-              "(query:pass-contracts-stats) returns an int (#406 back-compat)");
-        auto s_dead = cs.eval("(query:dead-coercion-zerooverhead-stats)");
-        CHECK(s_dead.has_value(),
-              "(query:dead-coercion-zerooverhead-stats) reachable (#508 back-compat)");
+              "(engine:metrics \"query:pass-contracts-stats\") returns an int (#406 back-compat)");
+        auto s_dead = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
+        CHECK(s_dead.has_value(), "(engine:metrics \"query:dead-coercion-zerooverhead-stats\") "
+                                  "reachable (#508 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -169,7 +171,7 @@ int aura_issue_626_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:contracts-hotpath-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:contracts-hotpath-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

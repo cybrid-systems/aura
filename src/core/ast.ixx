@@ -1372,6 +1372,11 @@ public:
     // exit.
     std::pmr::vector<std::int64_t> value_cache_;
     std::pmr::vector<MutationRecord> mutation_log_;
+    // Issue #1419: provenance context stamped into new MutationRecords
+    // (author / parent chain / composite transaction). Defaults 0.
+    std::uint64_t mutation_author_fingerprint_ = 0;
+    std::uint64_t mutation_parent_mutation_id_ = 0;
+    std::uint64_t mutation_composite_transaction_id_ = 0;
     // Issue #282: Occurrence Typing provenance log. Each entry
     // is captured when synthesize_flat_if applies a narrowing
     // (predicate → refined type in a branch). Exposed via
@@ -5131,6 +5136,30 @@ public:
 
     // ── Mutation audit ──────────────────────────────────────────
 
+    // Issue #1419: compound provenance context stamped into every
+    // new MutationRecord. 0 = system / no parent / no composite
+    // (backward compatible with pre-#1412 records). Set by
+    // Evaluator::set_current_agent_fingerprint and
+    // TypedTransactionGuard for atomic multi-mutate.
+    void set_mutation_author_fingerprint(std::uint64_t fp) noexcept {
+        mutation_author_fingerprint_ = fp;
+    }
+    [[nodiscard]] std::uint64_t mutation_author_fingerprint() const noexcept {
+        return mutation_author_fingerprint_;
+    }
+    void set_mutation_parent_mutation_id(std::uint64_t id) noexcept {
+        mutation_parent_mutation_id_ = id;
+    }
+    [[nodiscard]] std::uint64_t mutation_parent_mutation_id() const noexcept {
+        return mutation_parent_mutation_id_;
+    }
+    void set_mutation_composite_transaction_id(std::uint64_t id) noexcept {
+        mutation_composite_transaction_id_ = id;
+    }
+    [[nodiscard]] std::uint64_t mutation_composite_transaction_id() const noexcept {
+        return mutation_composite_transaction_id_;
+    }
+
     // Record a mutation on a node. Returns the mutation_id.
     std::uint64_t add_mutation(NodeId node, std::string_view op_name, std::string_view old_type,
                                std::string_view new_type, std::string_view summary,
@@ -5163,6 +5192,9 @@ public:
                 .old_value = old_value,
                 .new_value = new_value,
                 .has_rollback_data = has_rollback,
+                .author_fingerprint = mutation_author_fingerprint_,
+                .parent_mutation_id = mutation_parent_mutation_id_,
+                .composite_transaction_id = mutation_composite_transaction_id_,
             });
             lightweight_frames_.back().push_back(std::move(rec));
             lightweight_records_total_.fetch_add(1, std::memory_order_relaxed);
@@ -5181,6 +5213,9 @@ public:
             .old_value = old_value,
             .new_value = new_value,
             .has_rollback_data = has_rollback,
+            .author_fingerprint = mutation_author_fingerprint_,
+            .parent_mutation_id = mutation_parent_mutation_id_,
+            .composite_transaction_id = mutation_composite_transaction_id_,
         }));
         mark_dirty_upward(node);
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
@@ -5215,12 +5250,17 @@ public:
         }
         auto& frame = lightweight_frames_.back();
         std::size_t count = 0;
+        const bool prev_defer = defer_rollback_restamp_;
+        defer_rollback_restamp_ = true;
         for (auto it = frame.rbegin(); it != frame.rend(); ++it) {
             if (it->status != MutationStatus::Committed)
                 continue;
             if (try_rollback_record(*it).has_value())
                 ++count;
         }
+        defer_rollback_restamp_ = prev_defer;
+        if (count > 0)
+            restamp_all_node_generations();
         lightweight_frames_.pop_back();
         render_lightweight_active_ = !lightweight_frames_.empty();
         lightweight_rollback_total_.fetch_add(1, std::memory_order_relaxed);
@@ -5272,6 +5312,9 @@ public:
             .old_subtree_source = old_subtree_source,
             .operator_name = op_name,
             .summary = summary,
+            .author_fingerprint = mutation_author_fingerprint_,
+            .parent_mutation_id = mutation_parent_mutation_id_,
+            .composite_transaction_id = mutation_composite_transaction_id_,
         }));
         if (target_node != NULL_NODE)
             mark_dirty_upward(target_node);
@@ -5362,17 +5405,15 @@ public:
     // Issue #1408: Physically erase all mutation records with
     // mutation_id >= since_id from the log. Used by TypedTransactionGuard's
     // dtor to implement strict atomic-batch rollback: even when
-    // try_rollback_record() can't actually undo a non-structural op
-    // (e.g. mutate:rebind has no structural rollback handler today, so
-    // rollback_since leaves the record in Committed status), this method
-    // removes the record from the log so the "0 applied" AC holds
-    // (committed_mutation_count() returns to its pre-batch value).
+    // try_rollback_record() can't undo some ops (pre-#1441 rebind lacked
+    // rollback data), this method removes the record from the log so the
+    // "0 applied" AC holds (committed_mutation_count() returns to its
+    // pre-batch value). Issue #1441: rebind now has try_rollback_rebind_op
+    // so Phase-1 rollback restores Define bodies when has_rollback_data.
     //
-    // The variable-state rollback for non-structural ops is a separate
-    // follow-up; this method only handles the audit-log side of the
-    // contract. next_mutation_id_ is NOT reset here (it's monotonically
-    // increasing within a session; resetting it could break other
-    // holders of the higher ids).
+    // next_mutation_id_ is NOT reset here (it's monotonically increasing
+    // within a session; resetting it could break other holders of the
+    // higher ids).
     //
     // Returns the number of records erased.
     std::size_t erase_mutations_since(std::uint64_t since_id) {
@@ -6365,6 +6406,10 @@ public:
             case RollbackKind::Structural:
                 return try_rollback_structural_child_op(rec);
 
+            // Issue #1441: mutate:rebind — restore Define body from rec.old_value.
+            case RollbackKind::Rebind:
+                return try_rollback_rebind_op(rec);
+
             case RollbackKind::ScalarInt:
                 if (rec.target_node >= int_val_.size())
                     return std::unexpected(MutationError::OutOfRange);
@@ -6401,10 +6446,18 @@ public:
     }
 
 private:
+    // When true, bump_generation_on_rollback only advances generation_
+    // and defers restamp_all_node_generations to the batch end
+    // (rollback_since). Avoids O(records × |flat|) restamp storms that
+    // timed out jit_late1/late3 (600s) after #1441.
+    bool defer_rollback_restamp_ = false;
+
     void bump_generation_on_rollback() {
         ++generation_;
         if (generation_ == 0)
             generation_ = 1;
+        if (!defer_rollback_restamp_)
+            restamp_all_node_generations();
     }
 
     [[nodiscard]] std::expected<void, MutationError>
@@ -6449,7 +6502,7 @@ private:
         }
 
         rec.status = MutationStatus::RolledBack;
-        bump_generation_on_rollback();
+        bump_generation_on_rollback(); // restamp unless deferred by rollback_since
         mark_dirty_upward(parent);
         // Issue #369: bump the per-category counter. Success
         // means the children_ column was restored via the
@@ -6459,16 +6512,57 @@ private:
         return {};
     }
 
+    // Issue #1441: variable-state rollback for mutate:rebind.
+    // rec.target_node = Define node; rec.old_value / rec.new_value = body NodeIds;
+    // rec.field_offset = body child index (0). Restores children_[define][idx]
+    // and parent_ links, marks RolledBack.
+    [[nodiscard]] std::expected<void, MutationError> try_rollback_rebind_op(MutationRecord& rec) {
+        if (!rec.has_rollback_data)
+            return std::unexpected(MutationError::NoRollbackData);
+        if (rec.operator_name != "rebind" && rec.operator_name != "batch-rebind")
+            return std::unexpected(MutationError::UnknownStructuralOp);
+
+        const NodeId define_node = rec.target_node;
+        if (define_node >= children_.size() || define_node >= tag_.size())
+            return std::unexpected(MutationError::InvalidTarget);
+
+        const auto idx = rec.field_offset; // body slot (normally 0)
+        const auto old_child = static_cast<NodeId>(rec.old_value);
+        const auto new_child = static_cast<NodeId>(rec.new_value);
+        auto& list = children_[define_node];
+        if (idx >= list.size())
+            return std::unexpected(MutationError::OutOfRange);
+
+        // Inverse of set_child: detach new body, reattach old body.
+        if (new_child != NULL_NODE && new_child < parent_.size())
+            parent_[new_child] = NULL_NODE;
+        children_[define_node] = list.with_set(idx, old_child);
+        if (old_child != NULL_NODE && old_child < parent_.size())
+            parent_[old_child] = define_node;
+
+        rec.status = MutationStatus::RolledBack;
+        bump_generation_on_rollback(); // restamp unless deferred by rollback_since
+        mark_dirty_upward(define_node);
+        return {};
+    }
+
 public:
     // Rollback all mutations since (and including) the given ID.
+    // Defers restamp_all_node_generations to a single pass after the
+    // reverse walk (Issue #1441 + jit_late1/late3 timeout fix).
     std::size_t rollback_since(std::uint64_t since_id) {
         std::size_t count = 0;
+        const bool prev_defer = defer_rollback_restamp_;
+        defer_rollback_restamp_ = true;
         for (auto it = mutation_log_.rbegin(); it != mutation_log_.rend(); ++it) {
             if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
                 if (rollback(it->mutation_id))
                     ++count;
             }
         }
+        defer_rollback_restamp_ = prev_defer;
+        if (count > 0)
+            restamp_all_node_generations();
         return count;
     }
 
@@ -6507,6 +6601,9 @@ public:
                 rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
         }
         std::size_t count = 0;
+        // Same restamp deferral as rollback_since (jit_late timeout fix).
+        const bool prev_defer = defer_rollback_restamp_;
+        defer_rollback_restamp_ = true;
         for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
             auto& rec = mutation_log_[i - 1];
             if (rec.status == MutationStatus::Committed) {
@@ -6514,6 +6611,9 @@ public:
                     ++count;
             }
         }
+        defer_rollback_restamp_ = prev_defer;
+        if (count > 0)
+            restamp_all_node_generations();
         // Issue #1301 (P1) + #213: keep RolledBack records for audit
         // by default (status already set by rollback()). Only truncate
         // the rolled-back suffix when the log is huge so long AI

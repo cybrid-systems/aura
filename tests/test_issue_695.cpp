@@ -81,7 +81,7 @@ int aura_issue_695_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:eda-sv-closedloop-stress-stats ---");
-        auto stats = cs.eval("(query:eda-sv-closedloop-stress-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-sv-closedloop-stress-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-sv-closedloop-stress-stats returns hash");
         CHECK(stat_int(cs, "evolution-cycles") >= 0, "evolution-cycles present");

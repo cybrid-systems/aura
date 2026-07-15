@@ -1130,22 +1130,24 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(0, "Probe throttled render JIT deopt (returns applied count).",
                               "() -> int"));
 
-    add("query:render-jit-stability-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        if (m)
-            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
-        auto load = [](const std::atomic<std::uint64_t>& a) {
-            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
-        };
-        // Return compact string for Phase 1 (hash via production-sweep for structured).
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::format(
-            "deopt_applied={} throttled={} aot_prefer={} window_ms={} schema=1316",
-            m ? load(m->render_jit_deopt_applied) : 0, m ? load(m->render_jit_deopt_throttled) : 0,
-            m ? load(m->render_jit_aot_prefer_hits) : 0,
-            m ? load(m->render_deopt_throttle_window_ms) : 500));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:render-jit-stability-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            if (m)
+                m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            // Return compact string for Phase 1 (hash via production-sweep for structured).
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(
+                std::format("deopt_applied={} throttled={} aot_prefer={} window_ms={} schema=1316",
+                            m ? load(m->render_jit_deopt_applied) : 0,
+                            m ? load(m->render_jit_deopt_throttled) : 0,
+                            m ? load(m->render_jit_aot_prefer_hits) : 0,
+                            m ? load(m->render_deopt_throttle_window_ms) : 500));
+            return types::make_string(sidx);
+        });
 
     // ── Issue #1354: query:render-ffi-available ──
     // Agent discovery: registered bindings + hot-path dispatch stats.
@@ -1197,21 +1199,22 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // ── Issue #1317: terminal-diff-stats ──
-    add("query:terminal-diff-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        if (m) {
-            m->terminal_diff_stats_queries.fetch_add(1, std::memory_order_relaxed);
-            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
-        }
-        auto load = [](const std::atomic<std::uint64_t>& a) {
-            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
-        };
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::format("updates={} cells={} schema=1317",
-                                              m ? load(m->terminal_diff_updates) : 0,
-                                              m ? load(m->terminal_diff_cells_total) : 0));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:terminal-diff-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            if (m) {
+                m->terminal_diff_stats_queries.fetch_add(1, std::memory_order_relaxed);
+                m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+            }
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::format("updates={} cells={} schema=1317",
+                                                  m ? load(m->terminal_diff_updates) : 0,
+                                                  m ? load(m->terminal_diff_cells_total) : 0));
+            return types::make_string(sidx);
+        });
 
     // ── Issue #1319: gap-buffer structural mutate exercise ──
     add("gap-buffer-structural-mutate-demo", [&ev](std::span<const EvalValue> a) -> EvalValue {

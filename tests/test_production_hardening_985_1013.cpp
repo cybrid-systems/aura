@@ -38,7 +38,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-hardening-985-1013-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-hardening-985-1013-stats\")");
         CHECK(r && is_hash(*r), "hardening stats is hash");
         CHECK(href(cs, "query:production-hardening-985-1013-stats", "schema") == 985, "schema 985");
         CHECK(href(cs, "query:production-hardening-985-1013-stats", "active") == 1, "active");

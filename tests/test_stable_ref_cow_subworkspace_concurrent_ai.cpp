@@ -38,7 +38,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t boundary_hash(aura::compiler::CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:stable-ref-boundary-stats-hash) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:stable-ref-boundary-stats-hash\") '{}')", key));
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -65,7 +66,7 @@ int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run() {
     // AC1: boundary stats hash
     {
         std::println("\n--- AC1: query:stable-ref-boundary-stats-hash ---");
-        auto h = cs.eval("(query:stable-ref-boundary-stats-hash)");
+        auto h = cs.eval("(engine:metrics \"query:stable-ref-boundary-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "query:stable-ref-boundary-stats-hash returns hash");
         CHECK(boundary_hash(cs, "schema") == 738, "schema sentinel == 738");
@@ -138,15 +139,17 @@ int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run() {
     // AC6: enhanced stable-ref-stats-hash regression
     {
         std::println("\n--- AC6: query:stable-ref-stats-hash enhanced fields ---");
-        auto h = cs.eval("(query:stable-ref-stats-hash)");
+        auto h = cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "stable-ref-stats-hash returns hash");
-        auto cc = cs.eval("(hash-ref (query:stable-ref-stats-hash) \"cross-cow-invalidations\")");
-        auto pa = cs.eval("(hash-ref (query:stable-ref-stats-hash) \"pinned-across-boundaries\")");
+        auto cc = cs.eval("(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") "
+                          "\"cross-cow-invalidations\")");
+        auto pa = cs.eval("(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") "
+                          "\"pinned-across-boundaries\")");
         CHECK(cc && aura::compiler::types::is_int(*cc), "cross-cow-invalidations field present");
         CHECK(pa && aura::compiler::types::is_int(*pa), "pinned-across-boundaries field present");
-        auto s527 = cs.eval("(query:stable-ref-cow-fiber-stats)");
+        auto s527 = cs.eval("(engine:metrics \"query:stable-ref-cow-fiber-stats\")");
         CHECK(s527 && aura::compiler::types::is_int(*s527),
-              "(query:stable-ref-cow-fiber-stats) regression (#527)");
+              "(engine:metrics \"query:stable-ref-cow-fiber-stats\") regression (#527)");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

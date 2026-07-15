@@ -19,7 +19,7 @@
 // 2. Custom move/copy ctors + assignment updated for the
 //    additional std::atomic members (std::atomic needs
 //    explicit init in each special member).
-// 3. Observability: (compile:ast-ops-stats) Aura primitive
+// 3. Observability: (engine:metrics \"compile:ast-ops-stats\") Aura primitive
 //    returns a hash with all 4 counts.
 // 4. CompilerService::snapshot() exposes the 4 counts.
 //
@@ -29,7 +29,7 @@
 //
 // Test cases:
 //   AC1: snapshot fields start at 0 on a fresh CompilerService
-//   AC2: (compile:ast-ops-stats) primitive returns a hash
+//   AC2: (engine:metrics \"compile:ast-ops-stats\") primitive returns a hash
 //        (counters are queryable via Aura API)
 //   AC3: children_call_count_ bumps on AST traversal
 //   AC4: parent_of_call_count_ bumps on parent queries
@@ -88,9 +88,10 @@ bool test_initial_counters_zero() {
 }
 
 bool test_aura_primitive_returns_hash() {
-    std::println("\n--- AC2: (compile:ast-ops-stats) primitive returns a hash ---");
+    std::println(
+        "\n--- AC2: (engine:metrics \"compile:ast-ops-stats\") primitive returns a hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (compile:ast-ops-stats))\")");
+    auto r1 = cs.eval("(set-code \"(define h (engine:metrics \"compile:ast-ops-stats\"))\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
@@ -108,14 +109,14 @@ bool test_aura_primitive_returns_hash() {
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:ast-ops-stats) returns a hash (hash? is #t)");
+    CHECK(true, "(engine:metrics \"compile:ast-ops-stats\") returns a hash (hash? is #t)");
     auto rp = cs.eval("(pair? h)");
     if (!rp || !aura::compiler::types::is_bool(*rp) || aura::compiler::types::as_bool(*rp)) {
         std::println("  FAIL: (pair? h) did not return #f (val={})", rp ? rp->val : -1);
         ++g_failed;
         return false;
     }
-    CHECK(true, "(compile:ast-ops-stats) is not a pair (pair? is #f)");
+    CHECK(true, "(engine:metrics \"compile:ast-ops-stats\") is not a pair (pair? is #f)");
     // Verify the 4 keys exist with value 0 (fresh service).
     for (const char* key : {"children-call-count", "parent-of-call-count",
                             "mark-dirty-upward-call-count", "mark-dirty-total-nodes"}) {
@@ -147,7 +148,8 @@ bool test_children_count_bumps() {
         return false;
     }
     // Capture baseline.
-    auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"children-call-count\")");
+    auto rg =
+        cs.eval("(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"children-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -164,7 +166,8 @@ bool test_children_count_bumps() {
             // children() bumps happen during walk regardless.
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"children-call-count\")");
+    auto rg2 =
+        cs.eval("(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"children-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after failed");
         ++g_failed;
@@ -190,7 +193,8 @@ bool test_parent_of_count_bumps() {
         ++g_failed;
         return false;
     }
-    auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"parent-of-call-count\")");
+    auto rg =
+        cs.eval("(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"parent-of-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -207,7 +211,8 @@ bool test_parent_of_count_bumps() {
             return false;
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"parent-of-call-count\")");
+    auto rg2 =
+        cs.eval("(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"parent-of-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after failed");
         ++g_failed;
@@ -233,7 +238,8 @@ bool test_mark_dirty_upward_bumps() {
         ++g_failed;
         return false;
     }
-    auto rg = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
+    auto rg = cs.eval(
+        "(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"mark-dirty-upward-call-count\")");
     if (!rg || !aura::compiler::types::is_int(*rg)) {
         std::println("  FAIL: hash-ref failed");
         ++g_failed;
@@ -250,7 +256,8 @@ bool test_mark_dirty_upward_bumps() {
             return false;
         }
     }
-    auto rg2 = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
+    auto rg2 = cs.eval(
+        "(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"mark-dirty-upward-call-count\")");
     if (!rg2 || !aura::compiler::types::is_int(*rg2)) {
         std::println("  FAIL: hash-ref after failed");
         ++g_failed;
@@ -281,8 +288,10 @@ bool test_mark_dirty_total_invariant() {
         std::string code = "(mutate:rebind \"x\" \"6\")";
         (void)cs.eval(code);
     }
-    auto rg_calls = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-upward-call-count\")");
-    auto rg_nodes = cs.eval("(hash-ref (compile:ast-ops-stats) \"mark-dirty-total-nodes\")");
+    auto rg_calls = cs.eval(
+        "(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"mark-dirty-upward-call-count\")");
+    auto rg_nodes =
+        cs.eval("(hash-ref (engine:metrics \"compile:ast-ops-stats\") \"mark-dirty-total-nodes\")");
     if (!rg_calls || !aura::compiler::types::is_int(*rg_calls) || !rg_nodes ||
         !aura::compiler::types::is_int(*rg_nodes)) {
         std::println("  FAIL: hash-ref failed");

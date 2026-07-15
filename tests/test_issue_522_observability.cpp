@@ -46,7 +46,7 @@ int aura_issue_522_observability_run() {
     // AC1: query:aot-production-reload-stats returns hash
     {
         std::println("\n--- AC1: query:aot-production-reload-stats ---");
-        auto stats = cs.eval("(query:aot-production-reload-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:aot-production-reload-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:aot-production-reload-stats returns hash");
         CHECK(hash_int(cs, "reload-attempts") >= 0, "reload-attempts present");
@@ -99,10 +99,10 @@ int aura_issue_522_observability_run() {
         CHECK(total_after >= total_before,
               std::format("aot-production-reload-total monotonic ({} -> {})", total_before,
                           total_after));
-        auto hot = cs.eval("(query:aot-hot-reload-stats)");
+        auto hot = cs.eval("(engine:metrics \"query:aot-hot-reload-stats\")");
         CHECK(hot && aura::compiler::types::is_hash(*hot),
               "query:aot-hot-reload-stats hash regression");
-        auto reload = cs.eval("(query:aot-reload-stats)");
+        auto reload = cs.eval("(engine:metrics \"query:aot-reload-stats\")");
         CHECK(reload && aura::compiler::types::is_hash(*reload),
               "query:aot-reload-stats hash regression");
         aura_set_aot_defuse_version(0);

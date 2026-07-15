@@ -49,7 +49,7 @@ int aura_issue_684_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:irsoa-incremental-stats ---");
-        auto stats = cs.eval("(query:irsoa-incremental-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:irsoa-incremental-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:irsoa-incremental-stats returns hash");
         CHECK(stat_int(cs, "soa-wired-hits") >= 0, "soa-wired-hits present");

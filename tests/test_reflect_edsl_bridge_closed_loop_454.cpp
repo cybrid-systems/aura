@@ -35,7 +35,7 @@ using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
 
 static std::int64_t bridge_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:reflect-edsl-bridge-stats)");
+    auto r = cs.eval("(engine:metrics \"query:reflect-edsl-bridge-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -65,9 +65,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(macro_marker && is_string(*macro_marker), "node-marker on define");
 
     std::println("\n--- AC4: query:marker-stats ---");
-    auto ms = cs.eval("(query:marker-stats)");
+    auto ms = cs.eval("(engine:metrics \"query:marker-stats\")");
     CHECK(ms && is_pair(*ms), "marker-stats returns list");
-    auto total = cs.eval("(car (cdr (cdr (cdr (query:marker-stats)))))");
+    auto total = cs.eval("(car (cdr (cdr (cdr (engine:metrics \"query:marker-stats\")))))");
     CHECK(total && is_int(*total) && as_int(*total) > 0, "marker-stats total > 0");
 
     std::println("\n--- AC5: reflect-type (static reflection bridge) ---");
@@ -99,7 +99,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(mls.has_value(), "mutation-log:summary reachable after mutate");
 
     std::println("\n--- AC8: query regression ---");
-    auto rps = cs.eval("(query:reflect-postmutate-stats)");
+    auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     auto qn = cs.eval("(query:node 0)");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(qn && is_pair(*qn), "query:node regression");

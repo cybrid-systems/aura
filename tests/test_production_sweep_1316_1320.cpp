@@ -33,7 +33,7 @@ int main() {
     constexpr auto Q = "query:production-sweep-1316-1320-stats";
 
     {
-        auto r = cs.eval(std::format("({})", Q));
+        auto r = cs.eval(aura::test::aura_call_expr(Q));
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, Q, "schema") == 1316, "schema");
         CHECK(href(cs, Q, "active") == 1, "active");
@@ -54,7 +54,7 @@ int main() {
         CHECK(a2 && is_int(*a2), "second deopt probe returns int");
         auto throttled = href(cs, Q, "render-jit-deopt-throttled");
         CHECK(throttled >= 1, "second probe throttled within 500ms");
-        auto st = cs.eval("(query:render-jit-stability-stats)");
+        auto st = cs.eval("(engine:metrics \"query:render-jit-stability-stats\")");
         CHECK(st && is_string(*st), "query:render-jit-stability-stats string");
     }
 
@@ -70,7 +70,7 @@ int main() {
         (void)cs.eval(std::format("(terminal-set-cell {} 0 0 66)", as_int(*id2)));
         auto diff = cs.eval(std::format("(terminal-diff-update {} {})", bid, as_int(*id2)));
         CHECK(diff && is_int(*diff) && as_int(*diff) >= 1, "terminal-diff-update");
-        auto tds = cs.eval("(query:terminal-diff-stats)");
+        auto tds = cs.eval("(engine:metrics \"query:terminal-diff-stats\")");
         CHECK(tds && is_string(*tds), "query:terminal-diff-stats");
         auto present = cs.eval(std::format("(terminal-present-batch {})", bid));
         CHECK(present && is_int(*present) && as_int(*present) >= 0, "terminal-present-batch");

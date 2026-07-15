@@ -28,7 +28,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t loop_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:shape-jit-pass-closedloop-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:shape-jit-pass-closedloop-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -58,7 +59,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:shape-jit-pass-closedloop-stats (schema 744) ---");
     CHECK(setup_workspace(cs), "shape-jit workspace setup");
-    auto h = cs.eval("(query:shape-jit-pass-closedloop-stats)");
+    auto h = cs.eval("(engine:metrics \"query:shape-jit-pass-closedloop-stats\")");
     CHECK(h && is_hash(*h), "shape-jit-pass-closedloop-stats returns hash");
     CHECK(loop_hash(cs, "schema") == 744, "schema == 744");
     CHECK(loop_hash(cs, "stability-churn-deopts") >= 0, "stability-churn-deopts present");
@@ -114,8 +115,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "closed-loop sum monotonic over stress matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto svp = cs.eval("(query:shape-value-pass-stats)");
-    auto ap = cs.eval("(query:arena-auto-policy-stats)");
+    auto svp = cs.eval("(engine:metrics \"query:shape-value-pass-stats\")");
+    auto ap = cs.eval("(engine:metrics \"query:arena-auto-policy-stats\")");
     CHECK(svp && is_hash(*svp), "shape-value-pass-stats regression");
     CHECK(ap && is_hash(*ap), "arena-auto-policy-stats regression");
 }

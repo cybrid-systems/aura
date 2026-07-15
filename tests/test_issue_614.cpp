@@ -52,7 +52,7 @@ int aura_issue_614_run() {
     // AC1: query primitive shape — hash + 4 fields.
     {
         std::println("\n--- AC1: query:primitives-hotpath-stats shape ---");
-        auto stats = cs.eval("(query:primitives-hotpath-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-hotpath-stats returns a hash");
         CHECK(stat_int(cs, "primitive-call-total") >= 0, "primitive-call-total present");

@@ -14,13 +14,13 @@
 // dual-path summary via existing primitives:
 //   - (engine:metrics \"query:envframe-dualpath-stats\") — base flat-int dualpath
 //     primitive (the AC4 surface listed in #589 body)
-//   - (query:envframe-dualpath-stale-stats) — existing flat-int
+//   - (engine:metrics \"query:envframe-dualpath-stale-stats\") — existing flat-int
 //     stale summary
-//   - (query:envframe-dualpath-stale-stats-hash) (#647) — stale
+//   - (engine:metrics \"query:envframe-dualpath-stale-stats-hash\") (#647) — stale
 //     enforcement-layer hash (cross-fiber / version mismatch /
 //     dualpath-repair counters)
-//   - (query:envframe-stale-stats) — stale refresh stats
-//   - (query:envframe-bump-stats) — bump stats
+//   - (engine:metrics \"query:envframe-stale-stats\") — stale refresh stats
+//   - (engine:metrics \"query:envframe-bump-stats\") — bump stats
 //   - #543 SoA EnvFrame foundation
 //   - #568 children SoA
 //   - #205 GCEnvWalkFn foundation
@@ -100,8 +100,9 @@ int aura_issue_589_run() {
 
     // AC1: hash returns a hash with the documented fields.
     {
-        std::println("\n--- AC1: (query:envframe-dualpath-enforce-stats) shape ---");
-        auto h = cs.eval("(query:envframe-dualpath-enforce-stats)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:envframe-dualpath-enforce-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:envframe-dualpath-enforce-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "envframe-dualpath-enforce-stats returns a hash");
         const auto mirror = hash_int(cs, "mirror-write");
@@ -122,20 +123,25 @@ int aura_issue_589_run() {
         CHECK(s_base.has_value(),
               "(engine:metrics \"query:envframe-dualpath-stats\") reachable (existing base "
               "flat-int dualpath primitive back-compat — AC4 surface)");
-        auto s_stale = cs.eval("(query:envframe-dualpath-stale-stats)");
-        CHECK(s_stale.has_value(), "(query:envframe-dualpath-stale-stats) reachable (existing "
-                                   "flat-int stale summary back-compat)");
-        auto s_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
-        CHECK(s_647.has_value(), "(query:envframe-dualpath-stale-stats-hash) reachable (#647 "
-                                 "back-compat — stale enforcement-layer hash)");
-        auto s_651 = cs.eval("(query:gc-panic-deferral-stats)");
-        CHECK(s_651.has_value(), "(query:gc-panic-deferral-stats) reachable (#651 back-compat)");
-        auto s_650 = cs.eval("(query:scheduler-stealbudget-yield-class-stats)");
+        auto s_stale = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats\")");
+        CHECK(s_stale.has_value(),
+              "(engine:metrics \"query:envframe-dualpath-stale-stats\") reachable (existing "
+              "flat-int stale summary back-compat)");
+        auto s_647 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
+        CHECK(s_647.has_value(),
+              "(engine:metrics \"query:envframe-dualpath-stale-stats-hash\") reachable (#647 "
+              "back-compat — stale enforcement-layer hash)");
+        auto s_651 = cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")");
+        CHECK(s_651.has_value(),
+              "(engine:metrics \"query:gc-panic-deferral-stats\") reachable (#651 back-compat)");
+        auto s_650 = cs.eval("(engine:metrics \"query:scheduler-stealbudget-yield-class-stats\")");
         CHECK(s_650.has_value(),
-              "(query:scheduler-stealbudget-yield-class-stats) reachable (#650 back-compat)");
-        auto s_649 = cs.eval("(query:yield-checkpoint-panic-stats)");
-        CHECK(s_649.has_value(),
-              "(query:yield-checkpoint-panic-stats) reachable (#649 back-compat)");
+              "(engine:metrics \"query:scheduler-stealbudget-yield-class-stats\") reachable (#650 "
+              "back-compat)");
+        auto s_649 = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
+        CHECK(
+            s_649.has_value(),
+            "(engine:metrics \"query:yield-checkpoint-panic-stats\") reachable (#649 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -168,19 +174,22 @@ int aura_issue_589_run() {
     // and from existing flat-int primitives.
     {
         std::println("\n--- AC5: naming distinction from #647 + existing ---");
-        auto new_p = cs.eval("(query:envframe-dualpath-enforce-stats)");
-        auto old_647 = cs.eval("(query:envframe-dualpath-stale-stats-hash)");
+        auto new_p = cs.eval("(engine:metrics \"query:envframe-dualpath-enforce-stats\")");
+        auto old_647 = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats-hash\")");
         auto old_base = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
-        auto old_stale = cs.eval("(query:envframe-dualpath-stale-stats)");
+        auto old_stale = cs.eval("(engine:metrics \"query:envframe-dualpath-stale-stats\")");
         CHECK(new_p.has_value(),
-              "new primitive (query:envframe-dualpath-enforce-stats) reachable (-enforce- midfix)");
-        CHECK(old_647.has_value(), "existing #647 (query:envframe-dualpath-stale-stats-hash) still "
-                                   "reachable (-stale- midfix)");
+              "new primitive (engine:metrics \"query:envframe-dualpath-enforce-stats\") reachable "
+              "(-enforce- midfix)");
+        CHECK(old_647.has_value(),
+              "existing #647 (engine:metrics \"query:envframe-dualpath-stale-stats-hash\") still "
+              "reachable (-stale- midfix)");
         CHECK(old_base.has_value(),
               "existing base (engine:metrics \"query:envframe-dualpath-stats\") still reachable "
               "(no midfix)");
         CHECK(old_stale.has_value(),
-              "existing (query:envframe-dualpath-stale-stats) still reachable (no -hash suffix)");
+              "existing (engine:metrics \"query:envframe-dualpath-stale-stats\") still reachable "
+              "(no -hash suffix)");
         // The new primitive uses `schema` as its primary
         // sentinel — distinct from #647's `schema` (589 vs
         // 647). Verify field reachability (avoid hash-ref on
@@ -209,7 +218,7 @@ int aura_issue_589_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:envframe-dualpath-enforce-stats)");
+                auto r = cs.eval("(engine:metrics \"query:envframe-dualpath-enforce-stats\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

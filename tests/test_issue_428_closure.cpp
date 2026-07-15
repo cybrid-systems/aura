@@ -10,7 +10,7 @@
 // closure/EnvFrame/bridge_epoch integration. This scope-limited
 // close ships:
 //
-//   1. (query:closure-stats) — unified closure observability
+//   1. (engine:metrics \"query:closure-stats\") — unified closure observability
 //      surface in the query: family. Returns a hash with
 //      9 fields (7 from closure:stats + 2 new bridge_epoch
 //      fields). The bridge-epoch-drift-pct field is the
@@ -56,7 +56,7 @@
 //         are observable integers (initial 0)
 //   AC7:  empty workspace — query:closure-stats doesn't
 //         crash (returns a hash with all-zero fields)
-//   AC8:  repeated (query:closure-stats) calls return
+//   AC8:  repeated (engine:metrics \"query:closure-stats\") calls return
 //         consistent hashes (idempotent observable surface)
 
 import std;
@@ -108,8 +108,8 @@ static std::int64_t hash_int(aura::compiler::CompilerService& cs, std::string_vi
 bool test_fresh_evaluator_zero_counters() {
     std::println("\n--- AC1: fresh Evaluator zero counters ---");
     aura::compiler::CompilerService cs;
-    auto calls = hash_int(cs, "(query:closure-stats)", "calls-total");
-    auto drift = hash_int(cs, "(query:closure-stats)", "bridge-epoch-drift-pct");
+    auto calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
+    auto drift = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "bridge-epoch-drift-pct");
     CHECK(calls == 0, "fresh Evaluator: calls-total = 0");
     CHECK(drift == 0, "fresh Evaluator: bridge-epoch-drift-pct = 0 (no checks yet)");
     return true;
@@ -124,8 +124,8 @@ bool test_tw_closure_bump() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     run_on(cs, "(display (f 41))");
-    auto tw = hash_int(cs, "(query:closure-stats)", "tw-calls");
-    auto calls = hash_int(cs, "(query:closure-stats)", "calls-total");
+    auto tw = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "tw-calls");
+    auto calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
     CHECK(calls >= 1, "calls-total >= 1 after invoking f");
     CHECK(tw >= 1, "tw-calls >= 1 (tree-walker closure path)");
     return true;
@@ -145,10 +145,10 @@ bool test_ffi_call_bump() {
     // counters are cumulative so we observe both. We just
     // verify the dispatch count grew.
     run_on(cs, "(display (g 21))");
-    auto calls = hash_int(cs, "(query:closure-stats)", "calls-total");
-    auto tw = hash_int(cs, "(query:closure-stats)", "tw-calls");
-    auto ffi = hash_int(cs, "(query:closure-stats)", "ffi-calls");
-    auto ir = hash_int(cs, "(query:closure-stats)", "ir-calls");
+    auto calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
+    auto tw = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "tw-calls");
+    auto ffi = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "ffi-calls");
+    auto ir = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "ir-calls");
     auto total_dispatch = tw + ffi + ir;
     CHECK(calls >= 1, "calls-total >= 1 after invoking g");
     CHECK(total_dispatch >= 1, "total dispatch (tw+ffi+ir) >= 1");
@@ -165,7 +165,7 @@ bool test_multi_round_set_body() {
     run_on(cs, "(set-code \"(define (f x) (+ x 1))\")");
     run_on(cs, "(eval-current)");
     run_on(cs, "(display (f 5))");
-    auto before_calls = hash_int(cs, "(query:closure-stats)", "calls-total");
+    auto before_calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
     // Mutate the body of f: change (+ x 1) to (* x 2)
     auto rr = run_on(cs, "(mutate:set-body \"f\" \"(* x 2)\")");
     // Some engines may not support mutate:set-body; check the
@@ -175,7 +175,7 @@ bool test_multi_round_set_body() {
     // either re-parses the new body or falls back gracefully.
     (void)rr;
     run_on(cs, "(display (f 5))");
-    auto after_calls = hash_int(cs, "(query:closure-stats)", "calls-total");
+    auto after_calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
     CHECK(after_calls >= before_calls, "calls-total is monotonic across multi-round mutate");
     return true;
 }
@@ -199,7 +199,7 @@ bool test_field_consistency() {
     bool all_match = true;
     for (auto* k : kShared) {
         auto legacy = hash_int(cs, "(closure:stats)", k);
-        auto unified = hash_int(cs, "(query:closure-stats)", k);
+        auto unified = hash_int(cs, "(engine:metrics \"query:closure-stats\")", k);
         if (legacy != unified) {
             std::println("    [mismatch on field {}: legacy={} unified={}]", k, legacy, unified);
             all_match = false;
@@ -216,8 +216,8 @@ bool test_field_consistency() {
 bool test_bridge_epoch_fields_observable() {
     std::println("\n--- AC6: bridge_epoch fields are observable integers ---");
     aura::compiler::CompilerService cs;
-    auto hits = hash_int(cs, "(query:closure-stats)", "bridge-epoch-hits");
-    auto drift = hash_int(cs, "(query:closure-stats)", "bridge-epoch-drift-pct");
+    auto hits = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "bridge-epoch-hits");
+    auto drift = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "bridge-epoch-drift-pct");
     CHECK(hits >= 0, "bridge-epoch-hits is a non-negative integer");
     CHECK(drift >= 0, "bridge-epoch-drift-pct is a non-negative integer");
     CHECK(drift <= 100, "bridge-epoch-drift-pct is a percent (0-100)");
@@ -233,23 +233,24 @@ bool test_empty_workspace_no_crash() {
     // No set-code; workspace is empty. The primitive should
     // return a hash with all-zero fields (defensive — not a
     // crash, not an error).
-    auto calls = hash_int(cs, "(query:closure-stats)", "calls-total");
-    auto drift = hash_int(cs, "(query:closure-stats)", "bridge-epoch-drift-pct");
+    auto calls = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
+    auto drift = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "bridge-epoch-drift-pct");
     CHECK(calls == 0, "empty workspace: calls-total = 0 (no crash)");
     CHECK(drift == 0, "empty workspace: drift = 0 (no crash)");
     return true;
 }
 
 // ═══════════════════════════════════════════════════════════
-// AC8: idempotence — repeated (query:closure-stats) calls
+// AC8: idempotence — repeated (engine:metrics \"query:closure-stats\") calls
 //      return consistent hashes
 // ═══════════════════════════════════════════════════════════
 bool test_idempotent_observable() {
     std::println("\n--- AC8: repeated calls are idempotent ---");
     aura::compiler::CompilerService cs;
-    auto a = hash_int(cs, "(query:closure-stats)", "calls-total");
-    auto b = hash_int(cs, "(query:closure-stats)", "calls-total");
-    CHECK(a == b, "two consecutive (query:closure-stats) calls return the same calls-total");
+    auto a = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
+    auto b = hash_int(cs, "(engine:metrics \"query:closure-stats\")", "calls-total");
+    CHECK(a == b, "two consecutive (engine:metrics \"query:closure-stats\") calls return the same "
+                  "calls-total");
     return true;
 }
 

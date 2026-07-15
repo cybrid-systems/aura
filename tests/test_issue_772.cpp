@@ -185,10 +185,13 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #748 + #801 + #802 + #766/#767/#768 sibling "
                  "primitives unaffected ---");
-    auto sv_verification_structure = cs.eval("(query:sv-verification-structure-stats)");
-    auto sv_commercial_emit_fidelity = cs.eval("(query:sv-commercial-emit-fidelity-stats)");
-    auto sv_verification_self_evolution = cs.eval("(query:sv-verification-self-evolution-stats)");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto sv_verification_structure =
+        cs.eval("(engine:metrics \"query:sv-verification-structure-stats\")");
+    auto sv_commercial_emit_fidelity =
+        cs.eval("(engine:metrics \"query:sv-commercial-emit-fidelity-stats\")");
+    auto sv_verification_self_evolution =
+        cs.eval("(engine:metrics \"query:sv-verification-self-evolution-stats\")");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(sv_verification_structure && aura::compiler::types::is_hash(*sv_verification_structure),
           "query:sv-verification-structure-stats hash regression (#748)");
     CHECK(sv_commercial_emit_fidelity &&
@@ -200,18 +203,19 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
     const auto a748_schema =
-        hash_int_field(cs, "(query:sv-verification-structure-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:sv-verification-structure-stats\")", "schema");
     CHECK(a748_schema == 748,
           std::format("#748 schema = {} (expected 748, no drift)", a748_schema));
-    const auto a801_schema =
-        hash_int_field(cs, "(query:sv-commercial-emit-fidelity-stats)", "schema");
+    const auto a801_schema = hash_int_field(
+        cs, "(engine:metrics \"query:sv-commercial-emit-fidelity-stats\")", "schema");
     CHECK(a801_schema == 801,
           std::format("#801 schema = {} (expected 801, no drift)", a801_schema));
-    const auto a802_schema =
-        hash_int_field(cs, "(query:sv-verification-self-evolution-stats)", "schema");
+    const auto a802_schema = hash_int_field(
+        cs, "(engine:metrics \"query:sv-verification-self-evolution-stats\")", "schema");
     CHECK(a802_schema == 802,
           std::format("#802 schema = {} (expected 802, no drift)", a802_schema));
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
 }

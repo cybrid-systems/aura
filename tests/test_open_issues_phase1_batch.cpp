@@ -38,7 +38,7 @@ using aura::test::obs::kStandardCasesCount;
 using aura::test::obs::StandardCase;
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", q, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -115,7 +115,7 @@ void run_all(CompilerService& cs) {
     auto& ev = cs.evaluator();
     for (std::size_t i = 0; i < kStandardCasesCount; ++i) {
         const StandardCase& c = kStandardCases[i];
-        auto h = cs.eval(std::format("({})", c.query));
+        auto h = cs.eval(aura::test::aura_call_expr(c.query));
         CHECK(h && is_hash(*h), std::format("{} returns hash", c.query));
         CHECK(href(cs, c.query, "schema") == c.schema,
               std::format("{} schema == {}", c.query, c.schema));
@@ -128,12 +128,13 @@ void run_all(CompilerService& cs) {
     }
     for (std::size_t i = 0; i < kFieldListCasesCount; ++i) {
         const FieldListCase& c = kFieldListCases[i];
-        auto h = cs.eval(std::format("({})", c.query));
+        auto h = cs.eval(aura::test::aura_call_expr(c.query));
         CHECK(h && is_hash(*h), std::format("{} returns hash", c.query));
         CHECK(href(cs, c.query, "schema") == c.schema,
               std::format("{} schema == {}", c.query, c.schema));
         for (std::size_t f = 0; f < c.n_fields; ++f) {
-            auto v = cs.eval(std::format("(hash-ref ({}) '{}')", c.query, c.fields[f]));
+            auto v = cs.eval(std::format("(hash-ref {} \'{}\')",
+                                         aura::test::aura_call_expr(c.query), c.fields[f]));
             CHECK(v.has_value(), std::format("{} field present", c.query));
         }
     }

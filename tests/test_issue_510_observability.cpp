@@ -53,7 +53,7 @@ int aura_issue_510_observability_run() {
     // AC1: query:eda-verification-stats returns hash
     {
         std::println("\n--- AC1: query:eda-verification-stats ---");
-        auto stats = cs.eval("(query:eda-verification-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-verification-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-verification-stats returns hash");
         CHECK(hash_int(cs, "coverage-delta") >= 0, "coverage-delta present");
@@ -131,10 +131,10 @@ int aura_issue_510_observability_run() {
         const auto total_after = hash_int(cs, "eda-verification-total");
         CHECK(total_after > total_before,
               std::format("eda-verification-total bumped ({} -> {})", total_before, total_after));
-        auto vls = cs.eval("(query:verification-loop-stats)");
+        auto vls = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
         CHECK(vls && aura::compiler::types::is_int(*vls),
               "query:verification-loop-stats int regression");
-        auto hw = cs.eval("(query:hardware-backend-commercial-stats)");
+        auto hw = cs.eval("(engine:metrics \"query:hardware-backend-commercial-stats\")");
         CHECK(hw && aura::compiler::types::is_hash(*hw),
               "query:hardware-backend-commercial-stats hash regression");
     }

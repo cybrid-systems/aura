@@ -86,7 +86,7 @@ int main() {
     // AC1: query:eda-primitives-stats returns hash with #586 fields
     {
         std::println("\n--- AC1: query:eda-primitives-stats ---");
-        auto stats = cs.eval("(query:eda-primitives-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:eda-primitives-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:eda-primitives-stats returns hash");
         CHECK(hash_int(cs, "eda-registered-count") > 0, "eda-registered-count > 0");
@@ -163,10 +163,10 @@ int main() {
     // AC4: related EDA primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto foundation = cs.eval("(query:eda-foundation-stats)");
-        auto verification = cs.eval("(query:eda-verification-stats)");
-        auto structured = cs.eval("(query:sv-structured-edsl-stats)");
-        auto concurrency = cs.eval("(query:eda-concurrency-stats)");
+        auto foundation = cs.eval("(engine:metrics \"query:eda-foundation-stats\")");
+        auto verification = cs.eval("(engine:metrics \"query:eda-verification-stats\")");
+        auto structured = cs.eval("(engine:metrics \"query:sv-structured-edsl-stats\")");
+        auto concurrency = cs.eval("(engine:metrics \"query:eda-concurrency-stats\")");
         CHECK(foundation && aura::compiler::types::is_hash(*foundation),
               "query:eda-foundation-stats hash regression (#499)");
         CHECK(verification && aura::compiler::types::is_hash(*verification),

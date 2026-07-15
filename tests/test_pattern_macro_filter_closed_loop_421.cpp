@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t pattern_macro_filter_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:pattern-macro-filter-stats)");
+    auto r = cs.eval("(engine:metrics \"query:pattern-macro-filter-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -102,7 +102,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    auto mhc = cs.eval("(query:macro-hygiene-contract-stats)");
+    auto mhc = cs.eval("(engine:metrics \"query:macro-hygiene-contract-stats\")");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(mhc && is_int(*mhc), "macro-hygiene-contract-stats regression");
 }

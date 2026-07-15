@@ -32,7 +32,7 @@
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
-| `std/json` | `json-parse` `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- delegates to built-in json-parse / json-encode |
+| `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
 | `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+13) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` | Aura std/llm -- LLM 交互模块 |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
@@ -59,7 +59,7 @@
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+10) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
-| `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+74) | lib/std/surface.aura — recommended public convenience surface (P3) |
+| `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+81) | lib/std/surface.aura — recommended public convenience surface (P3) |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
 | `std/test` | — | Aura Testing Framework |

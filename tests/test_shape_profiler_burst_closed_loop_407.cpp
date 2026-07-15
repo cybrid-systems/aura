@@ -32,7 +32,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t burst_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:shape-deopt-burst-stats)");
+    auto r = cs.eval("(engine:metrics \"query:shape-deopt-burst-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -93,7 +93,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "burst stats monotonic over matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto sss = cs.eval("(query:shape-stability-stats)");
+    auto sss = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
     auto ths = cs.eval("(query:task4-hotpath-safety-score)");
     CHECK(sss && is_int(*sss), "shape-stability-stats regression");
     CHECK(ths && is_int(*ths), "task4-hotpath-safety-score regression");

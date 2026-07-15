@@ -34,7 +34,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:linear-postmutate-fidelity-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:linear-postmutate-fidelity-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -55,7 +56,7 @@ static std::int64_t env_version_sync(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:linear-postmutate-fidelity-stats (schema 800) ---");
-    auto h = cs.eval("(query:linear-postmutate-fidelity-stats)");
+    auto h = cs.eval("(engine:metrics \"query:linear-postmutate-fidelity-stats\")");
     CHECK(h && is_hash(*h), "linear-postmutate-fidelity-stats returns hash");
     CHECK(stat_int(cs, "schema") == 800, "schema == 800");
     CHECK(post_rollback_revalidate(cs) >= 0, "post-rollback-revalidate-hits non-negative");
@@ -103,8 +104,8 @@ static void run_matrix(CompilerService& cs) {
           "post-rollback-revalidate-hits grew after resume_fiber_migration");
 
     std::println("\n--- AC8: query regression ---");
-    auto gc763 = cs.eval("(query:linear-ownership-gc-compiler-stats)");
-    auto safe638 = cs.eval("(query:linear-ownership-safety-stats)");
+    auto gc763 = cs.eval("(engine:metrics \"query:linear-ownership-gc-compiler-stats\")");
+    auto safe638 = cs.eval("(engine:metrics \"query:linear-ownership-safety-stats\")");
     CHECK(gc763 && is_hash(*gc763), "linear-ownership-gc-compiler-stats regression (#763)");
     CHECK(safe638 && is_int(*safe638), "linear-ownership-safety-stats regression (#638)");
 }

@@ -34,7 +34,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref (query:eda-infra-stats) '{}')", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:eda-infra-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -119,7 +120,7 @@ static void run_production_ac6(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:eda-infra-stats (schema 841) ---");
-    auto h = cs.eval("(query:eda-infra-stats)");
+    auto h = cs.eval("(engine:metrics \"query:eda-infra-stats\")");
     CHECK(h && is_hash(*h), "eda-infra-stats returns hash");
     CHECK(stat_int(cs, "schema") == 841, "schema == 841");
     CHECK(parse_success(cs) >= 0, "parse-success-hits non-negative");
@@ -162,8 +163,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(agg7b >= agg7a + 4, "aggregate infra counters monotonic");
 
     std::println("\n--- AC8: query regression ---");
-    auto foundation = cs.eval("(query:eda-foundation-stats)");
-    auto hw = cs.eval("(query:eda-hw-stats)");
+    auto foundation = cs.eval("(engine:metrics \"query:eda-foundation-stats\")");
+    auto hw = cs.eval("(engine:metrics \"query:eda-hw-stats\")");
     CHECK(foundation && is_hash(*foundation), "eda-foundation-stats regression (#499)");
     CHECK(hw && is_hash(*hw), "eda-hw-stats regression (#616)");
 }

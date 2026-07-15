@@ -19,7 +19,7 @@
 //   AC3: typed_mutate on a top-level define increments the
 //        trace counter (via mark_dirty_upward recording the
 //        mutation)
-//   AC4: (compile:mutation-log-invalidation-stats) returns
+//   AC4: (engine:metrics \"compile:mutation-log-invalidation-stats\") returns
 //        a hash with 2 keys (records-total + trace-size)
 //   AC5: trace-size > 0 after a binding mutation
 //   AC6: existing eval still works (regression)
@@ -99,9 +99,11 @@ bool test_typed_mutate_increments_trace() {
 }
 
 bool test_invalidation_stats_primitive() {
-    std::println("\n--- AC4: (compile:mutation-log-invalidation-stats) returns 2-key hash ---");
+    std::println("\n--- AC4: (engine:metrics \"compile:mutation-log-invalidation-stats\") returns "
+                 "2-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define stats (compile:mutation-log-invalidation-stats))\")");
+    cs.eval("(set-code \"(define stats (engine:metrics "
+            "\"compile:mutation-log-invalidation-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key : {"records-total", "trace-size"}) {
         std::string check = std::string("(hash-ref stats \"") + key + "\")";
@@ -128,10 +130,11 @@ bool test_trace_size_nonzero_after_mutation() {
         ++g_failed;
         return false;
     }
-    auto rstats = cs.eval("(compile:mutation-log-invalidation-stats)");
+    auto rstats = cs.eval("(engine:metrics \"compile:mutation-log-invalidation-stats\")");
     CHECK(rstats && aura::compiler::types::is_hash(*rstats),
           "compile:mutation-log-invalidation-stats returns hash");
-    auto sz = cs.eval("(hash-ref (compile:mutation-log-invalidation-stats) \"trace-size\")");
+    auto sz = cs.eval(
+        "(hash-ref (engine:metrics \"compile:mutation-log-invalidation-stats\") \"trace-size\")");
     CHECK(sz && aura::compiler::types::is_int(*sz) && aura::compiler::types::as_int(*sz) > 0,
           "trace-size > 0 after a binding mutation");
     return true;

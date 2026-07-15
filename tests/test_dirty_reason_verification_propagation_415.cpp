@@ -33,7 +33,7 @@ using aura::compiler::types::is_pair;
 using aura::compiler::types::is_void;
 
 static std::int64_t propagation_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:dirty-reason-propagation-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dirty-reason-propagation-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -81,7 +81,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "propagation stats monotonic over multi-round matrix");
 
     std::println("\n--- AC4b: verify-dirty-stats regression ---");
-    auto vds = cs.eval("(query:verify-dirty-stats)");
+    auto vds = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(vds && is_int(*vds), "query:verify-dirty-stats regression");
 }
 

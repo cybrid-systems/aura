@@ -36,7 +36,7 @@ namespace aura_issue_469_detail {
 bool test_query_verification_loop_stats() {
     std::println("\n--- AC1: query:verification-loop-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:verification-loop-stats)");
+    auto r = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -149,7 +149,7 @@ bool test_query_verification_loop_stats_bumps() {
         ++g_failed;
         return false;
     }
-    auto r0 = cs.eval("(query:verification-loop-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
     if (!r0 || !aura::compiler::types::is_int(*r0)) {
         ++g_failed;
         return false;
@@ -164,7 +164,7 @@ bool test_query_verification_loop_stats_bumps() {
         ++g_failed;
         return false;
     }
-    auto r1 = cs.eval("(query:verification-loop-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:verification-loop-stats\")");
     if (!r1 || !aura::compiler::types::is_int(*r1)) {
         ++g_failed;
         return false;
@@ -200,13 +200,13 @@ bool test_public_accessors() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC8: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:stable-ref-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:stable-ref-stats (regression for #457)");
     auto r2 = cs.eval("(query:mutation-impact)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:mutation-impact (regression for #456)");
-    auto r3 = cs.eval("(query:verify-dirty-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:verify-dirty-stats (regression for #437)");
     return true;

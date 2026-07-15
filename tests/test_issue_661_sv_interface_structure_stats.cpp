@@ -68,7 +68,7 @@ static std::int64_t events_total(aura::compiler::CompilerService& cs) {
 
 static void run_ac1_schema(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:sv-interface-structure-stats (schema 661) ---");
-    auto h = cs.eval("(query:sv-interface-structure-stats)");
+    auto h = cs.eval("(engine:metrics \"query:sv-interface-structure-stats\")");
     CHECK(h && aura::compiler::types::is_hash(*h), "sv-interface-structure-stats returns hash");
     CHECK(hash_int(cs, "schema") == 661, "schema == 661");
     const auto p = ports_count(cs);
@@ -157,12 +157,13 @@ static void run_ac6_parse_netlist_path(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: query regression — existing SV + non-SV primitives ---");
-    auto sv_node = cs.eval("(query:sv-node-stats)");
-    auto sv_struct = cs.eval("(query:sv-structured-edsl-stats)");
-    auto sv_sva = cs.eval("(query:sv-sva-structure-stats)");
-    auto sv_verify = cs.eval("(query:sv-verification-closedloop-stats)");
-    auto self_evo = cs.eval("(query:self-evolution-chaos-stats)");
-    auto runtime_corr = cs.eval("(query:runtime-observability-correlated-stats)");
+    auto sv_node = cs.eval("(engine:metrics \"query:sv-node-stats\")");
+    auto sv_struct = cs.eval("(engine:metrics \"query:sv-structured-edsl-stats\")");
+    auto sv_sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+    auto sv_verify = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+    auto self_evo = cs.eval("(engine:metrics \"query:self-evolution-chaos-stats\")");
+    auto runtime_corr =
+        cs.eval("(engine:metrics \"query:runtime-observability-correlated-stats\")");
     CHECK(sv_node &&
               (aura::compiler::types::is_int(*sv_node) || aura::compiler::types::is_hash(*sv_node)),
           "query:sv-node-stats regression");

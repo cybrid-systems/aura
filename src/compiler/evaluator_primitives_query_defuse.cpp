@@ -140,14 +140,15 @@ void register_defuse_query_primitives(
         return cb.build_index(idx);
     });
 
-    add("query:index-stats", [&workspace_mtx, cb, make_merr](const auto& a) -> EvalValue {
-        (void)a;
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
-        auto idx = cb.ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
-        return cb.index_stats(idx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:index-stats", [&workspace_mtx, cb, make_merr](const auto& a) -> EvalValue {
+            (void)a;
+            std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
+            auto idx = cb.ensure_defuse();
+            if (!idx)
+                return make_merr("internal", "failed to build def-use index");
+            return cb.index_stats(idx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

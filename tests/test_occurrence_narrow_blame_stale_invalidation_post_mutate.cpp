@@ -40,7 +40,7 @@ static bool load_if_workspace(CompilerService& cs) {
 }
 
 static std::int64_t narrow_blame_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:narrow-blame-stats)");
+    auto r = cs.eval("(engine:metrics \"query:narrow-blame-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);

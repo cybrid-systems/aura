@@ -47,7 +47,7 @@ static std::size_t count_cast_ops(const IRModule& mod) {
 }
 
 static std::int64_t coercion_elim_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:coercion-elim-stats)");
+    auto r = cs.eval("(engine:metrics \"query:coercion-elim-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);

@@ -69,12 +69,13 @@ int aura_issue_618_run() {
 
     aura::compiler::CompilerService cs;
 
-    // AC1: (query:scheduler-mutation-coord-stats) returns a hash
+    // AC1: (engine:metrics \"query:scheduler-mutation-coord-stats\") returns a hash
     // with 6 fields. Backward-aware: tests the structured form
     // alongside the legacy JSON string from #451.
     {
-        std::println("\n--- AC1: (query:scheduler-mutation-coord-stats) shape ---");
-        auto h = cs.eval("(query:scheduler-mutation-coord-stats)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:scheduler-mutation-coord-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:scheduler-mutation-coord-stats\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "coord-stats returns a hash (not the legacy string)");
         const auto gc_pauses = coord_int(cs, "gc-pauses-attributed-to-mutation");

@@ -65,7 +65,7 @@ bool test_hygiene_metrics_bump() {
 bool test_query_hygiene_stats() {
     std::println("\n--- AC3: query:hygiene-stats returns an int ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:hygiene-stats)");
+    auto r = cs.eval("(engine:metrics \"query:hygiene-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -145,7 +145,7 @@ bool test_hygiene_stats_after_query() {
     auto& ev = cs.evaluator();
     auto total = ev.get_total_query_calls();
     auto skipped = ev.get_macro_introduced_skipped_in_query();
-    auto r = cs.eval("(query:hygiene-stats)");
+    auto r = cs.eval("(engine:metrics \"query:hygiene-stats\")");
     if (!r || !aura::compiler::types::is_int(*r)) {
         ++g_failed;
         return false;

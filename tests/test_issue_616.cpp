@@ -5,7 +5,7 @@
 // Scope-limited close matching the #601 / #491 / #479 / #604 / #606 /
 // #614 / #615 pattern: ship the file-boundary EDA primitives
 // (load-sv / parse-verification-result) + dedicated observability
-// primitive (query:eda-hw-stats) + 4 new counters now; the larger
+// primitive (engine:metrics \"query:eda-hw-stats\") + 4 new counters now; the larger
 // Phase 2/3 work from #499 (full simulator FFI integration,
 // property/cover manipulation, hardware intrinsics surface) remains
 // a separate follow-up.
@@ -85,7 +85,7 @@ static std::string hash_string(aura::compiler::CompilerService& cs, std::string_
 
 // Read a query:eda-hw-stats field directly.
 static std::int64_t hw_stat(aura::compiler::CompilerService& cs, std::string_view key) {
-    return hash_int(cs, "(query:eda-hw-stats)", key);
+    return hash_int(cs, "(engine:metrics \"query:eda-hw-stats\")", key);
 }
 
 } // namespace aura_issue_616_detail
@@ -201,12 +201,13 @@ int aura_issue_616_run() {
                           parse_fail_before, parse_fail_after));
     }
 
-    // AC5: (query:eda-hw-stats) shape — 6 fields, all non-negative,
+    // AC5: (engine:metrics \"query:eda-hw-stats\") shape — 6 fields, all non-negative,
     // success rates are within [0, 100].
     {
-        std::println("\n--- AC5: (query:eda-hw-stats) shape ---");
-        auto h = cs.eval("(query:eda-hw-stats)");
-        CHECK(h && aura::compiler::types::is_hash(*h), "(query:eda-hw-stats) returns a hash");
+        std::println("\n--- AC5: (engine:metrics \"query:eda-hw-stats\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:eda-hw-stats\")");
+        CHECK(h && aura::compiler::types::is_hash(*h),
+              "(engine:metrics \"query:eda-hw-stats\") returns a hash");
         const auto load_ok = hw_stat(cs, "load-sv-total");
         const auto load_fail = hw_stat(cs, "load-sv-failure-total");
         const auto parse_ok = hw_stat(cs, "parse-verification-result-total");

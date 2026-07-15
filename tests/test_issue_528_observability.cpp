@@ -62,7 +62,7 @@ int aura_issue_528_observability_run() {
     // AC1: query:pattern-production-index-stats returns hash
     {
         std::println("\n--- AC1: query:pattern-production-index-stats ---");
-        auto stats = cs.eval("(query:pattern-production-index-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pattern-production-index-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pattern-production-index-stats returns hash");
         CHECK(hash_int(cs, "index-hits") >= 0, "index-hits present");
@@ -123,7 +123,7 @@ int aura_issue_528_observability_run() {
         std::println("\n--- AC4: regression ---");
         auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-        auto pish = cs.eval("(query:pattern-index-stats-hash)");
+        auto pish = cs.eval("(engine:metrics \"query:pattern-index-stats-hash\")");
         CHECK(pis && aura::compiler::types::is_int(*pis), "pattern-index-stats int regression");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats int regression");
         CHECK(pish && aura::compiler::types::is_hash(*pish),

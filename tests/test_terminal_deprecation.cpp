@@ -115,8 +115,10 @@ int main() {
     {
         (void)cs.eval("(terminal:clear)");
         (void)cs.eval("(terminal:present)");
-        auto ct = cs.eval("(hash-ref (query:terminal-render-production-stats) 'clear-total)");
-        auto pt = cs.eval("(hash-ref (query:terminal-render-production-stats) 'present-total)");
+        auto ct = cs.eval(
+            "(hash-ref (engine:metrics \"query:terminal-render-production-stats\") 'clear-total)");
+        auto pt = cs.eval("(hash-ref (engine:metrics \"query:terminal-render-production-stats\") "
+                          "'present-total)");
         CHECK(ct && is_int(*ct) && as_int(*ct) >= 1, "clear-total still increments");
         CHECK(pt && is_int(*pt) && as_int(*pt) >= 1, "present-total still increments");
     }

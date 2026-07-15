@@ -52,7 +52,7 @@ int aura_issue_516_observability_run() {
     // AC1: query:prompt6-memory-safety-stats returns hash
     {
         std::println("\n--- AC1: query:prompt6-memory-safety-stats ---");
-        auto stats = cs.eval("(query:prompt6-memory-safety-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:prompt6-memory-safety-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:prompt6-memory-safety-stats returns hash");
         CHECK(hash_int(cs, "bridge-epoch-hits") >= 0, "bridge-epoch-hits present");
@@ -103,7 +103,7 @@ int aura_issue_516_observability_run() {
         CHECK(total_after >= total_before,
               std::format("prompt6-memory-safety-total monotonic ({} -> {})", total_before,
                           total_after));
-        auto ces = cs.eval("(query:closure-env-safety-stats)");
+        auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
         CHECK(ces && aura::compiler::types::is_hash(*ces),
               "query:closure-env-safety-stats hash regression");
     }

@@ -62,7 +62,7 @@ int aura_issue_524_observability_run() {
     // AC1: query:macro-production-hygiene-stats returns hash
     {
         std::println("\n--- AC1: query:macro-production-hygiene-stats ---");
-        auto stats = cs.eval("(query:macro-production-hygiene-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:macro-production-hygiene-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:macro-production-hygiene-stats returns hash");
         CHECK(hash_int(cs, "root-skips") >= 0, "root-skips present");
@@ -117,8 +117,8 @@ int aura_issue_524_observability_run() {
     // AC4: related macro/hygiene primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto pms = cs.eval("(query:pattern-marker-stats)");
-        auto ihs = cs.eval("(query:ir-hygiene-stats)");
+        auto pms = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
+        auto ihs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         CHECK(pms && aura::compiler::types::is_hash(*pms), "pattern-marker-stats hash regression");
         CHECK(ihs && aura::compiler::types::is_hash(*ihs), "ir-hygiene-stats hash regression");

@@ -79,7 +79,7 @@ static void seed_sva_workspace(aura::compiler::CompilerService& cs, aura::ast::N
 
 static void run_ac1_baseline(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:sv-sva-structure-stats baseline ---");
-    auto h = cs.eval("(query:sv-sva-structure-stats)");
+    auto h = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
     CHECK(h && aura::compiler::types::is_hash(*h), "sv-sva-structure-stats returns hash");
     aura::ast::NodeId pid, cid;
     seed_sva_workspace(cs, pid, cid);
@@ -153,9 +153,9 @@ static void run_ac5_sva_dirty(aura::compiler::CompilerService& cs) {
 
 static void run_ac6_sv_primitives_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — SV primitives still reachable ---");
-    auto sv_sva = cs.eval("(query:sv-sva-structure-stats)");
-    auto sv_node = cs.eval("(query:sv-node-stats)");
-    auto sv_iface = cs.eval("(query:sv-interface-structure-stats)");
+    auto sv_sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+    auto sv_node = cs.eval("(engine:metrics \"query:sv-node-stats\")");
+    auto sv_iface = cs.eval("(engine:metrics \"query:sv-interface-structure-stats\")");
     CHECK(sv_sva && aura::compiler::types::is_hash(*sv_sva),
           "sv-sva-structure-stats regression [hash, schema 694]");
     CHECK(sv_node &&

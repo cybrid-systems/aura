@@ -43,7 +43,8 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 
 static std::int64_t epoch_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:closure-epoch-concurrency-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:closure-epoch-concurrency-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -60,7 +61,7 @@ static std::int64_t stats_sum(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:closure-epoch-concurrency-stats (schema 739) ---");
-    auto h = cs.eval("(query:closure-epoch-concurrency-stats)");
+    auto h = cs.eval("(engine:metrics \"query:closure-epoch-concurrency-stats\")");
     CHECK(h && is_hash(*h), "closure-epoch-concurrency-stats returns hash");
     CHECK(epoch_hash(cs, "schema") == 739, "schema == 739");
     CHECK(epoch_hash(cs, "stale-epoch-on-steal") >= 0, "stale-epoch-on-steal present");
@@ -158,7 +159,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(epoch_hash(cs, "fence-enforced") > fence0, "fence-enforced grew over full matrix");
 
     std::println("\n--- AC6: query regression ---");
-    auto closure_stats = cs.eval("(query:closure-stats)");
+    auto closure_stats = cs.eval("(engine:metrics \"query:closure-stats\")");
     auto compile_epoch = cs.eval("(compile:epoch)");
     CHECK(closure_stats && is_hash(*closure_stats), "query:closure-stats regression");
     CHECK(compile_epoch && is_int(*compile_epoch), "compile:epoch regression");

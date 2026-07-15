@@ -30,7 +30,7 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t contract_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:cpp26-contracts-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:cpp26-contracts-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -56,7 +56,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:cpp26-contracts-stats (schema 742) ---");
     CHECK(setup_workspace(cs), "recursive workspace setup");
-    auto h = cs.eval("(query:cpp26-contracts-stats)");
+    auto h = cs.eval("(engine:metrics \"query:cpp26-contracts-stats\")");
     CHECK(h && is_hash(*h), "cpp26-contracts-stats returns hash");
     CHECK(contract_hash(cs, "schema") == 742, "schema == 742");
     CHECK(contract_hash(cs, "hotpath-invariant-hits") >= 0, "hotpath-invariant-hits present");
@@ -93,7 +93,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats5b >= stats5a, "cpp26-contracts stats monotonic");
 
     std::println("\n--- AC6: query regression ---");
-    auto hp = cs.eval("(query:highperf-cpp26-stats)");
+    auto hp = cs.eval("(engine:metrics \"query:highperf-cpp26-stats\")");
     auto inv = cs.eval("(query:cxx26-invariants)");
     auto hot = cs.eval("(query:cxx26-hotpath-invariants)");
     CHECK(hp && is_hash(*hp), "highperf-cpp26-stats regression");

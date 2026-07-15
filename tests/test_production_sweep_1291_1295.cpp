@@ -32,7 +32,7 @@ int main() {
     CompilerService cs;
 
     {
-        auto r = cs.eval("(query:production-sweep-1291-1295-stats)");
+        auto r = cs.eval("(engine:metrics \"query:production-sweep-1291-1295-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
         CHECK(href(cs, "query:production-sweep-1291-1295-stats", "schema") == 1291, "schema");
         CHECK(href(cs, "query:production-sweep-1291-1295-stats", "active") == 1, "active");

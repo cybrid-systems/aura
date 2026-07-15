@@ -55,7 +55,7 @@ bool query_has(CompilerService& cs, const char* query, const char* needle) {
     if (r && is_bool(*r) && as_bool(*r))
         return true;
     // Fallback: just require non-empty string
-    auto s = cs.eval(std::format("({})", query));
+    auto s = cs.eval(aura::test::aura_call_expr(query));
     (void)needle;
     return s && is_string(*s);
 }
@@ -67,7 +67,7 @@ int main() {
 
     // Queries exist
     {
-        auto a = cs.eval("(query:render-prim-call-stats)");
+        auto a = cs.eval("(engine:metrics \"query:render-prim-call-stats\")");
         CHECK(a && is_string(*a), "query:render-prim-call-stats string");
         auto b = cs.eval("(query:render-frame-time-histogram)");
         CHECK(b && is_string(*b), "query:render-frame-time-histogram string");
@@ -103,10 +103,10 @@ int main() {
         const auto s1 = ival(cs, "(render-prim-latency-samples)");
         CHECK(s1 > s0, "latency samples after hot-path prims");
         CHECK(s1 >= s0 + 50, "at least 50 latency samples");
-        auto stats = cs.eval("(query:render-prim-call-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:render-prim-call-stats\")");
         CHECK(stats && is_string(*stats), "prim-call-stats after samples");
         auto schema_ok = cs.eval(
-            R"((let ((s (query:render-prim-call-stats)))
+            R"((let ((s (engine:metrics "query:render-prim-call-stats")))
                  (and (string? s) (>= (string-length s) 11))))");
         CHECK(schema_ok && is_bool(*schema_ok) && as_bool(*schema_ok), "stats has content");
     }

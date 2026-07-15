@@ -8,7 +8,7 @@
 // This binary exercises the EDSL primitive paths specifically:
 //
 //   - AC1: 5-counter sum reachable via
-//          (query:edsl-stability-stats)
+//          (engine:metrics \"query:edsl-stability-stats\")
 //   - AC2: query:edsl-stability-stats returns integer
 //          sum of the 5 counters (4 from #549 Evaluator +
 //          1 from #457 FlatAST generation_wrap_count_)
@@ -76,17 +76,18 @@ bool test_edsl_stability_counters_reachable() {
 
 // ── AC2: query:edsl-stability-stats returns integer sum ───
 bool test_query_edsl_stability_stats() {
-    std::println("\n--- AC2: (query:edsl-stability-stats) returns integer ---");
+    std::println("\n--- AC2: (engine:metrics \"query:edsl-stability-stats\") returns integer ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:edsl-stability-stats)");
-    CHECK(r.has_value(), "(query:edsl-stability-stats) returns");
-    CHECK(aura::compiler::types::is_int(*r), "(query:edsl-stability-stats) is integer");
+    auto r = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"query:edsl-stability-stats\") returns");
+    CHECK(aura::compiler::types::is_int(*r),
+          "(engine:metrics \"query:edsl-stability-stats\") is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:edsl-stability-stats = {}", v);
-        CHECK(v >= 0, "(query:edsl-stability-stats) >= 0 (5 counters sum)");
+        CHECK(v >= 0, "(engine:metrics \"query:edsl-stability-stats\") >= 0 (5 counters sum)");
     }
     return true;
 }
@@ -170,12 +171,12 @@ bool test_query_stable_primitives_integration() {
     auto r1 = cs.eval("(query:tag-arity-count 32 0)");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(query:tag-arity-count) returns (regression for #447)");
-    auto r2 = cs.eval("(query:stable-ref-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:stable-ref-stats) returns (regression for #457)");
-    auto r3 = cs.eval("(query:edsl-stability-stats)");
+          "(engine:metrics \"query:stable-ref-stats\") returns (regression for #457)");
+    auto r3 = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
-          "(query:edsl-stability-stats) returns (new for #552)");
+          "(engine:metrics \"query:edsl-stability-stats\") returns (new for #552)");
     return true;
 }
 
@@ -262,18 +263,18 @@ bool test_gc_heap_with_stable_ref_task1() {
 bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — #549 + #551 primitives still work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(query:edsl-stability-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
-          "(query:edsl-stability-stats) (new for #552)");
-    auto r2 = cs.eval("(query:self-evolution-stability-stats)");
+          "(engine:metrics \"query:edsl-stability-stats\") (new for #552)");
+    auto r2 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:self-evolution-stability-stats) (regression for #549)");
-    auto r3 = cs.eval("(query:reflect-postmutate-stats)");
+          "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");
+    auto r3 = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),
-          "(query:reflect-postmutate-stats) (regression for #502)");
-    auto r4 = cs.eval("(query:stable-ref-stats)");
+          "(engine:metrics \"query:reflect-postmutate-stats\") (regression for #502)");
+    auto r4 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(r4.has_value() && aura::compiler::types::is_int(*r4),
-          "(query:stable-ref-stats) (regression for #457)");
+          "(engine:metrics \"query:stable-ref-stats\") (regression for #457)");
     if (!cs.eval("(define reg-552-a 10)")) {
         CHECK(false, "define (regression)");
         return false;

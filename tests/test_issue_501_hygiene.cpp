@@ -25,7 +25,8 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t inline_skipped(aura::compiler::CompilerService& cs) {
-    auto r = cs.eval("(hash-ref (compile:inline-pass-stats) 'macro-hygiene-skipped')");
+    auto r = cs.eval(
+        "(hash-ref (engine:metrics \"compile:inline-pass-stats\") 'macro-hygiene-skipped')");
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -61,7 +62,7 @@ int aura_issue_501_hygiene_run() {
     // AC1: query:ir-hygiene-stats returns hash (top-level call — no hash-ref nest)
     {
         std::println("\n--- AC1: query:ir-hygiene-stats ---");
-        auto stats = cs.eval("(query:ir-hygiene-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:ir-hygiene-stats returns hash");
         CHECK(macro_introduced_count(cs) >= 3, "macro-introduced nodes >= 3 after macro eval");
@@ -76,7 +77,7 @@ int aura_issue_501_hygiene_run() {
         std::println("\n--- AC2: InlinePass macro hygiene skip ---");
         const auto skipped = inline_skipped(cs);
         CHECK(skipped >= 0, "compile:inline-pass-stats macro-hygiene-skipped present");
-        auto stats2 = cs.eval("(query:ir-hygiene-stats)");
+        auto stats2 = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(stats2 && aura::compiler::types::is_hash(*stats2),
               "ir-hygiene-stats still hash after inline compile");
     }
@@ -99,7 +100,7 @@ int aura_issue_501_hygiene_run() {
         aura::compiler::CompilerService cs2;
         CHECK(cs2.eval("(set-code \"(define x 1) (+ x 1)\")").has_value(), "user-only code set");
         CHECK(cs2.eval("(eval-current)").has_value(), "user-only eval");
-        auto stats = cs2.eval("(query:ir-hygiene-stats)");
+        auto stats = cs2.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "ir-hygiene-stats hash on user-only path");
         CHECK(macro_introduced_count(cs2) == 0, "macro-introduced == 0 on user-only path");
@@ -110,7 +111,7 @@ int aura_issue_501_hygiene_run() {
     {
         std::println("\n--- AC5: query regression ---");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-        auto ips = cs.eval("(compile:inline-pass-stats)");
+        auto ips = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
         CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
         CHECK(ips && aura::compiler::types::is_hash(*ips), "compile:inline-pass-stats regression");
         CHECK(inline_skipped(cs) >= inline_before, "inline-hygiene-skipped monotonic");
@@ -124,11 +125,11 @@ int aura_issue_501_hygiene_run() {
         auto toggle = cs3.eval("(*allow-macro-inline* #t)");
         CHECK(toggle && aura::compiler::types::is_int(*toggle),
               "(*allow-macro-inline* #t) callable");
-        auto stats_on = cs3.eval("(query:ir-hygiene-stats)");
+        auto stats_on = cs3.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(stats_on && aura::compiler::types::is_hash(*stats_on),
               "ir-hygiene-stats hash after opt-in");
         (void)cs3.eval("(*allow-macro-inline* #f)");
-        auto stats_off = cs3.eval("(query:ir-hygiene-stats)");
+        auto stats_off = cs3.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(stats_off && aura::compiler::types::is_hash(*stats_off),
               "ir-hygiene-stats hash after opt-out");
     }

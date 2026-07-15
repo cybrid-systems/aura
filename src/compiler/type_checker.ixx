@@ -372,11 +372,13 @@ public:
     // bindings. The caller is expected to have run infer_flat
     // before calling this.
     //
-    // Issue #1387: now also discovers type-driven linear bindings
-    // (a binding whose value's type is registered linear in
-    // `reg` via `register_linear` / `kLinear` flag), not just
-    // syntactic `(Linear ...)` wrappers. The two sources are
-    // combined via set union (defense in depth).
+    // Issue #1387/#1410/#1417: discovers type-driven linear
+    // bindings (value / Let type_id registered via
+    // `register_linear` / `linear_of`, plus TypeAnnotation
+    // type-name lookup), not just syntactic `(Linear ...)`
+    // wrappers. Sources are combined via set union
+    // (defense in depth). Move/drop paths clear Owned so
+    // properly consumed bindings do not report leaked-linear.
     //
     // The `reg` parameter is REQUIRED (not defaulted). Old 3-arg
     // callers fail to compile, which is the intended signal that

@@ -148,7 +148,7 @@ int main() {
     // ── query exposes map size ──
     {
         CompilerService cs;
-        auto s = cs.eval("(query:aot-reload-primitive-stats)");
+        auto s = cs.eval("(engine:metrics \"query:aot-reload-primitive-stats\")");
         CHECK(s && is_hash(*s), "stats hash");
         CHECK(href(cs, "query:aot-reload-primitive-stats", "per-eval-state-map-size") >= 0,
               "per-eval-state-map-size key");

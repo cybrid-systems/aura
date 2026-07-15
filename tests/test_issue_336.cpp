@@ -31,7 +31,7 @@
 //   3. One new Aura primitive
 //      (compile:mark-dirty-upward-fast) that
 //      exposes the fast path to Aura callers +
-//      extends (compile:ast-ops-stats) with the
+//      extends (engine:metrics \"compile:ast-ops-stats\") with the
 //      fast-fixed-point-hits counter for
 //      observability
 //
@@ -48,7 +48,7 @@
 //       children recursively
 //   AC3 (compile:mark-dirty-upward-fast node-id
 //       reasons) primitive works end-to-end
-//   AC4 (compile:ast-ops-stats) returns the new
+//   AC4 (engine:metrics \"compile:ast-ops-stats\") returns the new
 //       dirty-upward-fast-fixed-point-hits field
 
 #include "test_harness.hpp"
@@ -165,11 +165,11 @@ bool test_compile_mark_dirty_upward_fast_primitive() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AC4: (compile:ast-ops-stats) returns the new counter
+// AC4: (engine:metrics \"compile:ast-ops-stats\") returns the new counter
 // ═══════════════════════════════════════════════════════════════
 
 bool test_ast_ops_stats_includes_fast_hits() {
-    std::println("\n--- AC4: (compile:ast-ops-stats) includes fast-hits ---");
+    std::println("\n--- AC4: (engine:metrics \"compile:ast-ops-stats\") includes fast-hits ---");
     using namespace aura;
     compiler::CompilerService cs;
     if (!build_workspace(cs, 3)) {
@@ -182,8 +182,8 @@ bool test_ast_ops_stats_includes_fast_hits() {
     // Aura level, so just verify the primitive
     // returns a value (it should always return
     // a hash when a workspace is loaded).
-    auto r = cs.eval("(compile:ast-ops-stats)");
-    CHECK(r.has_value(), "(compile:ast-ops-stats) returns a value");
+    auto r = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
+    CHECK(r.has_value(), "(engine:metrics \"compile:ast-ops-stats\") returns a value");
     return true;
 }
 
@@ -200,7 +200,7 @@ bool test_end_to_end_fast_path_via_aura() {
         return false;
     }
     // Snapshot counter before.
-    auto before = cs.eval("(compile:ast-ops-stats)");
+    auto before = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(before.has_value(), "pre-call: ast-ops-stats returns");
     // Run a few fast-path calls. Even if the
     // fixed-point doesn't fire (workspace is
@@ -209,7 +209,7 @@ bool test_end_to_end_fast_path_via_aura() {
         cs.eval("(compile:mark-dirty-upward-fast 0)");
     }
     // Snapshot counter after.
-    auto after = cs.eval("(compile:ast-ops-stats)");
+    auto after = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(after.has_value(), "post-call: ast-ops-stats returns");
     return true;
 }

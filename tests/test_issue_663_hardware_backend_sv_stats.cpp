@@ -67,7 +67,7 @@ static void seed_workspace(aura::compiler::CompilerService& cs) {
 
 static void run_ac1_schema(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:hardware-backend-sv-stats (schema 663) ---");
-    auto h = cs.eval("(query:hardware-backend-sv-stats)");
+    auto h = cs.eval("(engine:metrics \"query:hardware-backend-sv-stats\")");
     CHECK(h && aura::compiler::types::is_hash(*h), "hardware-backend-sv-stats returns hash");
     CHECK(stat_int(cs, "schema") == 663, "schema == 663");
 }
@@ -144,8 +144,8 @@ static void run_ac5_verification_feedback(aura::compiler::CompilerService& cs) {
 
 static void run_ac6_hardware_backend_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — existing hardware-backend primitives ---");
-    auto hb = cs.eval("(query:hardware-backend-stats)");
-    auto hbc = cs.eval("(query:hardware-backend-commercial-stats)");
+    auto hb = cs.eval("(engine:metrics \"query:hardware-backend-stats\")");
+    auto hbc = cs.eval("(engine:metrics \"query:hardware-backend-commercial-stats\")");
     CHECK(hb && aura::compiler::types::is_hash(*hb),
           "query:hardware-backend-stats (schema 580) regression [hash]");
     CHECK(hbc && aura::compiler::types::is_hash(*hbc),
@@ -154,8 +154,8 @@ static void run_ac6_hardware_backend_regression(aura::compiler::CompilerService&
 
 static void run_ac7_sv_primitives_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: regression — cross-feature SV primitives ---");
-    auto sv_sva = cs.eval("(query:sv-sva-structure-stats)");
-    auto sv_iface = cs.eval("(query:sv-interface-structure-stats)");
+    auto sv_sva = cs.eval("(engine:metrics \"query:sv-sva-structure-stats\")");
+    auto sv_iface = cs.eval("(engine:metrics \"query:sv-interface-structure-stats\")");
     CHECK(sv_sva && aura::compiler::types::is_hash(*sv_sva),
           "query:sv-sva-structure-stats (schema 694) regression [hash]");
     CHECK(sv_iface && aura::compiler::types::is_hash(*sv_iface),

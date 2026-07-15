@@ -24,7 +24,7 @@
 // defer or use grace + force GuardShape deopt +
 // linear_state re-check on affected funcs; wire to
 // mutation_epoch_, (4) new/enhance
-// (query:compiler-invalidate-guard-steal-stats)
+// (engine:metrics \"query:compiler-invalidate-guard-steal-stats\")
 // returning (deferred_invalidates, version_refresh_hits,
 // guardshape_deopt_on_steal, live_closure_stale_prevented)
 // + wire to existing mutation-impact + aot-hotupdate-
@@ -118,10 +118,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:compiler-invalidate-guard-steal-stats) hash shape ---");
-    auto r = cs.eval("(query:compiler-invalidate-guard-steal-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:compiler-invalidate-guard-steal-stats\") hash "
+                 "shape ---");
+    auto r = cs.eval("(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:compiler-invalidate-guard-steal-stats) returns a hash");
+          "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\") returns a hash");
     const std::vector<std::string> keys = {"deferred-invalidates-total",
                                            "version-refresh-hits-total",
                                            "guardshape-deopt-on-steal-total",
@@ -139,48 +140,54 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no compiler-runtime sync activity) ---");
-    const auto deferred = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                         "deferred-invalidates-total");
+    const auto deferred =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "deferred-invalidates-total");
     CHECK(deferred == 0,
           std::format("deferred-invalidates-total = {} (expected 0 on fresh service — Phase "
                       "2+ deferred to wire invalidate_function when active "
                       "MutationBoundaryGuard depth > 0)",
                       deferred));
-    const auto refresh = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                        "version-refresh-hits-total");
+    const auto refresh =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "version-refresh-hits-total");
     CHECK(refresh == 0,
           std::format("version-refresh-hits-total = {} (expected 0 on fresh service — Phase "
                       "2+ deferred to wire bridge_epoch / EnvFrame version_ re-stamp on steal "
                       "resume)",
                       refresh));
-    const auto deopt = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                      "guardshape-deopt-on-steal-total");
+    const auto deopt =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "guardshape-deopt-on-steal-total");
     CHECK(deopt == 0,
           std::format("guardshape-deopt-on-steal-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire GuardShape deopt on bridge_epoch mismatch)",
                       deopt));
-    const auto stale = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                      "live-closure-stale-prevented-total");
+    const auto stale =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "live-closure-stale-prevented-total");
     CHECK(stale == 0,
           std::format("live-closure-stale-prevented-total = {} (expected 0 on fresh service — "
                       "Phase 2+ deferred to wire closure_bridge_ refresh for live IRClosure "
                       "stale prevention)",
                       stale));
-    const auto safe_invalidate = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                                "safe-invalidate-at-outermost-boundary-active");
+    const auto safe_invalidate =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "safe-invalidate-at-outermost-boundary-active");
     CHECK(safe_invalidate == 0,
           std::format("safe-invalidate-at-outermost-boundary-active = {} (expected 0 — Phase "
                       "2+ deferred to expose safe_invalidate_at_outermost_boundary() helper)",
                       safe_invalidate));
-    const auto refresh_active = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                               "steal-resume-version-refresh-active");
+    const auto refresh_active =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "steal-resume-version-refresh-active");
     CHECK(refresh_active == 0,
           std::format("steal-resume-version-refresh-active = {} (expected 0 — Phase 2+ "
                       "deferred to wire force bridge_epoch / EnvFrame version_ re-stamp + "
                       "closure_bridge_ refresh on steal resume)",
                       refresh_active));
-    const auto rec =
-        hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)", "recommendation");
+    const auto rec = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")", "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when both deferred flags "
                       "== 0 AND no activity)",
@@ -189,8 +196,8 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 792 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")", "schema");
     CHECK(schema == 792, std::format("schema = {} (expected 792)", schema));
 }
 
@@ -198,14 +205,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC4: production-path bump helpers + primitive read-back ---");
 
     // Snapshot before.
-    const auto deferred_before = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                                "deferred-invalidates-total");
-    const auto refresh_before = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                               "version-refresh-hits-total");
-    const auto deopt_before = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                             "guardshape-deopt-on-steal-total");
-    const auto stale_before = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                             "live-closure-stale-prevented-total");
+    const auto deferred_before =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "deferred-invalidates-total");
+    const auto refresh_before =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "version-refresh-hits-total");
+    const auto deopt_before =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "guardshape-deopt-on-steal-total");
+    const auto stale_before =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "live-closure-stale-prevented-total");
 
     // Exercise the 4 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -220,14 +231,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
         ev.bump_compiler_live_closure_stale_prevented();
     }
 
-    const auto deferred_after = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                               "deferred-invalidates-total");
-    const auto refresh_after = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                              "version-refresh-hits-total");
-    const auto deopt_after = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                            "guardshape-deopt-on-steal-total");
-    const auto stale_after = hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)",
-                                            "live-closure-stale-prevented-total");
+    const auto deferred_after =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "deferred-invalidates-total");
+    const auto refresh_after =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "version-refresh-hits-total");
+    const auto deopt_after =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "guardshape-deopt-on-steal-total");
+    const auto stale_after =
+        hash_int_field(cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")",
+                       "live-closure-stale-prevented-total");
 
     std::println(
         "  counts after AC4 bumps: deferred {} -> {}, refresh {} -> {}, deopt {} -> {}, stale "
@@ -256,8 +271,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Recommendation should now be 2 (Phase 1 only —
     // both deferred flags == 0 BUT activity > 0).
-    const auto rec_after =
-        hash_int_field(cs, "(query:compiler-invalidate-guard-steal-stats)", "recommendation");
+    const auto rec_after = hash_int_field(
+        cs, "(engine:metrics \"query:compiler-invalidate-guard-steal-stats\")", "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with both deferred flags == 0)",
@@ -266,18 +281,20 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #791 + #783 sibling primitives unaffected ---");
-    auto a791 = cs.eval("(query:workspace-closedloop-fiber-multi-agent-yield-stats)");
-    auto a783 = cs.eval("(query:orchestration-steal-outermost-stats)");
+    auto a791 =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")");
+    auto a783 = cs.eval("(engine:metrics \"query:orchestration-steal-outermost-stats\")");
     CHECK(a791 && aura::compiler::types::is_hash(*a791),
           "query:workspace-closedloop-fiber-multi-agent-yield-stats hash regression (#791)");
     CHECK(a783 && aura::compiler::types::is_hash(*a783),
           "query:orchestration-steal-outermost-stats hash regression (#783)");
-    const auto a791_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "schema");
+    const auto a791_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "schema");
     CHECK(a791_schema == 791,
           std::format("#791 schema = {} (expected 791, no drift)", a791_schema));
-    const auto a783_schema =
-        hash_int_field(cs, "(query:orchestration-steal-outermost-stats)", "schema");
+    const auto a783_schema = hash_int_field(
+        cs, "(engine:metrics \"query:orchestration-steal-outermost-stats\")", "schema");
     CHECK(a783_schema == 783,
           std::format("#783 schema = {} (expected 783, no drift)", a783_schema));
 }

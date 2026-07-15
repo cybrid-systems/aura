@@ -31,7 +31,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t bridge_hash(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:incremental-closure-bridge-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:incremental-closure-bridge-stats\") \"" +
+                     key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -66,7 +67,7 @@ static bool setup_quote_lambda_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:incremental-closure-bridge-stats (schema 741) ---");
     CHECK(setup_quote_lambda_workspace(cs), "quote+lambda workspace setup");
-    auto h = cs.eval("(query:incremental-closure-bridge-stats)");
+    auto h = cs.eval("(engine:metrics \"query:incremental-closure-bridge-stats\")");
     CHECK(h && is_hash(*h), "incremental-closure-bridge-stats returns hash");
     CHECK(bridge_hash(cs, "schema") == 741, "schema == 741");
     CHECK(bridge_hash(cs, "impact-blocks-on-bridge") >= 0, "impact-blocks-on-bridge present");
@@ -145,9 +146,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "incremental-closure-bridge stats monotonic");
 
     std::println("\n--- AC7: query regression ---");
-    auto icl = cs.eval("(query:incremental-closure-stats)");
-    auto cci = cs.eval("(query:compiler-core-incremental-stats)");
-    auto ces = cs.eval("(query:closure-env-safety-stats)");
+    auto icl = cs.eval("(engine:metrics \"query:incremental-closure-stats\")");
+    auto cci = cs.eval("(engine:metrics \"query:compiler-core-incremental-stats\")");
+    auto ces = cs.eval("(engine:metrics \"query:closure-env-safety-stats\")");
     CHECK(icl && is_hash(*icl), "incremental-closure-stats regression");
     CHECK(cci && is_hash(*cci), "compiler-core-incremental-stats regression");
     CHECK(ces && is_hash(*ces), "closure-env-safety-stats regression");

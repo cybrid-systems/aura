@@ -161,13 +161,13 @@ bool test_complete_match_stable_after_refresh() {
 
 // AC4: query:adt-match-exhaust-stats primitive wired
 bool test_query_adt_match_exhaust_stats() {
-    std::println("\n--- AC4: (query:adt-match-exhaust-stats) primitive ---");
+    std::println("\n--- AC4: (engine:metrics \"query:adt-match-exhaust-stats\") primitive ---");
     aura::compiler::CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:adt-match-exhaust-stats)");
+    auto r = cs.eval("(engine:metrics \"query:adt-match-exhaust-stats\")");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),
-          "(query:adt-match-exhaust-stats) returns int");
+          "(engine:metrics \"query:adt-match-exhaust-stats\") returns int");
     if (r && aura::compiler::types::is_int(*r))
         CHECK(aura::compiler::types::as_int(*r) >= 0, "stats sum >= 0");
     return true;

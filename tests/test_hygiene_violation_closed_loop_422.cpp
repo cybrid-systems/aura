@@ -36,7 +36,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
 static std::int64_t hygiene_violation_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:hygiene-violation-stats)");
+    auto r = cs.eval("(engine:metrics \"query:hygiene-violation-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -109,7 +109,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    auto mbi = cs.eval("(query:mutation-boundary-invariant-stats)");
+    auto mbi = cs.eval("(engine:metrics \"query:mutation-boundary-invariant-stats\")");
     CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");
 }

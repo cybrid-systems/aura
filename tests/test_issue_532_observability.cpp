@@ -52,7 +52,7 @@ int aura_issue_532_observability_run() {
     // AC1: query:jit-consistency-stats returns hash
     {
         std::println("\n--- AC1: query:jit-consistency-stats ---");
-        auto stats = cs.eval("(query:jit-consistency-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:jit-consistency-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:jit-consistency-stats returns hash");
         CHECK(hash_int(cs, "unhandled-count") >= 0, "unhandled-count present");
@@ -102,9 +102,9 @@ int aura_issue_532_observability_run() {
     // AC4: related JIT primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto jit_hash = cs.eval("(query:jit-stats-hash)");
-        auto hotswap = cs.eval("(query:jit-hotswap-closure-stats)");
-        auto jit_line = cs.eval("(query:jit-stats)");
+        auto jit_hash = cs.eval("(engine:metrics \"query:jit-stats-hash\")");
+        auto hotswap = cs.eval("(engine:metrics \"query:jit-hotswap-closure-stats\")");
+        auto jit_line = cs.eval("(engine:metrics \"query:jit-stats\")");
         CHECK(jit_hash && aura::compiler::types::is_hash(*jit_hash),
               "query:jit-stats-hash hash regression");
         CHECK(hotswap && aura::compiler::types::is_hash(*hotswap),

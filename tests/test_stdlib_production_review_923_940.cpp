@@ -25,7 +25,7 @@ using aura::compiler::types::is_pair;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) '{}')", q, key));
+    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -47,7 +47,7 @@ int main() {
 
     // #926 / #923–#940: production review dashboard
     {
-        auto r = cs.eval("(query:stdlib-production-review-stats)");
+        auto r = cs.eval("(engine:metrics \"query:stdlib-production-review-stats\")");
         CHECK(r && is_hash(*r), "query:stdlib-production-review-stats is hash");
         CHECK(href(cs, "query:stdlib-production-review-stats", "schema") == 923,
               "schema field 923");
@@ -59,7 +59,7 @@ int main() {
 
     // #926 tier histogram
     {
-        auto r = cs.eval("(query:primitive-tier-stats)");
+        auto r = cs.eval("(engine:metrics \"query:primitive-tier-stats\")");
         CHECK(r && is_hash(*r), "query:primitive-tier-stats is hash");
         CHECK(href(cs, "query:primitive-tier-stats", "schema") == 926, "tier schema 926");
         CHECK(href(cs, "query:primitive-tier-stats", "slots") > 0, "has registry slots");

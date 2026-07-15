@@ -12,7 +12,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → all 6 per-DefUseIndex
 //        counters = 0
-//   AC2: (compile:per-symbol-reinfer-stats) returns the 4
+//   AC2: (engine:metrics \"compile:per-symbol-reinfer-stats\") returns the 4
 //        per-DefUseIndex fields (the wiring is plumbed)
 //   AC3: typed_mutate with empty tracker takes per-symbol
 //        path (per_symbol_used_total > 0,
@@ -74,9 +74,10 @@ bool test_initial_counters_zero() {
 }
 
 bool test_per_symbol_reinfer_stats_has_new_keys() {
-    std::println("\n--- AC2: (compile:per-symbol-reinfer-stats) has 4 per-DefUseIndex keys ---");
+    std::println("\n--- AC2: (engine:metrics \"compile:per-symbol-reinfer-stats\") has 4 "
+                 "per-DefUseIndex keys ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define h (compile:per-symbol-reinfer-stats))\")");
+    cs.eval("(set-code \"(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key :
          {"per-defuse-index-used-total", "per-defuse-index-visited-total",
@@ -134,7 +135,8 @@ bool test_typed_mutate_populated_tracker_takes_per_defuse_index() {
     cs.eval("(eval-current)");
     cs.eval("(setup)");
     // Verify the tracker is populated.
-    auto rst = cs.eval("(hash-ref (compile:per-defuse-index-stats) \"index-count\")");
+    auto rst =
+        cs.eval("(hash-ref (engine:metrics \"compile:per-defuse-index-stats\") \"index-count\")");
     if (!rst || !aura::compiler::types::is_int(*rst) || aura::compiler::types::as_int(*rst) < 1) {
         std::println("  FAIL: tracker not populated (index-count={})", rst ? rst->val : -1);
         ++g_failed;

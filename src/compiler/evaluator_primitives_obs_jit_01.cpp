@@ -591,15 +591,17 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         };
 
         // (engine:metrics "query:foo-stats") → single stats value
+        // Issue #1439: prefer internal stats impl table (public prims removed).
         if (a.size() >= 1 && is_string(a[0])) {
             auto sidx = as_string_idx(a[0]);
             if (sidx >= ev.string_heap_.size())
                 return make_void();
             const std::string& name = ev.string_heap_[sidx];
-            auto fn = ev.primitives_.lookup(name);
-            if (!fn)
-                return make_void();
-            return (*fn)({});
+            if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
+                return (*fn)({});
+            if (auto fn = ev.primitives_.lookup(name))
+                return (*fn)({});
+            return make_void();
         }
 
         // Keyword sub-ops: :all | :prefix s | :group g
@@ -615,7 +617,9 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 kv.push_back({"schema", make_int(2)});
                 kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
                 for (const auto& name : stats) {
-                    auto fn = ev.primitives_.lookup(name);
+                    std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(name);
+                    if (!fn)
+                        fn = ev.primitives_.lookup(name);
                     if (!fn)
                         continue;
                     kv.push_back({name, (*fn)({})});
@@ -638,7 +642,9 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 for (const auto& name : stats) {
                     if (name.size() < prefix.size() || name.compare(0, prefix.size(), prefix) != 0)
                         continue;
-                    auto fn = ev.primitives_.lookup(name);
+                    std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(name);
+                    if (!fn)
+                        fn = ev.primitives_.lookup(name);
                     if (fn)
                         kv.push_back({name, (*fn)({})});
                     else
@@ -775,9 +781,8 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
     // Issue #728: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=728 + category=general
     // + arity=0 + pure=true (same pattern as #712-#723 / #726).
-    ev.primitives_.add(
-        "query:unified-error-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:unified-error-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -841,22 +846,7 @@ void ObservabilityPrims::register_jit_p11(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(728)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Unified structured error + provenance + recovery observability: "
-                        "structured-hits (per-error-site migration to ErrorValue model), "
-                        "provenance-captured (StableNodeRef in error path), "
-                        "recovery-success (rollback + retry firings). Pairs with the "
-                        "existing #585 query:primitives-error-stats coarse hash "
-                        "(error-rate + recovery + panic + rollback) but tracks the "
-                        "*unified* model specifically as separate per-decision-point "
-                        "counters. #728 exposes the unified-model adoption rate "
-                        "the Agent consumes to decide whether to migrate legacy "
-                        "make_primitive_error call sites or trigger more recovery "
-                        "primitives.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 12 (orig lines 12890-13031)
@@ -913,9 +903,8 @@ void ObservabilityPrims::register_jit_p12(PrimRegistrar add, Evaluator& ev) {
     // Issue #731: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=731 + category=general
     // + arity=0 + pure=true (same pattern as #712-#728).
-    ev.primitives_.add(
-        "query:arena-concurrent-compact-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-concurrent-compact-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -984,25 +973,7 @@ void ObservabilityPrims::register_jit_p12(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(731)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Arena + SoA + EnvFrame concurrent compaction safety "
-                        "observability: concurrent-compacts (safepoint-coordinated "
-                        "compacts), envframe-revalidations (post-compact EnvId "
-                        "GCEnvWalkFn walks), panic-rollback-compact-hits (panic "
-                        "restore detected inconsistent compact + triggered rollback), "
-                        "races-prevented (steal/resume vs compact race safely deferred). "
-                        "Pairs with the existing #722 query:arena-integration-stats "
-                        "tier hash and #743 Arena auto-compact policy + fiber safepoint "
-                        "primitive but tracks the *concurrent* safety specifically as "
-                        "separate per-decision-point counters. #731 exposes the "
-                        "concurrent-compaction adoption rate + panic-rollback-coverage "
-                        "the Agent consumes to decide whether to enable concurrent "
-                        "compact under fiber contention or trigger panic-restore "
-                        "more aggressively.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 13 (orig lines 13032-13188)
@@ -1070,9 +1041,8 @@ void ObservabilityPrims::register_jit_p13(PrimRegistrar add, Evaluator& ev) {
     // Issue #732: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=732 + category=general
     // + arity=0 + pure=true (same pattern as #712-#728 / #731).
-    ev.primitives_.add(
-        "query:aot-safe-swap-boundary-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-safe-swap-boundary-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1146,24 +1116,7 @@ void ObservabilityPrims::register_jit_p13(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(732)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "AOT hot-reload safe-swap at MutationBoundary observability: "
-                        "safe-boundary-hits (per-reload mutation-boundary safe-swap "
-                        "firings), refcount-swaps + region-violations-prevented + "
-                        "concurrent-safe-reloads + deopt-on-steal (cross-reference "
-                        "with #708 query:aot-reload-stats high-level summary). Pairs "
-                        "with the existing #708 query:aot-reload-stats 5-7 field "
-                        "hash + #644 query:aot-reload-func-table-stats enforcement "
-                        "primitive + #590 query:aot-hotupdate-stats 3 atomics but "
-                        "tracks the *safe-swap at MutationBoundary* specifically "
-                        "as separate per-decision-point counters. #732 exposes the "
-                        "safe-swap adoption rate the Agent consumes to decide "
-                        "whether to defer reload until next safe-swap point or "
-                        "trigger safe-reload API.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 14 (orig lines 13189-13357)
@@ -1241,9 +1194,8 @@ void ObservabilityPrims::register_jit_p14(PrimRegistrar add, Evaluator& ev) {
     // Issue #733: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=733 + category=general
     // + arity=0 + pure=true (same pattern as #712-#732).
-    ev.primitives_.add(
-        "query:ir-marker-hygiene-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:ir-marker-hygiene-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1317,26 +1269,7 @@ void ObservabilityPrims::register_jit_p14(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(733)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "Macro SyntaxMarker propagation + IR/JIT hygiene enforcement "
-                        "observability: user-instrs vs macro-introduced-instrs "
-                        "(IR traffic split by marker), marker-loss-events (emit "
-                        "paths that failed to copy AST marker), "
-                        "jit-hygiene-violations-prevented (conservative policy "
-                        "firings on MacroIntroduced), marker-propagation-hits "
-                        "(successful AST-to-IR marker propagation). Pairs with "
-                        "the existing #714 query:self-evolution-closedloop-stats "
-                        "closed-loop reliability hash and #455 internal marker "
-                        "snapshot but tracks the *marker propagation + IR/JIT "
-                        "enforcement* specifically as separate per-decision-"
-                        "point counters. #733 exposes the hygiene fidelity "
-                        "the Agent consumes to decide whether to add "
-                        "propagate_marker_from_ast helpers, force Interpreter "
-                        "fallback, or trigger re-lower-with-marker on mutate.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 // Issue #909 part 15 (orig lines 13358-13526)
@@ -1418,9 +1351,8 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
     // Issue #735: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=735 + category=general
     // + arity=0 + pure=true (same pattern as #712-#733).
-    ev.primitives_.add(
-        "query:macro-provenance-stats",
-        [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:macro-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(16);
@@ -1489,27 +1421,7 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
                 {"schema", make_int(735)},
             };
             return build_hash(kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .doc = "MacroIntroduced provenance in StableNodeRef + targeted "
-                        "dirty/rollback for macro subtrees observability: "
-                        "is-macro-introduced-consults (hot-path consults on StableRef), "
-                        "provenance-captured (StableNodeRef with macro_introduced_at_"
-                        "capture + original_macro_expansion_id populated), "
-                        "dirty-impact-on-macro-subtree (targeted dirty propagation "
-                        "via original_macro_expansion_id), rollback-success (macro "
-                        "marker preserved during restore_children). Pairs with the "
-                        "existing #733 query:ir-marker-hygiene-stats IR-level "
-                        "marker propagation + #750 query:reflection-schema-stats "
-                        "runtime reflection validate but tracks the *MacroIntroduced "
-                        "provenance + targeted macro-subtree handling* specifically "
-                        "as separate per-decision-point counters. #735 exposes the "
-                        "macro-provenance + targeted-rollback adoption rate the "
-                        "Agent consumes to decide whether to enable provenance-aware "
-                        "rollback or trigger full-subtree rollback instead.",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

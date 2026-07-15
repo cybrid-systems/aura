@@ -53,7 +53,7 @@ int main() {
     // AC1: query:pass-pipeline-dirtyaware-stats returns hash
     {
         std::println("\n--- AC1: query:pass-pipeline-dirtyaware-stats ---");
-        auto stats = cs.eval("(query:pass-pipeline-dirtyaware-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:pass-pipeline-dirtyaware-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:pass-pipeline-dirtyaware-stats returns hash");
         CHECK(hash_int(cs, "pass-pipeline-runs") >= 0, "pass-pipeline-runs present");
@@ -115,9 +115,10 @@ int main() {
     // AC4: related pass pipeline primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto pipeline = cs.eval("(query:pass-pipeline-stats)");
-        auto contracts = cs.eval("(query:pass-contracts-stats)");
-        auto incremental = cs.eval("(query:pass-pipeline-incremental-stats-hash)");
+        auto pipeline = cs.eval("(engine:metrics \"query:pass-pipeline-stats\")");
+        auto contracts = cs.eval("(engine:metrics \"query:pass-contracts-stats\")");
+        auto incremental =
+            cs.eval("(engine:metrics \"query:pass-pipeline-incremental-stats-hash\")");
         CHECK(pipeline && aura::compiler::types::is_hash(*pipeline),
               "query:pass-pipeline-stats hash regression (#494)");
         CHECK(contracts && aura::compiler::types::is_int(*contracts),

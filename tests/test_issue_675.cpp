@@ -1,10 +1,10 @@
 // @category: integration
-// @reason: tests (query:ci-reproducibility-stats) primitive for Issue #675
+// @reason: tests (engine:metrics \"query:ci-reproducibility-stats\") primitive for Issue #675
 
 // test_issue_675.cpp — Issue #675: Build/CI reproducibility observability.
 //
 // Scope-limited close ships the METRICS + SCRIPT layer:
-//   - (query:ci-reproducibility-stats) 5-field hash primitive
+//   - (engine:metrics \"query:ci-reproducibility-stats\") 5-field hash primitive
 //   - scripts/ci_reproducibility.py dual-build verifier
 //   - scripts/gen_sbom.py CycloneDX SBOM generator
 //   - scripts/security_scan.sh + .github/dependabot.yml
@@ -89,7 +89,7 @@ int aura_issue_675_run() {
     // AC1: returns a hash
     {
         std::println("\n--- AC1: query:ci-reproducibility-stats returns hash ---");
-        auto r = run_on(cs, "(query:ci-reproducibility-stats)");
+        auto r = run_on(cs, "(engine:metrics \"query:ci-reproducibility-stats\")");
         CHECK(aura::compiler::types::is_hash(r), "returns a hash");
     }
 

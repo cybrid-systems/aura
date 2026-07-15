@@ -44,7 +44,7 @@ int main() {
     // AC1: query:primitives-hotpath-stats returns hash with #584 fields
     {
         std::println("\n--- AC1: query:primitives-hotpath-stats ---");
-        auto stats = cs.eval("(query:primitives-hotpath-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-hotpath-stats returns hash");
         CHECK(hash_int(cs, "primitive-call-total") >= 0, "primitive-call-total present (#614)");
@@ -102,9 +102,9 @@ int main() {
     // AC4: related primitives hot-path regression
     {
         std::println("\n--- AC4: regression ---");
-        auto core = cs.eval("(query:primitives-registry-core-stats)");
-        auto gov = cs.eval("(query:primitives-governance-stats)");
-        auto prim = cs.eval("(query:primitives-stats)");
+        auto core = cs.eval("(engine:metrics \"query:primitives-registry-core-stats\")");
+        auto gov = cs.eval("(engine:metrics \"query:primitives-governance-stats\")");
+        auto prim = cs.eval("(engine:metrics \"query:primitives-stats\")");
         CHECK(core && aura::compiler::types::is_hash(*core),
               "query:primitives-registry-core-stats hash regression (#583)");
         CHECK(gov && aura::compiler::types::is_hash(*gov),

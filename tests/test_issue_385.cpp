@@ -21,13 +21,13 @@
 // observability — the ratio of cache hits to cache
 // misses was invisible. Post-#385, the AI Agent can
 // measure the dedup ratio via the new
-// (compile:let-poly-stats) primitive and decide
+// (engine:metrics \"compile:let-poly-stats\") primitive and decide
 // whether the cache is doing useful work.
 //
 // Test cases:
 //   AC1: fresh CompilerService → poly_*_total == 0
 //   AC2: snapshot has 4 new poly fields
-//   AC3: (compile:let-poly-stats) returns 4-key hash
+//   AC3: (engine:metrics \"compile:let-poly-stats\") returns 4-key hash
 //   AC4: typecheck on a poly expression →
 //        poly_register_total > 0 (the
 //        register_forall call fired)
@@ -94,11 +94,11 @@ bool test_snapshot_has_new_fields() {
     return true;
 }
 
-// ── AC3: (compile:let-poly-stats) returns 4-key hash
+// ── AC3: (engine:metrics \"compile:let-poly-stats\") returns 4-key hash
 bool test_let_poly_stats_primitive() {
-    std::println("\n--- AC3: (compile:let-poly-stats) returns 4-key hash ---");
+    std::println("\n--- AC3: (engine:metrics \"compile:let-poly-stats\") returns 4-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define lps (compile:let-poly-stats))\")");
+    cs.eval("(set-code \"(define lps (engine:metrics \"compile:let-poly-stats\"))\")");
     cs.eval("(eval-current)");
     for (const char* key :
          {"register-total", "dedup-hits-total", "instantiate-total", "dedup-ratio-bp"}) {

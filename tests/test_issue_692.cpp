@@ -56,7 +56,7 @@ int aura_issue_692_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:adt-exhaustiveness-typed-mutate-stats ---");
-        auto stats = cs.eval("(query:adt-exhaustiveness-typed-mutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:adt-exhaustiveness-typed-mutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:adt-exhaustiveness-typed-mutate-stats returns hash");
         CHECK(stat_int(cs, "post-mutate-rechecks") >= 0, "post-mutate-rechecks present");
@@ -103,7 +103,7 @@ int aura_issue_692_run() {
     // AC3: query:adt-match-exhaust-stats regression
     {
         std::println("\n--- AC3: query:adt-match-exhaust-stats ---");
-        auto adt = cs.eval("(query:adt-match-exhaust-stats)");
+        auto adt = cs.eval("(engine:metrics \"query:adt-match-exhaust-stats\")");
         CHECK(adt && aura::compiler::types::is_int(*adt),
               "query:adt-match-exhaust-stats returns int");
         CHECK(aura::compiler::types::as_int(*adt) >= 0, "adt-match-exhaust-stats non-negative");

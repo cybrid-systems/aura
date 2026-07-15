@@ -29,7 +29,7 @@
 // Test cases:
 //   AC1: fresh CompilerService → narrowing_provenance_total = 0
 //   AC2: snapshot has narrowing_provenance_total field
-//   AC3: (compile:narrowing-blame-stats) returns 1-key hash
+//   AC3: (engine:metrics \"compile:narrowing-blame-stats\") returns 1-key hash
 //   AC4: typecheck on (if (number? x) ...) →
 //        narrowing_provenance_total > 0 (the
 //        OccurrenceInfoFlat has predicate_name +
@@ -92,11 +92,12 @@ bool test_snapshot_has_new_field() {
     return true;
 }
 
-// ── AC3: (compile:narrowing-blame-stats) returns 1-key hash
+// ── AC3: (engine:metrics \"compile:narrowing-blame-stats\") returns 1-key hash
 bool test_narrowing_blame_stats_primitive() {
-    std::println("\n--- AC3: (compile:narrowing-blame-stats) returns 1-key hash ---");
+    std::println(
+        "\n--- AC3: (engine:metrics \"compile:narrowing-blame-stats\") returns 1-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define nbs (compile:narrowing-blame-stats))\")");
+    cs.eval("(set-code \"(define nbs (engine:metrics \"compile:narrowing-blame-stats\"))\")");
     cs.eval("(eval-current)");
     auto r = cs.eval("(hash-ref nbs \"provenance-total\")");
     CHECK(r && aura::compiler::types::is_int(*r), "hash-ref nbs \"provenance-total\" returns int");

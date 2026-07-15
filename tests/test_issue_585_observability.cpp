@@ -55,7 +55,7 @@ int main() {
     // AC1: query:primitives-error-stats returns hash with #585 fields
     {
         std::println("\n--- AC1: query:primitives-error-stats ---");
-        auto stats = cs.eval("(query:primitives-error-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:primitives-error-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitives-error-stats returns hash");
         CHECK(hash_int(cs, "primitive-error-count") >= 0, "primitive-error-count present");
@@ -116,10 +116,10 @@ int main() {
     // AC4: related error primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto pair_stats = cs.eval("(query:primitive-error-stats)");
-        auto core = cs.eval("(query:primitives-registry-core-stats)");
-        auto prim = cs.eval("(query:primitives-stats)");
-        auto hotpath = cs.eval("(query:primitives-hotpath-stats)");
+        auto pair_stats = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
+        auto core = cs.eval("(engine:metrics \"query:primitives-registry-core-stats\")");
+        auto prim = cs.eval("(engine:metrics \"query:primitives-stats\")");
+        auto hotpath = cs.eval("(engine:metrics \"query:primitives-hotpath-stats\")");
         CHECK(pair_stats && aura::compiler::types::is_pair(*pair_stats),
               "query:primitive-error-stats pair regression (#478)");
         CHECK(core && aura::compiler::types::is_hash(*core),

@@ -1267,6 +1267,12 @@ export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
 // tracking during diagnosis), elapsed_us (per-call timing), and
 // Rule 4/5 (safe Dynamic passthrough using TypeRegistry when
 // available, falling back to the type_tag field on the instruction).
+//
+// Issue #1418: wire-up into CompilerService run_pipeline packs
+// (eval_ir / exec_jit / hot-swap re-lower) in addition to the
+// default eval() path and run_coercion_elim_on_function. Metrics
+// flow through accumulate_coercion_pass_metrics →
+// dead_coercion_eliminated_total / (compile:dead-coercion-stats).
 export class DeadCoercionEliminationPass {
 public:
     explicit DeadCoercionEliminationPass(const aura::core::TypeRegistry* reg = nullptr)

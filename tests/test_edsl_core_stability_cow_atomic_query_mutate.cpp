@@ -33,7 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:edsl-core-stability-stats) \"" + key + "\")");
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:edsl-core-stability-stats\") \"" + key + "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +62,7 @@ static bool setup_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:edsl-core-stability-stats (schema 655) ---");
     CHECK(setup_workspace(cs), "workspace setup");
-    auto h = cs.eval("(query:edsl-core-stability-stats)");
+    auto h = cs.eval("(engine:metrics \"query:edsl-core-stability-stats\")");
     CHECK(h && is_hash(*h), "edsl-core-stability-stats returns hash");
     CHECK(hash_int(cs, "schema") == 655, "schema == 655");
 
@@ -110,8 +111,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(safe >= 0, "children-safe-views readable");
 
     std::println("\n--- AC7: query regression ---");
-    auto cow = cs.eval("(query:stable-ref-cow-fiber-stats)");
-    auto edsl = cs.eval("(query:edsl-stability-stats)");
+    auto cow = cs.eval("(engine:metrics \"query:stable-ref-cow-fiber-stats\")");
+    auto edsl = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
     auto pindex = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(cow && is_int(*cow), "stable-ref-cow-fiber-stats regression");
     CHECK(edsl && is_int(*edsl), "edsl-stability-stats regression");

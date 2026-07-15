@@ -47,7 +47,7 @@ int aura_issue_502_run() {
     // AC1: query:reflect-postmutate-stats returns hash
     {
         std::println("\n--- AC1: query:reflect-postmutate-stats ---");
-        auto stats = cs.eval("(query:reflect-postmutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:reflect-postmutate-stats returns hash");
     }
@@ -82,7 +82,7 @@ int aura_issue_502_run() {
         const auto impact_before = cs.evaluator().get_mutation_impact_count();
         CHECK(cs.eval("(mutate:rebind \"b\" \"20\")").has_value(), "second mutate under Guard");
         (void)cs.eval("(query:pattern \"a\")");
-        auto stats = cs.eval("(query:reflect-postmutate-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "reflect-postmutate-stats hash after cycle");
         CHECK(cs.evaluator().get_mutation_impact_count() > impact_before,
@@ -96,7 +96,7 @@ int aura_issue_502_run() {
         CHECK(setup_workspace(cs2), "fresh workspace for query-only path");
         const auto fail0 = cs2.evaluator().get_schema_validation_fail_count();
         (void)cs2.eval("(query:pattern \"a\")");
-        auto stats = cs2.eval("(query:reflect-postmutate-stats)");
+        auto stats = cs2.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "reflect-postmutate-stats hash on query-only path");
         CHECK(cs2.evaluator().get_schema_validation_fail_count() == fail0,
@@ -107,7 +107,7 @@ int aura_issue_502_run() {
     {
         std::println("\n--- AC6: related stats regression ---");
         auto mi = cs.eval("(query:mutation-impact)");
-        auto rself = cs.eval("(query:reflection-selfmod-stats)");
+        auto rself = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
         CHECK(mi && aura::compiler::types::is_int(*mi), "mutation-impact regression");
         CHECK(rself && aura::compiler::types::is_int(*rself),
               "reflection-selfmod-stats regression");

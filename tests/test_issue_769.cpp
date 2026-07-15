@@ -15,14 +15,14 @@
 //   3. Metrics for elided coercions + schema-sentineled primitive
 //      → shipped via #629 (4 CompilerMetrics atomics) + #799
 //      ((query:dead-coercion-elision-stats, schema 799) +
-//      (query:dead-coercion-zerooverhead-stats) + bump helpers).
+//      (engine:metrics \"query:dead-coercion-zerooverhead-stats\") + bump helpers).
 //
 // This test exercises the 3 items as a regression net:
 //   AC1: DCE Pass class instantiable + runnable on an IRModule with
 //        narrow_evidence-proved CastOp; reports narrow_evidence hit.
 //   AC2: (query:dead-coercion-elision-stats, schema 799) primitive
 //        reachable with all 4 fields + schema sentinel.
-//   AC3: (query:dead-coercion-zerooverhead-stats) regression (the
+//   AC3: (engine:metrics \"query:dead-coercion-zerooverhead-stats\") regression (the
 //        #629 primitive, distinct from #799 — schema 629).
 //   AC4: Pass satisfies JITFriendlyPass concept (exposes
 //        pipeline_epoch_hint + name + is_block_dirty).
@@ -84,9 +84,9 @@ static void run_ac1_dce_pass_runnable(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_metrics_primitive(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: (query:dead-coercion-elision-stats, schema 799) reachable ---");
-    auto r = cs.eval("(query:dead-coercion-elision-stats)");
+    auto r = cs.eval("(engine:metrics \"query:dead-coercion-elision-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:dead-coercion-elision-stats) returns a hash (item 3 ship)");
+          "(engine:metrics \"query:dead-coercion-elision-stats\") returns a hash (item 3 ship)");
     const std::vector<std::string> keys = {"elided-casts", "evidence-hits",
                                            "narrowing-stable-paths", "runtime-check-savings",
                                            "schema"};
@@ -95,28 +95,31 @@ static void run_ac2_metrics_primitive(aura::compiler::CompilerService& cs) {
             "(hash-ref (engine:metrics \"query:dead-coercion-elision-stats\") '{}')", k));
         CHECK(f, std::format("field '{}' present", k));
     }
-    const auto schema = hash_int_field(cs, "(query:dead-coercion-elision-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:dead-coercion-elision-stats\")", "schema");
     CHECK(schema == 799,
           std::format("schema = {} (expected 799, #799 primitive ship confirmed)", schema));
 }
 
 static void run_ac3_zerooverhead_primitive(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC3: (query:dead-coercion-zerooverhead-stats) #508/#629 regression ---");
-    auto r = cs.eval("(query:dead-coercion-zerooverhead-stats)");
+    std::println("\n--- AC3: (engine:metrics \"query:dead-coercion-zerooverhead-stats\") #508/#629 "
+                 "regression ---");
+    auto r = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:dead-coercion-zerooverhead-stats) returns a hash (#508/#629 ship)");
+          "(engine:metrics \"query:dead-coercion-zerooverhead-stats\") returns a hash (#508/#629 "
+          "ship)");
     // The #508/#629 primitive ships WITHOUT a schema sentinel (its fields
     // are: eliminated / elapsed-us / kept-for-debug / type-prop-hits /
     // zerooverhead-wins / dead-coercion-total / dead-coercion-recommendation).
     // We verify reachability of the canonical fields + that they are non-negative.
-    const auto eliminated =
-        hash_int_field(cs, "(query:dead-coercion-zerooverhead-stats)", "eliminated");
+    const auto eliminated = hash_int_field(
+        cs, "(engine:metrics \"query:dead-coercion-zerooverhead-stats\")", "eliminated");
     CHECK(eliminated >= 0, std::format("'eliminated' field = {} (>=0, reachable)", eliminated));
-    const auto wins =
-        hash_int_field(cs, "(query:dead-coercion-zerooverhead-stats)", "zerooverhead-wins");
+    const auto wins = hash_int_field(
+        cs, "(engine:metrics \"query:dead-coercion-zerooverhead-stats\")", "zerooverhead-wins");
     CHECK(wins >= 0, std::format("'zerooverhead-wins' field = {} (>=0, reachable)", wins));
-    const auto type_prop_hits =
-        hash_int_field(cs, "(query:dead-coercion-zerooverhead-stats)", "type-prop-hits");
+    const auto type_prop_hits = hash_int_field(
+        cs, "(engine:metrics \"query:dead-coercion-zerooverhead-stats\")", "type-prop-hits");
     CHECK(type_prop_hits >= 0,
           std::format("'type-prop-hits' field = {} (>=0, reachable, #629 ship confirmed)",
                       type_prop_hits));
@@ -137,24 +140,26 @@ static void run_ac4_jit_friendly_concept() {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — sibling primitives + #769 observation reachability ---");
-    auto shape_pass_hotpath = cs.eval("(query:shape-pass-hotpath-stats)");
+    auto shape_pass_hotpath = cs.eval("(engine:metrics \"query:shape-pass-hotpath-stats\")");
     auto arena_defrag_fiber =
         cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
-    auto ir_soa_migration = cs.eval("(query:ir-soa-migration-stats)");
+    auto ir_soa_migration = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
     CHECK(shape_pass_hotpath && aura::compiler::types::is_hash(*shape_pass_hotpath),
           "query:shape-pass-hotpath-stats hash regression (#768)");
     CHECK(arena_defrag_fiber && aura::compiler::types::is_hash(*arena_defrag_fiber),
           "query:arena-auto-compact-defrag-fiber-stats hash regression (#767)");
     CHECK(ir_soa_migration && aura::compiler::types::is_hash(*ir_soa_migration),
           "query:ir-soa-migration-stats hash regression (#766)");
-    const auto a768_schema = hash_int_field(cs, "(query:shape-pass-hotpath-stats)", "schema");
+    const auto a768_schema =
+        hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")", "schema");
     CHECK(a768_schema == 768,
           std::format("#768 schema = {} (expected 768, no drift)", a768_schema));
     const auto a767_schema = hash_int_field(
         cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
     CHECK(a767_schema == 767,
           std::format("#767 schema = {} (expected 767, no drift)", a767_schema));
-    const auto a766_schema = hash_int_field(cs, "(query:ir-soa-migration-stats)", "schema");
+    const auto a766_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-migration-stats\")", "schema");
     CHECK(a766_schema == 766,
           std::format("#766 schema = {} (expected 766, no drift)", a766_schema));
 }

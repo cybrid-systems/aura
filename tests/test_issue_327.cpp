@@ -98,12 +98,12 @@ bool test_macro_then_mutate_dirty() {
                   "(define-hygienic-macro (mk x) (list 'define (list 'v x) x)) "
                   "(mk 1) (mk 2) (mk 3)\")");
     (void)cs.eval("(eval-current)");
-    auto before = cs.eval("(compile:ast-ops-stats)");
+    auto before = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(before.has_value(), "ast-ops-stats observable pre-mutate");
     // Mutate one of the macro-introduced bindings.
     auto r = cs.eval("(mutate:query-and-replace v 100)");
     CHECK(r.has_value(), "mutate macro-introduced binding succeeds");
-    auto after = cs.eval("(compile:ast-ops-stats)");
+    auto after = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(after.has_value(), "ast-ops-stats observable post-mutate");
     return true;
 }
@@ -156,13 +156,13 @@ bool test_macro_then_multi_query_pattern() {
     return true;
 }
 
-// ── Scenario 6: (query:compiler-cache-stats) returns 3-tuple shape ──
+// ── Scenario 6: (engine:metrics \"query:compiler-cache-stats\") returns 3-tuple shape ──
 bool test_compiler_cache_stats_observable() {
     std::println("\n--- Scenario 6: query:compiler-cache-stats 3-tuple shape ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define x 1) (define y 2)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:compiler-cache-stats)");
+    auto r = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     CHECK(r.has_value(), "query:compiler-cache-stats returns a value");
     CHECK(r && aura::compiler::types::is_pair(*r), "query:compiler-cache-stats result is a pair");
     return true;
@@ -185,7 +185,7 @@ bool test_e2e_pipeline() {
     auto re = cs.eval("(eval-current)");
     CHECK(re.has_value(), "re-eval after macro + mutate succeeds");
     // Phase 4: dirty-stats accessible.
-    auto dirty = cs.eval("(compile:ast-ops-stats)");
+    auto dirty = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
     CHECK(dirty.has_value(), "dirty-stats observable after full pipeline");
     return true;
 }

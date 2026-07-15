@@ -150,16 +150,32 @@ CATEGORY_PREFIX_MAP: dict[str, str] = {
     "query:": "internal-observable",
     "snapshot": "internal-observable",
     "metrics": "internal-observable",
-    # convenience: high-level wrappers that build on core
-    # primitives. Per the decision framework, MOST of these
-    # should migrate to stdlib (Issue 1's framework applies).
-    "string-": "convenience",
-    "vector": "convenience",
-    "hash-": "convenience",
+    # Hot-path string / vector / JSON (red-line #3) — language core,
+    # NOT stdlib-only convenience. Issue #1440: do not demote these.
+    "string-": "core",
+    "string->": "core",
+    "string=?": "core",
+    "string<?": "core",
+    "vector": "core",
+    "list->vector": "core",
+    "json-": "core",
+    # Math builtins (floor/sin/…) are bare names → fall through to core.
+    # Hash tables are language core (Agent / metrics / JSON objects).
+    "hash-": "core",
+    "hash->": "core",
+    "make-hash": "core",
+    # True convenience / product-layer wrappers (stdlib or demote candidates):
     "format": "convenience",
-    "json": "convenience",
-    "path": "convenience",
+    "path-": "convenience",
+    "time-": "convenience",
     "orchestrator": "convenience",
+    "agent-": "convenience",
+    "auto-evolve": "convenience",
+    # Host / FFI boundary (red-line #4) — not "convenience".
+    "c-": "mutation-safety",
+    "ffi-": "mutation-safety",
+    "file-": "mutation-safety",
+    "git-": "mutation-safety",
 }
 
 
@@ -199,15 +215,21 @@ def classify_primitive(name: str, overrides: dict[str, str]) -> str:
     """
     if name in overrides:
         return overrides[name]
+    # Longest-prefix match so "string->" wins over "string-" etc.
+    best: str | None = None
+    best_len = -1
     for prefix, cat in CATEGORY_PREFIX_MAP.items():
-        if name == prefix or name.startswith(prefix):
-            return cat
-    # Workspace boot dependencies default to core.
+        if (name == prefix or name.startswith(prefix)) and len(prefix) > best_len:
+            best = cat
+            best_len = len(prefix)
+    if best is not None:
+        return best
+    # Workspace boot dependencies default to mutation-safety.
     if name in {"set-code", "current-source", "eval-current", "api-reference"}:
         return "mutation-safety"
-    # Most high-level utilities default to convenience.
-    if "-" in name and ":" not in name:
-        return "convenience"
+    # Issue #1440: bare hyphenated names are NOT auto-convenience.
+    # Only explicit PREFIX_MAP / yaml overrides mark convenience;
+    # unknown names default to core (safer for engine-boot red-line).
     return "core"
 
 

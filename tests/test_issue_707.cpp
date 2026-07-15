@@ -58,7 +58,7 @@ int aura_issue_707_run() {
     // AC1: query:per-fiber-stack-pool-stats hash fields
     {
         std::println("\n--- AC1: query:per-fiber-stack-pool-stats ---");
-        auto stats = cs.eval("(query:per-fiber-stack-pool-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:per-fiber-stack-pool-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:per-fiber-stack-pool-stats returns hash");
         CHECK(stat_int(cs, "pool-hits") >= 0, "pool-hits present");
@@ -189,7 +189,7 @@ int aura_issue_707_run() {
                 std::lock_guard<std::mutex> lk(eval_mtx);
                 (void)cs.eval("(typecheck-current)");
                 (void)cs.eval("(mutate:request-gc-safepoint)");
-                auto r = cs.eval("(query:per-fiber-stack-pool-stats)");
+                auto r = cs.eval("(engine:metrics \"query:per-fiber-stack-pool-stats\")");
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

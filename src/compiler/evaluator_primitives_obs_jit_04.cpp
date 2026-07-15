@@ -168,71 +168,72 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 3 deferred
     //       flags + activity signal
     //   - schema == 790
-    add("query:mutate-batch-atomic-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t cross_fiber_steals =
-            static_cast<std::int64_t>(ev.atomic_batch_cross_fiber_steals_total());
-        const std::int64_t hygiene_violations =
-            static_cast<std::int64_t>(ev.atomic_batch_hygiene_violations_total());
-        // 4 hardcoded "not yet" fields for Phase 2+
-        // deferred work.
-        const std::int64_t hygiene_violation_rate = 0;
-        const std::int64_t atomic_batch_primitive_active = 0;
-        const std::int64_t snapshot_capture_active = 0;
-        const std::int64_t cross_fiber_re_stamp_active = 0;
-        // Recommendation: derived from the 3 deferred
-        // flags + activity signal. Phase 1 only (all
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (atomic_batch_primitive_active == 1 && snapshot_capture_active == 1 &&
-            cross_fiber_re_stamp_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (atomic_batch_primitive_active == 1 || snapshot_capture_active == 1 ||
-                 cross_fiber_re_stamp_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (cross_fiber_steals > 0 || hygiene_violations > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
-        else
-            recommendation = 3; // early-stage (no batch activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:mutate-batch-atomic-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t cross_fiber_steals =
+                static_cast<std::int64_t>(ev.atomic_batch_cross_fiber_steals_total());
+            const std::int64_t hygiene_violations =
+                static_cast<std::int64_t>(ev.atomic_batch_hygiene_violations_total());
+            // 4 hardcoded "not yet" fields for Phase 2+
+            // deferred work.
+            const std::int64_t hygiene_violation_rate = 0;
+            const std::int64_t atomic_batch_primitive_active = 0;
+            const std::int64_t snapshot_capture_active = 0;
+            const std::int64_t cross_fiber_re_stamp_active = 0;
+            // Recommendation: derived from the 3 deferred
+            // flags + activity signal. Phase 1 only (all
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (atomic_batch_primitive_active == 1 && snapshot_capture_active == 1 &&
+                cross_fiber_re_stamp_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (atomic_batch_primitive_active == 1 || snapshot_capture_active == 1 ||
+                     cross_fiber_re_stamp_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (cross_fiber_steals > 0 || hygiene_violations > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+            else
+                recommendation = 3; // early-stage (no batch activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("cross-fiber-steals-during-batch", cross_fiber_steals);
-        insert_kv("hygiene-violations-in-batch", hygiene_violations);
-        insert_kv("hygiene-violation-rate", hygiene_violation_rate);
-        insert_kv("atomic-batch-primitive-active", atomic_batch_primitive_active);
-        insert_kv("snapshot-capture-active", snapshot_capture_active);
-        insert_kv("cross-fiber-re-stamp-active", cross_fiber_re_stamp_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 790);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("cross-fiber-steals-during-batch", cross_fiber_steals);
+            insert_kv("hygiene-violations-in-batch", hygiene_violations);
+            insert_kv("hygiene-violation-rate", hygiene_violation_rate);
+            insert_kv("atomic-batch-primitive-active", atomic_batch_primitive_active);
+            insert_kv("snapshot-capture-active", snapshot_capture_active);
+            insert_kv("cross-fiber-re-stamp-active", cross_fiber_re_stamp_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 790);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 33 (orig lines 16338-16506)
@@ -333,7 +334,8 @@ void ObservabilityPrims::register_jit_p33(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 2 deferred
     //       flags + activity signal
     //   - schema == 791
-    add("query:workspace-closedloop-fiber-multi-agent-yield-stats",
+    ObservabilityPrims::register_stats_impl(
+        "query:workspace-closedloop-fiber-multi-agent-yield-stats",
         [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -499,85 +501,87 @@ void ObservabilityPrims::register_jit_p34(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 2 deferred
     //       flags + activity signal
     //   - schema == 792
-    add("query:compiler-invalidate-guard-steal-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t deferred_invalidates =
-            m ? static_cast<std::int64_t>(
-                    m->compiler_invalidate_deferred_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t version_refresh_hits =
-            m ? static_cast<std::int64_t>(
-                    m->compiler_version_refresh_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t guardshape_deopt =
-            m ? static_cast<std::int64_t>(
-                    m->compiler_guardshape_deopt_on_steal_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t live_closure_stale_prevented =
-            m ? static_cast<std::int64_t>(
-                    m->compiler_live_closure_stale_prevented_total.load(std::memory_order_relaxed))
-              : 0;
-        // 2 hardcoded "not yet" flags for Phase 2+
-        // deferred work.
-        const std::int64_t safe_invalidate_at_outermost_boundary_active = 0;
-        const std::int64_t steal_resume_version_refresh_active = 0;
-        // Recommendation: derived from the 2 deferred
-        // flags + activity signal. Phase 1 only (both
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (safe_invalidate_at_outermost_boundary_active == 1 &&
-            steal_resume_version_refresh_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (safe_invalidate_at_outermost_boundary_active == 1 ||
-                 steal_resume_version_refresh_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (deferred_invalidates > 0 || version_refresh_hits > 0 || guardshape_deopt > 0 ||
-                 live_closure_stale_prevented > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
-        else
-            recommendation = 3; // early-stage (no compiler-runtime sync activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:compiler-invalidate-guard-steal-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t deferred_invalidates =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_invalidate_deferred_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t version_refresh_hits =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_version_refresh_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guardshape_deopt =
+                m ? static_cast<std::int64_t>(
+                        m->compiler_guardshape_deopt_on_steal_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t live_closure_stale_prevented =
+                m ? static_cast<std::int64_t>(m->compiler_live_closure_stale_prevented_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            // 2 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t safe_invalidate_at_outermost_boundary_active = 0;
+            const std::int64_t steal_resume_version_refresh_active = 0;
+            // Recommendation: derived from the 2 deferred
+            // flags + activity signal. Phase 1 only (both
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (safe_invalidate_at_outermost_boundary_active == 1 &&
+                steal_resume_version_refresh_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (safe_invalidate_at_outermost_boundary_active == 1 ||
+                     steal_resume_version_refresh_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (deferred_invalidates > 0 || version_refresh_hits > 0 || guardshape_deopt > 0 ||
+                     live_closure_stale_prevented > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+            else
+                recommendation = 3; // early-stage (no compiler-runtime sync activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("deferred-invalidates-total", deferred_invalidates);
-        insert_kv("version-refresh-hits-total", version_refresh_hits);
-        insert_kv("guardshape-deopt-on-steal-total", guardshape_deopt);
-        insert_kv("live-closure-stale-prevented-total", live_closure_stale_prevented);
-        insert_kv("safe-invalidate-at-outermost-boundary-active",
-                  safe_invalidate_at_outermost_boundary_active);
-        insert_kv("steal-resume-version-refresh-active", steal_resume_version_refresh_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 792);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("deferred-invalidates-total", deferred_invalidates);
+            insert_kv("version-refresh-hits-total", version_refresh_hits);
+            insert_kv("guardshape-deopt-on-steal-total", guardshape_deopt);
+            insert_kv("live-closure-stale-prevented-total", live_closure_stale_prevented);
+            insert_kv("safe-invalidate-at-outermost-boundary-active",
+                      safe_invalidate_at_outermost_boundary_active);
+            insert_kv("steal-resume-version-refresh-active", steal_resume_version_refresh_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 792);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 35 (orig lines 16675-16832)
@@ -664,82 +668,87 @@ void ObservabilityPrims::register_jit_p35(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 2 deferred
     //       flags + activity signal
     //   - schema == 793
-    add("query:jit-aot-hotswap-fidelity-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t deopt_forced =
-            m ? static_cast<std::int64_t>(
-                    m->jit_deopt_forced_on_reload_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t linear_prevented =
-            m ? static_cast<std::int64_t>(
-                    m->jit_linear_violation_prevented_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t env_sync =
-            m ? static_cast<std::int64_t>(
-                    m->jit_env_version_sync_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t guardshape_stale =
-            m ? static_cast<std::int64_t>(
-                    m->jit_guardshape_stale_reject_total.load(std::memory_order_relaxed))
-              : 0;
-        // 2 hardcoded "not yet" flags for Phase 2+
-        // deferred work.
-        const std::int64_t reload_deopt_version_hooks_active = 0;
-        const std::int64_t jit_emit_runtime_version_checks_active = 0;
-        // Recommendation: derived from the 2 deferred
-        // flags + activity signal. Phase 1 only (both
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (reload_deopt_version_hooks_active == 1 && jit_emit_runtime_version_checks_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (reload_deopt_version_hooks_active == 1 ||
-                 jit_emit_runtime_version_checks_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (deopt_forced > 0 || linear_prevented > 0 || env_sync > 0 || guardshape_stale > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
-        else
-            recommendation = 3; // early-stage (no JIT/AOT fidelity activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-aot-hotswap-fidelity-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t deopt_forced =
+                m ? static_cast<std::int64_t>(
+                        m->jit_deopt_forced_on_reload_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear_prevented =
+                m ? static_cast<std::int64_t>(
+                        m->jit_linear_violation_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t env_sync =
+                m ? static_cast<std::int64_t>(
+                        m->jit_env_version_sync_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guardshape_stale =
+                m ? static_cast<std::int64_t>(
+                        m->jit_guardshape_stale_reject_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 2 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t reload_deopt_version_hooks_active = 0;
+            const std::int64_t jit_emit_runtime_version_checks_active = 0;
+            // Recommendation: derived from the 2 deferred
+            // flags + activity signal. Phase 1 only (both
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (reload_deopt_version_hooks_active == 1 &&
+                jit_emit_runtime_version_checks_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (reload_deopt_version_hooks_active == 1 ||
+                     jit_emit_runtime_version_checks_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (deopt_forced > 0 || linear_prevented > 0 || env_sync > 0 ||
+                     guardshape_stale > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, expose/wire deferred)
+            else
+                recommendation = 3; // early-stage (no JIT/AOT fidelity activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("deopt-forced-on-reload-total", deopt_forced);
-        insert_kv("linear-violation-prevented-total", linear_prevented);
-        insert_kv("env-version-sync-hits-total", env_sync);
-        insert_kv("guardshape-stale-reject-total", guardshape_stale);
-        insert_kv("reload-deopt-version-hooks-active", reload_deopt_version_hooks_active);
-        insert_kv("jit-emit-runtime-version-checks-active", jit_emit_runtime_version_checks_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 793);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("deopt-forced-on-reload-total", deopt_forced);
+            insert_kv("linear-violation-prevented-total", linear_prevented);
+            insert_kv("env-version-sync-hits-total", env_sync);
+            insert_kv("guardshape-stale-reject-total", guardshape_stale);
+            insert_kv("reload-deopt-version-hooks-active", reload_deopt_version_hooks_active);
+            insert_kv("jit-emit-runtime-version-checks-active",
+                      jit_emit_runtime_version_checks_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 793);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 36 (orig lines 16833-17004)
@@ -840,82 +849,84 @@ void ObservabilityPrims::register_jit_p36(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the 2 deferred
     //       flags + activity signal
     //   - schema == 794
-    add("query:full-closedloop-compiler-edsl-fidelity-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t guardshape_deopt =
-            m ? static_cast<std::int64_t>(
-                    m->cross_layer_guardshape_deopt_hits_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t linear_success =
-            m ? static_cast<std::int64_t>(
-                    m->cross_layer_linear_enforce_success_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t epoch_sync =
-            m ? static_cast<std::int64_t>(
-                    m->cross_layer_epoch_sync_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t drift_detections =
-            m ? static_cast<std::int64_t>(
-                    m->cross_layer_drift_detections_total.load(std::memory_order_relaxed))
-              : 0;
-        // 2 hardcoded "not yet" flags for Phase 2+
-        // deferred work.
-        const std::int64_t full_closedloop_harness_active = 0;
-        const std::int64_t slo_gate_active = 0;
-        // Recommendation: derived from the 2 deferred
-        // flags + activity signal. Phase 1 only (both
-        // deferred flags == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (full_closedloop_harness_active == 1 && slo_gate_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (full_closedloop_harness_active == 1 || slo_gate_active == 1)
-            recommendation = 1; // partial Phase 2+
-        else if (guardshape_deopt > 0 || linear_success > 0 || epoch_sync > 0 ||
-                 drift_detections > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, harness deferred)
-        else
-            recommendation = 3; // early-stage (no closed-loop fidelity activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:full-closedloop-compiler-edsl-fidelity-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t guardshape_deopt =
+                m ? static_cast<std::int64_t>(
+                        m->cross_layer_guardshape_deopt_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear_success =
+                m ? static_cast<std::int64_t>(
+                        m->cross_layer_linear_enforce_success_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t epoch_sync =
+                m ? static_cast<std::int64_t>(
+                        m->cross_layer_epoch_sync_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t drift_detections =
+                m ? static_cast<std::int64_t>(
+                        m->cross_layer_drift_detections_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 2 hardcoded "not yet" flags for Phase 2+
+            // deferred work.
+            const std::int64_t full_closedloop_harness_active = 0;
+            const std::int64_t slo_gate_active = 0;
+            // Recommendation: derived from the 2 deferred
+            // flags + activity signal. Phase 1 only (both
+            // deferred flags == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (full_closedloop_harness_active == 1 && slo_gate_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (full_closedloop_harness_active == 1 || slo_gate_active == 1)
+                recommendation = 1; // partial Phase 2+
+            else if (guardshape_deopt > 0 || linear_success > 0 || epoch_sync > 0 ||
+                     drift_detections > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, harness deferred)
+            else
+                recommendation = 3; // early-stage (no closed-loop fidelity activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("cross-layer-guardshape-deopt-hits-total", guardshape_deopt);
-        insert_kv("cross-layer-linear-enforce-success-total", linear_success);
-        insert_kv("cross-layer-epoch-sync-total", epoch_sync);
-        insert_kv("cross-layer-drift-detections-total", drift_detections);
-        insert_kv("full-closedloop-harness-active", full_closedloop_harness_active);
-        insert_kv("slo-gate-active", slo_gate_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 794);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("cross-layer-guardshape-deopt-hits-total", guardshape_deopt);
+            insert_kv("cross-layer-linear-enforce-success-total", linear_success);
+            insert_kv("cross-layer-epoch-sync-total", epoch_sync);
+            insert_kv("cross-layer-drift-detections-total", drift_detections);
+            insert_kv("full-closedloop-harness-active", full_closedloop_harness_active);
+            insert_kv("slo-gate-active", slo_gate_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 794);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 37 (orig lines 17005-17167)
@@ -1010,79 +1021,81 @@ void ObservabilityPrims::register_jit_p37(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the deferred flag
     //       + activity signal
     //   - schema == 795
-    add("query:shape-pass-hotpath-contracts-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t soa_view_violations =
-            m ? static_cast<std::int64_t>(
-                    m->soa_view_violations_caught_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t shape_stable_pass_violations =
-            m ? static_cast<std::int64_t>(
-                    m->shape_stable_pass_violations_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t targeted_deopt =
-            m ? static_cast<std::int64_t>(
-                    m->targeted_deopt_via_impact_scope_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t on_compact_hook =
-            m ? static_cast<std::int64_t>(
-                    m->on_compact_hook_invocations_total.load(std::memory_order_relaxed))
-              : 0;
-        // 1 hardcoded "not yet" flag for Phase 2+
-        // deferred work (covers all 3+ deferred
-        // wire-up areas).
-        const std::int64_t concepts_active = 0;
-        // Recommendation: derived from the deferred
-        // flag + activity signal. Phase 1 only
-        // (deferred flag == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (concepts_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (soa_view_violations > 0 || shape_stable_pass_violations > 0 ||
-                 targeted_deopt > 0 || on_compact_hook > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, concepts deferred)
-        else
-            recommendation = 3; // early-stage (no hot-path contracts activity yet)
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:shape-pass-hotpath-contracts-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t soa_view_violations =
+                m ? static_cast<std::int64_t>(
+                        m->soa_view_violations_caught_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t shape_stable_pass_violations =
+                m ? static_cast<std::int64_t>(
+                        m->shape_stable_pass_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t targeted_deopt =
+                m ? static_cast<std::int64_t>(
+                        m->targeted_deopt_via_impact_scope_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t on_compact_hook =
+                m ? static_cast<std::int64_t>(
+                        m->on_compact_hook_invocations_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 1 hardcoded "not yet" flag for Phase 2+
+            // deferred work (covers all 3+ deferred
+            // wire-up areas).
+            const std::int64_t concepts_active = 0;
+            // Recommendation: derived from the deferred
+            // flag + activity signal. Phase 1 only
+            // (deferred flag == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (concepts_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (soa_view_violations > 0 || shape_stable_pass_violations > 0 ||
+                     targeted_deopt > 0 || on_compact_hook > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, concepts deferred)
+            else
+                recommendation = 3; // early-stage (no hot-path contracts activity yet)
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("soa-view-violations-caught-total", soa_view_violations);
-        insert_kv("shape-stable-pass-violations-total", shape_stable_pass_violations);
-        insert_kv("targeted-deopt-via-impact-scope-total", targeted_deopt);
-        insert_kv("on-compact-hook-invocations-total", on_compact_hook);
-        insert_kv("concepts-active", concepts_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 795);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("soa-view-violations-caught-total", soa_view_violations);
+            insert_kv("shape-stable-pass-violations-total", shape_stable_pass_violations);
+            insert_kv("targeted-deopt-via-impact-scope-total", targeted_deopt);
+            insert_kv("on-compact-hook-invocations-total", on_compact_hook);
+            insert_kv("concepts-active", concepts_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 795);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 38 (orig lines 17168-17349)
@@ -1177,156 +1190,160 @@ void ObservabilityPrims::register_jit_p38(PrimRegistrar add, Evaluator& ev) {
     //       derived 0/1/2/3 from the deferred flag
     //       + activity signal
     //   - schema == 796
-    add("query:ir-soa-full-migration-stats", [&ev](const auto&) -> EvalValue {
-        CompilerMetrics* m =
-            ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
-        const std::int64_t soa_emitted =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_instructions_emitted_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t dirty_skips =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_dirty_block_skips_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t clean_block_hit_rate =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_clean_block_hit_rate_pct.load(std::memory_order_relaxed))
-              : 0;
-        // #796 reuses the existing
-        // ir_soa_jit_codegen_time_ns_total atomic
-        // (already populated by
-        // bump_ir_soa_jit_codegen_time_ns from prior
-        // issue work) — the #796 primitive exposes it
-        // as jit-soa-time-ns-total for the new
-        // dashboard.
-        const std::int64_t jit_soa_ns =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_jit_codegen_time_ns_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t pmr_utilization =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_pmr_column_utilization_pct.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t impact_dirty_skips =
-            m ? static_cast<std::int64_t>(
-                    m->ir_soa_impact_dirty_hybrid_skips_total.load(std::memory_order_relaxed))
-              : 0;
-        // 1 hardcoded "not yet" flag for Phase 2+
-        // deferred work (clean-block-hit-rate replaced
-        // with existing ir_soa_clean_block_hit_rate_pct
-        // atomic above; this single flag covers the
-        // overall "is the full SoA migration active?"
-        // status).
-        const std::int64_t full_soa_migration_active = 0;
-        // Recommendation: derived from the deferred
-        // flag + activity signal. Phase 1 only
-        // (deferred flag == 0) but with activity
-        // signals from the new atomics.
-        std::int64_t recommendation = 3;
-        if (full_soa_migration_active == 1)
-            recommendation = 0; // production-ready with all Phase 2+
-        else if (soa_emitted > 0 || dirty_skips > 0 || jit_soa_ns > 0 || impact_dirty_skips > 0)
-            recommendation = 2; // Phase 1 only (atomics wired, full migration deferred)
-        else
-            recommendation = 3; // early-stage (no IR SoA migration activity yet)
-        auto* ht = FlatHashTable::create(16);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:ir-soa-full-migration-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            const std::int64_t soa_emitted =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_instructions_emitted_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_skips =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_dirty_block_skips_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t clean_block_hit_rate =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_clean_block_hit_rate_pct.load(std::memory_order_relaxed))
+                  : 0;
+            // #796 reuses the existing
+            // ir_soa_jit_codegen_time_ns_total atomic
+            // (already populated by
+            // bump_ir_soa_jit_codegen_time_ns from prior
+            // issue work) — the #796 primitive exposes it
+            // as jit-soa-time-ns-total for the new
+            // dashboard.
+            const std::int64_t jit_soa_ns =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_jit_codegen_time_ns_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t pmr_utilization =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_pmr_column_utilization_pct.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t impact_dirty_skips =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_impact_dirty_hybrid_skips_total.load(std::memory_order_relaxed))
+                  : 0;
+            // 1 hardcoded "not yet" flag for Phase 2+
+            // deferred work (clean-block-hit-rate replaced
+            // with existing ir_soa_clean_block_hit_rate_pct
+            // atomic above; this single flag covers the
+            // overall "is the full SoA migration active?"
+            // status).
+            const std::int64_t full_soa_migration_active = 0;
+            // Recommendation: derived from the deferred
+            // flag + activity signal. Phase 1 only
+            // (deferred flag == 0) but with activity
+            // signals from the new atomics.
+            std::int64_t recommendation = 3;
+            if (full_soa_migration_active == 1)
+                recommendation = 0; // production-ready with all Phase 2+
+            else if (soa_emitted > 0 || dirty_skips > 0 || jit_soa_ns > 0 || impact_dirty_skips > 0)
+                recommendation = 2; // Phase 1 only (atomics wired, full migration deferred)
+            else
+                recommendation = 3; // early-stage (no IR SoA migration activity yet)
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("soa-instructions-emitted-total", soa_emitted);
-        insert_kv("dirty-block-skips-total", dirty_skips);
-        insert_kv("clean-block-hit-rate-pct", clean_block_hit_rate);
-        insert_kv("jit-soa-time-ns-total", jit_soa_ns);
-        insert_kv("pmr-column-utilization-pct", pmr_utilization);
-        insert_kv("impact-dirty-hybrid-skips-total", impact_dirty_skips);
-        insert_kv("full-soa-migration-active", full_soa_migration_active);
-        insert_kv("recommendation", recommendation);
-        insert_kv("schema", 796);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("soa-instructions-emitted-total", soa_emitted);
+            insert_kv("dirty-block-skips-total", dirty_skips);
+            insert_kv("clean-block-hit-rate-pct", clean_block_hit_rate);
+            insert_kv("jit-soa-time-ns-total", jit_soa_ns);
+            insert_kv("pmr-column-utilization-pct", pmr_utilization);
+            insert_kv("impact-dirty-hybrid-skips-total", impact_dirty_skips);
+            insert_kv("full-soa-migration-active", full_soa_migration_active);
+            insert_kv("recommendation", recommendation);
+            insert_kv("schema", 796);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 39 (orig lines 17350-17403)
 void ObservabilityPrims::register_jit_p39(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #809: error-handling-policy-stats — formalized exception policy + interop counters
-    add("query:error-handling-policy-stats", [&ev](const auto&) -> EvalValue {
-        auto load = [&](auto* atomic_ptr) -> std::uint64_t {
-            return atomic_ptr ? atomic_ptr->load(std::memory_order_relaxed) : 0;
-        };
-        CompilerMetrics* m =
-            ev.compiler_metrics_ ? static_cast<CompilerMetrics*>(ev.compiler_metrics_) : nullptr;
-        const std::int64_t f_interop_conversions =
-            m ? static_cast<std::int64_t>(
-                    m->error_policy_interop_conversions_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t f_contract_as_aura_error =
-            m ? static_cast<std::int64_t>(
-                    m->error_policy_contract_as_aura_error_total.load(std::memory_order_relaxed))
-              : 0;
-        const std::int64_t f_policy_doc_active = 1;
-        const std::int64_t f_hot_path_uses_result = 1;
-        auto* ht = FlatHashTable::create(16) /* #1141 */;
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:error-handling-policy-stats", [&ev](const auto&) -> EvalValue {
+            auto load = [&](auto* atomic_ptr) -> std::uint64_t {
+                return atomic_ptr ? atomic_ptr->load(std::memory_order_relaxed) : 0;
+            };
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const std::int64_t f_interop_conversions =
+                m ? static_cast<std::int64_t>(
+                        m->error_policy_interop_conversions_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t f_contract_as_aura_error =
+                m ? static_cast<std::int64_t>(m->error_policy_contract_as_aura_error_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t f_policy_doc_active = 1;
+            const std::int64_t f_hot_path_uses_result = 1;
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("interop-conversions", f_interop_conversions);
-        insert_kv("contract-as-aura-error", f_contract_as_aura_error);
-        insert_kv("policy-doc-active", f_policy_doc_active);
-        insert_kv("hot-path-uses-result", f_hot_path_uses_result);
-        insert_kv("schema", 809);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("interop-conversions", f_interop_conversions);
+            insert_kv("contract-as-aura-error", f_contract_as_aura_error);
+            insert_kv("policy-doc-active", f_policy_doc_active);
+            insert_kv("hot-path-uses-result", f_hot_path_uses_result);
+            insert_kv("schema", 809);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

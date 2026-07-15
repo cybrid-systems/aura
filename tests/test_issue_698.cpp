@@ -66,7 +66,7 @@ int aura_issue_698_run() {
     // AC1: query:hardware-backend-commercial-stats hash fields
     {
         std::println("\n--- AC1: query:hardware-backend-commercial-stats ---");
-        auto stats = cs.eval("(query:hardware-backend-commercial-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:hardware-backend-commercial-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:hardware-backend-commercial-stats returns hash");
         CHECK(stat_int(cs, "hook-calls") >= 0, "hook-calls present");

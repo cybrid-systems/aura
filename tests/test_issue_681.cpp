@@ -46,7 +46,7 @@ int aura_issue_681_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:compiler-closure-inval-stats ---");
-        auto stats = cs.eval("(query:compiler-closure-inval-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:compiler-closure-inval-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:compiler-closure-inval-stats returns hash");
         CHECK(stat_int(cs, "stale-bridge-caught") >= 0, "stale-bridge-caught present");

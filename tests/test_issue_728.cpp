@@ -99,9 +99,10 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:unified-error-stats) hash shape ---");
-    auto r = cs.eval("(query:unified-error-stats)");
-    CHECK(r && aura::compiler::types::is_hash(*r), "(query:unified-error-stats) returns a hash");
+    std::println("\n--- AC1: (engine:metrics \"query:unified-error-stats\") hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:unified-error-stats\")");
+    CHECK(r && aura::compiler::types::is_hash(*r),
+          "(engine:metrics \"query:unified-error-stats\") returns a hash");
     const std::vector<std::string> keys = {"structured-hits", "provenance-captured",
                                            "recovery-success", "schema"};
     for (const auto& k : keys) {
@@ -113,17 +114,21 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto hits = hash_int_field(cs, "(query:unified-error-stats)", "structured-hits");
+    const auto hits =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "structured-hits");
     CHECK(hits == 0, std::format("structured-hits = {} (expected 0 on fresh service)", hits));
-    const auto prov = hash_int_field(cs, "(query:unified-error-stats)", "provenance-captured");
+    const auto prov =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "provenance-captured");
     CHECK(prov == 0, std::format("provenance-captured = {} (expected 0 on fresh service)", prov));
-    const auto rec = hash_int_field(cs, "(query:unified-error-stats)", "recovery-success");
+    const auto rec =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "recovery-success");
     CHECK(rec == 0, std::format("recovery-success = {} (expected 0 on fresh service)", rec));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 728 (drift sentinel) ---");
-    const auto schema = hash_int_field(cs, "(query:unified-error-stats)", "schema");
+    const auto schema =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "schema");
     CHECK(schema == 728, std::format("schema = {} (expected 728)", schema));
 }
 
@@ -151,9 +156,12 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_unified_error_recovery_success();
     ev.bump_unified_error_recovery_success();
     ev.bump_unified_error_recovery_success();
-    const auto hits = hash_int_field(cs, "(query:unified-error-stats)", "structured-hits");
-    const auto prov = hash_int_field(cs, "(query:unified-error-stats)", "provenance-captured");
-    const auto rec = hash_int_field(cs, "(query:unified-error-stats)", "recovery-success");
+    const auto hits =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "structured-hits");
+    const auto prov =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "provenance-captured");
+    const auto rec =
+        hash_int_field(cs, "(engine:metrics \"query:unified-error-stats\")", "recovery-success");
     CHECK(hits == 7,
           std::format("after 7 structured-hit bumps: structured-hits = {} (expected 7)", hits));
     CHECK(prov == 4,
@@ -174,10 +182,10 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
     auto incremental = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     auto closure_env = cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")");
     auto jit_parity = cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")");
-    auto ir_soa = cs.eval("(query:ir-soa-completeness-stats)");
+    auto ir_soa = cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")");
     auto arena = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
     auto value_dispatch = cs.eval("(engine:metrics \"query:value-dispatch-stats\")");
-    auto closed_loop = cs.eval("(query:closed-loop-reliability-stats)");
+    auto closed_loop = cs.eval("(engine:metrics \"query:closed-loop-reliability-stats\")");
     CHECK(reflect && aura::compiler::types::is_hash(*reflect),
           "query:macro-reflect-validation-stats hash regression (#712)");
     CHECK(jit && aura::compiler::types::is_hash(*jit),
@@ -243,7 +251,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         hash_int_field(cs, "(engine:metrics \"query:jit-interpreter-parity-stats\")", "schema");
     CHECK(jit_parity_schema == 720,
           std::format("jit-parity schema = {} (expected 720, no drift)", jit_parity_schema));
-    const auto ir_soa_schema = hash_int_field(cs, "(query:ir-soa-completeness-stats)", "schema");
+    const auto ir_soa_schema =
+        hash_int_field(cs, "(engine:metrics \"query:ir-soa-completeness-stats\")", "schema");
     CHECK(ir_soa_schema == 721,
           std::format("ir-soa schema = {} (expected 721, no drift)", ir_soa_schema));
     const auto arena_schema =
@@ -256,7 +265,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         value_dispatch_schema == 723,
         std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
     const auto closed_loop_schema =
-        hash_int_field(cs, "(query:closed-loop-reliability-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(closed_loop_schema == 726,
           std::format("closed-loop schema = {} (expected 726, no drift)", closed_loop_schema));
 }

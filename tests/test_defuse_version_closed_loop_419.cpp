@@ -36,7 +36,7 @@ using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 
 static std::int64_t defuse_version_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:defuse-version-stats)");
+    auto r = cs.eval("(engine:metrics \"query:defuse-version-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -82,7 +82,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats4b > stats4a, "mutate bumps defuse-version-stats");
 
     std::println("\n--- AC5: epoch-delta-since-last-query ---");
-    (void)cs.eval("(query:epoch-stats)");
+    (void)cs.eval("(engine:metrics \"query:epoch-stats\")");
     auto delta = cs.eval("(query:epoch-delta-since-last-query)");
     CHECK(delta && is_int(*delta), "epoch-delta returns int");
 
@@ -101,8 +101,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b > stats6a, "defuse-version-stats grow over matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto eps = cs.eval("(query:epoch-stats)");
-    auto mbi = cs.eval("(query:mutation-boundary-invariant-stats)");
+    auto eps = cs.eval("(engine:metrics \"query:epoch-stats\")");
+    auto mbi = cs.eval("(engine:metrics \"query:mutation-boundary-invariant-stats\")");
     CHECK(eps && is_int(*eps), "epoch-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");
 }

@@ -351,12 +351,12 @@ bool test_regression_primitives(CompilerService& cs) {
     auto r1 = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\") regression");
-    auto r2 = cs.eval("(query:panic-checkpoint-fiber-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_hash(*r2),
-          "(query:panic-checkpoint-fiber-stats) regression");
-    auto r3 = cs.eval("(query:yield-checkpoint-panic-stats)");
+          "(engine:metrics \"query:panic-checkpoint-fiber-stats\") regression");
+    auto r3 = cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),
-          "(query:yield-checkpoint-panic-stats) regression");
+          "(engine:metrics \"query:yield-checkpoint-panic-stats\") regression");
     auto r4 = cs.eval("(panic-checkpoint)");
     CHECK(r4.has_value(), "(panic-checkpoint) regression");
     return true;

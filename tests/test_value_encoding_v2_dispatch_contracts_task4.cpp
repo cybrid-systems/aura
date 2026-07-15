@@ -334,8 +334,9 @@ bool test_regression_related_primitives() {
     CHECK(r1.has_value() && is_int(*r1), "(query:prompt6-violation-count) regression");
     auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
     CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression");
-    auto r3 = cs.eval("(query:macro-reflect-self-evo-stats)");
-    CHECK(r3.has_value() && is_int(*r3), "(query:macro-reflect-self-evo-stats) regression");
+    auto r3 = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
+    CHECK(r3.has_value() && is_int(*r3),
+          "(engine:metrics \"query:macro-reflect-self-evo-stats\") regression");
     if (!cs.eval("(define reg-571-a 11)")) {
         CHECK(false, "define regression");
         return false;

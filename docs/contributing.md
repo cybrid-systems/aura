@@ -74,7 +74,17 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 勿再为每个 counter 新增 `query:*-stats` 名（见 P0b 冻结）。
 
-**P1b / #1434**：高频 top-20 `query:*-stats` 已标 `deprecated`（`api-reference` 的 `*deprecated*` 段）。调用点请改 `(engine:metrics "query:…")`；分析脚本 `scripts/find_top_stats.py` / 批量迁移 `scripts/migrate_top_stats_to_facade.py`。
+**P5b / #1440**：string/json/vector/math **热路径**仍是 C++ `core`（`string-append`、`json-parse`、`floor`…）；`lib/std/surface` 是产品面。gen_docs 的 convenience 计数已修正（勿再把 hyphen 名默认标 convenience）。细节见 [CHANGELOG-v2.0-prep.md](CHANGELOG-v2.0-prep.md)。
+
+**P1b / #1434 → P5a / #1439（v2.0）**：`query:*-stats` / `compile:*-stats` **已不在 public 原语表**（不再出现在 `(api-reference)`）。内部仍实现 hash builder，只能通过：
+
+```scheme
+(engine:metrics "query:foo-stats")   ; 单名（兼容旧 schema）
+(engine:metrics :group "jit")        ; 推荐：CompilerMetrics 分组
+(engine:metrics :prefix "query:")
+```
+
+迁移说明：[migration-stats-to-metrics.md](migration-stats-to-metrics.md)。分析 / 改写：`scripts/find_top_stats.py`、`scripts/migrate_top_stats_to_facade.py`。**禁止**再 `add("query:…-stats")` 到 public 表（用 `ObservabilityPrims::register_stats_impl` 仅当引擎内部确需兼容名）。
 
 **结构查询（#1435）**：优先 `(query :node|:children|:parent|:find|:def-use|:mutation-log …)`；`:children` / `:parent` 支持 `:stable #t`（#393）。旧 `query:children` 等仍可用但已 deprecated。
 

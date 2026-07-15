@@ -33,7 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t hash_int(CompilerService& cs, const std::string& key) {
-    auto r = cs.eval("(hash-ref (query:typesystem-typed-mutate-stats) \"" + key + "\")");
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:typesystem-typed-mutate-stats\") \"" + key +
+                     "\")");
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -61,7 +62,7 @@ static bool setup_predicate_workspace(CompilerService& cs) {
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:typesystem-typed-mutate-stats (schema 659) ---");
     CHECK(setup_predicate_workspace(cs), "predicate workspace setup");
-    auto h = cs.eval("(query:typesystem-typed-mutate-stats)");
+    auto h = cs.eval("(engine:metrics \"query:typesystem-typed-mutate-stats\")");
     CHECK(h && is_hash(*h), "typesystem-typed-mutate-stats returns hash");
     CHECK(hash_int(cs, "schema") == 659, "schema == 659");
 
@@ -108,9 +109,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(coercion >= 0, "coercion-incremental-wins readable");
 
     std::println("\n--- AC7: query regression ---");
-    auto ctm = cs.eval("(query:constraint-typed-mutate-stats)");
-    auto dco = cs.eval("(query:dead-coercion-zerooverhead-stats)");
-    auto lot = cs.eval("(query:linear-ownership-typed-mutate-stats)");
+    auto ctm = cs.eval("(engine:metrics \"query:constraint-typed-mutate-stats\")");
+    auto dco = cs.eval("(engine:metrics \"query:dead-coercion-zerooverhead-stats\")");
+    auto lot = cs.eval("(engine:metrics \"query:linear-ownership-typed-mutate-stats\")");
     CHECK(ctm && is_hash(*ctm), "constraint-typed-mutate-stats regression");
     CHECK(dco && is_hash(*dco), "dead-coercion-zerooverhead-stats regression");
     CHECK(lot && is_hash(*lot), "linear-ownership-typed-mutate-stats regression");

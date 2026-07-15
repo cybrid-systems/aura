@@ -93,7 +93,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
         return static_cast<CompilerMetrics*>(ev.compiler_metrics());
     };
 
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:stdlib-production-review-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -170,20 +170,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-940", make_int(940)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .safety_flags = 0,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Stdlib production review dashboard (issues #923–#940).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #926: count PrimMeta tiers
-    ev.primitives().add(
-        "query:primitive-tier-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:primitive-tier-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             if (auto* m = metrics()) {
                 m->stdlib_primmeta_tier_queries_total.fetch_add(1, std::memory_order_relaxed);
             }
@@ -216,14 +207,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"slots", make_int(static_cast<std::int64_t>(n))},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "PrimMeta perf_tier / security_level histogram (#926).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #933/#936: self-evo / fiber-mutation audit probe (Agent-callable)
     ev.primitives().add(
@@ -308,9 +292,8 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     }
 
     // ── Issues #941–#954: self-evo / compiler-core pipeline dashboard ──
-    ev.primitives().add(
-        "query:self-evo-pipeline-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:self-evo-pipeline-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             if (m) {
                 m->selfevo_dirty_observer_hooks_total.fetch_add(1, std::memory_order_relaxed);
@@ -351,19 +334,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-954", make_int(954)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Self-evo / compiler-core pipeline dashboard (#941–#954).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issues #955–#967: bugfix / serve hygiene dashboard
-    ev.primitives().add(
-        "query:bugfix-941-967-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:bugfix-941-967-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(955)},
@@ -399,14 +374,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"module-path-heap-realpath", make_int(1)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Bugfix batch dashboard (#955–#967).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Agent probe: bump self-evo counters by issue number
     ev.primitives().add(
@@ -464,7 +432,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .schema = "(int) -> bool"});
 
     // ── Issues #985–#1013: production cache bounds + resource quota ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-hardening-985-1013-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -493,21 +461,14 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1013", make_int(1013)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Production hardening dashboard (#985–#1013).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // resource:quota-check lives in ObservabilityPrims (#753) and was extended
     // in #1013 to bump resource_quota_checks_total / _rejects_total. Do not
     // re-register here (would duplicate ordered_names_ slots).
 
     // ── Issues #1014–#1046: production stability + bugfix dashboard ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-stability-1014-1046-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -539,14 +500,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1046", make_int(1046)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Production stability dashboard (#1014–#1046).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1015: unified serve health / SLO surface (Phase 1).
     ev.primitives().add(
@@ -574,7 +528,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .schema = "() -> hash"});
 
     // ── Issues #1047–#1071: hygiene / type / mutate safety ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-safety-1047-1071-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -597,17 +551,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1071", make_int(1071)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Production safety dashboard (#1047–#1071).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1072–#1096: security / metrics / concurrency ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-hardening-1072-1096-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -633,17 +580,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1096", make_int(1096)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Production hardening dashboard (#1072–#1096).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1097–#1122: serialize / fold / serve safety ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-safety-1097-1122-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -665,17 +605,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1122", make_int(1122)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Production safety dashboard (#1097–#1122).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1123–#1143: final open-issue sweep ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1123-1140-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -697,16 +630,9 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1143", make_int(1143)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Final open-issue sweep dashboard (#1123–#1143).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
     // ── Issues #1144–#1148: observability wire-up sweep ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1144-1148-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -725,17 +651,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1148", make_int(1148)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Observability wire-up sweep (#1144–#1148).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1158–#1176 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1158-1176-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -754,17 +673,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1176", make_int(1176)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1158–#1176).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1177–#1201 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1177-1201-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -812,17 +724,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1201", make_int(1201)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1177–#1201).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1202–#1228 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1202-1228-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -855,14 +760,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1228", make_int(1228)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1202–#1228).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1215 Phase 1: composite production-health query (SLO surface).
     ev.primitives().add(
@@ -895,7 +793,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .schema = "() -> hash"});
 
     // ── Issues #1229–#1240 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1229-1240-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -930,17 +828,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1240", make_int(1240)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1229–#1240).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1241–#1245 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1241-1245-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -959,17 +850,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1245", make_int(1245)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1241–#1245).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1246–#1250 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1246-1250-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1010,17 +894,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1250", make_int(1250)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1246–#1250).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1251–#1255 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1251-1255-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1049,17 +926,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1255", make_int(1255)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1251–#1255).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1256–#1260 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1256-1260-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1087,17 +957,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1260", make_int(1260)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1256–#1260).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1261–#1265 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1261-1265-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1127,17 +990,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1265", make_int(1265)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1261–#1265).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1266–#1270 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1266-1270-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1159,17 +1015,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1270", make_int(1270)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1266–#1270).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1271–#1275 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1271-1275-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1196,17 +1045,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1275", make_int(1275)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1271–#1275).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1276–#1280 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1276-1280-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1234,17 +1076,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1280", make_int(1280)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1276–#1280).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1281–#1285 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1281-1285-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1276,20 +1111,12 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1285", make_int(1285)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1281–#1285).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1283: query:dirty-provenance-stats — Agent-visible
     // aggregation of boundary provenance captures + dirty impact.
-    ev.primitives().add(
-        "query:dirty-provenance-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:dirty-provenance-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1283)},
@@ -1300,20 +1127,12 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(m ? load_u64(m, m->provenance_boundary_capture_count) : 0)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Dirty + StableNodeRef provenance boundary stats (#1283).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1282: query:generation-stats — Agent-visible wrap/restamp surface
     // under the query: namespace (ast:generation-stats remains for legacy callers).
-    ev.primitives().add(
-        "query:generation-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
+    ObservabilityPrims::register_stats_impl(
+        "query:generation-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1282)},
@@ -1338,17 +1157,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                     make_int(static_cast<std::int64_t>(ws->children_topology_restore_count())));
             }
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Generation wrap / auto-restamp stats (#1282).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1286–#1290 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1286-1290-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1374,17 +1186,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1290", make_int(1290)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1286–#1290).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1291–#1295 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1291-1295-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1408,17 +1213,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1295", make_int(1295)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1291–#1295).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1296–#1300 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1296-1300-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1438,17 +1236,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                                                                 ws->ghost_orphan_nodes_freed())));
             }
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1296–#1300).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1301–#1305 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1301-1305-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1475,17 +1266,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                                                                 ws->mutation_log_compact_ops())));
             }
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1301–#1305).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1306–#1310 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1306-1310-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1503,17 +1287,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1310", make_int(1310)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1306–#1310).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1311–#1315 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1311-1315-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1538,17 +1315,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1315", make_int(1315)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1311–#1315).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1316–#1320 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1316-1320-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1633,17 +1403,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1320", make_int(1320)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1316–#1320).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1321–#1324 Phase 1 ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1321-1324-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1703,14 +1466,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1324", make_int(1324)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1321–#1324).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1325–#1330 Phase 1: primitive surface reduction architecture ──
     // Preferred :stats-* namespace aliases (#1326) for read-only essentials.
@@ -1759,7 +1515,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .category = "general",
                  .schema = "() -> int"});
 
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1325-1330-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1805,17 +1561,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1330", make_int(1330)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1325–#1330 architecture reduction).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1331–#1343 Phase 1: TUI pixel rendering architecture ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1331-1343-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1871,17 +1620,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1343", make_int(1343)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1331–#1343 TUI architecture).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // ── Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep ──
-    ev.primitives().add(
+    ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1336-1348-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
@@ -1991,14 +1733,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-1348", make_int(1348)},
             };
             return build_kv_hash(ev, kv);
-        },
-        PrimMeta{.arity = 0,
-                 .pure = true,
-                 .perf_tier = kPrimPerfHot,
-                 .security_level = kPrimSecSafe,
-                 .doc = "Phase 1 production sweep (#1336–#1341, #1344–#1348 type/AST/EDA).",
-                 .category = "general",
-                 .schema = "() -> hash"});
+        });
 
     // Issue #1347 harness uses existing verify:parse-coverage-feedback /
     // verify:parse-assert-failure (wired with production-sweep counters

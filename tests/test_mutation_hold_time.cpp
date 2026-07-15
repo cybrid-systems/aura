@@ -22,7 +22,8 @@ using aura::compiler::types::is_int;
 namespace {
 
 std::int64_t href(CompilerService& cs, const char* key) {
-    auto r = cs.eval(std::format("(hash-ref (query:mutation-boundary-hold-stats) \"{}\")", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -120,7 +121,7 @@ int main() {
             bool ok = true;
             Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
         }
-        auto r = cs.eval("(query:mutation-boundary-hold-stats)");
+        auto r = cs.eval("(engine:metrics \"query:mutation-boundary-hold-stats\")");
         CHECK(r && is_hash(*r), "hold-stats is hash");
         CHECK(href(cs, "holds-total") == 10, "holds-total via query");
         CHECK(href(cs, "total-us") >= 0, "total-us alias");

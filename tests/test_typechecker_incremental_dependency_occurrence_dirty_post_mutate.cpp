@@ -46,7 +46,7 @@ static bool load_workspace(CompilerService& cs) {
 }
 
 static std::int64_t type_incremental_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:type-incremental-stats)");
+    auto r = cs.eval("(engine:metrics \"query:type-incremental-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -127,7 +127,7 @@ static void run_matrix(CompilerService& cs) {
     for (int i = 0; i < 8; ++i) {
         (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                       std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
-        auto qs = cs.eval("(query:type-incremental-stats)");
+        auto qs = cs.eval("(engine:metrics \"query:type-incremental-stats\")");
         CHECK(qs && is_int(*qs), "query:type-incremental-stats during stress");
         if (qs && is_int(*qs))
             stress_sum += as_int(*qs);

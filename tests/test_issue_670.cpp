@@ -68,7 +68,7 @@ static std::int64_t guard_stat(aura::compiler::CompilerService& cs, std::string_
 
 static void run_ac1_stats_reachable(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC1: query:verify-tool-guard-stats 4 fields reachable ---");
-    auto r = cs.eval("(query:verify-tool-guard-stats)");
+    auto r = cs.eval("(engine:metrics \"query:verify-tool-guard-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r), "query:verify-tool-guard-stats returns hash");
     for (const auto& k :
          {"guard-captures", "dirty-propagation", "stable-ref-hits", "feedback-mutate-success"}) {

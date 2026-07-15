@@ -48,7 +48,7 @@ static bool load_workspace(CompilerService& cs) {
 }
 
 static std::int64_t occurrence_narrow_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:occurrence-narrow-stats)");
+    auto r = cs.eval("(engine:metrics \"query:occurrence-narrow-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -151,7 +151,7 @@ static void run_matrix(CompilerService& cs) {
     for (int i = 0; i < 8; ++i) {
         (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                       std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
-        auto qs = cs.eval("(query:occurrence-narrow-stats)");
+        auto qs = cs.eval("(engine:metrics \"query:occurrence-narrow-stats\")");
         CHECK(qs && is_int(*qs), "query:occurrence-narrow-stats during stress");
         if (qs && is_int(*qs))
             stress_sum += as_int(*qs);

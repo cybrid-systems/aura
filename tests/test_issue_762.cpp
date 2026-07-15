@@ -91,10 +91,11 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:workspace-closedloop-orchestration-stats) hash shape ---");
-    auto r = cs.eval("(query:workspace-closedloop-orchestration-stats)");
+    std::println("\n--- AC1: (engine:metrics \"query:workspace-closedloop-orchestration-stats\") "
+                 "hash shape ---");
+    auto r = cs.eval("(engine:metrics \"query:workspace-closedloop-orchestration-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:workspace-closedloop-orchestration-stats) returns a hash");
+          "(engine:metrics \"query:workspace-closedloop-orchestration-stats\") returns a hash");
     const std::vector<std::string> keys = {"concurrent-query-mutate", "cross-cow-ref-valid",
                                            "yield-points-hit", "shared-mutex-contention", "schema"};
     for (const auto& k : keys) {
@@ -107,24 +108,28 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: counters == 0 on fresh service ---");
-    const auto cq = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                   "concurrent-query-mutate");
+    const auto cq =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "concurrent-query-mutate");
     CHECK(cq == 0, std::format("concurrent-query-mutate = {} (expected 0 on fresh service)", cq));
-    const auto ccr = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                    "cross-cow-ref-valid");
+    const auto ccr =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "cross-cow-ref-valid");
     CHECK(ccr == 0, std::format("cross-cow-ref-valid = {} (expected 0 on fresh service)", ccr));
     const auto yph =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "yield-points-hit");
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "yield-points-hit");
     CHECK(yph == 0, std::format("yield-points-hit = {} (expected 0 on fresh service)", yph));
-    const auto smc = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                    "shared-mutex-contention");
+    const auto smc =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "shared-mutex-contention");
     CHECK(smc == 0, std::format("shared-mutex-contention = {} (expected 0 on fresh service)", smc));
 }
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 762 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")", "schema");
     CHECK(schema == 762, std::format("schema = {} (expected 762)", schema));
 }
 
@@ -144,14 +149,18 @@ static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {
     ev.bump_workspace_closedloop_yield_point_hit();
     ev.bump_workspace_closedloop_yield_point_hit();
     ev.bump_workspace_closedloop_shared_mutex_contention();
-    const auto cq = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                   "concurrent-query-mutate");
-    const auto ccr = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                    "cross-cow-ref-valid");
+    const auto cq =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "concurrent-query-mutate");
+    const auto ccr =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "cross-cow-ref-valid");
     const auto yph =
-        hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)", "yield-points-hit");
-    const auto smc = hash_int_field(cs, "(query:workspace-closedloop-orchestration-stats)",
-                                    "shared-mutex-contention");
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "yield-points-hit");
+    const auto smc =
+        hash_int_field(cs, "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                       "shared-mutex-contention");
     CHECK(cq == 4,
           std::format(
               "after 4 concurrent-query-mutate bumps: concurrent-query-mutate = {} (expected 4)",
@@ -172,11 +181,12 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
                  "primitives unaffected ---");
     auto macro_provenance = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
     auto envframe_policy = cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")");
-    auto macro_hygiene_provenance = cs.eval("(query:macro-hygiene-provenance-stats)");
+    auto macro_hygiene_provenance =
+        cs.eval("(engine:metrics \"query:macro-hygiene-provenance-stats\")");
     auto edsl_reflection = cs.eval("(engine:metrics \"query:edsl-reflection-stats\")");
-    auto code_as_data_maturity = cs.eval("(query:code-as-data-maturity-stats)");
-    auto pattern_perf = cs.eval("(query:pattern-performance-stats)");
-    auto mutate_batch = cs.eval("(query:mutate-batch-stats)");
+    auto code_as_data_maturity = cs.eval("(engine:metrics \"query:code-as-data-maturity-stats\")");
+    auto pattern_perf = cs.eval("(engine:metrics \"query:pattern-performance-stats\")");
+    auto mutate_batch = cs.eval("(engine:metrics \"query:mutate-batch-stats\")");
     CHECK(macro_provenance && aura::compiler::types::is_hash(*macro_provenance),
           "query:macro-provenance-stats hash regression (#735)");
     CHECK(envframe_policy && aura::compiler::types::is_hash(*envframe_policy),
@@ -202,7 +212,7 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("envframe-dualpath-policy schema = {} (expected 756, no drift)",
                       envframe_policy_schema));
     const auto macro_hygiene_provenance_schema =
-        hash_int_field(cs, "(query:macro-hygiene-provenance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:macro-hygiene-provenance-stats\")", "schema");
     CHECK(macro_hygiene_provenance_schema == 757,
           std::format("macro-hygiene-provenance schema = {} (expected 757, no drift)",
                       macro_hygiene_provenance_schema));
@@ -212,16 +222,17 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("edsl-reflection schema = {} (expected 758, no drift)",
                       edsl_reflection_schema));
     const auto code_as_data_maturity_schema =
-        hash_int_field(cs, "(query:code-as-data-maturity-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:code-as-data-maturity-stats\")", "schema");
     CHECK(code_as_data_maturity_schema == 759,
           std::format("code-as-data-maturity schema = {} (expected 759, no drift)",
                       code_as_data_maturity_schema));
     const auto pattern_perf_schema =
-        hash_int_field(cs, "(query:pattern-performance-stats)", "schema");
+        hash_int_field(cs, "(engine:metrics \"query:pattern-performance-stats\")", "schema");
     CHECK(pattern_perf_schema == 760,
           std::format("pattern-performance schema = {} (expected 760, no drift)",
                       pattern_perf_schema));
-    const auto mutate_batch_schema = hash_int_field(cs, "(query:mutate-batch-stats)", "schema");
+    const auto mutate_batch_schema =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-stats\")", "schema");
     CHECK(mutate_batch_schema == 761,
           std::format("mutate-batch schema = {} (expected 761, no drift)", mutate_batch_schema));
 }

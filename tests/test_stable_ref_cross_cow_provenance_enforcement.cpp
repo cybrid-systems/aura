@@ -33,8 +33,8 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::int64_t stat_int(CompilerService& cs, std::string_view key) {
-    auto r =
-        cs.eval(std::format("(hash-ref (query:stable-ref-cross-cow-provenance-stats) '{}')", key));
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:stable-ref-cross-cow-provenance-stats\") '{}')", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -55,7 +55,7 @@ static std::int64_t steal_auto_refresh(CompilerService& cs) {
 
 static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:stable-ref-cross-cow-provenance-stats (schema 818) ---");
-    auto h = cs.eval("(query:stable-ref-cross-cow-provenance-stats)");
+    auto h = cs.eval("(engine:metrics \"query:stable-ref-cross-cow-provenance-stats\")");
     CHECK(h && is_hash(*h), "stable-ref-cross-cow-provenance-stats returns hash");
     CHECK(stat_int(cs, "schema") == 818, "schema == 818");
     CHECK(provenance_enforced(cs) >= 0, "provenance-enforced-hits non-negative");
@@ -145,7 +145,7 @@ static void run_matrix(CompilerService& cs) {
                        steal_auto_refresh(cs);
     CHECK(agg8b >= agg8a + 4, "aggregate #818 counters monotonic");
 
-    auto s641 = cs.eval("(query:stable-ref-provenance-sv-stats)");
+    auto s641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
     auto s715 = cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")");
     CHECK(s641 && is_hash(*s641), "stable-ref-provenance-sv-stats regression (#641)");
     CHECK(s715 && is_hash(*s715), "stable-ref-layer-stats regression (#715)");

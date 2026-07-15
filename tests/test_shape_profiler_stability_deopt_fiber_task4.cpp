@@ -6,7 +6,7 @@
 // test_shape.cpp (unit tests). Focus:
 //   - record_shape stability ratio + version++ on invalidate
 //   - invalidate_all mutation path + deopt hook
-//   - (query:shape-stability-stats) observability
+//   - (engine:metrics \"query:shape-stability-stats\") observability
 //   - fiber MutationBoundary refresh counter
 //   - fuzz/stress under concurrent fibers
 
@@ -155,11 +155,11 @@ bool test_invalidate_all_mutation_path() {
 
 // ── AC5: query:shape-stability-stats reachable ────────────
 bool test_shape_stability_stats_reachable() {
-    std::println("\n--- AC5: (query:shape-stability-stats) reachable ---");
+    std::println("\n--- AC5: (engine:metrics \"query:shape-stability-stats\") reachable ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    const auto s = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     std::println("  shape-stability-stats baseline: {}", s);
     CHECK(s >= 0, "shape-stability-stats >= 0");
     return true;
@@ -170,7 +170,7 @@ bool test_stats_grow_under_mutate_eval() {
     std::println("\n--- AC6: stats grow under mutate + eval ---");
     CompilerService cs;
     CHECK(setup_shape_workspace(cs), "shape workspace setup");
-    const auto s0 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     for (int i = 0; i < 15; ++i) {
         (void)cs.eval("(add1 " + std::to_string(i) + ")");
         const auto mr =
@@ -178,7 +178,7 @@ bool test_stats_grow_under_mutate_eval() {
         CHECK(mr.success, "typed_mutate rebind succeeds");
         (void)cs.eval("(eval-current)");
     }
-    const auto s1 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto churn = mutation_shape_churn_count.load();
     std::println("  shape-stability-stats: {} -> {} churn={}", s0, s1, churn);
     CHECK(s1 >= s0, "shape-stability-stats monotonic under mutate");
@@ -205,7 +205,7 @@ bool test_fuzz_shape_stability_sequences() {
     CHECK(setup_shape_workspace(cs), "workspace for fuzz");
     std::mt19937 rng(5701u);
     std::uniform_int_distribution<int> val_dist(0, 200);
-    const auto stats0 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto stats0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 15) + ")");
@@ -215,7 +215,7 @@ bool test_fuzz_shape_stability_sequences() {
         if ((i & 7) == 0)
             (void)cs.eval("(eval-current)");
     }
-    const auto stats1 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto stats1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     CHECK(stats1 >= stats0, "shape-stability-stats grew during fuzz");
     return true;
 }
@@ -294,7 +294,7 @@ bool test_long_running_shape_stress() {
     std::println("\n--- AC11: {} iters long stress ---", k_stress_iters());
     CompilerService cs;
     CHECK(setup_shape_workspace(cs), "workspace for stress");
-    const auto s0 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     std::mt19937 rng(5709u);
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
@@ -309,7 +309,7 @@ bool test_long_running_shape_stress() {
         if ((i & 15) == 0)
             (void)cs.eval("(eval-current)");
     }
-    const auto s1 = eval_int(cs, "(query:shape-stability-stats)");
+    const auto s1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto v = prompt6_violations(cs);
     const auto metrics = cs.shape_metrics("add1");
     std::println("  stats: {} -> {} add1_calls={} violations={}", s0, s1, metrics.total_calls, v);
@@ -327,8 +327,9 @@ bool test_regression_related_primitives() {
           "(engine:metrics \"query:value-dispatch-stats\") regression for #571");
     auto r2 = cs.eval("(query:task4-hotpath-safety-score)");
     CHECK(r2.has_value() && is_int(*r2), "(query:task4-hotpath-safety-score) regression for #607");
-    auto r3 = cs.eval("(query:shape-stability-stats)");
-    CHECK(r3.has_value() && is_int(*r3), "(query:shape-stability-stats) reachable");
+    auto r3 = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
+    CHECK(r3.has_value() && is_int(*r3),
+          "(engine:metrics \"query:shape-stability-stats\") reachable");
     if (!cs.eval("(define reg-570-a 12)")) {
         CHECK(false, "define regression");
         return false;

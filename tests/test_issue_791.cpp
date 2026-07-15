@@ -72,8 +72,8 @@
 //        per-Evaluator bump helpers + cross-check the
 //        primitive reads reflect the bumps
 //   AC5: sibling observability regression — #773
-//        (query:workspace-closedloop-fiber-eda-stats)
-//        + #790 (query:mutate-batch-atomic-stats)
+//        (engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")
+//        + #790 (engine:metrics \"query:mutate-batch-atomic-stats\")
 //        primitives still reachable with their schema
 //        sentinels intact
 
@@ -111,11 +111,14 @@ static std::int64_t hash_int_field(aura::compiler::CompilerService& cs, std::str
 }
 
 static void run_ac1_shape(aura::compiler::CompilerService& cs) {
-    std::println("\n--- AC1: (query:workspace-closedloop-fiber-multi-agent-yield-stats) "
-                 "hash shape ---");
-    auto r = cs.eval("(query:workspace-closedloop-fiber-multi-agent-yield-stats)");
+    std::println(
+        "\n--- AC1: (engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\") "
+        "hash shape ---");
+    auto r =
+        cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:workspace-closedloop-fiber-multi-agent-yield-stats) returns a hash");
+          "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\") returns a "
+          "hash");
     const std::vector<std::string> keys = {"autoprop-refs-total",
                                            "autoprop-dirty-total",
                                            "missed-yield-total",
@@ -135,40 +138,45 @@ static void run_ac1_shape(aura::compiler::CompilerService& cs) {
 static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: fresh-service zero state (no Workspace autoprop activity) ---");
     const auto refs = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-refs-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-refs-total");
     CHECK(refs == 0,
           std::format("autoprop-refs-total = {} (expected 0 on fresh service — Phase 2+ "
                       "deferred to wire StableRef auto-propagation across COW/clone/split)",
                       refs));
     const auto dirty = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-dirty-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-dirty-total");
     CHECK(dirty == 0,
           std::format("autoprop-dirty-total = {} (expected 0 on fresh service — Phase 2+ "
                       "deferred to wire dirty auto-propagation across COW/clone/split)",
                       dirty));
     const auto missed = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "missed-yield-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "missed-yield-total");
     CHECK(missed == 0,
           std::format("missed-yield-total = {} (expected 0 on fresh service — negative "
                       "signal; Phase 2+ to wire from Fiber::yield + check_gc_safepoint "
                       "long walk instrumentation)",
                       missed));
-    const auto yield_active =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)",
-                       "exhaustive-yield-instrumentation-active");
+    const auto yield_active = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "exhaustive-yield-instrumentation-active");
     CHECK(yield_active == 0,
           std::format("exhaustive-yield-instrumentation-active = {} (expected 0 — Phase 2+ "
                       "deferred to wire Fiber::yield + check_gc_safepoint in "
                       "evaluator_primitives_query.cpp + mutate.cpp long walks)",
                       yield_active));
     const auto autoprop_active = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-active");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-active");
     CHECK(autoprop_active == 0,
           std::format("autoprop-active = {} (expected 0 — Phase 2+ deferred to wire StableRef "
                       "+ dirty + cross-boundary validation auto-propagation)",
                       autoprop_active));
     const auto rec = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "recommendation");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "recommendation");
     CHECK(rec == 3,
           std::format("recommendation = {} (expected 3 = early-stage when both deferred flags "
                       "== 0 AND no activity)",
@@ -177,8 +185,9 @@ static void run_ac2_fresh_zero(aura::compiler::CompilerService& cs) {
 
 static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 791 (drift sentinel) ---");
-    const auto schema =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "schema");
+    const auto schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "schema");
     CHECK(schema == 791, std::format("schema = {} (expected 791)", schema));
 }
 
@@ -187,11 +196,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
     // Snapshot before.
     const auto refs_before = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-refs-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-refs-total");
     const auto dirty_before = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-dirty-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-dirty-total");
     const auto missed_before = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "missed-yield-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "missed-yield-total");
 
     // Exercise the 3 NEW per-Evaluator bump helpers
     // via the service's evaluator instance. The bump
@@ -206,11 +218,14 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     }
 
     const auto refs_after = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-refs-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-refs-total");
     const auto dirty_after = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "autoprop-dirty-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "autoprop-dirty-total");
     const auto missed_after = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "missed-yield-total");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "missed-yield-total");
 
     std::println("  counts after AC4 bumps: refs {} -> {}, dirty {} -> {}, missed-yield {} -> {}",
                  refs_before, refs_after, dirty_before, dirty_after, missed_before, missed_after);
@@ -233,7 +248,8 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
     // Recommendation should now be 2 (Phase 1 only —
     // both deferred flags == 0 BUT activity > 0).
     const auto rec_after = hash_int_field(
-        cs, "(query:workspace-closedloop-fiber-multi-agent-yield-stats)", "recommendation");
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-multi-agent-yield-stats\")",
+        "recommendation");
     CHECK(rec_after == 2,
           std::format("recommendation = {} (expected 2 = Phase 1 only after activity; "
                       "activity > 0 with both deferred flags == 0)",
@@ -242,17 +258,18 @@ static void run_ac4_bump_correctness(aura::compiler::CompilerService& cs) {
 
 static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC5: regression — #773 + #790 sibling primitives unaffected ---");
-    auto a773 = cs.eval("(query:workspace-closedloop-fiber-eda-stats)");
-    auto a790 = cs.eval("(query:mutate-batch-atomic-stats)");
+    auto a773 = cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")");
+    auto a790 = cs.eval("(engine:metrics \"query:mutate-batch-atomic-stats\")");
     CHECK(a773 && aura::compiler::types::is_hash(*a773),
           "query:workspace-closedloop-fiber-eda-stats hash regression (#773)");
     CHECK(a790 && aura::compiler::types::is_hash(*a790),
           "query:mutate-batch-atomic-stats hash regression (#790)");
-    const auto a773_schema =
-        hash_int_field(cs, "(query:workspace-closedloop-fiber-eda-stats)", "schema");
+    const auto a773_schema = hash_int_field(
+        cs, "(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")", "schema");
     CHECK(a773_schema == 773,
           std::format("#773 schema = {} (expected 773, no drift)", a773_schema));
-    const auto a790_schema = hash_int_field(cs, "(query:mutate-batch-atomic-stats)", "schema");
+    const auto a790_schema =
+        hash_int_field(cs, "(engine:metrics \"query:mutate-batch-atomic-stats\")", "schema");
     CHECK(a790_schema == 790,
           std::format("#790 schema = {} (expected 790, no drift)", a790_schema));
 }

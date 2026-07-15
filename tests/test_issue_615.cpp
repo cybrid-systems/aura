@@ -45,7 +45,7 @@ static std::int64_t err_count_via_cxx(aura::compiler::CompilerService& cs) {
 // Aura primitive (Issue #478). The result is a pair (count . stored);
 // this extracts the car.
 static std::int64_t err_count_via_prim(aura::compiler::CompilerService& cs) {
-    auto r = cs.eval("(car (query:primitive-error-stats))");
+    auto r = cs.eval("(car (engine:metrics \"query:primitive-error-stats\"))");
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -53,7 +53,7 @@ static std::int64_t err_count_via_prim(aura::compiler::CompilerService& cs) {
 
 // Read stored (error_values_size) via cdr of query:primitive-error-stats.
 static std::int64_t err_stored_via_prim(aura::compiler::CompilerService& cs) {
-    auto r = cs.eval("(cdr (query:primitive-error-stats))");
+    auto r = cs.eval("(cdr (engine:metrics \"query:primitive-error-stats\"))");
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -72,7 +72,7 @@ int aura_issue_615_run() {
     // pair (regression — Issue #478 shape unchanged).
     {
         std::println("\n--- AC1: query:primitive-error-stats shape (regression) ---");
-        auto r = cs.eval("(query:primitive-error-stats)");
+        auto r = cs.eval("(engine:metrics \"query:primitive-error-stats\")");
         CHECK(r && aura::compiler::types::is_pair(*r),
               "query:primitive-error-stats returns a pair");
         auto cnt = err_count_via_prim(cs);

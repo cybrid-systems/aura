@@ -35,7 +35,7 @@ namespace aura_issue_438_detail {
 bool test_query_fiber_migration_stats() {
     std::println("\n--- AC1: query:fiber-migration-stats returns a value ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:fiber-migration-stats)");
+    auto r = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -56,13 +56,13 @@ bool test_c_linkage_shim() {
 bool test_evaluator_accessors() {
     std::println("\n--- AC3: Evaluator mutation-coordination accessors ---");
     aura::compiler::CompilerService cs;
-    auto r0 = cs.eval("(query:fiber-migration-stats)");
+    auto r0 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     if (!r0) {
         ++g_failed;
         return false;
     }
     const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r0));
-    auto r1 = cs.eval("(query:fiber-migration-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     if (!r1) {
         ++g_failed;
         return false;
@@ -78,7 +78,7 @@ bool test_evaluator_accessors() {
 bool test_transfer_bump() {
     std::println("\n--- AC4: query:fiber-migration-stats reachable via accessor ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:fiber-migration-stats)");
+    auto r = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -93,13 +93,13 @@ bool test_transfer_bump() {
 bool test_regression_prior_primitives() {
     std::println("\n--- AC5: regression — prior primitives still work ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(query:mutation-coordination-stats)");
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:mutation-coordination-stats (regression for #448)");
-    auto r2 = cs.eval("(query:query-stats)");
+    auto r2 = cs.eval("(engine:metrics \"query:query-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:query-stats (regression for #447)");
-    auto r3 = cs.eval("(query:stale-ref-stats)");
+    auto r3 = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "query:stale-ref-stats (regression for #391)");
     return true;

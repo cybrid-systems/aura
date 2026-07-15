@@ -9,11 +9,12 @@
 // shape-stability + JIT observability surface that #624 AC4 lists,
 // via shape::*_count counters in src/compiler/shape_profiler.h
 // (added by #570 / #605 / #492 / #686). Pre-existing primitives:
-//   - (query:shape-stability-stats) (#570/#605) — int-sum of 6
-//   - (query:shape-profiler-stats) (#492) — 12-field hash
-//   - (query:jit-stats) (#427) / (query:jit-stats-hash) (#491) —
+//   - (engine:metrics \"query:shape-stability-stats\") (#570/#605) — int-sum of 6
+//   - (engine:metrics \"query:shape-profiler-stats\") (#492) — 12-field hash
+//   - (engine:metrics \"query:jit-stats\") (#427) / (engine:metrics \"query:jit-stats-hash\")
+//   (#491) —
 //     JIT compile/dispatch metrics
-//   - (query:guard-shape-stats) — GuardShape dispatch (existing)
+//   - (engine:metrics \"query:guard-shape-stats\") — GuardShape dispatch (existing)
 //
 // What the issue body AC4 specifies — `query:shape-stability-jit-
 // stats` with fields {stability_ratio_post_mutate, deopt_on_
@@ -77,8 +78,9 @@ int aura_issue_624_run() {
 
     // AC1: hash returns a hash with 6 fields (5 fields + schema).
     {
-        std::println("\n--- AC1: (query:shape-stability-jit-stats-hash) shape ---");
-        auto h = cs.eval("(query:shape-stability-jit-stats-hash)");
+        std::println(
+            "\n--- AC1: (engine:metrics \"query:shape-stability-jit-stats-hash\") shape ---");
+        auto h = cs.eval("(engine:metrics \"query:shape-stability-jit-stats-hash\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
               "shape-stability-jit-stats-hash returns a hash");
         const auto post_mutate = hash_int(cs, "stability-ratio-post-mutate");
@@ -102,22 +104,23 @@ int aura_issue_624_run() {
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
         // Original int-sum.
-        auto s_int = cs.eval("(query:shape-stability-stats)");
+        auto s_int = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
         CHECK(s_int && aura::compiler::types::is_int(*s_int),
-              "(query:shape-stability-stats) returns an int (#570 back-compat)");
+              "(engine:metrics \"query:shape-stability-stats\") returns an int (#570 back-compat)");
         // 12-field structured form.
-        auto s_struct = cs.eval("(query:shape-profiler-stats)");
+        auto s_struct = cs.eval("(engine:metrics \"query:shape-profiler-stats\")");
         CHECK(s_struct && aura::compiler::types::is_hash(*s_struct),
-              "(query:shape-profiler-stats) returns a hash (#492 back-compat)");
-        // JIT-related — (query:jit-stats) returns a string dump;
-        // (query:jit-stats-hash) returns a hash. Both reachable.
-        auto s_jit = cs.eval("(query:jit-stats)");
+              "(engine:metrics \"query:shape-profiler-stats\") returns a hash (#492 back-compat)");
+        // JIT-related — (engine:metrics \"query:jit-stats\") returns a string dump;
+        // (engine:metrics \"query:jit-stats-hash\") returns a hash. Both reachable.
+        auto s_jit = cs.eval("(engine:metrics \"query:jit-stats\")");
         CHECK(s_jit.has_value() && !s_jit.has_value()
                   ? false
                   : s_jit && aura::compiler::types::is_string(*s_jit),
-              "(query:jit-stats) returns a string (#427 back-compat)");
-        auto s_jit_h = cs.eval("(query:jit-stats-hash)");
-        CHECK(s_jit_h.has_value(), "(query:jit-stats-hash) reachable (#491 back-compat)");
+              "(engine:metrics \"query:jit-stats\") returns a string (#427 back-compat)");
+        auto s_jit_h = cs.eval("(engine:metrics \"query:jit-stats-hash\")");
+        CHECK(s_jit_h.has_value(),
+              "(engine:metrics \"query:jit-stats-hash\") reachable (#491 back-compat)");
     }
 
     // AC3: derived-metric invariants on a fresh service.
@@ -157,7 +160,7 @@ int aura_issue_624_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:shape-stability-jit-stats-hash)");
+                auto r = cs.eval("(engine:metrics \"query:shape-stability-jit-stats-hash\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

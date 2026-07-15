@@ -52,7 +52,7 @@ int aura_issue_525_observability_run() {
     // AC1: query:guard-production-impact-stats returns hash
     {
         std::println("\n--- AC1: query:guard-production-impact-stats ---");
-        auto stats = cs.eval("(query:guard-production-impact-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:guard-production-impact-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:guard-production-impact-stats returns hash");
         CHECK(hash_int(cs, "epoch-after") >= 0, "epoch-after present");
@@ -112,7 +112,7 @@ int aura_issue_525_observability_run() {
         std::println("\n--- AC4: regression ---");
         auto log = cs.eval("(query:mutation-boundary-log)");
         auto snap = cs.eval("(query:mutation-impact-snapshot)");
-        auto reflect = cs.eval("(query:reflect-postmutate-stats)");
+        auto reflect = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         CHECK(log && aura::compiler::types::is_hash(*log), "mutation-boundary-log hash regression");
         CHECK(snap && aura::compiler::types::is_hash(*snap),
               "mutation-impact-snapshot hash regression");

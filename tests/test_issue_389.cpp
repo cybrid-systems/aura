@@ -9,7 +9,7 @@
 //        3 stability-context keys (current-generation,
 //        current-wrap-epoch, generation-wrap-count) +
 //        1 workspace-context key (node-count) = 8 keys total.
-//   AC3: The 4 marker counts match (query:marker-stats) — the
+//   AC3: The 4 marker counts match (engine:metrics \"query:marker-stats\") — the
 //        same underlying data, just exposed via a different
 //        primitive shape (hash vs positional list).
 //   AC4: After a hygienic-macro eval, marker-macro-introduced-
@@ -121,17 +121,18 @@ void test_snapshot_hash_shape() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AC3: The 4 marker counts match (query:marker-stats) — same
+// AC3: The 4 marker counts match (engine:metrics \"query:marker-stats\") — same
 // underlying data, different primitive shape.
 // ═══════════════════════════════════════════════════════════════
 
 void test_marker_counts_match_query_marker_stats() {
-    std::println("\n--- AC3: snapshot marker counts == (query:marker-stats) ---");
+    std::println(
+        "\n--- AC3: snapshot marker counts == (engine:metrics \"query:marker-stats\") ---");
     CompilerService cs;
     CHECK(load_and_eval(cs, "(define x 1) (define y 2) (define z 3)"),
           "set-code + eval-current succeeds");
     auto snap = cs.eval("(compile:snapshot)");
-    auto list = cs.eval("(query:marker-stats)");
+    auto list = cs.eval("(engine:metrics \"query:marker-stats\")");
     CHECK(snap && aura::compiler::types::is_hash(*snap), "snapshot is hash");
     CHECK(list && aura::compiler::types::is_pair(*list), "marker-stats is list");
     if (!snap || !list)
@@ -150,29 +151,29 @@ void test_marker_counts_match_query_marker_stats() {
     std::int64_t snap_macro = read_key("marker-macro-introduced-count");
     std::int64_t snap_bool = read_key("marker-bool-literal-count");
     std::int64_t snap_total = read_key("marker-total-count");
-    // (query:marker-stats) returns a list of 4 ints in order
+    // (engine:metrics \"query:marker-stats\") returns a list of 4 ints in order
     // (user macro-introduced bool-literal total). Extract via
     // (car)/(cadr)/(caddr)/(cadddr).
-    auto list_user = cs.eval("(car (query:marker-stats))");
-    auto list_macro = cs.eval("(cadr (query:marker-stats))");
-    auto list_bool = cs.eval("(caddr (query:marker-stats))");
+    auto list_user = cs.eval("(car (engine:metrics \"query:marker-stats\"))");
+    auto list_macro = cs.eval("(cadr (engine:metrics \"query:marker-stats\"))");
+    auto list_bool = cs.eval("(caddr (engine:metrics \"query:marker-stats\"))");
     // cadddr is not a registered primitive nor defined in
     // lib/std/*; reach the 4th element via the (cdddr ...) primitive
     // + (car ...).
-    auto list_total = cs.eval("(car (cdddr (query:marker-stats)))");
+    auto list_total = cs.eval("(car (cdddr (engine:metrics \"query:marker-stats\")))");
     auto as_int_checked = [](auto& r) -> std::int64_t {
         if (!r || !aura::compiler::types::is_int(*r))
             return -1;
         return aura::compiler::types::as_int(*r);
     };
     CHECK_EQ(snap_user, as_int_checked(list_user),
-             "marker-user-count == (car (query:marker-stats))");
+             "marker-user-count == (car (engine:metrics \"query:marker-stats\"))");
     CHECK_EQ(snap_macro, as_int_checked(list_macro),
-             "marker-macro-introduced-count == (cadr (query:marker-stats))");
+             "marker-macro-introduced-count == (cadr (engine:metrics \"query:marker-stats\"))");
     CHECK_EQ(snap_bool, as_int_checked(list_bool),
-             "marker-bool-literal-count == (caddr (query:marker-stats))");
+             "marker-bool-literal-count == (caddr (engine:metrics \"query:marker-stats\"))");
     CHECK_EQ(snap_total, as_int_checked(list_total),
-             "marker-total-count == (cadddr (query:marker-stats))");
+             "marker-total-count == (cadddr (engine:metrics \"query:marker-stats\"))");
 }
 
 // ═══════════════════════════════════════════════════════════════

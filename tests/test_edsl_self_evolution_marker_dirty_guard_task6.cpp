@@ -35,7 +35,7 @@ using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
 static std::int64_t loop_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:self-evolution-loop-stats)");
+    auto r = cs.eval("(engine:metrics \"query:self-evolution-loop-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -83,7 +83,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: marker + epoch query regression ---");
     auto marker = cs.eval("(query:by-marker \"MacroIntroduced\")");
-    auto epoch = cs.eval("(query:epoch-stats)");
+    auto epoch = cs.eval("(engine:metrics \"query:epoch-stats\")");
     CHECK(marker.has_value(), "query:by-marker MacroIntroduced reachable");
     CHECK(epoch && is_int(*epoch), "query:epoch-stats returns int");
 
@@ -99,9 +99,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats6b >= stats6a, "loop-stats monotonic over self-evo matrix");
 
     std::println("\n--- AC7: query regression ---");
-    auto mrs = cs.eval("(query:macro-reflect-self-evo-stats)");
-    auto hys = cs.eval("(query:hygiene-stats)");
-    auto mls = cs.eval("(query:mutation-log-stats)");
+    auto mrs = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
+    auto hys = cs.eval("(engine:metrics \"query:hygiene-stats\")");
+    auto mls = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(mrs && is_int(*mrs), "macro-reflect-self-evo-stats regression");
     CHECK(hys && is_int(*hys), "hygiene-stats regression");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");

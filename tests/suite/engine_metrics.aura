@@ -40,7 +40,7 @@
   (if (eq? via (void))
       (check #t) ; s0: no bulk stats registered
     (begin
-      (define direct (query:macro-hygiene-stats))
+      (define direct (engine:metrics "query:macro-hygiene-stats"))
       (check (hash? direct))
       (check (hash? via))
       (check (number? (hash-ref via "schema"))))))

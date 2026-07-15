@@ -34,7 +34,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
 static std::int64_t pattern_structural_index_stats(CompilerService& cs) {
-    auto r = cs.eval("(query:pattern-structural-index-stats)");
+    auto r = cs.eval("(engine:metrics \"query:pattern-structural-index-stats\")");
     if (!r || !is_int(*r))
         return 0;
     return as_int(*r);
@@ -116,7 +116,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC7: query regression ---");
     auto pis = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
-    auto pmf = cs.eval("(query:pattern-macro-filter-stats)");
+    auto pmf = cs.eval("(engine:metrics \"query:pattern-macro-filter-stats\")");
     CHECK(pis && is_int(*pis), "pattern-index-stats regression");
     CHECK(pmf && is_int(*pmf), "pattern-macro-filter-stats regression");
 }

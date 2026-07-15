@@ -2,7 +2,7 @@
 // @reason: pure C++ test of SoA Phase 2 scaffolding
 //          (IRFunctionSoA + IRInstructionView + IRModuleV2 +
 //          to_aos_view + SoAtoAoSBridgePass) + EDSL
-//          (query:soa-adoption-stats) primitive
+//          (engine:metrics \"query:soa-adoption-stats\") primitive
 
 // test_issue_463_soa_phase2_wiring.cpp — Issue #463:
 // SoA Phase 2 wiring (refine #429).
@@ -24,7 +24,7 @@
 //      counters
 //   5. 3 CompilerMetrics atomics: soa_functions_visited,
 //      soa_instructions_visited, aos_view_built_count
-//   6. (query:soa-adoption-stats) Aura primitive — 3-field
+//   6. (engine:metrics \"query:soa-adoption-stats\") Aura primitive — 3-field
 //      hash
 //   7. (stats:count) 49 → 50
 //
@@ -37,7 +37,7 @@
 //   AC6:  SoAtoAoSBridgePass with empty AoS pass counters
 //   AC7:  SoAtoAoSBridgePass with non-empty SoA module
 //         bumps all 3 counters
-//   AC8:  EDSL: (query:soa-adoption-stats) returns a hash
+//   AC8:  EDSL: (engine:metrics \"query:soa-adoption-stats\") returns a hash
 //         with 3 fields
 //   AC9:  EDSL: (stats:count) >= 50
 //   AC10: EDSL: (stats:list) includes query:soa-adoption-stats
@@ -187,17 +187,18 @@ bool test_bridge_nonempty() {
     return true;
 }
 
-// ── AC8: EDSL: (query:soa-adoption-stats) returns a hash ──────
+// ── AC8: EDSL: (engine:metrics \"query:soa-adoption-stats\") returns a hash ──────
 bool test_edsl_stats_returns_hash() {
-    std::println("\n--- AC8: EDSL (query:soa-adoption-stats) ---");
+    std::println("\n--- AC8: EDSL (engine:metrics \"query:soa-adoption-stats\") ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:soa-adoption-stats)");
+    auto r = cs.eval("(engine:metrics \"query:soa-adoption-stats\")");
     if (!r) {
         CHECK(false, "eval returned error");
         return true;
     }
     auto v = *r;
-    CHECK(aura::compiler::types::is_hash(v), "(query:soa-adoption-stats) returns a hash");
+    CHECK(aura::compiler::types::is_hash(v),
+          "(engine:metrics \"query:soa-adoption-stats\") returns a hash");
     for (auto key : {"soa-functions-visited", "soa-instructions-visited", "aos-view-built-count"}) {
         auto rr = cs.eval(
             std::format("(hash-ref (engine:metrics \"query:soa-adoption-stats\") '{}')", key));

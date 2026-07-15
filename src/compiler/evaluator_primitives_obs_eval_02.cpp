@@ -93,53 +93,54 @@ void ObservabilityPrims::register_eval_p16(PrimRegistrar add, Evaluator& ev) {
     //   - estimated-cache-misses list_estimated_cache_misses_total
     //   - hotpath-events-total  (sum of 4, per-call derivation)
     //   - schema == 752
-    add("query:list-soa-hotpath-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t chain_traversals =
-            static_cast<std::int64_t>(ev.get_list_chain_traversals());
-        const std::int64_t soa_hits = static_cast<std::int64_t>(ev.get_list_soa_hits());
-        const std::int64_t intrinsic_dispatches =
-            static_cast<std::int64_t>(ev.get_list_intrinsic_dispatches());
-        const std::int64_t estimated_cache_misses =
-            static_cast<std::int64_t>(ev.get_list_estimated_cache_misses());
-        const std::int64_t events_total =
-            chain_traversals + soa_hits + intrinsic_dispatches + estimated_cache_misses;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:list-soa-hotpath-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t chain_traversals =
+                static_cast<std::int64_t>(ev.get_list_chain_traversals());
+            const std::int64_t soa_hits = static_cast<std::int64_t>(ev.get_list_soa_hits());
+            const std::int64_t intrinsic_dispatches =
+                static_cast<std::int64_t>(ev.get_list_intrinsic_dispatches());
+            const std::int64_t estimated_cache_misses =
+                static_cast<std::int64_t>(ev.get_list_estimated_cache_misses());
+            const std::int64_t events_total =
+                chain_traversals + soa_hits + intrinsic_dispatches + estimated_cache_misses;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("chain-traversals", chain_traversals);
-        insert_kv("soa-hits", soa_hits);
-        insert_kv("intrinsic-dispatches", intrinsic_dispatches);
-        insert_kv("estimated-cache-misses", estimated_cache_misses);
-        insert_kv("hotpath-events-total", events_total);
-        insert_kv("schema", 752);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("chain-traversals", chain_traversals);
+            insert_kv("soa-hits", soa_hits);
+            insert_kv("intrinsic-dispatches", intrinsic_dispatches);
+            insert_kv("estimated-cache-misses", estimated_cache_misses);
+            insert_kv("hotpath-events-total", events_total);
+            insert_kv("schema", 752);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 17 (orig lines 2850-2914)
@@ -158,57 +159,58 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
     //   - deployment-slo-hits    longrunning_deployment_slo_hits_total
     //   - infra-events-total     (sum of 5, per-call derivation)
     //   - schema == 753
-    add("query:longrunning-infra-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t quota_violations =
-            static_cast<std::int64_t>(ev.get_longrunning_quota_violations());
-        const std::int64_t checkpoint_success =
-            static_cast<std::int64_t>(ev.get_longrunning_checkpoint_success());
-        const std::int64_t heal_triggers =
-            static_cast<std::int64_t>(ev.get_longrunning_heal_triggers());
-        const std::int64_t resource_trend =
-            static_cast<std::int64_t>(ev.get_longrunning_resource_trend());
-        const std::int64_t deployment_slo_hits =
-            static_cast<std::int64_t>(ev.get_longrunning_deployment_slo_hits());
-        const std::int64_t events_total = quota_violations + checkpoint_success + heal_triggers +
-                                          resource_trend + deployment_slo_hits;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:longrunning-infra-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t quota_violations =
+                static_cast<std::int64_t>(ev.get_longrunning_quota_violations());
+            const std::int64_t checkpoint_success =
+                static_cast<std::int64_t>(ev.get_longrunning_checkpoint_success());
+            const std::int64_t heal_triggers =
+                static_cast<std::int64_t>(ev.get_longrunning_heal_triggers());
+            const std::int64_t resource_trend =
+                static_cast<std::int64_t>(ev.get_longrunning_resource_trend());
+            const std::int64_t deployment_slo_hits =
+                static_cast<std::int64_t>(ev.get_longrunning_deployment_slo_hits());
+            const std::int64_t events_total = quota_violations + checkpoint_success +
+                                              heal_triggers + resource_trend + deployment_slo_hits;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("quota-violations", quota_violations);
-        insert_kv("checkpoint-success", checkpoint_success);
-        insert_kv("heal-triggers", heal_triggers);
-        insert_kv("resource-trend", resource_trend);
-        insert_kv("deployment-slo-hits", deployment_slo_hits);
-        insert_kv("infra-events-total", events_total);
-        insert_kv("schema", 753);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("quota-violations", quota_violations);
+            insert_kv("checkpoint-success", checkpoint_success);
+            insert_kv("heal-triggers", heal_triggers);
+            insert_kv("resource-trend", resource_trend);
+            insert_kv("deployment-slo-hits", deployment_slo_hits);
+            insert_kv("infra-events-total", events_total);
+            insert_kv("schema", 753);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 18 (orig lines 2915-2976)
@@ -227,54 +229,55 @@ void ObservabilityPrims::register_eval_p18(PrimRegistrar add, Evaluator& ev) {
     //   - gc-safepoint-adapted  orchestration_llm_gc_safepoint_adapted_total
     //   - orchestration-events-total (sum of 4, per-call derivation)
     //   - schema == 754
-    add("query:orchestration-llm-bottleneck-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t outermost_preferred =
-            static_cast<std::int64_t>(aura_adaptive_steal_outermost_preferred());
-        const std::int64_t backoff_triggers =
-            static_cast<std::int64_t>(aura_adaptive_steal_deferred_pressure_boosts());
-        const std::int64_t llm_tail_reduction =
-            static_cast<std::int64_t>(aura_adaptive_steal_llm_tail_reductions());
-        const std::int64_t gc_safepoint_adapted =
-            static_cast<std::int64_t>(ev.get_orchestration_llm_gc_safepoint_adapted());
-        const std::int64_t events_total =
-            outermost_preferred + backoff_triggers + llm_tail_reduction + gc_safepoint_adapted;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:orchestration-llm-bottleneck-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t outermost_preferred =
+                static_cast<std::int64_t>(aura_adaptive_steal_outermost_preferred());
+            const std::int64_t backoff_triggers =
+                static_cast<std::int64_t>(aura_adaptive_steal_deferred_pressure_boosts());
+            const std::int64_t llm_tail_reduction =
+                static_cast<std::int64_t>(aura_adaptive_steal_llm_tail_reductions());
+            const std::int64_t gc_safepoint_adapted =
+                static_cast<std::int64_t>(ev.get_orchestration_llm_gc_safepoint_adapted());
+            const std::int64_t events_total =
+                outermost_preferred + backoff_triggers + llm_tail_reduction + gc_safepoint_adapted;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("outermost-preferred", outermost_preferred);
-        insert_kv("backoff-triggers", backoff_triggers);
-        insert_kv("llm-tail-reduction", llm_tail_reduction);
-        insert_kv("gc-safepoint-adapted", gc_safepoint_adapted);
-        insert_kv("orchestration-events-total", events_total);
-        insert_kv("schema", 754);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("outermost-preferred", outermost_preferred);
+            insert_kv("backoff-triggers", backoff_triggers);
+            insert_kv("llm-tail-reduction", llm_tail_reduction);
+            insert_kv("gc-safepoint-adapted", gc_safepoint_adapted);
+            insert_kv("orchestration-events-total", events_total);
+            insert_kv("schema", 754);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 19 (orig lines 2977-3037)
@@ -292,54 +295,55 @@ void ObservabilityPrims::register_eval_p19(PrimRegistrar add, Evaluator& ev) {
     //   - recovery-success         concurrent_safety_recovery_success_total
     //   - safety-events-total      (sum of 4, per-call derivation)
     //   - schema == 755
-    add("query:concurrent-safety-full-cycle-stats", [&ev](const auto&) -> EvalValue {
-        const std::int64_t steal_boundary_success =
-            static_cast<std::int64_t>(ev.get_concurrent_safety_steal_boundary_success());
-        const std::int64_t aot_reload_at_guard =
-            static_cast<std::int64_t>(ev.get_concurrent_safety_aot_reload_at_guard());
-        const std::int64_t gc_safepoint_during_steal =
-            static_cast<std::int64_t>(ev.get_concurrent_safety_gc_safepoint_during_steal());
-        const std::int64_t recovery_success =
-            static_cast<std::int64_t>(ev.get_concurrent_safety_recovery_success());
-        const std::int64_t events_total = steal_boundary_success + aot_reload_at_guard +
-                                          gc_safepoint_during_steal + recovery_success;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:concurrent-safety-full-cycle-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t steal_boundary_success =
+                static_cast<std::int64_t>(ev.get_concurrent_safety_steal_boundary_success());
+            const std::int64_t aot_reload_at_guard =
+                static_cast<std::int64_t>(ev.get_concurrent_safety_aot_reload_at_guard());
+            const std::int64_t gc_safepoint_during_steal =
+                static_cast<std::int64_t>(ev.get_concurrent_safety_gc_safepoint_during_steal());
+            const std::int64_t recovery_success =
+                static_cast<std::int64_t>(ev.get_concurrent_safety_recovery_success());
+            const std::int64_t events_total = steal_boundary_success + aot_reload_at_guard +
+                                              gc_safepoint_during_steal + recovery_success;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("steal-boundary-success", steal_boundary_success);
-        insert_kv("aot-reload-at-guard", aot_reload_at_guard);
-        insert_kv("gc-safepoint-during-steal", gc_safepoint_during_steal);
-        insert_kv("recovery-success", recovery_success);
-        insert_kv("safety-events-total", events_total);
-        insert_kv("schema", 755);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("steal-boundary-success", steal_boundary_success);
+            insert_kv("aot-reload-at-guard", aot_reload_at_guard);
+            insert_kv("gc-safepoint-during-steal", gc_safepoint_during_steal);
+            insert_kv("recovery-success", recovery_success);
+            insert_kv("safety-events-total", events_total);
+            insert_kv("schema", 755);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 20 (orig lines 3038-3164)
@@ -414,63 +418,64 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
     // service.ixx invalidate + needs the 1000+ reload cycles
     // + concurrent apply_closure + TSan coverage from the
     // issue body — separate follow-ups.
-    add("query:aot-reload-func-table-stats", [&ev](const auto&) -> EvalValue {
-        // ref-bump: new foundation atomic
-        // (0 until AC1 atomic refcount bumps wire-up).
-        const std::uint64_t ref_bump =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->aot_func_table_ref_bump_total.load(std::memory_order_relaxed)
-                : 0;
-        // ref-decrement: new foundation atomic
-        // (0 until AC1 atomic refcount decrements wire-up).
-        const std::uint64_t ref_decrement =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->aot_func_table_ref_decrement_total.load(std::memory_order_relaxed)
-                : 0;
-        // region-reapply: new foundation atomic
-        // (0 until AC2 region filtering re-apply wire-up).
-        const std::uint64_t region_reapply =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->aot_region_filter_reapply_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-reload-func-table-stats", [&ev](const auto&) -> EvalValue {
+            // ref-bump: new foundation atomic
+            // (0 until AC1 atomic refcount bumps wire-up).
+            const std::uint64_t ref_bump =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->aot_func_table_ref_bump_total.load(std::memory_order_relaxed)
+                    : 0;
+            // ref-decrement: new foundation atomic
+            // (0 until AC1 atomic refcount decrements wire-up).
+            const std::uint64_t ref_decrement =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->aot_func_table_ref_decrement_total.load(std::memory_order_relaxed)
+                    : 0;
+            // region-reapply: new foundation atomic
+            // (0 until AC2 region filtering re-apply wire-up).
+            const std::uint64_t region_reapply =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->aot_region_filter_reapply_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("ref-bump", static_cast<std::int64_t>(ref_bump));
-        insert_kv("ref-decrement", static_cast<std::int64_t>(ref_decrement));
-        insert_kv("region-reapply", static_cast<std::int64_t>(region_reapply));
-        insert_kv("schema", 644);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("ref-bump", static_cast<std::int64_t>(ref_bump));
+            insert_kv("ref-decrement", static_cast<std::int64_t>(ref_decrement));
+            insert_kv("region-reapply", static_cast<std::int64_t>(region_reapply));
+            insert_kv("schema", 644);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 21 (orig lines 3165-3290)
@@ -544,63 +549,64 @@ void ObservabilityPrims::register_eval_p21(PrimRegistrar add, Evaluator& ev) {
     // needs the 20+ fibers + LLM-sim latency matrix +
     // TSan coverage from the issue body — separate
     // follow-ups.
-    add("query:scheduler-steal-bias-stats", [&ev](const auto&) -> EvalValue {
-        // lifo-hits: new foundation atomic
-        // (0 until AC1 LIFO local hits wire-up).
-        const std::uint64_t lifo_hits =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->scheduler_lifo_hits_total.load(std::memory_order_relaxed)
-                : 0;
-        // fifo-steals: new foundation atomic
-        // (0 until AC1 FIFO steals wire-up).
-        const std::uint64_t fifo_steals =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->scheduler_fifo_steals_total.load(std::memory_order_relaxed)
-                : 0;
-        // mutation-deferred: new foundation atomic
-        // (0 until AC1+AC2 deferred-steal wire-up).
-        const std::uint64_t mutation_deferred =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->scheduler_mutation_deferred_bias_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:scheduler-steal-bias-stats", [&ev](const auto&) -> EvalValue {
+            // lifo-hits: new foundation atomic
+            // (0 until AC1 LIFO local hits wire-up).
+            const std::uint64_t lifo_hits =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->scheduler_lifo_hits_total.load(std::memory_order_relaxed)
+                    : 0;
+            // fifo-steals: new foundation atomic
+            // (0 until AC1 FIFO steals wire-up).
+            const std::uint64_t fifo_steals =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->scheduler_fifo_steals_total.load(std::memory_order_relaxed)
+                    : 0;
+            // mutation-deferred: new foundation atomic
+            // (0 until AC1+AC2 deferred-steal wire-up).
+            const std::uint64_t mutation_deferred =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->scheduler_mutation_deferred_bias_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("lifo-hits", static_cast<std::int64_t>(lifo_hits));
-        insert_kv("fifo-steals", static_cast<std::int64_t>(fifo_steals));
-        insert_kv("mutation-deferred", static_cast<std::int64_t>(mutation_deferred));
-        insert_kv("schema", 645);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("lifo-hits", static_cast<std::int64_t>(lifo_hits));
+            insert_kv("fifo-steals", static_cast<std::int64_t>(fifo_steals));
+            insert_kv("mutation-deferred", static_cast<std::int64_t>(mutation_deferred));
+            insert_kv("schema", 645);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 22 (orig lines 3291-3411)
@@ -669,63 +675,64 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
     // wait_for_safepoint + needs the high-contention matrix
     // + arena pressure + TSan coverage from the issue body
     // — separate follow-ups.
-    add("query:gc-safepoint-deferral-stats", [&ev](const auto&) -> EvalValue {
-        // outermost-deferral: new foundation atomic
-        // (0 until AC1 outermost depth==1 wire-up).
-        const std::uint64_t outermost_deferral =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->gc_outermost_deferral_total.load(std::memory_order_relaxed)
-                : 0;
-        // inner-proceeded: new foundation atomic
-        // (0 until AC1 inner depth>1 wire-up).
-        const std::uint64_t inner_proceeded =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->gc_inner_proceeded_total.load(std::memory_order_relaxed)
-                : 0;
-        // backoff-trigger: new foundation atomic
-        // (0 until AC2 backoff wire-up).
-        const std::uint64_t backoff_trigger =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->gc_backoff_trigger_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:gc-safepoint-deferral-stats", [&ev](const auto&) -> EvalValue {
+            // outermost-deferral: new foundation atomic
+            // (0 until AC1 outermost depth==1 wire-up).
+            const std::uint64_t outermost_deferral =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->gc_outermost_deferral_total.load(std::memory_order_relaxed)
+                    : 0;
+            // inner-proceeded: new foundation atomic
+            // (0 until AC1 inner depth>1 wire-up).
+            const std::uint64_t inner_proceeded =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->gc_inner_proceeded_total.load(std::memory_order_relaxed)
+                    : 0;
+            // backoff-trigger: new foundation atomic
+            // (0 until AC2 backoff wire-up).
+            const std::uint64_t backoff_trigger =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->gc_backoff_trigger_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("outermost-deferral", static_cast<std::int64_t>(outermost_deferral));
-        insert_kv("inner-proceeded", static_cast<std::int64_t>(inner_proceeded));
-        insert_kv("backoff-trigger", static_cast<std::int64_t>(backoff_trigger));
-        insert_kv("schema", 646);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("outermost-deferral", static_cast<std::int64_t>(outermost_deferral));
+            insert_kv("inner-proceeded", static_cast<std::int64_t>(inner_proceeded));
+            insert_kv("backoff-trigger", static_cast<std::int64_t>(backoff_trigger));
+            insert_kv("schema", 646);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 23 (orig lines 3412-3552)
@@ -814,63 +821,65 @@ void ObservabilityPrims::register_eval_p23(PrimRegistrar add, Evaluator& ev) {
     // yield/resume matrix + INVALID_VERSION post-rollback
     // + TSan coverage from the issue body — separate
     // follow-ups.
-    add("query:envframe-dualpath-stale-stats-hash", [&ev](const auto&) -> EvalValue {
-        // cross-fiber-stale: new foundation atomic
-        // (0 until AC1 cross-fiber post-steal wire-up).
-        const std::uint64_t cross_fiber_stale =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->envframe_cross_fiber_stale_total.load(std::memory_order_relaxed)
-                : 0;
-        // version-mismatch: new foundation atomic
-        // (0 until AC1 version_ mismatch post-steal wire-up).
-        const std::uint64_t version_mismatch =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->envframe_version_mismatch_post_steal_total.load(std::memory_order_relaxed)
-                : 0;
-        // dualpath-repair: new foundation atomic
-        // (0 until AC2 dual-path repair wire-up).
-        const std::uint64_t dualpath_repair =
-            ev.compiler_metrics()
-                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                      ->envframe_dualpath_repair_total.load(std::memory_order_relaxed)
-                : 0;
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-dualpath-stale-stats-hash", [&ev](const auto&) -> EvalValue {
+            // cross-fiber-stale: new foundation atomic
+            // (0 until AC1 cross-fiber post-steal wire-up).
+            const std::uint64_t cross_fiber_stale =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->envframe_cross_fiber_stale_total.load(std::memory_order_relaxed)
+                    : 0;
+            // version-mismatch: new foundation atomic
+            // (0 until AC1 version_ mismatch post-steal wire-up).
+            const std::uint64_t version_mismatch =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->envframe_version_mismatch_post_steal_total.load(
+                              std::memory_order_relaxed)
+                    : 0;
+            // dualpath-repair: new foundation atomic
+            // (0 until AC2 dual-path repair wire-up).
+            const std::uint64_t dualpath_repair =
+                ev.compiler_metrics()
+                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          ->envframe_dualpath_repair_total.load(std::memory_order_relaxed)
+                    : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
-            }
-        };
-        insert_kv("cross-fiber-stale", static_cast<std::int64_t>(cross_fiber_stale));
-        insert_kv("version-mismatch", static_cast<std::int64_t>(version_mismatch));
-        insert_kv("dualpath-repair", static_cast<std::int64_t>(dualpath_repair));
-        insert_kv("schema", 647);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            };
+            insert_kv("cross-fiber-stale", static_cast<std::int64_t>(cross_fiber_stale));
+            insert_kv("version-mismatch", static_cast<std::int64_t>(version_mismatch));
+            insert_kv("dualpath-repair", static_cast<std::int64_t>(dualpath_repair));
+            insert_kv("schema", 647);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

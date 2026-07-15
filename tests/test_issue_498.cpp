@@ -108,7 +108,7 @@ int aura_issue_498_run() {
     // AC4: query:primitive-meta-stats regression
     {
         std::println("\n--- AC4: primitive-meta-stats regression ---");
-        auto meta = cs.eval("(query:primitive-meta-stats)");
+        auto meta = cs.eval("(engine:metrics \"query:primitive-meta-stats\")");
         CHECK(meta && aura::compiler::types::is_int(*meta), "primitive-meta-stats regression");
     }
 

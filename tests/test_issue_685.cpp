@@ -47,7 +47,7 @@ int aura_issue_685_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:arena-auto-compact-stats ---");
-        auto stats = cs.eval("(query:arena-auto-compact-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:arena-auto-compact-stats returns hash");
         CHECK(stat_int(cs, "auto-triggers") >= 0, "auto-triggers present");

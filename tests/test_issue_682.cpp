@@ -48,7 +48,7 @@ int aura_issue_682_run() {
     // AC1: stats hash fields
     {
         std::println("\n--- AC1: query:compiler-gc-root-stats ---");
-        auto stats = cs.eval("(query:compiler-gc-root-stats)");
+        auto stats = cs.eval("(engine:metrics \"query:compiler-gc-root-stats\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:compiler-gc-root-stats returns hash");
         CHECK(stat_int(cs, "ir-closure-roots-registered") >= 0,
