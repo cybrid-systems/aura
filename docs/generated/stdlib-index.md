@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**62** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**63** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -22,6 +22,7 @@
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp->year` `timestamp->month` `timestamp->day` `timestamp->hour` `timestamp->minute` … (+17) | datetime.aura — Date and time utilities |
 | `std/eda` | `;` `Issue` `#1012` `helper` `eda:strcat` `IR` `constructors` `make-eda:module` … (+260) | — |
+| `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |

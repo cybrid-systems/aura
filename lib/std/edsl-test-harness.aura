@@ -1,0 +1,82 @@
+; ── EDSL Test Harness (#1452) ─────────────────────────────────
+; Declarative-ish helpers for pure-Aura self-tests without quoting
+; entire suites through test-suite macros (those hit data_to_flat
+; edge cases). All checks evaluate immediately.
+;
+; Usage:
+;   (require "std/edsl-test-harness" all:)
+;   (section "Query")
+;   (it "def-use" (= (length (car (query:def-use "x"))) 1))
+;   (describe "Governance" (lambda ()
+;     (it "validate-new blocks stats" …)))
+;   (summary)   ; prints totals; returns #t iff zero failures
+;
+; Philosophy (#1451/#1452): tests are code-as-memory — named,
+; ordered, fail-loud, prefer facade/Guard/StableRef coverage.
+
+(export section it describe report summary
+        total-pass total-fail reset-totals
+        fixture-set-code expect-hash-bool)
+
+(define total-pass 0)
+(define total-fail 0)
+(define current-section "")
+
+(define (reset-totals)
+  (set! total-pass 0)
+  (set! total-fail 0)
+  (set! current-section "")
+  #t)
+
+(define (section title)
+  (newline)
+  (display "── ")
+  (display title)
+  (display " ──\n")
+  (set! current-section title)
+  title)
+
+;; (it name ok) — record one assertion; returns ok for chaining.
+(define (it name ok)
+  (display "  ")
+  (display name)
+  (display ": ")
+  (if ok
+      (begin (display "✅\n") (set! total-pass (+ total-pass 1)))
+      (begin (display "❌\n") (set! total-fail (+ total-fail 1))))
+  ok)
+
+;; Alias for existing edsl_self_test call sites.
+(define (report name ok) (it name ok))
+
+;; (describe title body-thunk) — section + run body.
+(define (describe title body-thunk)
+  (section title)
+  (body-thunk)
+  title)
+
+;; (fixture-set-code src) — set-code + return success bool.
+(define (fixture-set-code src)
+  (set-code src))
+
+;; (expect-hash-bool expr key expected) — hash-ref key is bool == expected.
+;; expr is a form that evaluates to a hash (e.g. engine:surface result).
+(define (expect-hash-bool h key expected)
+  (and (hash? h)
+       (let ((v (hash-ref h key)))
+         (and (boolean? v) (if expected v (not v))))))
+
+(define (summary)
+  (newline)
+  (display "═══ Results ═══\n")
+  (display total-pass)
+  (display " passed, ")
+  (display total-fail)
+  (display " failed\n")
+  (if (= total-fail 0)
+      (begin (display "✅ All tests passed!\n") #t)
+      (begin
+        (display "❌ ")
+        (display total-fail)
+        (display " test(s) failed\n")
+        #f)))
