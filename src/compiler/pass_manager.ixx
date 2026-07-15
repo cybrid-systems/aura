@@ -2214,21 +2214,43 @@ private:
 //   - Car/Cdr: result.type_id = pair (whatever the source
 //     pair's type_id is, if any)
 //
-// Cost: O(N) per block. Idempotent.
+// Cost: O(rounds × N) per block, rounds ≤ 8. Idempotent after
+// fixpoint. Issue #1457: iterative + CastOp / narrow_evidence
+// stamping so DeadCoercionEliminationPass can elide more CastOps
+// for JIT zero-overhead post-mutation.
+//
+// Does NOT call TypeRegistry (lookup_type can re-enter GC/compact
+// mid-pipeline on some paths); only propagates type_ids already
+// stamped by lowering / TypeSpecializationWrap.
 export class TypePropagationPass {
 public:
+    explicit TypePropagationPass(const aura::core::TypeRegistry* /*reg*/ = nullptr) {}
+
     void run(aura::ir::IRModule& module) {
         propagated_count_ = 0;
+        narrow_propagated_ = 0;
+        cast_result_stamped_ = 0;
+        if (module.functions.empty())
+            return;
         for (auto& func : module.functions) {
-            for (auto& block : func.blocks) {
+            for (auto& block : func.blocks)
                 run_on_block(block);
-            }
         }
+    }
+
+    // Issue #1457: per-function entry for incremental re-lower.
+    void run_function(aura::ir::IRFunction& func) {
+        for (auto& block : func.blocks)
+            run_on_block(block);
     }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "type-propagation"; }
     std::size_t propagated_count() const { return propagated_count_; }
+    std::size_t narrow_propagated() const { return narrow_propagated_; }
+    std::size_t cast_result_stamped() const { return cast_result_stamped_; }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
 private:
     static bool should_propagate(aura::ir::IROpcode op) {
@@ -2243,6 +2265,7 @@ private:
             case aura::ir::IROpcode::Not:
             case aura::ir::IROpcode::Car:
             case aura::ir::IROpcode::Cdr:
+            case aura::ir::IROpcode::CastOp:
                 return true;
             default:
                 return false;
@@ -2250,86 +2273,133 @@ private:
     }
 
     void run_on_block(aura::ir::BasicBlock& block) {
-        // Pass 1: build slot -> type_id map from instructions
-        // that already have type_id set (constants, etc.).
-        // The map's key is the result slot; the value is the
-        // type_id. We use a flat vector indexed by slot number
-        // (assumes slots are dense, which is the convention
-        // for Aura's IR).
-        const std::size_t n = block.instructions.size();
-        if (n == 0)
+        if (block.instructions.empty())
             return;
-        // Find max slot referenced in the block.
-        std::uint32_t max_slot = 0;
-        for (const auto& instr : block.instructions) {
-            for (std::uint32_t k = 0; k < 4; ++k) {
-                if (instr.operands[k] > max_slot)
-                    max_slot = instr.operands[k];
-            }
-        }
-        if (max_slot == 0)
-            return;
-        // Allocate slot_type_id sized to max_slot + 1.
-        std::vector<std::uint32_t> slot_type_id(max_slot + 1, 0);
-        for (const auto& instr : block.instructions) {
-            if (!DCEPass::has_result_slot_local(instr.opcode))
-                continue;
-            if (instr.type_id != 0) {
-                auto slot = instr.operands[0];
-                if (slot <= max_slot) {
-                    slot_type_id[slot] = instr.type_id;
-                }
-            }
-        }
 
-        // Pass 2: propagate to instructions with type_id == 0.
-        for (auto& instr : block.instructions) {
-            if (!should_propagate(instr.opcode))
-                continue;
-            if (instr.type_id != 0)
-                continue; // already set
-            if (!DCEPass::has_result_slot_local(instr.opcode))
-                continue;
-            std::uint32_t inferred = 0;
-            switch (instr.opcode) {
-                case aura::ir::IROpcode::Local:
-                case aura::ir::IROpcode::Not:
-                case aura::ir::IROpcode::Car:
-                case aura::ir::IROpcode::Cdr:
-                    // Single source operand.
-                    if (instr.operands[1] <= max_slot) {
-                        inferred = slot_type_id[instr.operands[1]];
+        // Slot map keyed by result slot. Prefer a dense map from
+        // known result slots only (avoid scanning padding operands
+        // which may hold garbage high values).
+        std::unordered_map<std::uint32_t, std::uint32_t> slot_type_id;
+        std::unordered_map<std::uint32_t, std::uint32_t> slot_narrow;
+        slot_type_id.reserve(block.instructions.size() * 2);
+        slot_narrow.reserve(block.instructions.size() * 2);
+
+        auto seed = [&]() {
+            for (const auto& instr : block.instructions) {
+                if (!DCEPass::has_result_slot_local(instr.opcode))
+                    continue;
+                const auto slot = instr.operands[0];
+                if (instr.type_id != 0)
+                    slot_type_id[slot] = instr.type_id;
+                if (instr.narrow_evidence != 0)
+                    slot_narrow[slot] = instr.narrow_evidence;
+            }
+        };
+        seed();
+
+        constexpr int kMaxRounds = 8;
+        for (int round = 0; round < kMaxRounds; ++round) {
+            std::size_t progress = 0;
+            for (auto& instr : block.instructions) {
+                if (!should_propagate(instr.opcode))
+                    continue;
+                if (!DCEPass::has_result_slot_local(instr.opcode))
+                    continue;
+                const auto slot = instr.operands[0];
+
+                std::uint32_t inferred = 0;
+                std::uint32_t inferred_narrow = 0;
+
+                switch (instr.opcode) {
+                    case aura::ir::IROpcode::CastOp: {
+                        // Stamp CastOp result from its type_id so DCE
+                        // Rule 1/6 can match source.type_id == cast.type_id.
+                        if (instr.type_id != 0) {
+                            auto it = slot_type_id.find(slot);
+                            if (it == slot_type_id.end() || it->second != instr.type_id) {
+                                slot_type_id[slot] = instr.type_id;
+                                ++cast_result_stamped_;
+                                ++progress;
+                            }
+                        }
+                        const auto src = instr.operands[1];
+                        auto sit = slot_type_id.find(src);
+                        auto snit = slot_narrow.find(src);
+                        if (instr.type_id != 0 && sit != slot_type_id.end() &&
+                            sit->second == instr.type_id) {
+                            if (instr.narrow_evidence == 0 && snit != slot_narrow.end() &&
+                                snit->second != 0) {
+                                instr.narrow_evidence = snit->second;
+                                slot_narrow[slot] = snit->second;
+                                ++narrow_propagated_;
+                                ++progress;
+                            }
+                        }
+                        break;
                     }
-                    break;
-                case aura::ir::IROpcode::Add:
-                case aura::ir::IROpcode::Sub:
-                case aura::ir::IROpcode::Mul:
-                case aura::ir::IROpcode::Div:
-                case aura::ir::IROpcode::And:
-                case aura::ir::IROpcode::Or: {
-                    // Two source operands. If both have the same
-                    // type_id, propagate. If they differ, leave 0
-                    // (downstream pass handles mixed-type ops).
-                    auto t1 =
-                        (instr.operands[1] <= max_slot) ? slot_type_id[instr.operands[1]] : 0u;
-                    auto t2 =
-                        (instr.operands[2] <= max_slot) ? slot_type_id[instr.operands[2]] : 0u;
-                    if (t1 != 0 && t1 == t2)
-                        inferred = t1;
-                    break;
+                    case aura::ir::IROpcode::Local:
+                    case aura::ir::IROpcode::Not:
+                    case aura::ir::IROpcode::Car:
+                    case aura::ir::IROpcode::Cdr: {
+                        const auto src = instr.operands[1];
+                        if (auto it = slot_type_id.find(src); it != slot_type_id.end())
+                            inferred = it->second;
+                        if (auto it = slot_narrow.find(src); it != slot_narrow.end())
+                            inferred_narrow = it->second;
+                        break;
+                    }
+                    case aura::ir::IROpcode::Add:
+                    case aura::ir::IROpcode::Sub:
+                    case aura::ir::IROpcode::Mul:
+                    case aura::ir::IROpcode::Div:
+                    case aura::ir::IROpcode::And:
+                    case aura::ir::IROpcode::Or: {
+                        auto t1 = slot_type_id.find(instr.operands[1]);
+                        auto t2 = slot_type_id.find(instr.operands[2]);
+                        if (t1 != slot_type_id.end() && t2 != slot_type_id.end() &&
+                            t1->second != 0 && t1->second == t2->second)
+                            inferred = t1->second;
+                        auto n1 = slot_narrow.find(instr.operands[1]);
+                        auto n2 = slot_narrow.find(instr.operands[2]);
+                        if (n1 != slot_narrow.end() && n2 != slot_narrow.end() && n1->second != 0 &&
+                            n1->second == n2->second)
+                            inferred_narrow = n1->second;
+                        break;
+                    }
+                    default:
+                        break;
                 }
-                default:
-                    break;
+
+                if (inferred != 0 && instr.type_id == 0) {
+                    instr.type_id = inferred;
+                    slot_type_id[slot] = inferred;
+                    ++propagated_count_;
+                    ++progress;
+                }
+                if (inferred_narrow != 0 && instr.narrow_evidence == 0) {
+                    instr.narrow_evidence = inferred_narrow;
+                    slot_narrow[slot] = inferred_narrow;
+                    ++narrow_propagated_;
+                    ++progress;
+                }
+                if (instr.type_id != 0)
+                    slot_type_id[slot] = instr.type_id;
+                if (instr.narrow_evidence != 0)
+                    slot_narrow[slot] = instr.narrow_evidence;
             }
-            if (inferred != 0) {
-                instr.type_id = inferred;
-                ++propagated_count_;
-            }
+            if (progress == 0)
+                break;
         }
     }
 
     std::size_t propagated_count_ = 0;
+    std::size_t narrow_propagated_ = 0;
+    std::size_t cast_result_stamped_ = 0;
+    std::uint64_t pipeline_epoch_ = 0;
 };
+
+static_assert(JITFriendlyPass<TypePropagationPass>,
+              "TypePropagationPass exposes pipeline_epoch_hint");
 
 // Issue #160: Inline Expansion Pass (sub-item #6 minimal).
 //

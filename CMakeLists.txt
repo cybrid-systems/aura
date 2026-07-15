@@ -1779,6 +1779,9 @@ aura_issue_test_link_llvm_jit(test_issue_1455_occurrence_stale_propagation)
 # Issue #1456: affected_subtree locality for incremental typecheck
 aura_add_issue_test(test_issue_1456_affected_subtree_locality)
 aura_issue_test_link_llvm_jit(test_issue_1456_affected_subtree_locality)
+# Issue #1457: IR type propagation + CastOp zero-overhead
+aura_add_issue_test(test_issue_1457_type_propagation_castop_zerooverhead)
+aura_issue_test_link_llvm_jit(test_issue_1457_type_propagation_castop_zerooverhead)
 aura_add_issue_test(test_bidirectional_check_occurrence_narrow_post_mutate)
 aura_issue_test_link_llvm_jit(test_bidirectional_check_occurrence_narrow_post_mutate)
 # Issue #609: occurrence typing blame + post-mutate recovery
