@@ -1359,24 +1359,29 @@ def cmd_test(suite_names: list[str]):
 
 
 def cmd_primitive_surface():
-    """P0b/#1432: freeze — no new stats/convenience/ast:ref-* primitive names."""
-    print(f"{B}═══ Primitive surface freeze ═══{N}")
+    """P0b/#1432 freeze + #1448 SlimSurface --strict (budget + facade report)."""
+    print(f"{B}═══ Primitive surface freeze + SlimSurface ═══{N}")
     script = ROOT / "scripts" / "check_primitive_surface.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    # Issue #1448: --strict includes freeze + public budget + facade report.
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
     if r.returncode != 0:
-        fail("primitive surface freeze failed (no new *-stats / string|json|math|vector|path|time-* / ast:ref-*)")
+        fail(
+            "primitive surface freeze/strict failed "
+            "(no new *-stats / string|json|math|vector|path|time-* / ast:ref-*; "
+            "public count ≤ interim ceiling)"
+        )
         return 1
-    # Issue #1432: synthetic unit tests (blocks deliberately-bad names).
+    # Issue #1432 / #1448: synthetic unit tests (blocks deliberately-bad names + strict).
     ut = ROOT / "tests" / "test_primitive_surface_gate.py"
     if ut.exists():
         r2 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
         if r2.returncode != 0:
             fail("primitive surface gate unit tests failed")
             return 1
-    ok("primitive surface freeze OK")
+    ok("primitive surface freeze + SlimSurface --strict OK")
     return 0
 
 

@@ -1,13 +1,17 @@
 # Primitives Surface Refactor — Minimal Public API + Progressive Delivery
 
-> **Status**: in progress — **P0b–P4 + P5a/#1439 public stats removal landed**  
+> **Status**: in progress — **P0b–P4 + P5a/#1439 public stats removal + #1448 SlimSurface infra landed**  
 > **Supersedes / extends**: [#558–#566 demotion epic](primitives-demotion-batch1.md),  
 > [primitive-vs-stdlib-decision-framework.md](primitive-vs-stdlib-decision-framework.md),  
 > [query-namespace-decision.md](query-namespace-decision.md),  
-> [stdlib-organization-spec.md](stdlib-organization-spec.md)  
+> [stdlib-organization-spec.md](stdlib-organization-spec.md),  
+> **[#1448 SlimSurface v2 governance](primitives-slim-surface-v2.md)**  
 > **Goal**: 对外暴露尽可能少；其余用宏 / 标准库；C++ 只保留高性能 + AI-native 工作面 + 引擎/宿主红线。  
 >  
 > **Shipped**:  
+> - **#1448 SlimSurface infra**: `--strict` budget (target 420 / interim ceiling 700),  
+>   `PrimMeta.deprecated` dispatch counter, `docs/design/primitives-slim-surface-v2.md`,  
+>   gate runs freeze+strict, `tests/test_primitives_surface_convergence.cpp`  
 > - P0b/#1432: `scripts/check_primitive_surface.py` freezes stats **and** convenience (`string`/`json`/`math`/`vector`/`path`/`time`) + `ast:ref-*` vs baseline; gate + unit test  
 > - P1a/#1433: `(engine:metrics)` schema 2 + nested groups + `:prefix` / `:group` / `:all`; `lib/std/engine-metrics.aura`  
 > - P1b/#1434: top-20 stats callers migrated to facade; `PrimMeta.deprecated` + `api-reference *deprecated*`; `scripts/find_top_stats.py`  
