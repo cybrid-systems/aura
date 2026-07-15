@@ -7,7 +7,7 @@
 | Infra (gate, deprecation counter, design) | #1448 | **Done** (`a1276ed2`) |
 | Observability facade + residual stats | #1450 | **Done** — Phase1 facade + Phase2 residual public `*-stats` → `register_stats_impl` |
 | Governance policy doc | #1451 | **Done** — `primitive-governance-policy.md` + `(primitive:validate-new)` |
-| Convenience → stdlib | #1452 (epic text) / testing epic | Open |
+| Testing framework entry | #1452 | **Done** — harness + binding gate + declarative self-test |
 | Hard removal + migration guide | #1455 | Open |
 
 ## #1450 deliverables

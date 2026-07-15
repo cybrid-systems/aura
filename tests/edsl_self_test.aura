@@ -1,282 +1,259 @@
-; ── Aura EDSL Self-Test Suite ───────────────────────────────
+; ── Aura EDSL Self-Test Suite (#1452 declarative harness) ────
 ;
-; Pure Aura test of all EDSL primitives. No Python, no LLM.
+; Pure Aura test of EDSL + governance facade. No Python, no LLM.
 ; Run: ./aura < tests/edsl_self_test.aura
+; Also: tests/suite/edsl_self_test.aura (suite runner copy)
 ;
-; NOTE: Uses direct check calls, not test-suite macro.
-; This avoids the data_to_flat issue with quoted expressions.
+; Uses std/edsl-test-harness (immediate it/report — not quoted
+; test-suite bodies, which hit data_to_flat edge cases).
 
-(require std/test all:)
-; Issue #561: synthesize:list-templates was demoted to the
-; stdlib (lib/std/synthesize.aura) — import the wrapper here
-; so the synth-list test (line ~164) binds the symbol.
-(require std/synthesize)
+(require "std/edsl-test-harness" all:)
+; Issue #561: synthesize:list-templates demoted to stdlib.
+(require "std/synthesize")
 
-(display "═══ EDSL Self-Test Suite ═══\n")
-(newline)
+(display "═══ EDSL Self-Test Suite (#1452) ═══\n")
+(reset-totals)
 
-(define total-pass 0)
-(define total-fail 0)
-
-(define (report name ok)
-  (display "  ")
-  (display name)
-  (display ": ")
-  (if ok
-    (begin (display "✅\n") (set! total-pass (+ total-pass 1)))
-    (begin (display "❌\n") (set! total-fail (+ total-fail 1))))
-  ok)
-
-; ── 1. Workspace ──
-(newline)
-(display "── 1. Workspace ──\n")
-
-(report "set-code" (set-code "(define (f x) (+ x 1))"))
-(report "current-source" (string? (current-source)))
-(report "eval-current" (eval-current))
-(report "typecheck-current" (string? (typecheck-current)))
+; ── 1. Workspace boot ──
+(describe "1. Workspace boot"
+  (lambda ()
+    (it "set-code" (set-code "(define (f x) (+ x 1))"))
+    (it "current-source" (string? (current-source)))
+    (it "eval-current" (eval-current))
+    (it "typecheck-current" (string? (typecheck-current)))))
 
 ; ── 2. Query ──
-(newline)
-(display "── 2. Query ──\n")
+(describe "2. Query"
+  (lambda ()
+    (set-code "(define x 42)")
+    (it "def-use-simple" (= (length (car (query:def-use "x"))) 1))
 
-(set-code "(define x 42)")
-(report "def-use-simple" (= (length (car (query:def-use "x"))) 1))
+    (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+    (it "def-use-function"
+      (let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
+        (and (= (length d) 1) (> (length u) 0))))
 
-(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
-(report "def-use-function"
-  (let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
-    (and (= (length d) 1) (> (length u) 0))))
+    (set-code "(define (f x) (+ x 1))")
+    (it "def-use-param" (= (length (car (query:def-use "x"))) 1))
 
-(set-code "(define (f x) (+ x 1))")
-(report "def-use-param" (= (length (car (query:def-use "x"))) 1))
+    (set-code "(define x 1)")
+    (it "def-use-nonexistent"
+      (let* ((r (query:def-use "nonexistent")) (d (car r)) (u (cdr r)))
+        (and (= (length d) 0) (= (length u) 0))))
 
-(set-code "(define x 1)")
-(report "def-use-nonexistent"
-  (let* ((r (query:def-use "nonexistent")) (d (car r)) (u (cdr r)))
-    (and (= (length d) 0) (= (length u) 0))))
-
-(set-code "(define (f x) (+ x 1))")
-(report "query-reaches"
-  (let ((defs (query:node-type "Define")))
-    (if (pair? defs) (pair? (query:reaches (car defs))) #t)))
-(report "query-effects" (pair? (query:effects "f")))
-(report "query-node-type" (pair? (query:node-type "Define")))
+    (set-code "(define (f x) (+ x 1))")
+    (it "query-reaches"
+      (let ((defs (query:node-type "Define")))
+        (if (pair? defs) (pair? (query:reaches (car defs))) #t)))
+    (it "query-effects" (pair? (query:effects "f")))
+    (it "query-node-type" (pair? (query:node-type "Define")))))
 
 ; ── 3. Mutation ──
-(newline)
-(display "── 3. Mutation ──\n")
+(describe "3. Mutation"
+  (lambda ()
+    (set-code "(define (f x) (+ x 1))")
+    (it "mutate-rebind" (mutate:rebind "f" "(lambda (x) (* x 2))" "test"))
+    (it "mutate-set-body" (mutate:set-body "f" "(* x 3)"))
+    (set-code "(define (f x) (+ x 1))")
+    (it "mutate-replace-value" (mutate:replace-value 2 100 "change"))
 
-(set-code "(define (f x) (+ x 1))")
-(report "mutate-rebind" (mutate:rebind "f" "(lambda (x) (* x 2))" "test"))
-(report "mutate-set-body" (mutate:set-body "f" "(* x 3)"))
-(set-code "(define (f x) (+ x 1))")
-(report "mutate-replace-value" (mutate:replace-value 2 100 "change"))
+    (set-code "(begin (display 1) (display 3))")
+    (it "mutate-splice"
+      (let ((root (query:root)))
+        (> (length (mutate:splice root 1 "(display 2)" "splice")) 0)))
 
-(set-code "(begin (display 1) (display 3))")
-(report "mutate-splice"
-  (let ((root (query:root)))
-    (> (length (mutate:splice root 1 "(display 2)" "splice")) 0)))
+    (set-code "(define (f x) (+ x 1))")
+    (it "mutate-wrap"
+      (let ((calls (query:node-type "Call")))
+        (if (pair? calls) (>= (mutate:wrap (car calls) "(display _)" "wrap") 0) #t)))
 
-(set-code "(define (f x) (+ x 1))")
-(report "mutate-wrap"
-  (let ((calls (query:node-type "Call")))
-    (if (pair? calls) (>= (mutate:wrap (car calls) "(display _)" "wrap") 0) #t)))
-
-(set-code "(define (f x) (+ x 1))")
-(report "mutate-cache-rebuild"
-  (begin (query:def-use "f")
-         (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-         (pair? (query:def-use "f"))))
+    (set-code "(define (f x) (+ x 1))")
+    (it "mutate-cache-rebuild"
+      (begin (query:def-use "f")
+             (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+             (pair? (query:def-use "f"))))))
 
 ; ── 4. Snapshot ──
-(newline)
-(display "── 4. Snapshot ──\n")
+(describe "4. Snapshot"
+  (lambda ()
+    (set-code "(define (f x) (+ x 1))")
+    (it "snapshot-basic" (>= (ast:snapshot "test") 0))
 
-(set-code "(define (f x) (+ x 1))")
-(report "snapshot-basic" (>= (ast:snapshot "test") 0))
+    (it "snapshot-restore"
+      (let ((sid (ast:snapshot "before")))
+        (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+        (ast:restore sid)
+        (pair? (query:def-use "f"))))
 
-(report "snapshot-restore"
-  (let ((sid (ast:snapshot "before")))
-    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-    (ast:restore sid)
-    (pair? (query:def-use "f"))))
+    (it "snapshot-diff"
+      (let ((sid (ast:snapshot "v1")))
+        (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+        (pair? (ast:diff sid))))
 
-(report "snapshot-diff"
-  (let ((sid (ast:snapshot "v1")))
-    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-    (pair? (ast:diff sid))))
+    (set-code "(define x 1)")
+    (ast:snapshot "v1")
+    (it "snapshot-list" (pair? (ast:list-snapshots)))))
 
-(set-code "(define x 1)")
-(ast:snapshot "v1")
-(report "snapshot-list" (pair? (ast:list-snapshots)))
-
-; ── 5. Summary ──
-(newline)
-(display "── 5. Summary ──\n")
-
-(set-code "(define (f x) (+ x 1))")
-(report "summary-basic" (pair? (ast:summary)))
-(report "compile-status" (pair? (compile:status)))
+; ── 5. Summary / compile ──
+(describe "5. Summary"
+  (lambda ()
+    (set-code "(define (f x) (+ x 1))")
+    (it "summary-basic" (pair? (ast:summary)))
+    (it "compile-status" (pair? (compile:status)))))
 
 ; ── 6. Workspace ──
-(newline)
-(display "── 6. Workspace ──\n")
+(describe "6. Workspace"
+  (lambda ()
+    (set-code "(define x 1)")
+    (workspace:create "a")
+    (workspace:create "b")
+    (it "ws-create-list" (>= (length (workspace:list)) 2))
 
-(set-code "(define x 1)")
-(workspace:create "a")(workspace:create "b")
-(report "ws-create-list" (>= (length (workspace:list)) 2))
+    (set-code "(define (f x) (+ x 1))")
+    (it "ws-isolation"
+      (let ((ws (workspace:create "iso")))
+        (workspace:switch ws)
+        (mutate:rebind "f" "(lambda (x) (* x 2))" "mut")
+        (workspace:switch 0)
+        (pair? (query:def-use "f"))))
 
-(set-code "(define (f x) (+ x 1))")
-(report "ws-isolation"
-  (let ((ws (workspace:create "iso")))
-    (workspace:switch ws)
-    (mutate:rebind "f" "(lambda (x) (* x 2))" "mut")
-    (workspace:switch 0)
-    (pair? (query:def-use "f"))))
+    (set-code "(define x 1)")
+    (it "ws-lock" (let ((ws (workspace:create "lt")))
+      (workspace:lock ws #t) (not (workspace:can-write? ws))))
+    (it "ws-unlock" (let ((ws (workspace:create "ut")))
+      (workspace:lock ws #t) (workspace:lock ws #f) (workspace:can-write? ws)))
 
-(set-code "(define x 1)")
-(report "ws-lock" (let ((ws (workspace:create "lt")))
-  (workspace:lock ws #t) (not (workspace:can-write? ws))))
-(report "ws-unlock" (let ((ws (workspace:create "ut")))
-  (workspace:lock ws #t) (workspace:lock ws #f) (workspace:can-write? ws)))
-
-(set-code "(define (f x) (+ x 1))")
-(report "ws-discard" (let ((ws (workspace:create "dt")))
-  (workspace:switch ws) (mutate:rebind "f" "(lambda (x) (* x 2))" "t")
-  (workspace:switch 0) (workspace:discard ws)))
-(report "ws-current" (= (workspace:current) 0))
+    (set-code "(define (f x) (+ x 1))")
+    (it "ws-discard" (let ((ws (workspace:create "dt")))
+      (workspace:switch ws) (mutate:rebind "f" "(lambda (x) (* x 2))" "t")
+      (workspace:switch 0) (workspace:discard ws)))
+    (it "ws-current" (= (workspace:current) 0))))
 
 ; ── 7. Messaging ──
-(newline)
-(display "── 7. Messaging ──\n")
-
-(report "msg-my-id" (string? (my-id)))
-(report "msg-recv-timeout" (not (recv 0)))
-(report "msg-send-no-target" (not (send "nonexistent" "test")))
-(report "msg-mailbox-count" (= (mailbox-count) 0))
-(report "msg-session-active" (not (session-active? "nonexistent")))
-(report "msg-reply-no-sender" (not (reply "test")))
+(describe "7. Messaging"
+  (lambda ()
+    (it "msg-my-id" (string? (my-id)))
+    (it "msg-recv-timeout" (not (recv 0)))
+    (it "msg-send-no-target" (not (send "nonexistent" "test")))
+    (it "msg-mailbox-count" (= (mailbox-count) 0))
+    (it "msg-session-active" (not (session-active? "nonexistent")))
+    (it "msg-reply-no-sender" (not (reply "test")))))
 
 ; ── 8. Template ──
-(newline)
-(display "── 8. Template ──\n")
+(describe "8. Template"
+  (lambda ()
+    (set-code "(begin)")
+    (synthesize:register-template "double" "(define (double-{n} x) (* 2 x))" "n")
+    (it "synth-fill" (synthesize:fill "double" "val"))
+    (it "synth-list" (pair? (synthesize:list-templates)))
 
-(set-code "(begin)")
-(synthesize:register-template "double" "(define (double-{n} x) (* 2 x))" "n")
-(report "synth-fill" (synthesize:fill "double" "val"))
-(report "synth-list" (pair? (synthesize:list-templates)))
-
-(set-code "(begin)")
-(synthesize:register-template "h" "(define (handle-{r} req) (display req))" "r")
-(report "synth-multi" (synthesize:fill "h" "users"))
-(report "synth-nonexistent" (not (synthesize:fill "no-such" "x")))
+    (set-code "(begin)")
+    (synthesize:register-template "h" "(define (handle-{r} req) (display req))" "r")
+    (it "synth-multi" (synthesize:fill "h" "users"))
+    (it "synth-nonexistent" (not (synthesize:fill "no-such" "x")))))
 
 ; ── 9. Optimize ──
-(newline)
-(display "── 9. Optimize ──\n")
+(describe "9. Optimize"
+  (lambda ()
+    (set-code "(define (f x) (+ x 100))")
+    (it "opt-basic" (pair? (synthesize:optimize "f" ":population" 3 ":generations" 1)))
 
-(set-code "(define (f x) (+ x 100))")
-(report "opt-basic" (pair? (synthesize:optimize "f" ":population" 3 ":generations" 1)))
+    (set-code "(define (f x) (+ x 1))")
+    (synthesize:optimize "f" ":population" 3 ":generations" 1)
+    (it "opt-preserves" (string? (current-source)))))
 
-(set-code "(define (f x) (+ x 1))")
-(synthesize:optimize "f" ":population" 3 ":generations" 1)
-(report "opt-preserves" (string? (current-source)))
+; ── 10. Encoding collision regression ──
+(describe "10. Encoding collision"
+  (lambda ()
+    (set-code "(define (f x) (+ x 1))")
+    (it "encoding-defuse-prep" (set-code "(define (f x) (+ x 1))"))
 
-; ── 10. Encoding Collision Regression ──
-(newline)
-(display "── 10. Encoding Collision Regression ──\n")
+    (display "CollisionGuard-aaa")
+    (display "CollisionGuard-bbb")
+    (display "CollisionGuard-ccc")
+    (display "CollisionGuard-ddd")
+    (display "CollisionGuard-eee")
+    (display "CollisionGuard-fff")
+    (display "CollisionGuard-ggg")
+    (display "CollisionGuard-hhh")
+    (display "CollisionGuard-iii")
+    (display "CollisionGuard-jjj")
+    (display "CollisionGuard-kkk")
+    (display "CollisionGuard-lll")
+    (display "CollisionGuard-mmm")
+    (display "CollisionGuard-nnn")
+    (display "CollisionGuard-ooo")
+    (display "CollisionGuard-ppp")
+    (display "CollisionGuard-qqq")
+    (display "CollisionGuard-rrr")
+    (display "CollisionGuard-sss")
+    (display "CollisionGuard-ttt")
+    (display "CollisionGuard-uuu")
+    (display "CollisionGuard-vvv")
+    (display "CollisionGuard-www")
+    (display "CollisionGuard-xxx")
+    (display "CollisionGuard-yyy")
+    (display "CollisionGuard-zzz")
+    (newline)
 
-; Regression test for the make_string(odd_idx) vs is_ref encoding collision bug.
-; make_string(idx) with odd idx can accidentally pass is_ref() and be confused
-; with RefError (type=8), RefKeyword (type=11), etc.
-; This was discovered as the root cause of query:def-use "fib" silently failing
-; when string_heap_.size() hit specific odd sizes.
+    (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+    (let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
+      (it "encoding-defuse-fib-after-guard" (and (= (length d) 1) (> (length u) 0))))
 
-; Test 1: def-use after verbose expression pushes string_heap past the collision
-; threshold. The fib string at various heap sizes must correctly resolve.
-(set-code "(define (f x) (+ x 1))")
-(report "encoding-defuse-prep" (set-code "(define (f x) (+ x 1))"))
+    (it "encoding-string-pred" (string? "any-string"))
+    (it "encoding-error-pred" (not (error? "safe-string")))
+    (it "encoding-keyword-pred" (not (keyword? "safe-string")))
 
-; Generate enough string allocations to push string_heap past collision sizes
-; (31, 95, etc.) by using multiple display calls with distinct strings
-(display "CollisionGuard-aaa")
-(display "CollisionGuard-bbb")
-(display "CollisionGuard-ccc")
-(display "CollisionGuard-ddd")
-(display "CollisionGuard-eee")
-(display "CollisionGuard-fff")
-(display "CollisionGuard-ggg")
-(display "CollisionGuard-hhh")
-(display "CollisionGuard-iii")
-(display "CollisionGuard-jjj")
-(display "CollisionGuard-kkk")
-(display "CollisionGuard-lll")
-(display "CollisionGuard-mmm")
-(display "CollisionGuard-nnn")
-(display "CollisionGuard-ooo")
-(display "CollisionGuard-ppp")
-(display "CollisionGuard-qqq")
-(display "CollisionGuard-rrr")
-(display "CollisionGuard-sss")
-(display "CollisionGuard-ttt")
-(display "CollisionGuard-uuu")
-(display "CollisionGuard-vvv")
-(display "CollisionGuard-www")
-(display "CollisionGuard-xxx")
-(display "CollisionGuard-yyy")
-(display "CollisionGuard-zzz")
-(newline)
-
-; Now run def-use on fib — known to fail when string_heap at odd collision sizes
-(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
-(let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
-  (report "encoding-defuse-fib-after-guard" (and (= (length d) 1) (> (length u) 0))))
-
-; Test 2: string? must return #t for all string heap positions
-; (encoding collision fix: is_string should not be fooled by is_ref overlap)
-; Inner quotes escaped — the outer string in this .aura source file would
-; otherwise terminate at the first inner " and the parser sees an unbound
-; variable (regression from the encoding-collision era).
-(set-code "(define test-strs '(\"a\" \"bb\" \"ccc\" \"dddd\" \"eeeee\" \"ffffff\" \"ggggggg\" \"hhhhhhhh\"))")
-(report "encoding-string-pred" (string? "any-string"))
-
-; Test 3: error? must return #f for strings (not confused by RefError collision)
-(report "encoding-error-pred" (not (error? "safe-string")))
-
-; Test 4: keyword? must return #f for strings (not confused by RefKeyword collision)
-(report "encoding-keyword-pred" (not (keyword? "safe-string")))
-
-; Test 5: consecutive def-use queries with different symbols ensure the index
-; is rebuilt correctly regardless of string_heap state
-(set-code "(define (g x) (+ x 2))
+    (set-code "(define (g x) (+ x 2))
 (define (h x) (* x 3))
 (define (j x) (- x 1))
 (define (k x) (/ x 2))
 (define (m x) (* x x))")
-(report "encoding-defuse-g" (let* ((r (query:def-use "g")) (d (car r))) (= (length d) 1)))
-(report "encoding-defuse-h" (let* ((r (query:def-use "h")) (d (car r))) (= (length d) 1)))
-(report "encoding-defuse-j" (let* ((r (query:def-use "j")) (d (car r))) (= (length d) 1)))
-(report "encoding-defuse-k" (let* ((r (query:def-use "k")) (d (car r))) (= (length d) 1)))
-(report "encoding-defuse-m" (let* ((r (query:def-use "m")) (d (car r))) (= (length d) 1)))
+    (it "encoding-defuse-g" (let* ((r (query:def-use "g")) (d (car r))) (= (length d) 1)))
+    (it "encoding-defuse-h" (let* ((r (query:def-use "h")) (d (car r))) (= (length d) 1)))
+    (it "encoding-defuse-j" (let* ((r (query:def-use "j")) (d (car r))) (= (length d) 1)))
+    (it "encoding-defuse-k" (let* ((r (query:def-use "k")) (d (car r))) (= (length d) 1)))
+    (it "encoding-defuse-m" (let* ((r (query:def-use "m")) (d (car r))) (= (length d) 1)))
 
-; Test 6: verify def-use returns uses for functions that are actually called
-(set-code "(define (helper x) (* x 2))
+    (set-code "(define (helper x) (* x 2))
 (define (caller y) (helper (helper y)))")
-(let* ((r (query:def-use "helper")) (d (car r)) (u (cdr r)))
-  (report "encoding-defuse-uses-count" (> (length u) 0)))
+    (let* ((r (query:def-use "helper")) (d (car r)) (u (cdr r)))
+      (it "encoding-defuse-uses-count" (> (length u) 0)))
 
-; Test 7: verify query:effects after many set-code calls (tests call graph index)
-(set-code "(define (adder x) (+ x 1))
+    (set-code "(define (adder x) (+ x 1))
 (define (user a) (adder (adder a)))")
-(let* ((r (query:effects "adder")) (callers (cdr (cdr r))))
-  (report "encoding-effects-callers" (> (length callers) 0)))
+    (let* ((r (query:effects "adder")) (callers (cdr (cdr r))))
+      (it "encoding-effects-callers" (> (length callers) 0)))))
+
+; ── 11. Governance / SlimSurface facade (#1448–#1451) ──
+(describe "11. Governance facade"
+  (lambda ()
+    ; #1451 Agent-Proof proposal check
+    (it "validate-new-blocks-stats"
+      (let ((h (primitive:validate-new "query:agent-hallucinated-stats")))
+        (and (hash? h) (not (hash-ref h "ok")) (hash-ref h "blocked"))))
+    (it "validate-new-blocks-string"
+      (let ((h (primitive:validate-new "string-fake-1452")))
+        (and (hash? h) (not (hash-ref h "ok")))))
+    (it "validate-new-already-registered"
+      (let ((h (primitive:validate-new "+")))
+        (and (hash? h) (hash-ref h "already-registered") (not (hash-ref h "ok")))))
+    (it "validate-new-free-name-requires-red-line"
+      (let ((h (primitive:validate-new "agent-proof-free-name-1452")))
+        (and (hash? h) (hash-ref h "ok") (hash-ref h "requires-red-line"))))
+
+    ; #1450 facade
+    (it "stats-count-int" (integer? (stats:count)))
+    (it "stats-count-budget" (<= (stats:count) 420))
+    (it "stats-get-gc" (not (void? (stats:get "gc-stats"))))
+    (it "engine-surface-hash" (hash? (engine:surface)))
+    (it "engine-surface-budget"
+      (let ((h (engine:surface)))
+        (= (hash-ref h "target-budget") 420)))
+    (it "engine-surface-zero-public-stats"
+      (let ((h (engine:surface)))
+        (= (hash-ref h "public-stats-remaining") 0)))
+    (it "engine-metrics-hash" (hash? (engine:metrics)))))
 
 ; ── Results ──
-(newline)
-(display "═══ Results ═══\n")
-(display total-pass)(display " passed, ")(display total-fail)(display " failed\n")
-
-(if (= total-fail 0)
-  (display "✅ All EDSL self-tests passed!\n")
-  (begin (display "❌ ")(display total-fail)(display " test(s) failed\n")))
+(summary)

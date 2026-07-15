@@ -1385,9 +1385,31 @@ def cmd_primitive_surface():
     return 0
 
 
+def cmd_test_binding():
+    """Issue #1452/#1453: production prim source changes must touch tests/."""
+    print(f"{B}═══ Test binding (prim sources ↔ tests/) ═══{N}")
+    script = ROOT / "scripts" / "check_test_binding.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("test binding failed — production primitive sources changed without tests/")
+        return 1
+    ok("test binding OK")
+    return 0
+
+
 def cmd_gate():
-    """Fast static checks for CI (docs + lint + format + fixtures + surface freeze)."""
-    return cmd_docs(check=True) or cmd_lint() or cmd_format() or cmd_fixtures() or cmd_primitive_surface()
+    """Fast static checks for CI (docs + lint + format + fixtures + surface + binding)."""
+    return (
+        cmd_docs(check=True)
+        or cmd_lint()
+        or cmd_format()
+        or cmd_fixtures()
+        or cmd_primitive_surface()
+        or cmd_test_binding()
+    )
 
 
 def cmd_ci():

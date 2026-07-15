@@ -68,7 +68,9 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 - `string-*` / `string:*`、`json-*`/`json:*`、`math-*`/`math:*`、`vector-*`/`vector:*`、`path-*`/`path:*`、`time-*`/`time:*`（→ `lib/std` / `std/surface`）
 - `ast:ref-*`（#393 StableRef；禁止新名）
 
-`./build.py gate` 跑 `scripts/check_primitive_surface.py` + `tests/test_primitive_surface_gate.py`。故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。
+`./build.py gate` 跑 `scripts/check_primitive_surface.py --strict` + unit gate + `scripts/check_test_binding.py`（#1452：改 primitive 源码必须带 `tests/` 变更）。故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。
+
+EDSL 自测：`./build/aura < tests/edsl_self_test.aura`（harness：`lib/std/edsl-test-harness.aura`，见 [testing-framework-v1.md](design/testing-framework-v1.md)）。
 
 **观测读取（P1 / #1433）**：测试与 Agent 优先 facade：
 
