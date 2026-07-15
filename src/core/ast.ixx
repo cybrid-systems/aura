@@ -1545,6 +1545,37 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0};
     // Issue #1348: auto soft-compact on atomic batch commit.
     mutable std::atomic<std::uint64_t> auto_compact_on_commit_count_{0};
+    // Issue #1465: AST-level dirty short-circuit API surface.
+    // is_subtree_dirty_node(NodeId) — O(1) check on a single node's
+    //   dirty_ bit. Foundation for downstream per-subtree short-circuit
+    //   in query/lower/eval hot paths.
+    // dirty_nodes_in_range(NodeId start, NodeId end) — counts dirty
+    //   nodes in [start, end). Useful for batch-query invocations
+    //   that want to skip a range when count == 0.
+    // Returns false / 0 if the AST is not yet dirty-tracked
+    // (dirty_ column not built). Both are const and thread-safe.
+    bool is_subtree_dirty_node(NodeId id) const noexcept {
+        if (id == NULL_NODE || id >= size())
+            return false;
+        if (dirty_.empty())
+            return false; // not built
+        return dirty_[static_cast<std::size_t>(id)];
+    }
+    std::size_t dirty_nodes_in_range(NodeId start, NodeId end) const noexcept {
+        if (start >= end || dirty_.empty())
+            return 0;
+        const auto s = static_cast<std::size_t>(start);
+        const auto e = static_cast<std::size_t>(end);
+        const auto cap = dirty_.size();
+        const auto hi = (e > cap) ? cap : e;
+        if (s >= hi)
+            return 0;
+        std::size_t count = 0;
+        for (std::size_t i = s; i < hi; ++i)
+            if (dirty_[i])
+                ++count;
+        return count;
+    }
     mutable std::atomic<std::uint64_t> live_nodes_threshold_warn_count_{0};
     // Configurable soft-compact policy (#1348).
     std::size_t compaction_free_list_threshold_ = 1024;
@@ -1790,3397 +1821,3467 @@ public:
             return; // not built yet — ensure will full-rebuild
         if (static_cast<std::size_t>(id) >= tag_arity_index_built_size_) {
             // Append-only: index this node into its bucket.
-            const auto tag = static_cast<std::uint32_t>(tag_[id]);
-            const std::size_t ar = children_[id].size();
-            const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
-                                  static_cast<std::uint16_t>(ar)};
-            tag_arity_index_[key].push_back(id);
-            if (static_cast<std::size_t>(id) + 1 > tag_arity_index_built_size_)
-                tag_arity_index_built_size_ = static_cast<std::size_t>(id) + 1;
+            if (static_cast<std::size_t>(id) >= tag_arity_index_built_size_) {
+                // Append-only: index this node into its bucket.
+                const auto tag = static_cast<std::uint32_t>(tag_[id]);
+                const std::size_t ar = children_[id].size();
+                const TagArityKey key{tag, static_cast<std::uint16_t>(ar),
+                                      static_cast<std::uint16_t>(ar)};
+                tag_arity_index_[key].push_back(id);
+                if (static_cast<std::size_t>(id) + 1 > tag_arity_index_built_size_)
+                    tag_arity_index_built_size_ = static_cast<std::size_t>(id) + 1;
+                tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
+                // If only appends happened, clear dirty; ensure still
+                // full-rebuilds if other mutate paths dirtied earlier.
+                // Leave dirty true only if built_size still lags size.
+                if (tag_arity_index_built_size_ >= size())
+                    tag_arity_index_dirty_.store(false, std::memory_order_release);
+            }
+            // In-place mutate (id < built_size): leave dirty; ensure
+            // will full-rebuild on next query.
+        }
+        // Issue #447 / #1371: find all NodeIds matching (tag,
+        // arity_min, arity_max). Returns a copy of the
+        // bucket. O(1) hash lookup. Bumps hit/miss counter.
+        // Callers should call ensure_tag_arity_index() /
+        // rebuild_tag_arity_index() first when the index may
+        // be dirty (query:pattern does this).
+        [[nodiscard]] std::pmr::vector<NodeId> find_by_tag_arity(
+            std::uint32_t tag, std::uint16_t arity_min, std::uint16_t arity_max) const {
+            const TagArityKey key{tag, arity_min, arity_max};
+            auto it = tag_arity_index_.find(key);
+            if (it != tag_arity_index_.end()) {
+                tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
+                return it->second;
+            }
+            tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
+            return {};
+        }
+        // Issue #447: query-stats accessors.
+        [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
+            return tag_arity_index_hits_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t tag_arity_index_misses() const noexcept {
+            return tag_arity_index_misses_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t tag_arity_index_rebuilds() const noexcept {
+            return tag_arity_index_rebuilds_.load(std::memory_order_relaxed);
+        }
+        // Issue #554: rebuild timing + delta update counters.
+        [[nodiscard]] std::uint64_t tag_arity_index_rebuild_time_us() const noexcept {
+            return tag_arity_index_rebuild_time_us_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t tag_arity_index_delta_hits() const noexcept {
+            return tag_arity_index_delta_hits_.load(std::memory_order_relaxed);
+        }
+        // Issue #554: bump helper for delta hits — call from
+        // the (follow-up) incremental delta-rebuild path.
+        void bump_tag_arity_index_delta_hits() const noexcept {
             tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
-            // If only appends happened, clear dirty; ensure still
-            // full-rebuilds if other mutate paths dirtied earlier.
-            // Leave dirty true only if built_size still lags size.
-            if (tag_arity_index_built_size_ >= size())
-                tag_arity_index_dirty_.store(false, std::memory_order_release);
         }
-        // In-place mutate (id < built_size): leave dirty; ensure
-        // will full-rebuild on next query.
-    }
-    // Issue #447 / #1371: find all NodeIds matching (tag,
-    // arity_min, arity_max). Returns a copy of the
-    // bucket. O(1) hash lookup. Bumps hit/miss counter.
-    // Callers should call ensure_tag_arity_index() /
-    // rebuild_tag_arity_index() first when the index may
-    // be dirty (query:pattern does this).
-    [[nodiscard]] std::pmr::vector<NodeId>
-    find_by_tag_arity(std::uint32_t tag, std::uint16_t arity_min, std::uint16_t arity_max) const {
-        const TagArityKey key{tag, arity_min, arity_max};
-        auto it = tag_arity_index_.find(key);
-        if (it != tag_arity_index_.end()) {
-            tag_arity_index_hits_.fetch_add(1, std::memory_order_relaxed);
-            return it->second;
+        [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
+            return tag_arity_index_.size();
         }
-        tag_arity_index_misses_.fetch_add(1, std::memory_order_relaxed);
-        return {};
-    }
-    // Issue #447: query-stats accessors.
-    [[nodiscard]] std::uint64_t tag_arity_index_hits() const noexcept {
-        return tag_arity_index_hits_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t tag_arity_index_misses() const noexcept {
-        return tag_arity_index_misses_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t tag_arity_index_rebuilds() const noexcept {
-        return tag_arity_index_rebuilds_.load(std::memory_order_relaxed);
-    }
-    // Issue #554: rebuild timing + delta update counters.
-    [[nodiscard]] std::uint64_t tag_arity_index_rebuild_time_us() const noexcept {
-        return tag_arity_index_rebuild_time_us_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t tag_arity_index_delta_hits() const noexcept {
-        return tag_arity_index_delta_hits_.load(std::memory_order_relaxed);
-    }
-    // Issue #554: bump helper for delta hits — call from
-    // the (follow-up) incremental delta-rebuild path.
-    void bump_tag_arity_index_delta_hits() const noexcept {
-        tag_arity_index_delta_hits_.fetch_add(1, std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
-        return tag_arity_index_.size();
-    }
-    // Issue #547: dirty-flag hook. mark_tag_arity_index_dirty()
-    // is called from mutate:* paths (and the follow-up will
-    // wire mark_dirty_upward). tag_arity_index_dirty() lets
-    // callers short-circuit queries when the index is stale
-    // (rebuild before serving the query). Stats counter
-    // tag_arity_index_dirty_marks() exposes the lifetime
-    // # of dirty marks for (query:pattern-index-stats).
-    void mark_tag_arity_index_dirty() const noexcept {
-        tag_arity_index_dirty_.store(true, std::memory_order_release);
-        tag_arity_index_dirty_marks_.fetch_add(1, std::memory_order_relaxed);
-    }
-    [[nodiscard]] bool tag_arity_index_dirty() const noexcept {
-        return tag_arity_index_dirty_.load(std::memory_order_acquire);
-    }
-    [[nodiscard]] std::uint64_t tag_arity_index_dirty_marks() const noexcept {
-        return tag_arity_index_dirty_marks_.load(std::memory_order_relaxed);
-    }
-    // Issue #437: apply verify-dirty bits to a node.
-    void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
-        if (verify_reasons == 0)
-            return;
-        if (id >= verify_dirty_.size())
-            verify_dirty_.resize(id + 1, 0);
-        // Detect newly-set bits (for per-reason counters).
-        const auto newly_set = verify_reasons & ~verify_dirty_[id];
-        verify_dirty_[id] |= verify_reasons;
-        if (newly_set & kAssertionDirty)
-            verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        if (newly_set & kCoverageDirty)
-            verify_coverage_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        if (newly_set & kSvaDirty)
-            verify_sva_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        if (newly_set & kFormalCounterexampleDirty)
-            verify_formal_cex_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
-    }
-    // Issue #469: verification_dirty_ accessor (public, used
-    // by the (query:verification-loop-stats) primitive).
-    [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
-        if (id >= verification_dirty_.size())
-            return 0;
-        return verification_dirty_[id];
-    }
-    // Issue #469: apply verification-dirty bits to a node.
-    // Mirrors apply_verify_dirty_bits (from #437) but for
-    // the verification_dirty_ column (separate column to
-    // avoid collision with the VerifyDirtyReason bits).
-    void apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
-        if (reasons == 0)
-            return;
-        if (id >= verification_dirty_.size())
-            verification_dirty_.resize(id + 1, 0);
-        // Detect newly-set bits (for per-reason counters).
-        const auto newly_set = reasons & ~verification_dirty_[id];
-        verification_dirty_[id] |= reasons;
-        if (newly_set & kCoverageFeedbackDirty)
-            verification_coverage_feedback_total_.fetch_add(1, std::memory_order_relaxed);
-        if (newly_set & kAssertFailureDirty)
-            verification_assert_failure_total_.fetch_add(1, std::memory_order_relaxed);
-        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
-    }
-
-    // Issue #313: mark_dirty_verification helper. Convenience
-    // wrapper around apply_verification_dirty_bits() that
-    // applies all standard verification reasons at once
-    // (coverage-feedback + assert-failure). Mirrors
-    // mark_ppa_dirty() (PPA-style API).
-    //
-    // Note on the bit value: the issue body suggests 0x20 for
-    // kVerificationDirty in the main dirty_ bitmask, but all 8
-    // bits of that byte are already used by kGeneralDirty (0x01),
-    // kConstraintDirty (0x02), kOccurrenceDirty (0x04),
-    // kOwnershipDirty (0x08), kCoercionDirty (0x10),
-    // kStructDirty (0x20), kDefUseDirty (0x40), and
-    // kPpaHintDirty (0x80) — see the DirtyReason enum. The
-    // honest close is therefore to keep the orthogonal
-    // verification_dirty_ side-table (set by #469) as the
-    // canonical storage for per-reason verification state, and
-    // use the constant kVerificationDirty as a *named
-    // identifier* (not an actual bit value) so that callers
-    // can document the verification concern without conflicting
-    // with existing dirty-bit assignments.
-    //
-    // Follow-up issue: a bitmask-widening refactor (uint8_t →
-    // uint16_t or wider) could consolidate the per-reason state
-    // into a single column. That's a separate, well-scoped
-    // change touching the storage vector, is_dirty / is_dirty_for
-    // accessors, and all mark_* helpers.
-    static constexpr std::uint8_t kVerificationDirty = 0x20;
-
-    // Mark a node as verification-dirty: set all verification
-    // reasons on the orthogonal verification_dirty_ side-table
-    // + mirror kGeneralDirty on the main dirty_ byte (via
-    // apply_verification_dirty_bits).
-    void mark_dirty_verification(NodeId id) {
-        apply_verification_dirty_bits(
-            id, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
-    }
-
-    // Issue #320: per-node epoch accessors + helper.
-    //
-    // The last_seen_epoch_ column records the
-    // mutation_epoch_ at which this node was last
-    // touched. The TypeChecker's synthesize_flat cache
-    // will use this to do per-node invalidation
-    // (rather than the coarse whole-cache gate that
-    // #168 ships). For now (this PR is the
-    // foundation), the column is plumbed but the
-    // synthesize_flat cache still uses the coarse gate.
-    // The follow-up issue wires the per-node check.
-    //
-    // The accessor returns 0 for out-of-range (which
-    // compares != any real mutation_epoch_ >= 1, so
-    // a never-touched node will look "stale" once
-    // after the first real epoch and then settle).
-
-    // Read-only accessor (public, used by the type
-    // checker + tests).
-    [[nodiscard]] std::uint64_t last_seen_epoch(NodeId id) const noexcept {
-        if (id >= last_seen_epoch_.size())
-            return 0;
-        return last_seen_epoch_[id];
-    }
-
-    // Stamp the node with the current mutation epoch.
-    // Called from mark_dirty() so any future read sees
-    // the updated epoch. The size of the column grows
-    // lazily (matches the pattern of other side-tables
-    // like verify_dirty_).
-    void stamp_last_seen_epoch(NodeId id, std::uint64_t epoch) noexcept {
-        if (id >= last_seen_epoch_.size())
-            last_seen_epoch_.resize(id + 1, 0);
-        last_seen_epoch_[id] = epoch;
-    }
-
-    // Convenience: stamp a node as having-seen the
-    // current global epoch. The caller is expected to
-    // pass the epoch from the global mutation counter
-    // (e.g. CompilerService::mutation_epoch_). This
-    // helper exists so the call site doesn't have to
-    // know about the column details.
-    void stamp_last_seen_epoch_to_current(NodeId id, std::uint64_t current_epoch) noexcept {
-        stamp_last_seen_epoch(id, current_epoch);
-    }
-
-    // Issue #339: per-node occurrence-staleness
-    // accessors + helpers. The occ_stale_ column
-    // records whether the node's occurrence-narrowing
-    // information is fresh (0) or stale (1) after a
-    // mutation. Stale nodes must re-run
-    // analyze_predicate_flat before their narrowing
-    // is trusted.
-    //
-    // The narrowing is "stale" when the type checker
-    // (post-mutation) can't confirm the predicate
-    // still holds — either because the predicate
-    // itself mutated or because the bound variable's
-    // type changed in a way that's no longer a
-    // sub-type of the refined type.
-    //
-    // Public read accessor: returns 0/1 (or 0 for
-    // out-of-range, consistent with the other
-    // per-node dirty accessors).
-    [[nodiscard]] std::uint8_t is_occurrence_stale(NodeId id) const noexcept {
-        if (id >= occ_stale_.size())
-            return 0;
-        return occ_stale_[id];
-    }
-    // Mark a node as stale (after mutation or after
-    // validate_occurrence_narrowing() decides the
-    // refined type is no longer compatible). The
-    // caller can pass the mutation_id for
-    // provenance tracking.
-    void mark_occurrence_stale(NodeId id) noexcept {
-        if (id >= occ_stale_.size())
-            occ_stale_.resize(id + 1, 0);
-        occ_stale_[id] = 1;
-    }
-    // Clear the staleness bit (after a successful
-    // re-analysis via analyze_predicate_flat).
-    void clear_occurrence_stale(NodeId id) noexcept {
-        if (id < occ_stale_.size())
-            occ_stale_[id] = 0;
-    }
-    // Count of how many nodes are currently stale
-    // (for observability).
-    [[nodiscard]] std::size_t occurrence_stale_count() const noexcept {
-        std::size_t n = 0;
-        for (auto v : occ_stale_)
-            if (v)
-                ++n;
-        return n;
-    }
-
-    // Walk the parent_ chain upward (BFS, the same shape as
-    // mark_dirty_upward at line ~3726) and apply
-    // verification-dirty to each ancestor. The BFS logic is
-    // duplicated locally rather than funneling through
-    // mark_dirty_upward to avoid triggering the
-    // type_cache_generation_, mark_tag_arity_index_dirty, +
-    // per-binding-gen bump path — those cost meaningful work
-    // for nodes whose verification state changed but whose
-    // type is unaffected. The verification_dirty_ column is
-    // the canonical source of "verification needs re-eval"
-    // and `is_verification_dirty(id)` reads it directly. If
-    // the broader mark_dirty_upward side effects are wanted
-    // alongside verification, callers can chain the two.
-    void mark_dirty_verification_upward(NodeId id) {
-        // Match the mark_dirty_upward observability signal so
-        // monitoring tooling sees a single upward-walk per
-        // verification event.
-        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
-        std::deque<NodeId> queue;
-        queue.push_back(id);
-        while (!queue.empty()) {
-            auto nid = queue.front();
-            queue.pop_front();
-            apply_verification_dirty_bits(
-                nid, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
-            auto p = parent_[nid];
-            if (p != NULL_NODE)
-                queue.push_back(p);
+        // Issue #547: dirty-flag hook. mark_tag_arity_index_dirty()
+        // is called from mutate:* paths (and the follow-up will
+        // wire mark_dirty_upward). tag_arity_index_dirty() lets
+        // callers short-circuit queries when the index is stale
+        // (rebuild before serving the query). Stats counter
+        // tag_arity_index_dirty_marks() exposes the lifetime
+        // # of dirty marks for (query:pattern-index-stats).
+        void mark_tag_arity_index_dirty() const noexcept {
+            tag_arity_index_dirty_.store(true, std::memory_order_release);
+            tag_arity_index_dirty_marks_.fetch_add(1, std::memory_order_relaxed);
         }
-    }
-
-    // Issue #313: read-only accessor for the verification-
-    // dirty side-table. Returns the OR'd set of verification
-    // reasons set on this node (kCoverageFeedbackDirty |
-    // kAssertFailureDirty | ...). 0 means "clean from a
-    // verification perspective".
-    bool is_verification_dirty(NodeId id) const {
-        return id < verification_dirty_.size() && verification_dirty_[id] != 0;
-    }
-    bool is_verification_dirty_for(NodeId id, std::uint8_t verify_mask) const {
-        return id < verification_dirty_.size() && (verification_dirty_[id] & verify_mask) != 0;
-    }
-    void clear_verification_dirty(NodeId id) {
-        if (id < verification_dirty_.size())
-            verification_dirty_[id] = 0;
-    }
-    void clear_verification_dirty_for(NodeId id, std::uint8_t verify_mask) {
-        if (id < verification_dirty_.size())
-            verification_dirty_[id] &= static_cast<std::uint8_t>(~verify_mask);
-    }
-
-
-    // Issue #290: macro_dirty_ bit definitions. OR'd into the
-    // macro_dirty_ column when clone_macro_body or a
-    // self-evolution step touches a node. Setting any macro bit
-    // also ORs kGeneralDirty on dirty_ for backward-compat with
-    // legacy is_dirty() callers (type checker, lowering).
-    enum MacroDirtyReason : std::uint8_t {
-        kMacroExpansion = 0x01,  // clone_macro_body produced this subtree
-        kMacroSelfModify = 0x02, // self-evolution step touched a macro-introduced node
-    };
-    // Issue #290: macro_dirty_ accessor (public, used by the
-    // (compile:macro-dirty?) primitive).
-    [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
-        if (id >= macro_dirty_.size())
-            return 0;
-        return macro_dirty_[id];
-    }
-    // Issue #290: apply macro-dirty bits to a node. Called from
-    // clone_macro_body after a hygienic macro expansion
-    // (kMacroExpansion) and from self-evolution loops that touch
-    // macro-introduced nodes (kMacroSelfModify). Mirrors the
-    // verification-column pattern (#469) but lives in its own
-    // column to avoid collision with the VerifyDirtyReason bits
-    // (4 bits used).
-    void apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
-        if (reasons == 0)
-            return;
-        if (id >= macro_dirty_.size())
-            macro_dirty_.resize(id + 1, 0);
-        const auto newly_set = reasons & ~macro_dirty_[id];
-        macro_dirty_[id] |= reasons;
-        if (newly_set & kMacroExpansion)
-            macro_expansion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        if (newly_set & kMacroSelfModify)
-            macro_self_modify_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
-    }
-    // Issue #290: bulk-clear all macro_dirty_ bits across the
-    // flat. Called from the (compile:clear-macro-dirty!) primitive
-    // and from full-reset paths. Walks every live node.
-    void clear_macro_dirty_all() noexcept {
-        for (auto& b : macro_dirty_)
-            b = 0;
-    }
-    // Issue #290: count nodes with any macro_dirty_ bit set.
-    // Used by the (compile:macro-dirty-count) primitive.
-    [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
-        std::size_t n = 0;
-        for (auto b : macro_dirty_)
-            if (b != 0)
-                ++n;
-        return n;
-    }
-
-public:
-    // Low-level raw node creation (for advanced mutation).
-    // Creates a minimal node with the given tag and default fields.
-    // Children must be set up manually via set_child/insert_child.
-    [[nodiscard]] NodeId add_raw_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
-        return add_node(tag, m);
-    }
-
-    std::vector<MatchClauseInfo> match_info_;
-    // Issue #150 Phase 1: region annotation side-tables.
-    // region_by_sym_ is keyed by the define's SymId (the
-    // function's bound name). region_by_lambda_id_ is keyed by
-    // the lambda's NodeId (for anonymous lambdas that don't
-    // have a bound name). Both are populated by the parser
-    // (evaluator_eval_flat.cpp) when it sees
-    // (performance-region ...) / (evolution-region ...) wrappers.
-    // Lowering reads them via get_function_region_for_sym /
-    // get_function_region_for_lambda to set
-    // IRFunction::region accordingly.
-    std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
-    std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
-    // Issue #255: explicit custom move constructor. The
-    // 4 std::atomic observability members (added for #255)
-    // make the implicit move ctor deleted by some compiler
-    // versions — the default move tries to copy-construct
-    // each atomic, which is deleted. We implement a custom
-    // move ctor that does a memberwise move: std::pmr vectors
-    // + unordered_maps move naturally; std::atomic values are
-    // std::move'd (which on libstdc++ does an rcu-style value
-    // transfer). The user-declared destructor would otherwise
-    // inhibit implicit move generation, so this is mandatory.
-    FlatAST(FlatAST&& other) noexcept
-        : tag_(std::move(other.tag_))
-        , int_val_(std::move(other.int_val_))
-        , float_val_(std::move(other.float_val_))
-        , sym_id_(std::move(other.sym_id_))
-        , children_(std::move(other.children_))
-        , parent_(std::move(other.parent_))
-        , param_begin_(std::move(other.param_begin_))
-        , param_count_(std::move(other.param_count_))
-        , cap_require_count_(std::move(other.cap_require_count_))
-        , param_data_(std::move(other.param_data_))
-        , param_annot_data_(std::move(other.param_annot_data_))
-        , line_(std::move(other.line_))
-        , col_(std::move(other.col_))
-        , type_id_(std::move(other.type_id_))
-        , type_cache_gen_(std::move(other.type_cache_gen_))
-        , type_cache_binding_gen_(std::move(other.type_cache_binding_gen_))
-        , binding_gens_(std::move(other.binding_gens_))
-        , error_kind_(std::move(other.error_kind_))
-        , value_cache_(std::move(other.value_cache_))
-        , mutation_log_(std::move(other.mutation_log_))
-        // Issue #300 follow-up #2: regression from e5f559bf
-        // ("fix warning") which dropped node_first_mutation_
-        // from the move-ctor init list. Default-construction
-        // used the new_delete_resource, mixing with the
-        // arena-allocated columns during ~FlatAST() and
-        // producing a heap-use-after-free on the binding_gens_
-        // shared_ptr control block (the default-ctor'd
-        // column's heap buffer lived past the arena shrink in
-        // (arena:defrag), then died during teardown in an
-        // order that poisoned the next column's destructor).
-        // Restoring the init-list entry matches declaration
-        // order (node_first_mutation_ declared before
-        // last_seen_epoch_) and keeps the same pmr allocator.
-        , node_first_mutation_(std::move(other.node_first_mutation_))
-        // Issue #320: per-node epoch tracking column
-        // (SoA parallel to mutation_log_).
-        , last_seen_epoch_(std::move(other.last_seen_epoch_))
-        // Issue #339: per-node occurrence-staleness column.
-        , occ_stale_(std::move(other.occ_stale_))
-        , next_mutation_id_(other.next_mutation_id_)
-        , generation_(other.generation_)
-        , node_gen_(std::move(other.node_gen_))
-        , free_list_(std::move(other.free_list_))
-        , bump_generation_count_(other.bump_generation_count_.load())
-        , is_valid_check_count_(other.is_valid_check_count_.load())
-        , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
-        , generation_wrap_count_(other.generation_wrap_count_.load())
-        , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
-        , atomic_batch_commits_(other.atomic_batch_commits_.load())
-        , children_call_count_(other.children_call_count_.load())
-        , parent_of_call_count_(other.parent_of_call_count_.load())
-        , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
-        , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
-        , mark_dirty_early_exit_count_(other.mark_dirty_early_exit_count_.load())
-        , mark_dirty_max_depth_observed_(other.mark_dirty_max_depth_observed_.load())
-        , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
-        , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
-        , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
-        , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
-        , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
-        , max_live_nodes_warn_(other.max_live_nodes_warn_)
-        , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
-        , node_recycle_total_(other.node_recycle_total_.load())
-        , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
-        , node_compact_total_(other.node_compact_total_.load())
-        , soft_compact_count_(other.soft_compact_count_.load())
-        , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
-        , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
-        , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
-        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
-        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
-        , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
-        , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
-        , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
-        , match_info_(std::move(other.match_info_))
-        , region_by_sym_(std::move(other.region_by_sym_))
-        , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
-        , root(other.root)
-        , bump_generation_suppressed_(other.bump_generation_suppressed_)
-        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
-    FlatAST& operator=(FlatAST&& other) noexcept {
-        if (this != &other) {
-            tag_ = std::move(other.tag_);
-            int_val_ = std::move(other.int_val_);
-            float_val_ = std::move(other.float_val_);
-            sym_id_ = std::move(other.sym_id_);
-            children_ = std::move(other.children_);
-            parent_ = std::move(other.parent_);
-            param_begin_ = std::move(other.param_begin_);
-            param_count_ = std::move(other.param_count_);
-            cap_require_count_ = std::move(other.cap_require_count_);
-            param_data_ = std::move(other.param_data_);
-            param_annot_data_ = std::move(other.param_annot_data_);
-            line_ = std::move(other.line_);
-            col_ = std::move(other.col_);
-            type_id_ = std::move(other.type_id_);
-            type_cache_gen_ = std::move(other.type_cache_gen_);
-            type_cache_binding_gen_ = std::move(other.type_cache_binding_gen_);
-            binding_gens_ = std::move(other.binding_gens_);
-            error_kind_ = std::move(other.error_kind_);
-            node_gen_ = std::move(other.node_gen_);
-            free_list_ = std::move(other.free_list_);
-            value_cache_ = std::move(other.value_cache_);
-            mutation_log_ = std::move(other.mutation_log_);
-            node_first_mutation_ = std::move(other.node_first_mutation_);
-            next_mutation_id_ = other.next_mutation_id_;
-            generation_ = other.generation_;
-            bump_generation_count_.store(other.bump_generation_count_.load());
-            is_valid_check_count_.store(other.is_valid_check_count_.load());
-            stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
-            atomic_batch_commits_.store(other.atomic_batch_commits_.load());
-            verification_coverage_feedback_total_.store(
-                other.verification_coverage_feedback_total_.load());
-            verification_assert_failure_total_.store(
-                other.verification_assert_failure_total_.load());
-            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
-            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
-            verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
-            macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
-            macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
-            generation_wrap_count_.store(other.generation_wrap_count_.load());
-            node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
-            children_call_count_.store(other.children_call_count_.load());
-            parent_of_call_count_.store(other.parent_of_call_count_.load());
-            mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
-            mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
-            mark_dirty_early_exit_count_.store(other.mark_dirty_early_exit_count_.load());
-            mark_dirty_max_depth_observed_.store(other.mark_dirty_max_depth_observed_.load());
-            mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
-            mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
-            auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
-            live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
-            compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
-            max_live_nodes_warn_ = other.max_live_nodes_warn_;
-            rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
-            node_recycle_total_.store(other.node_recycle_total_.load());
-            node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
-            node_compact_total_.store(other.node_compact_total_.load());
-            soft_compact_count_.store(other.soft_compact_count_.load());
-            stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
-            match_info_ = std::move(other.match_info_);
-            region_by_sym_ = std::move(other.region_by_sym_);
-            region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
-            root = other.root;
-            bump_generation_suppressed_ = other.bump_generation_suppressed_;
-            atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+        [[nodiscard]] bool tag_arity_index_dirty() const noexcept {
+            return tag_arity_index_dirty_.load(std::memory_order_acquire);
         }
-        return *this;
-    }
-    // Issue #255: explicit copy constructor + copy assignment.
-    // Declaring a move ctor/assignment implicitly deletes the
-    // copy versions, but evaluator_env.cpp has 3 copy-assign
-    // sites (workspace COW, local-flat initialization, etc.).
-    // Copy is rare in hot paths but must compile.
-    FlatAST(const FlatAST& other)
-        : tag_(other.tag_)
-        , int_val_(other.int_val_)
-        , float_val_(other.float_val_)
-        , sym_id_(other.sym_id_)
-        , children_(other.children_)
-        , parent_(other.parent_)
-        , param_begin_(other.param_begin_)
-        , param_count_(other.param_count_)
-        , cap_require_count_(other.cap_require_count_)
-        , param_data_(other.param_data_)
-        , param_annot_data_(other.param_annot_data_)
-        , line_(other.line_)
-        , col_(other.col_)
-        , marker_(other.marker_)
-        , dirty_(other.dirty_)
-        , ppa_dirty_(other.ppa_dirty_)
-        , verify_dirty_(other.verify_dirty_)
-        , verification_dirty_(other.verification_dirty_)
-        , macro_dirty_(other.macro_dirty_)
-        , type_id_(other.type_id_)
-        , type_cache_gen_(other.type_cache_gen_)
-        , type_cache_binding_gen_(other.type_cache_binding_gen_)
-        , schema_cache_(other.schema_cache_)
-        , binding_gens_(other.binding_gens_)
-        , error_kind_(other.error_kind_)
-        , value_cache_(other.value_cache_)
-        , mutation_log_(other.mutation_log_)
-        , narrowing_log_(other.narrowing_log_)
-        , node_first_mutation_(other.node_first_mutation_)
-        // Issue #320: per-node epoch tracking column.
-        , last_seen_epoch_(other.last_seen_epoch_)
-        // Issue #339: per-node occurrence-staleness
-        // column. (Declared after last_seen_epoch_ in
-        // the class; init-list order must match the
-        // declaration order to silence -Wreorder.)
-        , occ_stale_(other.occ_stale_)
-        , next_mutation_id_(other.next_mutation_id_)
-        , generation_(other.generation_)
-        , node_gen_(other.node_gen_)
-        , free_list_(other.free_list_)
-        , bump_generation_count_(other.bump_generation_count_.load())
-        , is_valid_check_count_(other.is_valid_check_count_.load())
-        , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
-        , generation_wrap_count_(other.generation_wrap_count_.load())
-        , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
-        , atomic_batch_commits_(other.atomic_batch_commits_.load())
-        , children_call_count_(other.children_call_count_.load())
-        , parent_of_call_count_(other.parent_of_call_count_.load())
-        , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
-        , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
-        , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
-        , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
-        , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
-        , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
-        , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
-        , max_live_nodes_warn_(other.max_live_nodes_warn_)
-        , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
-        , node_recycle_total_(other.node_recycle_total_.load())
-        , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
-        , node_compact_total_(other.node_compact_total_.load())
-        , soft_compact_count_(other.soft_compact_count_.load())
-        , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
-        , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
-        , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
-        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
-        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
-        , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
-        , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
-        , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
-        , match_info_(other.match_info_)
-        , region_by_sym_(other.region_by_sym_)
-        , region_by_lambda_id_(other.region_by_lambda_id_)
-        , root(other.root)
-        , bump_generation_suppressed_(other.bump_generation_suppressed_)
-        , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
-    FlatAST& operator=(const FlatAST& other) {
-        if (this != &other) {
-            tag_ = other.tag_;
-            int_val_ = other.int_val_;
-            float_val_ = other.float_val_;
-            sym_id_ = other.sym_id_;
-            children_ = other.children_;
-            parent_ = other.parent_;
-            param_begin_ = other.param_begin_;
-            param_count_ = other.param_count_;
-            cap_require_count_ = other.cap_require_count_;
-            param_data_ = other.param_data_;
-            param_annot_data_ = other.param_annot_data_;
-            line_ = other.line_;
-            col_ = other.col_;
-            type_id_ = other.type_id_;
-            type_cache_gen_ = other.type_cache_gen_;
-            type_cache_binding_gen_ = other.type_cache_binding_gen_;
-            binding_gens_ = other.binding_gens_;
-            schema_cache_ = other.schema_cache_;
-            error_kind_ = other.error_kind_;
-            node_gen_ = other.node_gen_;
-            free_list_ = other.free_list_;
-            value_cache_ = other.value_cache_;
-            mutation_log_ = other.mutation_log_;
-            node_first_mutation_ = other.node_first_mutation_;
-            next_mutation_id_ = other.next_mutation_id_;
-            generation_ = other.generation_;
-            bump_generation_count_.store(other.bump_generation_count_.load());
-            is_valid_check_count_.store(other.is_valid_check_count_.load());
-            stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
-            atomic_batch_commits_.store(other.atomic_batch_commits_.load());
-            verification_coverage_feedback_total_.store(
-                other.verification_coverage_feedback_total_.load());
-            verification_assert_failure_total_.store(
-                other.verification_assert_failure_total_.load());
-            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
-            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
-            verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
-            macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
-            macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
-            children_call_count_.store(other.children_call_count_.load());
-            parent_of_call_count_.store(other.parent_of_call_count_.load());
-            mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
-            mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
-            mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
-            mark_dirty_boundary_prune_count_.store(other.mark_dirty_boundary_prune_count_.load());
-            auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
-            live_nodes_threshold_warn_count_.store(other.live_nodes_threshold_warn_count_.load());
-            compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
-            max_live_nodes_warn_ = other.max_live_nodes_warn_;
-            rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
-            node_recycle_total_.store(other.node_recycle_total_.load());
-            node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
-            node_compact_total_.store(other.node_compact_total_.load());
-            soft_compact_count_.store(other.soft_compact_count_.load());
-            stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
-            match_info_ = other.match_info_;
-            region_by_sym_ = other.region_by_sym_;
-            region_by_lambda_id_ = other.region_by_lambda_id_;
-            root = other.root;
-            bump_generation_suppressed_ = other.bump_generation_suppressed_;
-            atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+        [[nodiscard]] std::uint64_t tag_arity_index_dirty_marks() const noexcept {
+            return tag_arity_index_dirty_marks_.load(std::memory_order_relaxed);
         }
-        return *this;
-    }
-    explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
-        : tag_(alloc)
-        , int_val_(alloc)
-        , float_val_(alloc)
-        , sym_id_(alloc)
-        , children_()
-        , parent_(alloc)
-        , param_begin_(alloc)
-        , param_count_(alloc)
-        , cap_require_count_(alloc)
-        , param_data_(alloc)
-        , param_annot_data_(alloc)
-        , line_(alloc)
-        , col_(alloc)
-        // Issue #300: these pmr columns must use the arena alloc passed
-        // to FlatAST (not the default new_delete_resource).
-        , marker_(alloc)
-        , dirty_(alloc)
-        , ppa_dirty_(alloc)
-        , verify_dirty_(alloc)
-        , verification_dirty_(alloc)
-        , macro_dirty_(alloc)
-        , type_id_(alloc)
-        , type_cache_gen_(alloc)
-        , type_cache_binding_gen_(alloc)
-        , schema_cache_(alloc)
-        , error_kind_(alloc)
-        // Issue #1371: tag_arity hash map (declared before value_cache_).
-        , tag_arity_index_(alloc)
-        , value_cache_(alloc)
-        , mutation_log_(alloc)
-        , narrowing_log_(alloc)
-        // Issue #300 follow-up #2: regression from e5f559bf
-        // ("fix warning"). node_first_mutation_ must use the
-        // arena allocator (alloc), not the default
-        // new_delete_resource. Same root cause as the move
-        // ctor fix above — removing it from the init list
-        // caused default-construction with the wrong
-        // allocator and produced a heap-use-after-free on
-        // the binding_gens_ shared_ptr control block during
-        // ~FlatAST() after (arena:defrag) shrank the arena.
-        // Restoring the init-list entry matches declaration
-        // order (node_first_mutation_ declared before
-        // last_seen_epoch_).
-        , node_first_mutation_(alloc)
-        // Issue #320: per-node epoch tracking column.
-        , last_seen_epoch_(alloc)
-        // Issue #339: per-node occurrence-staleness column.
-        , occ_stale_(alloc)
-        , node_gen_(alloc)
-        , free_list_(alloc) {}
-
-    // Issue #300 follow-up #1: release the children_ column before
-    // the rest of ~FlatAST runs. Aliased PCV slots can share one
-    // heap control block with a corrupted use_count (ASAN UAF after
-    // arena:defrag). Swap the column out first so the member dtor is
-    // a no-op, then dedupe-abandon aliases on the detached vector.
-    void release_children_for_teardown() {
-        std::vector<PersistentChildVector<NodeId>> doomed;
-        doomed.swap(children_);
-        std::unordered_set<const void*> seen;
-        for (auto& pcv : doomed) {
-            const void* id = pcv.storage_identity();
-            if (id == nullptr)
-                continue;
-            if (!seen.insert(id).second)
-                pcv.abandon_storage();
+        // Issue #437: apply verify-dirty bits to a node.
+        void apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
+            if (verify_reasons == 0)
+                return;
+            if (id >= verify_dirty_.size())
+                verify_dirty_.resize(id + 1, 0);
+            // Detect newly-set bits (for per-reason counters).
+            const auto newly_set = verify_reasons & ~verify_dirty_[id];
+            verify_dirty_[id] |= verify_reasons;
+            if (newly_set & kAssertionDirty)
+                verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            if (newly_set & kCoverageDirty)
+                verify_coverage_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            if (newly_set & kSvaDirty)
+                verify_sva_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            if (newly_set & kFormalCounterexampleDirty)
+                verify_formal_cex_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
         }
-    }
-
-    ~FlatAST() { release_children_for_teardown(); }
-
-    // ── Builders ───────────────────────────────────────────────
-
-    // Set parent for all children of the given node
-    void link_children(NodeId id) {
-        // Issue #220/221: walk the per-node PCV. The PCV's
-        // iterators are const (the vector is immutable from
-        // the outside), so this is read-only iteration.
-        for (auto cid : children_[id]) {
-            if (cid != NULL_NODE)
-                parent_[cid] = id;
+        // Issue #469: verification_dirty_ accessor (public, used
+        // by the (query:verification-loop-stats) primitive).
+        [[nodiscard]] std::uint8_t verification_dirty(NodeId id) const noexcept {
+            if (id >= verification_dirty_.size())
+                return 0;
+            return verification_dirty_[id];
         }
-    }
-
-    [[nodiscard]] NodeId add_literal_float(double val) {
-        auto id = add_node(NodeTag::LiteralFloat);
-        float_val_[id] = val;
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_literalstring(SymId name) {
-        auto id = add_node(NodeTag::LiteralString);
-        sym_id_[id] = name;
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_literal(std::int64_t val) {
-        auto id = add_node(NodeTag::LiteralInt);
-        int_val_[id] = val;
-        // Issue #402: literal int doesn't trigger any
-        // fallback-relevant flag (LiteralInt is IR-native).
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_variable(SymId name) {
-        auto id = add_node(NodeTag::Variable);
-        sym_id_[id] = name;
-        // Issue #402: lazy sym_id bit deferred. Keyword
-        // Variables (':foo') need tree-walker fallback, but
-        // resolving the sym_id requires the pool, which is
-        // out of scope here. The fast-path's subtree walk
-        // covers the keyword check (it walks the root
-        // subtree and applies the existing per-NodeTag /
-        // per-sym_id logic without paying the full-flat
-        // iteration cost).
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
-        auto id = add_node(NodeTag::Call);
-        children_[id] =
-            PersistentChildVector<NodeId>(1 + args.size(), [&](std::size_t i) -> NodeId {
-                if (i == 0)
-                    return func;
-                return args[i - 1];
-            });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
-        auto id = add_node(NodeTag::IfExpr);
-        children_[id] = PersistentChildVector<NodeId>(3, [&](std::size_t i) -> NodeId {
-            return (i == 0 ? cond : (i == 1 ? then_b : else_b));
-        });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body,
-                                    bool dotted = false) {
-        return add_lambda(params, {}, body, dotted);
-    }
-    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, std::span<const NodeId> annots,
-                                    NodeId body, bool dotted = false) {
-        auto id = add_node(NodeTag::Lambda);
-        int_val_[id] = dotted ? 1 : 0; // store dotted flag
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), params.begin(), params.end());
-        // Store annotations (or NULL_NODE if not provided)
-        param_annot_data_.resize(param_annot_data_.size() + params.size(), aura::ast::NULL_NODE);
-        for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
-            param_annot_data_[pstart + i] = annots[i];
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
-        link_children(id);
-        return id;
-    }
-
-    // Issue #1266: set params on an existing Lambda (used by
-    // mutate:inline-call clone path — add_lambda with empty params
-    // then copy params after body wire-up).
-    void set_lambda_params(NodeId id, std::span<const SymId> params,
-                           std::span<const NodeId> annots = {}) {
-        if (id >= param_begin_.size() || id >= param_count_.size())
-            return;
-        if (id >= tag_.size() || tag_[id] != NodeTag::Lambda)
-            return;
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), params.begin(), params.end());
-        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
-        for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
-            param_annot_data_[pstart + i] = annots[i];
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(params.size());
-    }
-
-    [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
-        auto id = add_node(NodeTag::Let);
-        sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
-        auto id = add_node(NodeTag::LetRec);
-        sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
-        auto id = add_node(NodeTag::Define);
-        sym_id_[id] = name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
-        link_children(id);
-        return id;
-    }
-
-    // Issue #150 Phase 1: region annotation side-table.
-    // Maps either a define's name (SymId) or a lambda's
-    // NodeId (for anonymous lambdas) to the user's
-    // performance-region / evolution-region hint. The
-    // lowering pass (FlatFnBuilder in lowering_impl.cpp)
-    // reads this table to set IRFunction::region on the
-    // corresponding IRFunction. The side-table is keyed by
-    // either a SymId (for defines) or a NodeId (for anonymous
-    // lambdas) — we use two parallel maps to keep the
-    // namespaces separate.
-    //
-    // The parser populates this via set_function_region(sym, r)
-    // for a define, and set_function_region(node_id, r) for a
-    // lambda. The lowering pass queries via
-    // get_function_region_for_sym(sym) and
-    // get_function_region_for_lambda(node_id) — both return
-    // std::optional<std::uint8_t>; nullopt means no annotation.
-    void set_function_region(SymId name, std::uint8_t region) { region_by_sym_[name] = region; }
-    // Overload tag: pass a 0 literal to disambiguate. We
-    // use a sentinel parameter (an unused int) so the two
-    // overloads don't collide on the same uint32_t underlying
-    // type. Callers use set_function_region_sym and
-    // set_function_region_lambda explicitly.
-    void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
-        region_by_lambda_id_[lambda_id] = region;
-    }
-    [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
-        auto it = region_by_sym_.find(name);
-        if (it == region_by_sym_.end())
-            return std::nullopt;
-        return it->second;
-    }
-    [[nodiscard]] std::optional<std::uint8_t>
-    get_function_region_for_lambda(NodeId lambda_id) const {
-        auto it = region_by_lambda_id_.find(lambda_id);
-        if (it == region_by_lambda_id_.end())
-            return std::nullopt;
-        return it->second;
-    }
-
-    // Issue #150 Phase 3: mutation impact analysis helper.
-    // Given a SymId (the name that was mutated), find all
-    // Define nodes whose value subtree references that
-    // sym. Returns the list of Define node IDs whose
-    // functions are potentially affected by a
-    // mutate:rebind on the given name.
-    //
-    // Conservative MVP: direct reference only. A function
-    // that calls another function which uses the mutated
-    // name is NOT flagged (transitive analysis is a
-    // follow-up). This is a safe underestimate: a function
-    // that DOES directly reference the mutated sym is
-    // flagged, and the caller of such a function MAY also
-    // need invalidation but isn't flagged. The follow-up
-    // (Phase 3b) would walk the call graph from these
-    // results to find the transitive set.
-    [[nodiscard]] std::pmr::vector<aura::ast::NodeId> defines_referencing_sym(SymId sym) const {
-        std::pmr::vector<aura::ast::NodeId> result(
-            std::pmr::polymorphic_allocator<aura::ast::NodeId>{});
-        for (aura::ast::NodeId i = 0; i < size(); ++i) {
-            if (i >= size())
-                break;
-            auto v = get(i);
-            if (v.tag != aura::ast::NodeTag::Define)
-                continue;
-            if (v.sym_id == sym)
-                continue; // the mutated Define itself
-            if (v.children.empty())
-                continue;
-            if (subtree_uses_sym(v.child(0), sym)) {
-                result.push_back(i);
-            }
-        }
-        return result;
-    }
-
-    // Recursive helper: does the subtree rooted at `root`
-    // contain a Variable node whose sym_id == `sym`?
-    //
-    // Phase A hoisting migration: now uses
-    // aura::ast::find_first_node_with<Id, C, P> from the
-    // generic AST traversal helpers (originally defined in
-    // aura.compiler.query, hoisted here to break the ast ↔
-    // query import cycle). Same semantics — walks the subtree
-    // recursively, returns true on first matching Variable
-    // node. Zero behavior change at -O3 (template-inlined).
-    bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
-        if (root == aura::ast::NULL_NODE || root >= size())
-            return false;
-        auto found =
-            find_first_node_with<std::uint32_t>(*this, root, [this, sym](aura::ast::NodeId id) {
-                auto v = this->get(id);
-                return v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym;
-            });
-        return found.has_value();
-    }
-
-    // Issue #372: name-based Define lookup.
-    //
-    // Walks the AST subtree rooted at `root_` (or an explicit
-    // root override) and returns the first Define node whose
-    // sym_id matches the given name in the supplied pool.
-    //
-    // The pool is a separate argument (rather than a stored
-    // member) because FlatAST is the AST data, not the
-    // symbol-table — multiple Flats can share a single
-    // StringPool (e.g. parent layer → child layer after COW
-    // clone), or one Flat can be parsed against multiple
-    // pools across its lifetime. The caller is responsible
-    // for passing the pool that this Flat was parsed against
-    // (workspace_flat_'s companion workspace_pool_).
-    //
-    // Returns std::nullopt if the name isn't interned in the
-    // pool, the root is NULL_NODE, or no Define with that
-    // sym_id exists in the reachable subtree.
-    [[nodiscard]] std::optional<aura::ast::NodeId>
-    find_define_by_name(const StringPool& pool, std::string_view name,
-                        std::optional<aura::ast::NodeId> search_root = std::nullopt) const {
-        const auto sym = pool.find_by_name(name);
-        if (!sym)
-            return std::nullopt;
-        const auto start = search_root.value_or(root);
-        if (start == aura::ast::NULL_NODE || start >= size())
-            return std::nullopt;
-        return find_first_node_with<std::uint32_t>(
-            *this, start, [this, sym_id = *sym](aura::ast::NodeId id) {
-                auto v = this->get(id);
-                return v.tag == aura::ast::NodeTag::Define && v.sym_id == sym_id;
-            });
-    }
-
-    [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
-                                         std::span<const NodeId> ctors) {
-        auto id = add_node(NodeTag::DefineType);
-        sym_id_[id] = name;
-        // Store type params in param_data_
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), params.begin(), params.end());
-        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id] = PersistentChildVector<NodeId>(ctors.begin(), ctors.end());
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
-        auto id = add_node(NodeTag::Begin);
-        // Build the N-element PCV directly from the exprs array via
-        // the fill-constructor (single allocation, no temp vector).
-        children_[id] =
-            PersistentChildVector<NodeId>(count, [&](std::size_t i) -> NodeId { return exprs[i]; });
-        link_children(id);
-        return id;
-    }
-    [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
-        auto id = add_node(NodeTag::Begin);
-        children_[id] = PersistentChildVector<NodeId>(
-            exprs.size(), [&](std::size_t i) -> NodeId { return exprs[i]; });
-        link_children(id);
-        return id;
-    }
-
-    // Export: (export sym1 sym2 ...) — children = Variable nodes
-    [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params) {
-        auto id = add_node(NodeTag::DefineModule);
-        sym_id_[id] = name;
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
-        param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(type_params.size());
-        return id;
-    }
-    [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params,
-                                           std::span<const SymId> cap_require) {
-        auto id = add_node(NodeTag::DefineModule);
-        sym_id_[id] = name;
-        // type params first
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
-        param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
-        // capability requirements after type params (no separator needed, we store count)
-        param_data_.insert(param_data_.end(), cap_require.begin(), cap_require.end());
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(type_params.size());
-        cap_require_count_[id] = static_cast<std::uint32_t>(cap_require.size());
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
-        auto id = add_node(NodeTag::Export);
-        children_[id] = PersistentChildVector<NodeId>(
-            syms.size(), [&](std::size_t i) -> NodeId { return syms[i]; });
-        link_children(id);
-        return id;
-    }
-
-    // Issue #311: SV `interface` builder. Mirrors add_export's
-    // shape (PersistentChildVector of body NodeIds) + stores
-    // the interface name in `sym_id_` (same shape as
-    // add_define_module's param_data_ side-table would, but
-    // body items are NodeIds — signal declarations, nested
-    // modport nodes, etc. — rather than bare symbols). Uses
-    // the PCV fill-constructor pattern to preserve copy-on-
-    // write semantics, and calls link_children() to wire up
-    // parent_[child] = id for each body item.
-    //
-    // The body items can be any NodeId (Define for signal
-    // decls, Modport for nested modports, Begin for module
-    // bodies, etc.). The builder doesn't constrain what the
-    // body contains — the parser / EDSL surface is
-    // responsible for that.
-    [[nodiscard]] NodeId add_interface(SymId name, std::span<const NodeId> body) {
-        auto id = add_node(NodeTag::Interface);
-        sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
-        link_children(id);
-        return id;
-    }
-
-    // Issue #311: SV `modport` builder. Uses the param_data_
-    // side-table (same shape as add_define_module's
-    // type_params) to store the port-direction list as a
-    // flat symbol vector with offset/count indices. The
-    // direction information (input/output/inout) is captured
-    // implicitly via the port symbol's name (a future parser
-    // surface will decode e.g. "input data" -> {data, INPUT}
-    // and emit the modport accordingly; the builder just
-    // records the symbol list for now).
-    //
-    // Like add_define_module, no children_ is set (a modport
-    // is a leaf construct carrying only the port list); the
-    // param_data_ side-table is the canonical payload.
-    [[nodiscard]] NodeId add_modport(SymId name, std::span<const SymId> ports) {
-        auto id = add_node(NodeTag::Modport);
-        sym_id_[id] = name;
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), ports.begin(), ports.end());
-        param_annot_data_.resize(param_annot_data_.size() + ports.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(ports.size());
-        return id;
-    }
-
-    // Issue #694: SVA builders. Property/Sequence store the expr as a
-    // LiteralString child; Coverpoint uses param_data_ for bins (like
-    // Modport); Covergroup stores Coverpoint children; Assert references
-    // a Property child.
-    [[nodiscard]] NodeId add_property(SymId name, SymId expr_sym) {
-        auto expr_id = add_literalstring(expr_sym);
-        auto id = add_node(NodeTag::Property);
-        sym_id_[id] = name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_sequence(SymId name, SymId expr_sym) {
-        auto expr_id = add_literalstring(expr_sym);
-        auto id = add_node(NodeTag::Sequence);
-        sym_id_[id] = name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_coverpoint(SymId var, std::span<const SymId> bins) {
-        auto id = add_node(NodeTag::Coverpoint);
-        sym_id_[id] = var;
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), bins.begin(), bins.end());
-        param_annot_data_.resize(param_annot_data_.size() + bins.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(bins.size());
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_covergroup(SymId name, std::span<const NodeId> coverpoints) {
-        auto id = add_node(NodeTag::Covergroup);
-        sym_id_[id] = name;
-        children_[id] = PersistentChildVector<NodeId>(
-            coverpoints.size(), [&](std::size_t i) -> NodeId { return coverpoints[i]; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_assert(SymId name, NodeId property_id) {
-        auto id = add_node(NodeTag::Assert);
-        sym_id_[id] = name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return property_id; });
-        link_children(id);
-        return id;
-    }
-
-    // Issue #496: SV constraint builder. Expressions stored in param_data_
-    // (same side-table shape as Coverpoint bins / Modport ports).
-    [[nodiscard]] NodeId add_constraint(SymId name, std::span<const SymId> expressions) {
-        auto id = add_node(NodeTag::Constraint);
-        sym_id_[id] = name;
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), expressions.begin(), expressions.end());
-        param_annot_data_.resize(param_annot_data_.size() + expressions.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(expressions.size());
-        return id;
-    }
-
-    // Issue #496: SV class builder. Optional base class stored as the first
-    // param_data_ entry when base_sym != INVALID_SYM; body items are children_.
-    [[nodiscard]] NodeId add_class(SymId name, SymId base_sym, std::span<const NodeId> body) {
-        auto id = add_node(NodeTag::Class);
-        sym_id_[id] = name;
-        if (base_sym != INVALID_SYM) {
-            auto pstart = static_cast<std::uint32_t>(param_data_.size());
-            param_data_.push_back(base_sym);
-            param_annot_data_.push_back(NULL_NODE);
-            param_begin_[id] = pstart;
-            param_count_[id] = 1;
-        }
-        children_[id] = PersistentChildVector<NodeId>(
-            body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
-        link_children(id);
-        return id;
-    }
-
-    void append_param(NodeId id, SymId val) {
-        if (id >= param_begin_.size())
-            return;
-        param_data_.push_back(val);
-        param_annot_data_.push_back(NULL_NODE);
-        ++param_count_[id];
-    }
-
-    [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
-        auto id = add_node(NodeTag::Set);
-        sym_id_[id] = name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body,
-                                      bool dotted = false, bool hygienic = false,
-                                      bool preserved = false) {
-        auto id = add_node(NodeTag::MacroDef);
-        sym_id_[id] = name;
-        // Issue #120: dotted in bit 0, hygienic in bit 1.
-        // Issue #230 #2: bit 2 = preserved. When set, this macro
-        // uses the env-binding expansion path (params bound in a
-        // child env, no AST subst) instead of the AST-subst
-        // path. The env-binding path is what symbol-generating
-        // macros like define-struct need: the body can reference
-        // the user's actual struct name and field list as
-        // Variables and get the literal values back. The `&`
-        // sigil in the param list is just a marker for
-        // readability — if the macro is `define-hygienic-macro*`
-        // (preserved), ALL params use the env-binding semantics.
-        int_val_[id] = (preserved ? 4 : 0) | (hygienic ? 2 : 0) | (dotted ? 1 : 0);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
-        // Issue #484 follow-up: link_children so the body's parent_
-        // points to this MacroDef. Without this, the macro body
-        // is an orphan (parent_ = NULL), which causes query:pattern
-        // to exclude it (orphan-skip after #484). The test
-        // test_issue_140 AC2.3 and AC4.2 depend on the macro body
-        // being queryable as User-marker code.
-        link_children(id);
-        auto pstart = static_cast<std::uint32_t>(param_data_.size());
-        param_data_.insert(param_data_.end(), params.begin(), params.end());
-        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
-        param_begin_[id] = pstart;
-        param_count_[id] = static_cast<std::uint32_t>(params.size());
-        return id;
-    }
-
-    // Issue #120: query the hygienic flag on a MacroDef node.
-    // Encoded in bit 1 of int_val_ (dotted is bit 0).
-    bool is_hygienic_macrodef(NodeId id) const {
-        if (id >= int_val_.size())
-            return false;
-        return (int_val_[id] & 2) != 0;
-    }
-    bool is_dotted_macrodef(NodeId id) const {
-        if (id >= int_val_.size())
-            return false;
-        return (int_val_[id] & 1) != 0;
-    }
-    // Issue #230 #2: query the preserved flag (set by
-    // `define-hygienic-macro*`). When true, the macro uses
-    // env-binding expansion (params bound in a child env)
-    // instead of AST substitution.
-    bool is_preserved_macrodef(NodeId id) const {
-        if (id >= int_val_.size())
-            return false;
-        return (int_val_[id] & 4) != 0;
-    }
-
-    [[nodiscard]] NodeId add_quote(NodeId val) {
-        auto id = add_node(NodeTag::Quote);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
-        auto id = add_node(NodeTag::Pair);
-        children_[id] = PersistentChildVector<NodeId>(
-            2, [&](std::size_t i) -> NodeId { return (i == 0 ? car : cdr); });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner,
-                                             SymId var_sym = INVALID_SYM) {
-        auto id = add_node(NodeTag::TypeAnnotation);
-        sym_id_[id] = type_name;
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        if (var_sym != INVALID_SYM) {
-            int_val_[id] = static_cast<std::int64_t>(var_sym);
-        }
-        link_children(id);
-        return id;
-    }
-
-    bool has_var_annot(NodeId id) const { return id < size() && int_val_[id] != 0; }
-    SymId var_annot_sym(NodeId id) const { return static_cast<SymId>(int_val_[id]); }
-
-    [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
-        auto id = add_node(NodeTag::Coercion);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        type_id_[id] = type_id;
-        link_children(id);
-        return id;
-    }
-    [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
-        auto id = add_node(NodeTag::Coercion);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        int_val_[id] = static_cast<std::int64_t>(type_tag);
-        type_id_[id] = type_id;
-        link_children(id);
-        return id;
-    }
-    // ── M4 Linear ownership builders ───────────────────────────
-    [[nodiscard]] NodeId add_linear(NodeId inner) {
-        auto id = add_node(NodeTag::Linear);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_move(NodeId inner) {
-        auto id = add_node(NodeTag::Move);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_borrow(NodeId inner) {
-        auto id = add_node(NodeTag::Borrow);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
-        auto id = add_node(NodeTag::MutBorrow);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        link_children(id);
-        return id;
-    }
-
-    [[nodiscard]] NodeId add_drop(NodeId inner) {
-        auto id = add_node(NodeTag::Drop);
-        children_[id] =
-            PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
-        link_children(id);
-        return id;
-    }
-
-    // ── Access ─────────────────────────────────────────────────
-
-    NodeView get(NodeId id) const {
-        if (id >= tag_.size()) {
-            // Defensive: stale or invalid NodeId. Return a default
-            // NodeView (empty spans, NULL_NODE-like values). The
-            // parser can produce invalid NodeIds during
-            // quasiquote expansion (Issue #219 regression) when a
-            // previously-captured NodeView's underlying buffer
-            // moved. Without this check, the next access would
-            // crash on tag_[id] / child_data_[begin] / etc.
-            return NodeView{
-                .id = id,
-                .tag = static_cast<NodeTag>(0),
-                .int_value = 0,
-                .float_value = 0.0,
-                .sym_id = INVALID_SYM,
-                .line = 0,
-                .col = 0,
-                .type_id = 0u,
-                .children = {},
-                .params = {},
-                .param_annotations = {},
-                .marker = SyntaxMarker::User,
-            };
-        }
-        return NodeView{
-            .id = id,
-            .tag = tag_[id],
-            .int_value = int_val_[id],
-            .float_value = float_val_[id],
-            .sym_id = sym_id_[id],
-            .line = id < line_.size() ? line_[id] : 0,
-            .col = id < col_.size() ? col_[id] : 0,
-            // Issue #73 Phase 2: populate type_id on the view so
-            // callers can read it without a separate flat.type_id()
-            // lookup. Same value as flat.type_id(id).
-            .type_id = id < type_id_.size() ? type_id_[id] : 0u,
-            .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
-            .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
-            .param_annotations =
-                std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
-            .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
-        };
-    }
-
-    // ── Location ──────────────────────────────────────────────
-    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < line_.size())
-        pre(id < col_.size()) {
-        line_[id] = line;
-        col_[id] = col;
-    }
-    std::uint32_t line(NodeId id) const { return line_[id]; }
-    std::uint32_t col(NodeId id) const { return col_[id]; }
-
-    // Direct field access (for mutation)
-    NodeTag& tag(NodeId id) { return tag_[id]; }
-    std::int64_t& int_val(NodeId id) { return int_val_[id]; }
-    SymId& sym_id(NodeId id) { return sym_id_[id]; }
-
-    // Const overloads so ASTContainer<const FlatAST, Id>
-    // is satisfied (concept requires `ast.tag(id)` callable
-    // on const ast). Used by find_first_node_with<Id, const
-    // FlatAST, P> when called from const methods like
-    // FlatAST::subtree_uses_sym.
-    // Issue #1321: hot SoA column accessors — contract pre(id valid) in debug
-    // so AI mutation corruption is caught early (release: no-op).
-    [[nodiscard]] NodeTag tag(NodeId id) const noexcept {
-        contract_assert(id < tag_.size());
-        return tag_[id];
-    }
-    [[nodiscard]] std::int64_t int_val(NodeId id) const noexcept {
-        contract_assert(id < int_val_.size());
-        return int_val_[id];
-    }
-    [[nodiscard]] SymId sym_id(NodeId id) const noexcept {
-        contract_assert(id < sym_id_.size());
-        return sym_id_[id];
-    }
-
-    // ── Parent access ──────────────────────────────────────────
-    NodeId parent_of(NodeId id) const {
-        // Issue #256: bump the call counter (lifetime total).
-        parent_of_call_count_.fetch_add(1, std::memory_order_relaxed);
-        return id < parent_.size() ? parent_[id] : NULL_NODE;
-    }
-
-    // ── Child field access ─────────────────────────────────────
-
-    std::span<const NodeId> children(NodeId id) const {
-        // Issue #256: bump the call counter (lifetime total).
-        // The early-return on out-of-range still bumps — we
-        // want to count how often callers probe with bad ids
-        // (cheap error metric).
-        children_call_count_.fetch_add(1, std::memory_order_relaxed);
-        if (id >= children_.size())
-            return {};
-        // WARNING (Issue #370): the returned std::span borrows
-        // the underlying storage. If callers cache this span
-        // across mutations (set_child / insert_child /
-        // remove_child / rollback_to_size), the span WILL
-        // dangle when the storage's last shared_ptr is
-        // released. Use children_safe(id) for lifetime-pinned
-        // views; reserve raw children(id) for single-statement
-        // use within the same mutation boundary.
-        return std::span<const NodeId>(children_[id].data(), children_[id].size());
-    }
-
-    // Issue #370: lifetime-pinned accessor. Returns a
-    // SafePCVSpan<NodeId> that bundles the std::span with the
-    // underlying storage shared_ptr. As long as the
-    // SafePCVSpan is alive, the storage stays alive — so the
-    // returned span stays valid across mutate operations +
-    // rollback. One atomic refcount bump per call (amortized
-    // over all reads via the same handle).
-    // Issue #370/#678: lifetime-pinned children accessor.
-    [[nodiscard]] SafePCVSpan<NodeId> children_safe_view(NodeId id) const {
-        children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
-        if (id >= children_.size())
-            return {};
-        auto keep = share_storage(children_[id]);
-        std::span<const NodeId> sp(children_[id].data(), children_[id].size());
-        return SafePCVSpan<NodeId>(sp, std::move(keep));
-    }
-
-    [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
-        return children_safe_view(id);
-    }
-
-    // Mutable overload (for code paths that need to write through
-    // the children list, e.g. fixup_deltas in ast_impl.cpp).
-    // PCV is immutable; this returns a const span. For
-    // mutation, use insert_child / remove_child / set_child
-    // (which return a new PCV and assign back to children_[id]).
-    std::span<const NodeId> children_mutable(NodeId id) {
-        if (id >= children_.size())
-            return {};
-        return std::span<const NodeId>(children_[id].data(), children_[id].size());
-    }
-
-    // ── Issue #222: structural mutation guard ────────────────────
-    //
-    // RAII wrapper that holds an exclusive lock on structural_mtx_
-    // for its lifetime. On destruction:
-    //   1. Bumps generation_ (invalidates StableNodeRef).
-    //   2. Releases the exclusive lock.
-    //
-    // The lock + generation bump is the atomicity guarantee for
-    // structural mutations. A reader that wants to see consistent
-    // state across (read generation → read children_) can:
-    //   - capture generation_ before the read
-    //   - read children_
-    //   - verify generation_ unchanged after the read
-    //   - if changed, retry (with the new generation)
-    //
-    // Or, use try_acquire_reader_lock() for a longer-lived read
-    // transaction.
-    //
-    // The set_child / insert_child / remove_child methods acquire
-    // this guard internally. Callers who need to apply a multi-step
-    // mutation atomically (e.g. swap two children in a single
-    // "transaction") can acquire the guard explicitly:
-    //
-    //   {
-    //     auto guard = ast.begin_structural_mutation();
-    //     auto a = ast.children(id_a);
-    //     ast.set_child(id_a, 0, ...);
-    //     ast.set_child(id_b, 0, ...);
-    //     // guard's dtor bumps generation_ once, releases the lock.
-    //   }
-    //
-    // Move-only. The dtor is the single point that releases the
-    // lock + bumps the generation, so even exception paths are safe.
-    class StructuralMutationGuard {
-    public:
-        StructuralMutationGuard() noexcept = default;
-        explicit StructuralMutationGuard(FlatAST* ast) noexcept
-            : ast_(ast)
-            , lock_() {
-            if (ast_)
-                lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
-        }
-        ~StructuralMutationGuard() {
-            if (ast_) {
-                // Issue #250: count suppressed bumps in the
-                // FlatAST's atomic_batch_bumps_saved_ counter.
-                // The actual bump is still done by FlatAST's
-                // bump_generation() method, which short-circuits
-                // when bump_generation_suppressed_ is set.
-                if (ast_->bump_generation_suppressed_) {
-                    ++ast_->atomic_batch_bumps_saved_;
-                }
-                ast_->bump_generation();
-            }
-            // unique_lock's dtor releases the lock.
-        }
-        StructuralMutationGuard(const StructuralMutationGuard&) = delete;
-        StructuralMutationGuard& operator=(const StructuralMutationGuard&) = delete;
-        StructuralMutationGuard(StructuralMutationGuard&& o) noexcept
-            : ast_(o.ast_)
-            , lock_(std::move(o.lock_)) {
-            o.ast_ = nullptr;
-        }
-        StructuralMutationGuard& operator=(StructuralMutationGuard&& o) noexcept {
-            if (this != &o) {
-                // Release any current lock first.
-                if (ast_)
-                    ast_->bump_generation();
-                ast_ = o.ast_;
-                lock_ = std::move(o.lock_);
-                o.ast_ = nullptr;
-            }
-            return *this;
-        }
-        // Returns true if the guard holds a valid lock.
-        [[nodiscard]] explicit operator bool() const noexcept {
-            return ast_ != nullptr && lock_.owns_lock();
+        // Issue #469: apply verification-dirty bits to a node.
+        // Mirrors apply_verify_dirty_bits (from #437) but for
+        // the verification_dirty_ column (separate column to
+        // avoid collision with the VerifyDirtyReason bits).
+        void apply_verification_dirty_bits(NodeId id, std::uint8_t reasons) {
+            if (reasons == 0)
+                return;
+            if (id >= verification_dirty_.size())
+                verification_dirty_.resize(id + 1, 0);
+            // Detect newly-set bits (for per-reason counters).
+            const auto newly_set = reasons & ~verification_dirty_[id];
+            verification_dirty_[id] |= reasons;
+            if (newly_set & kCoverageFeedbackDirty)
+                verification_coverage_feedback_total_.fetch_add(1, std::memory_order_relaxed);
+            if (newly_set & kAssertFailureDirty)
+                verification_assert_failure_total_.fetch_add(1, std::memory_order_relaxed);
+            mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
         }
 
-    private:
-        FlatAST* ast_ = nullptr;
-        std::unique_lock<std::shared_mutex> lock_;
-    };
-
-    // Acquire an exclusive lock on structural_mtx_ for the
-    // duration of the returned guard's lifetime. Used by
-    // set_child / insert_child / remove_child internally;
-    // callers can also acquire it explicitly for multi-step
-    // atomic mutations.
-    [[nodiscard]] StructuralMutationGuard begin_structural_mutation() {
-        return StructuralMutationGuard(this);
-    }
-
-    // Acquire a SHARED (reader) lock on structural_mtx_.
-    // The returned guard's lifetime is the duration of the
-    // reader's transaction. Use for long-lived reads that
-    // need a consistent view of children_ across multiple
-    // calls. For short reads (one children(id) call), the
-    // PCV's COW semantics + generation_ check are sufficient.
-    class ReaderLockGuard {
-    public:
-        ReaderLockGuard() noexcept = default;
-        explicit ReaderLockGuard(const FlatAST* ast) noexcept
-            : ast_(ast)
-            , lock_() {
-            if (ast_)
-                lock_ = std::shared_lock<std::shared_mutex>(ast->structural_mtx_.mutable_get());
-        }
-        ~ReaderLockGuard() = default;
-        ReaderLockGuard(const ReaderLockGuard&) = delete;
-        ReaderLockGuard& operator=(const ReaderLockGuard&) = delete;
-        ReaderLockGuard(ReaderLockGuard&& o) noexcept
-            : ast_(o.ast_)
-            , lock_(std::move(o.lock_)) {
-            o.ast_ = nullptr;
-        }
-        ReaderLockGuard& operator=(ReaderLockGuard&& o) noexcept {
-            if (this != &o) {
-                ast_ = o.ast_;
-                lock_ = std::move(o.lock_);
-                o.ast_ = nullptr;
-            }
-            return *this;
-        }
-        [[nodiscard]] explicit operator bool() const noexcept {
-            return ast_ != nullptr && lock_.owns_lock();
-        }
-
-    private:
-        const FlatAST* ast_ = nullptr;
-        std::shared_lock<std::shared_mutex> lock_;
-    };
-    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const { return ReaderLockGuard(this); }
-
-    // Issue #222 slice 3/3: _locked() variants of the structural
-    // mutators. Caller MUST hold the structural mutation lock
-    // (e.g. is inside a begin_structural_mutation() scope). Used
-    // for multi-step atomic mutations where the caller wants to
-    // batch several set_child / insert_child / remove_child calls
-    // under a single lock + single generation bump. Without these,
-    // calling set_child inside begin_structural_mutation would
-    // double-lock the non-recursive std::shared_mutex and deadlock.
-    //
-    // The body is identical to the public version except for the
-    // guard acquisition.
-    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
-        const auto& list = children_[id];
-        if (idx >= list.size())
-            return;
-        auto old_cid = list[idx];
-        if (old_cid != NULL_NODE && old_cid < parent_.size())
-            parent_[old_cid] = NULL_NODE;
-        children_[id] = list.with_set(idx, child);
-        if (child != NULL_NODE && child < parent_.size())
-            parent_[child] = id;
-        add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
-    }
-    void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
-        const auto& list = children_[id];
-        auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
-        children_[id] = list.with_insert(pos, child);
-        if (child != NULL_NODE && child < parent_.size())
-            parent_[child] = id;
-        add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
-        // Issue #1319 Phase 1: count structural inserts; full GapBuffer-backed
-        // children_ column is progressive (PCV COW retained for snapshot/rollback).
-        structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
-    }
-    void remove_child_locked(NodeId id, std::uint32_t idx) {
-        const auto& list = children_[id];
-        if (idx < list.size()) {
-            auto cid = list[idx];
-            if (cid != NULL_NODE && cid < parent_.size())
-                parent_[cid] = NULL_NODE;
-            children_[id] = list.with_erase(idx);
-            add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
-            structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-
-    void set_child(NodeId id, std::uint32_t idx, NodeId child) {
-        // Issue #222: acquire the structural mutation guard. The
-        // guard's dtor bumps generation_ + releases the lock.
-        StructuralMutationGuard guard(this);
-        set_child_locked(id, idx, child);
-    }
-
-    // Insert a child at position idx (0 = first, child_count = append)
-    // Shifts all subsequent children and updates child_begin_ for later nodes.
-    void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
-        // Issue #222: acquire the structural mutation guard.
-        StructuralMutationGuard guard(this);
-        insert_child_locked(id, idx, child);
-    }
-
-    // Remove a child at position idx by replacing with NULL_NODE
-    void remove_child(NodeId id, std::uint32_t idx) {
-        // Issue #222: acquire the structural mutation guard.
-        StructuralMutationGuard guard(this);
-        remove_child_locked(id, idx);
-    }
-
-    // ── Bulk ───────────────────────────────────────────────────
-
-    // Issue #221: capture a snapshot of children_ for rollback
-    // (#177 MutationCheckpoint integration). The returned vector
-    // contains PCV copies that share the underlying storage with
-    // children_ (PCV COW); the snapshot is O(1) per node.
-    // Returns std::pmr::vector to match children_'s allocator.
-    std::vector<PersistentChildVector<NodeId>> snapshot_children() const {
-        return children_; // vector copy ctor; each PCV is shared_ptr copy
-    }
-
-    // Issue #221: restore children_ from a pre-captured snapshot.
-    // The passed-in vector is moved (its shared_ptrs are now bound
-    // to children_; back-references to the old PCVs in the
-    // snapshot are released as the snapshot goes out of scope).
-    void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
-        // Issue #487: pad the snapshot up to children_'s current
-        // size before the move. Without padding, if the in-flight
-        // mutation added nodes (e.g. set-code inside a MutationBoundary
-        // guard, or any primitive that grew children_ before the
-        // rollback fires), the snapshot would be smaller than the
-        // current children_. The subsequent move would shrink
-        // children_, and any access to children_[id] for id >=
-        // snapshot.size() (e.g. a destructor that walks every node)
-        // would trigger std::vector::operator[]'s debug-mode
-        // assertion. This was crashing test_issue_192 tests 3.1 +
-        // 4.1 (the atomic-batch bad-op path).
+        // Issue #313: mark_dirty_verification helper. Convenience
+        // wrapper around apply_verification_dirty_bits() that
+        // applies all standard verification reasons at once
+        // (coverage-feedback + assert-failure). Mirrors
+        // mark_ppa_dirty() (PPA-style API).
         //
-        // The padding is cheap (empty PCVs are zero-sized; the
-        // per-node COW means a moved-empty PCV is a single
-        // shared_ptr that doesn't allocate).
-        // Issue #1299/#1300: nodes allocated during the failed mutation
-        // (id >= pre-mutation size) become orphan "ghosts" if we only
-        // pad children_ with empty PCVs. Free those slots so queries
-        // and restamp_all_node_generations skip them.
-        const std::size_t pre_size = snapshot.size();
-        const std::size_t post_size = children_.size();
-        if (snapshot.size() < children_.size()) {
-            snapshot.resize(children_.size());
+        // Note on the bit value: the issue body suggests 0x20 for
+        // kVerificationDirty in the main dirty_ bitmask, but all 8
+        // bits of that byte are already used by kGeneralDirty (0x01),
+        // kConstraintDirty (0x02), kOccurrenceDirty (0x04),
+        // kOwnershipDirty (0x08), kCoercionDirty (0x10),
+        // kStructDirty (0x20), kDefUseDirty (0x40), and
+        // kPpaHintDirty (0x80) — see the DirtyReason enum. The
+        // honest close is therefore to keep the orthogonal
+        // verification_dirty_ side-table (set by #469) as the
+        // canonical storage for per-reason verification state, and
+        // use the constant kVerificationDirty as a *named
+        // identifier* (not an actual bit value) so that callers
+        // can document the verification concern without conflicting
+        // with existing dirty-bit assignments.
+        //
+        // Follow-up issue: a bitmask-widening refactor (uint8_t →
+        // uint16_t or wider) could consolidate the per-reason state
+        // into a single column. That's a separate, well-scoped
+        // change touching the storage vector, is_dirty / is_dirty_for
+        // accessors, and all mark_* helpers.
+        static constexpr std::uint8_t kVerificationDirty = 0x20;
+
+        // Mark a node as verification-dirty: set all verification
+        // reasons on the orthogonal verification_dirty_ side-table
+        // + mirror kGeneralDirty on the main dirty_ byte (via
+        // apply_verification_dirty_bits).
+        void mark_dirty_verification(NodeId id) {
+            apply_verification_dirty_bits(
+                id, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
         }
-        children_ = std::move(snapshot);
-        if (post_size > pre_size)
-            free_orphan_nodes_from(static_cast<NodeId>(pre_size));
-        // Issue #1281: every PCV topology restore is a fidelity event.
-        children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
-        bump_generation();
-        // Issue #1282: if a wrap was observed mid-mutation, restamp now.
-        maybe_auto_restamp_on_wrap();
-    }
 
-    // Issue #1299/#1300: mark nodes [begin, size()) as free (node_gen_=0)
-    // and push onto free_list_. Used after rollback when mutations added
-    // nodes that are no longer reachable after children_ restore.
-    std::size_t free_orphan_nodes_from(NodeId begin) {
-        std::size_t freed = 0;
-        for (NodeId id = begin; id < size(); ++id) {
-            if (id >= node_gen_.size())
-                break;
-            if (node_gen_[id] == 0)
-                continue; // already free
-            node_gen_[id] = 0;
-            free_list_.push_back(id);
-            ++freed;
+        // Issue #320: per-node epoch accessors + helper.
+        //
+        // The last_seen_epoch_ column records the
+        // mutation_epoch_ at which this node was last
+        // touched. The TypeChecker's synthesize_flat cache
+        // will use this to do per-node invalidation
+        // (rather than the coarse whole-cache gate that
+        // #168 ships). For now (this PR is the
+        // foundation), the column is plumbed but the
+        // synthesize_flat cache still uses the coarse gate.
+        // The follow-up issue wires the per-node check.
+        //
+        // The accessor returns 0 for out-of-range (which
+        // compares != any real mutation_epoch_ >= 1, so
+        // a never-touched node will look "stale" once
+        // after the first real epoch and then settle).
+
+        // Read-only accessor (public, used by the type
+        // checker + tests).
+        [[nodiscard]] std::uint64_t last_seen_epoch(NodeId id) const noexcept {
+            if (id >= last_seen_epoch_.size())
+                return 0;
+            return last_seen_epoch_[id];
         }
-        if (freed > 0) {
-            node_recycle_total_.fetch_add(freed, std::memory_order_relaxed);
-            ghost_orphan_nodes_freed_.fetch_add(freed, std::memory_order_relaxed);
+
+        // Stamp the node with the current mutation epoch.
+        // Called from mark_dirty() so any future read sees
+        // the updated epoch. The size of the column grows
+        // lazily (matches the pattern of other side-tables
+        // like verify_dirty_).
+        void stamp_last_seen_epoch(NodeId id, std::uint64_t epoch) noexcept {
+            if (id >= last_seen_epoch_.size())
+                last_seen_epoch_.resize(id + 1, 0);
+            last_seen_epoch_[id] = epoch;
         }
-        return freed;
-    }
 
-    [[nodiscard]] std::uint64_t ghost_orphan_nodes_freed() const noexcept {
-        return ghost_orphan_nodes_freed_.load(std::memory_order_relaxed);
-    }
+        // Convenience: stamp a node as having-seen the
+        // current global epoch. The caller is expected to
+        // pass the epoch from the global mutation counter
+        // (e.g. CompilerService::mutation_epoch_). This
+        // helper exists so the call site doesn't have to
+        // know about the column details.
+        void stamp_last_seen_epoch_to_current(NodeId id, std::uint64_t current_epoch) noexcept {
+            stamp_last_seen_epoch(id, current_epoch);
+        }
 
-    // Issue #266: capture / restore sym_id_ for fine-grained rollback
-    // of bulk rename operations (mutate:rename-symbol).
-    std::pmr::vector<SymId> snapshot_sym_id() const { return sym_id_; }
-    void restore_sym_id(std::pmr::vector<SymId>&& snapshot) {
-        sym_id_ = std::move(snapshot);
-        bump_generation();
-    }
+        // Issue #339: per-node occurrence-staleness
+        // accessors + helpers. The occ_stale_ column
+        // records whether the node's occurrence-narrowing
+        // information is fresh (0) or stale (1) after a
+        // mutation. Stale nodes must re-run
+        // analyze_predicate_flat before their narrowing
+        // is trusted.
+        //
+        // The narrowing is "stale" when the type checker
+        // (post-mutation) can't confirm the predicate
+        // still holds — either because the predicate
+        // itself mutated or because the bound variable's
+        // type changed in a way that's no longer a
+        // sub-type of the refined type.
+        //
+        // Public read accessor: returns 0/1 (or 0 for
+        // out-of-range, consistent with the other
+        // per-node dirty accessors).
+        [[nodiscard]] std::uint8_t is_occurrence_stale(NodeId id) const noexcept {
+            if (id >= occ_stale_.size())
+                return 0;
+            return occ_stale_[id];
+        }
+        // Mark a node as stale (after mutation or after
+        // validate_occurrence_narrowing() decides the
+        // refined type is no longer compatible). The
+        // caller can pass the mutation_id for
+        // provenance tracking.
+        void mark_occurrence_stale(NodeId id) noexcept {
+            if (id >= occ_stale_.size())
+                occ_stale_.resize(id + 1, 0);
+            occ_stale_[id] = 1;
+        }
+        // Clear the staleness bit (after a successful
+        // re-analysis via analyze_predicate_flat).
+        void clear_occurrence_stale(NodeId id) noexcept {
+            if (id < occ_stale_.size())
+                occ_stale_[id] = 0;
+        }
+        // Count of how many nodes are currently stale
+        // (for observability).
+        [[nodiscard]] std::size_t occurrence_stale_count() const noexcept {
+            std::size_t n = 0;
+            for (auto v : occ_stale_)
+                if (v)
+                    ++n;
+            return n;
+        }
 
-    // Issue #266: Lambda param columns used by rename-symbol.
-    struct ParamColumnsSnapshot {
-        std::pmr::vector<SymId> param_data;
-        std::pmr::vector<std::uint32_t> param_begin;
-        std::pmr::vector<std::uint32_t> param_count;
-    };
-    ParamColumnsSnapshot snapshot_param_columns() const {
-        return {param_data_, param_begin_, param_count_};
-    }
-    void restore_param_columns(ParamColumnsSnapshot&& snapshot) {
-        param_data_ = std::move(snapshot.param_data);
-        param_begin_ = std::move(snapshot.param_begin);
-        param_count_ = std::move(snapshot.param_count);
-        bump_generation();
-    }
-
-    // ── Issue #261: NodeId lifecycle / SoA compaction ────────────
-    //
-    // recycle_dead_nodes() marks unreachable slots (not reachable
-    // from root via children, plus region_by_lambda_id_ roots) as
-    // free (node_gen_=0) and pushes them onto free_list_ for reuse
-    // by add_node(). Does NOT shrink the SoA columns — use
-    // compact_nodes() for densification + cache locality.
-    //
-    // compact_nodes() rebuilds dense 0..live-1 SoA columns,
-    // remaps all NodeId references, clears free_list_, and bumps
-    // generation_ (invalidates all StableNodeRefs).
-    [[nodiscard]] std::size_t recycle_dead_nodes() {
-        auto live = mark_live_nodes();
-        std::size_t recycled = 0;
-        for (NodeId id = 0; id < size(); ++id) {
-            if (is_free_slot(id))
-                continue;
-            if (!live[id]) {
-                node_gen_[id] = 0;
-                free_list_.push_back(id);
-                ++recycled;
+        // Walk the parent_ chain upward (BFS, the same shape as
+        // mark_dirty_upward at line ~3726) and apply
+        // verification-dirty to each ancestor. The BFS logic is
+        // duplicated locally rather than funneling through
+        // mark_dirty_upward to avoid triggering the
+        // type_cache_generation_, mark_tag_arity_index_dirty, +
+        // per-binding-gen bump path — those cost meaningful work
+        // for nodes whose verification state changed but whose
+        // type is unaffected. The verification_dirty_ column is
+        // the canonical source of "verification needs re-eval"
+        // and `is_verification_dirty(id)` reads it directly. If
+        // the broader mark_dirty_upward side effects are wanted
+        // alongside verification, callers can chain the two.
+        void mark_dirty_verification_upward(NodeId id) {
+            // Match the mark_dirty_upward observability signal so
+            // monitoring tooling sees a single upward-walk per
+            // verification event.
+            mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+            std::deque<NodeId> queue;
+            queue.push_back(id);
+            while (!queue.empty()) {
+                auto nid = queue.front();
+                queue.pop_front();
+                apply_verification_dirty_bits(
+                    nid, static_cast<std::uint8_t>(kCoverageFeedbackDirty | kAssertFailureDirty));
+                auto p = parent_[nid];
+                if (p != NULL_NODE)
+                    queue.push_back(p);
             }
         }
-        if (recycled > 0)
-            node_recycle_total_.fetch_add(recycled, std::memory_order_relaxed);
-        return recycled;
-    }
 
-    // Issue #497: recycle dead slots without full SoA remap or
-    // generation bump (avoids invalidating all StableNodeRefs).
-    [[nodiscard]] std::size_t compact_nodes_soft() {
-        const auto recycled = recycle_dead_nodes();
-        if (recycled > 0)
-            soft_compact_count_.fetch_add(1, std::memory_order_relaxed);
-        return recycled;
-    }
-
-    [[nodiscard]] std::size_t compact_nodes() {
-        auto live = mark_live_nodes();
-        std::size_t live_count = 0;
-        for (bool is_live : live) {
-            if (is_live)
-                ++live_count;
+        // Issue #313: read-only accessor for the verification-
+        // dirty side-table. Returns the OR'd set of verification
+        // reasons set on this node (kCoverageFeedbackDirty |
+        // kAssertFailureDirty | ...). 0 means "clean from a
+        // verification perspective".
+        bool is_verification_dirty(NodeId id) const {
+            return id < verification_dirty_.size() && verification_dirty_[id] != 0;
         }
-        const auto old_size = size();
-        if (live_count == 0) {
-            clear();
-            if (old_size > 0)
-                node_compact_total_.fetch_add(old_size, std::memory_order_relaxed);
-            return old_size;
+        bool is_verification_dirty_for(NodeId id, std::uint8_t verify_mask) const {
+            return id < verification_dirty_.size() && (verification_dirty_[id] & verify_mask) != 0;
         }
-        if (live_count == old_size)
-            return 0;
-
-        std::vector<NodeId> old_to_new(old_size, NULL_NODE);
-        NodeId next = 0;
-        for (NodeId id = 0; id < old_size; ++id) {
-            if (live[id])
-                old_to_new[id] = next++;
+        void clear_verification_dirty(NodeId id) {
+            if (id < verification_dirty_.size())
+                verification_dirty_[id] = 0;
+        }
+        void clear_verification_dirty_for(NodeId id, std::uint8_t verify_mask) {
+            if (id < verification_dirty_.size())
+                verification_dirty_[id] &= static_cast<std::uint8_t>(~verify_mask);
         }
 
-        auto remap = [&](NodeId id) -> NodeId {
-            if (id == NULL_NODE || id >= old_to_new.size())
-                return NULL_NODE;
-            return old_to_new[id];
+
+        // Issue #290: macro_dirty_ bit definitions. OR'd into the
+        // macro_dirty_ column when clone_macro_body or a
+        // self-evolution step touches a node. Setting any macro bit
+        // also ORs kGeneralDirty on dirty_ for backward-compat with
+        // legacy is_dirty() callers (type checker, lowering).
+        enum MacroDirtyReason : std::uint8_t {
+            kMacroExpansion = 0x01,  // clone_macro_body produced this subtree
+            kMacroSelfModify = 0x02, // self-evolution step touched a macro-introduced node
         };
+        // Issue #290: macro_dirty_ accessor (public, used by the
+        // (compile:macro-dirty?) primitive).
+        [[nodiscard]] std::uint8_t macro_dirty(NodeId id) const noexcept {
+            if (id >= macro_dirty_.size())
+                return 0;
+            return macro_dirty_[id];
+        }
+        // Issue #290: apply macro-dirty bits to a node. Called from
+        // clone_macro_body after a hygienic macro expansion
+        // (kMacroExpansion) and from self-evolution loops that touch
+        // macro-introduced nodes (kMacroSelfModify). Mirrors the
+        // verification-column pattern (#469) but lives in its own
+        // column to avoid collision with the VerifyDirtyReason bits
+        // (4 bits used).
+        void apply_macro_dirty_bits(NodeId id, std::uint8_t reasons) {
+            if (reasons == 0)
+                return;
+            if (id >= macro_dirty_.size())
+                macro_dirty_.resize(id + 1, 0);
+            const auto newly_set = reasons & ~macro_dirty_[id];
+            macro_dirty_[id] |= reasons;
+            if (newly_set & kMacroExpansion)
+                macro_expansion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            if (newly_set & kMacroSelfModify)
+                macro_self_modify_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+            mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+        }
+        // Issue #290: bulk-clear all macro_dirty_ bits across the
+        // flat. Called from the (compile:clear-macro-dirty!) primitive
+        // and from full-reset paths. Walks every live node.
+        void clear_macro_dirty_all() noexcept {
+            for (auto& b : macro_dirty_)
+                b = 0;
+        }
+        // Issue #290: count nodes with any macro_dirty_ bit set.
+        // Used by the (compile:macro-dirty-count) primitive.
+        [[nodiscard]] std::size_t macro_dirty_count() const noexcept {
+            std::size_t n = 0;
+            for (auto b : macro_dirty_)
+                if (b != 0)
+                    ++n;
+            return n;
+        }
 
-        StructuralMutationGuard guard(this);
+    public:
+        // Low-level raw node creation (for advanced mutation).
+        // Creates a minimal node with the given tag and default fields.
+        // Children must be set up manually via set_child/insert_child.
+        [[nodiscard]] NodeId add_raw_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+            return add_node(tag, m);
+        }
 
-        auto alloc = tag_.get_allocator();
-        std::pmr::vector<NodeTag> new_tag(alloc);
-        std::pmr::vector<std::int64_t> new_int_val(alloc);
-        std::pmr::vector<double> new_float_val(alloc);
-        std::pmr::vector<SymId> new_sym_id(alloc);
-        std::vector<PersistentChildVector<NodeId>> new_children;
-        std::pmr::vector<NodeId> new_parent(alloc);
-        std::pmr::vector<std::uint32_t> new_param_begin(alloc);
-        std::pmr::vector<std::uint32_t> new_param_count(alloc);
-        std::pmr::vector<std::uint32_t> new_cap_require_count(alloc);
-        std::pmr::vector<std::uint32_t> new_line(alloc);
-        std::pmr::vector<std::uint32_t> new_col(alloc);
-        std::pmr::vector<SyntaxMarker> new_marker(alloc);
-        std::pmr::vector<std::uint8_t> new_dirty(alloc);
-        std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
-        // Issue #437: COW scratch for verify_dirty_
-        std::pmr::vector<std::uint8_t> new_verify_dirty(alloc);
-        // Issue #469: COW scratch for verification_dirty_
-        std::pmr::vector<std::uint8_t> new_verification_dirty(alloc);
-        // Issue #290: COW scratch for macro_dirty_
-        std::pmr::vector<std::uint8_t> new_macro_dirty(alloc);
-        std::pmr::vector<std::uint32_t> new_type_id(alloc);
-        // Issue #412: COW scratch for type_cache_gen_.
-        std::pmr::vector<std::uint32_t> new_type_cache_gen(alloc);
-        // Issue #412 follow-up #1: COW scratch for
-        // per-binding cache gen.
-        std::pmr::vector<std::uint32_t> new_type_cache_binding_gen(alloc);
-        std::pmr::vector<std::uint8_t> new_error_kind(alloc);
-        std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
-        std::pmr::vector<std::uint16_t> new_node_gen(alloc);
-        std::pmr::vector<std::int64_t> new_value_cache(alloc);
+        std::vector<MatchClauseInfo> match_info_;
+        // Issue #150 Phase 1: region annotation side-tables.
+        // region_by_sym_ is keyed by the define's SymId (the
+        // function's bound name). region_by_lambda_id_ is keyed by
+        // the lambda's NodeId (for anonymous lambdas that don't
+        // have a bound name). Both are populated by the parser
+        // (evaluator_eval_flat.cpp) when it sees
+        // (performance-region ...) / (evolution-region ...) wrappers.
+        // Lowering reads them via get_function_region_for_sym /
+        // get_function_region_for_lambda to set
+        // IRFunction::region accordingly.
+        std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
+        std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
+        // Issue #255: explicit custom move constructor. The
+        // 4 std::atomic observability members (added for #255)
+        // make the implicit move ctor deleted by some compiler
+        // versions — the default move tries to copy-construct
+        // each atomic, which is deleted. We implement a custom
+        // move ctor that does a memberwise move: std::pmr vectors
+        // + unordered_maps move naturally; std::atomic values are
+        // std::move'd (which on libstdc++ does an rcu-style value
+        // transfer). The user-declared destructor would otherwise
+        // inhibit implicit move generation, so this is mandatory.
+        FlatAST(FlatAST && other) noexcept
+            : tag_(std::move(other.tag_))
+            , int_val_(std::move(other.int_val_))
+            , float_val_(std::move(other.float_val_))
+            , sym_id_(std::move(other.sym_id_))
+            , children_(std::move(other.children_))
+            , parent_(std::move(other.parent_))
+            , param_begin_(std::move(other.param_begin_))
+            , param_count_(std::move(other.param_count_))
+            , cap_require_count_(std::move(other.cap_require_count_))
+            , param_data_(std::move(other.param_data_))
+            , param_annot_data_(std::move(other.param_annot_data_))
+            , line_(std::move(other.line_))
+            , col_(std::move(other.col_))
+            , type_id_(std::move(other.type_id_))
+            , type_cache_gen_(std::move(other.type_cache_gen_))
+            , type_cache_binding_gen_(std::move(other.type_cache_binding_gen_))
+            , binding_gens_(std::move(other.binding_gens_))
+            , error_kind_(std::move(other.error_kind_))
+            , value_cache_(std::move(other.value_cache_))
+            , mutation_log_(std::move(other.mutation_log_))
+            // Issue #300 follow-up #2: regression from e5f559bf
+            // ("fix warning") which dropped node_first_mutation_
+            // from the move-ctor init list. Default-construction
+            // used the new_delete_resource, mixing with the
+            // arena-allocated columns during ~FlatAST() and
+            // producing a heap-use-after-free on the binding_gens_
+            // shared_ptr control block (the default-ctor'd
+            // column's heap buffer lived past the arena shrink in
+            // (arena:defrag), then died during teardown in an
+            // order that poisoned the next column's destructor).
+            // Restoring the init-list entry matches declaration
+            // order (node_first_mutation_ declared before
+            // last_seen_epoch_) and keeps the same pmr allocator.
+            , node_first_mutation_(std::move(other.node_first_mutation_))
+            // Issue #320: per-node epoch tracking column
+            // (SoA parallel to mutation_log_).
+            , last_seen_epoch_(std::move(other.last_seen_epoch_))
+            // Issue #339: per-node occurrence-staleness column.
+            , occ_stale_(std::move(other.occ_stale_))
+            , next_mutation_id_(other.next_mutation_id_)
+            , generation_(other.generation_)
+            , node_gen_(std::move(other.node_gen_))
+            , free_list_(std::move(other.free_list_))
+            , bump_generation_count_(other.bump_generation_count_.load())
+            , is_valid_check_count_(other.is_valid_check_count_.load())
+            , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
+            , generation_wrap_count_(other.generation_wrap_count_.load())
+            , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
+            , atomic_batch_commits_(other.atomic_batch_commits_.load())
+            , children_call_count_(other.children_call_count_.load())
+            , parent_of_call_count_(other.parent_of_call_count_.load())
+            , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
+            , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+            , mark_dirty_early_exit_count_(other.mark_dirty_early_exit_count_.load())
+            , mark_dirty_max_depth_observed_(other.mark_dirty_max_depth_observed_.load())
+            , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+            , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
+            , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
+            , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
+            , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
+            , max_live_nodes_warn_(other.max_live_nodes_warn_)
+            , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
+            , node_recycle_total_(other.node_recycle_total_.load())
+            , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
+            , node_compact_total_(other.node_compact_total_.load())
+            , soft_compact_count_(other.soft_compact_count_.load())
+            , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
+            , verification_coverage_feedback_total_(
+                  other.verification_coverage_feedback_total_.load())
+            , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
+            , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
+            , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
+            , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
+            , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
+            , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
+            , match_info_(std::move(other.match_info_))
+            , region_by_sym_(std::move(other.region_by_sym_))
+            , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
+            , root(other.root)
+            , bump_generation_suppressed_(other.bump_generation_suppressed_)
+            , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+        FlatAST& operator=(FlatAST&& other) noexcept {
+            if (this != &other) {
+                tag_ = std::move(other.tag_);
+                int_val_ = std::move(other.int_val_);
+                float_val_ = std::move(other.float_val_);
+                sym_id_ = std::move(other.sym_id_);
+                children_ = std::move(other.children_);
+                parent_ = std::move(other.parent_);
+                param_begin_ = std::move(other.param_begin_);
+                param_count_ = std::move(other.param_count_);
+                cap_require_count_ = std::move(other.cap_require_count_);
+                param_data_ = std::move(other.param_data_);
+                param_annot_data_ = std::move(other.param_annot_data_);
+                line_ = std::move(other.line_);
+                col_ = std::move(other.col_);
+                type_id_ = std::move(other.type_id_);
+                type_cache_gen_ = std::move(other.type_cache_gen_);
+                type_cache_binding_gen_ = std::move(other.type_cache_binding_gen_);
+                binding_gens_ = std::move(other.binding_gens_);
+                error_kind_ = std::move(other.error_kind_);
+                node_gen_ = std::move(other.node_gen_);
+                free_list_ = std::move(other.free_list_);
+                value_cache_ = std::move(other.value_cache_);
+                mutation_log_ = std::move(other.mutation_log_);
+                node_first_mutation_ = std::move(other.node_first_mutation_);
+                next_mutation_id_ = other.next_mutation_id_;
+                generation_ = other.generation_;
+                bump_generation_count_.store(other.bump_generation_count_.load());
+                is_valid_check_count_.store(other.is_valid_check_count_.load());
+                stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
+                atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+                verification_coverage_feedback_total_.store(
+                    other.verification_coverage_feedback_total_.load());
+                verification_assert_failure_total_.store(
+                    other.verification_assert_failure_total_.load());
+                sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
+                sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
+                verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
+                macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
+                macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
+                generation_wrap_count_.store(other.generation_wrap_count_.load());
+                node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
+                children_call_count_.store(other.children_call_count_.load());
+                parent_of_call_count_.store(other.parent_of_call_count_.load());
+                mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
+                mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+                mark_dirty_early_exit_count_.store(other.mark_dirty_early_exit_count_.load());
+                mark_dirty_max_depth_observed_.store(other.mark_dirty_max_depth_observed_.load());
+                mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+                mark_dirty_boundary_prune_count_.store(
+                    other.mark_dirty_boundary_prune_count_.load());
+                auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
+                live_nodes_threshold_warn_count_.store(
+                    other.live_nodes_threshold_warn_count_.load());
+                compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
+                max_live_nodes_warn_ = other.max_live_nodes_warn_;
+                rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
+                node_recycle_total_.store(other.node_recycle_total_.load());
+                node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
+                node_compact_total_.store(other.node_compact_total_.load());
+                soft_compact_count_.store(other.soft_compact_count_.load());
+                stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
+                match_info_ = std::move(other.match_info_);
+                region_by_sym_ = std::move(other.region_by_sym_);
+                region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
+                root = other.root;
+                bump_generation_suppressed_ = other.bump_generation_suppressed_;
+                atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            }
+            return *this;
+        }
+        // Issue #255: explicit copy constructor + copy assignment.
+        // Declaring a move ctor/assignment implicitly deletes the
+        // copy versions, but evaluator_env.cpp has 3 copy-assign
+        // sites (workspace COW, local-flat initialization, etc.).
+        // Copy is rare in hot paths but must compile.
+        FlatAST(const FlatAST& other)
+            : tag_(other.tag_)
+            , int_val_(other.int_val_)
+            , float_val_(other.float_val_)
+            , sym_id_(other.sym_id_)
+            , children_(other.children_)
+            , parent_(other.parent_)
+            , param_begin_(other.param_begin_)
+            , param_count_(other.param_count_)
+            , cap_require_count_(other.cap_require_count_)
+            , param_data_(other.param_data_)
+            , param_annot_data_(other.param_annot_data_)
+            , line_(other.line_)
+            , col_(other.col_)
+            , marker_(other.marker_)
+            , dirty_(other.dirty_)
+            , ppa_dirty_(other.ppa_dirty_)
+            , verify_dirty_(other.verify_dirty_)
+            , verification_dirty_(other.verification_dirty_)
+            , macro_dirty_(other.macro_dirty_)
+            , type_id_(other.type_id_)
+            , type_cache_gen_(other.type_cache_gen_)
+            , type_cache_binding_gen_(other.type_cache_binding_gen_)
+            , schema_cache_(other.schema_cache_)
+            , binding_gens_(other.binding_gens_)
+            , error_kind_(other.error_kind_)
+            , value_cache_(other.value_cache_)
+            , mutation_log_(other.mutation_log_)
+            , narrowing_log_(other.narrowing_log_)
+            , node_first_mutation_(other.node_first_mutation_)
+            // Issue #320: per-node epoch tracking column.
+            , last_seen_epoch_(other.last_seen_epoch_)
+            // Issue #339: per-node occurrence-staleness
+            // column. (Declared after last_seen_epoch_ in
+            // the class; init-list order must match the
+            // declaration order to silence -Wreorder.)
+            , occ_stale_(other.occ_stale_)
+            , next_mutation_id_(other.next_mutation_id_)
+            , generation_(other.generation_)
+            , node_gen_(other.node_gen_)
+            , free_list_(other.free_list_)
+            , bump_generation_count_(other.bump_generation_count_.load())
+            , is_valid_check_count_(other.is_valid_check_count_.load())
+            , stable_ref_invalidations_(other.stable_ref_invalidations_.load())
+            , generation_wrap_count_(other.generation_wrap_count_.load())
+            , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
+            , atomic_batch_commits_(other.atomic_batch_commits_.load())
+            , children_call_count_(other.children_call_count_.load())
+            , parent_of_call_count_(other.parent_of_call_count_.load())
+            , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
+            , mark_dirty_total_nodes_(other.mark_dirty_total_nodes_.load())
+            , mark_dirty_truncated_count_(other.mark_dirty_truncated_count_.load())
+            , mark_dirty_boundary_prune_count_(other.mark_dirty_boundary_prune_count_.load())
+            , auto_compact_on_commit_count_(other.auto_compact_on_commit_count_.load())
+            , live_nodes_threshold_warn_count_(other.live_nodes_threshold_warn_count_.load())
+            , compaction_free_list_threshold_(other.compaction_free_list_threshold_)
+            , max_live_nodes_warn_(other.max_live_nodes_warn_)
+            , rollback_compaction_triggered_(other.rollback_compaction_triggered_.load())
+            , node_recycle_total_(other.node_recycle_total_.load())
+            , node_slot_reuse_count_(other.node_slot_reuse_count_.load())
+            , node_compact_total_(other.node_compact_total_.load())
+            , soft_compact_count_(other.soft_compact_count_.load())
+            , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
+            , verification_coverage_feedback_total_(
+                  other.verification_coverage_feedback_total_.load())
+            , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
+            , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
+            , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
+            , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
+            , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
+            , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
+            , match_info_(other.match_info_)
+            , region_by_sym_(other.region_by_sym_)
+            , region_by_lambda_id_(other.region_by_lambda_id_)
+            , root(other.root)
+            , bump_generation_suppressed_(other.bump_generation_suppressed_)
+            , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
+        FlatAST& operator=(const FlatAST& other) {
+            if (this != &other) {
+                tag_ = other.tag_;
+                int_val_ = other.int_val_;
+                float_val_ = other.float_val_;
+                sym_id_ = other.sym_id_;
+                children_ = other.children_;
+                parent_ = other.parent_;
+                param_begin_ = other.param_begin_;
+                param_count_ = other.param_count_;
+                cap_require_count_ = other.cap_require_count_;
+                param_data_ = other.param_data_;
+                param_annot_data_ = other.param_annot_data_;
+                line_ = other.line_;
+                col_ = other.col_;
+                type_id_ = other.type_id_;
+                type_cache_gen_ = other.type_cache_gen_;
+                type_cache_binding_gen_ = other.type_cache_binding_gen_;
+                binding_gens_ = other.binding_gens_;
+                schema_cache_ = other.schema_cache_;
+                error_kind_ = other.error_kind_;
+                node_gen_ = other.node_gen_;
+                free_list_ = other.free_list_;
+                value_cache_ = other.value_cache_;
+                mutation_log_ = other.mutation_log_;
+                node_first_mutation_ = other.node_first_mutation_;
+                next_mutation_id_ = other.next_mutation_id_;
+                generation_ = other.generation_;
+                bump_generation_count_.store(other.bump_generation_count_.load());
+                is_valid_check_count_.store(other.is_valid_check_count_.load());
+                stable_ref_invalidations_.store(other.stable_ref_invalidations_.load());
+                atomic_batch_commits_.store(other.atomic_batch_commits_.load());
+                verification_coverage_feedback_total_.store(
+                    other.verification_coverage_feedback_total_.load());
+                verification_assert_failure_total_.store(
+                    other.verification_assert_failure_total_.load());
+                sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
+                sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
+                verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
+                macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
+                macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
+                children_call_count_.store(other.children_call_count_.load());
+                parent_of_call_count_.store(other.parent_of_call_count_.load());
+                mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
+                mark_dirty_total_nodes_.store(other.mark_dirty_total_nodes_.load());
+                mark_dirty_truncated_count_.store(other.mark_dirty_truncated_count_.load());
+                mark_dirty_boundary_prune_count_.store(
+                    other.mark_dirty_boundary_prune_count_.load());
+                auto_compact_on_commit_count_.store(other.auto_compact_on_commit_count_.load());
+                live_nodes_threshold_warn_count_.store(
+                    other.live_nodes_threshold_warn_count_.load());
+                compaction_free_list_threshold_ = other.compaction_free_list_threshold_;
+                max_live_nodes_warn_ = other.max_live_nodes_warn_;
+                rollback_compaction_triggered_.store(other.rollback_compaction_triggered_.load());
+                node_recycle_total_.store(other.node_recycle_total_.load());
+                node_slot_reuse_count_.store(other.node_slot_reuse_count_.load());
+                node_compact_total_.store(other.node_compact_total_.load());
+                soft_compact_count_.store(other.soft_compact_count_.load());
+                stale_ref_auto_refresh_count_.store(other.stale_ref_auto_refresh_count_.load());
+                match_info_ = other.match_info_;
+                region_by_sym_ = other.region_by_sym_;
+                region_by_lambda_id_ = other.region_by_lambda_id_;
+                root = other.root;
+                bump_generation_suppressed_ = other.bump_generation_suppressed_;
+                atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            }
+            return *this;
+        }
+        explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
+            : tag_(alloc)
+            , int_val_(alloc)
+            , float_val_(alloc)
+            , sym_id_(alloc)
+            , children_()
+            , parent_(alloc)
+            , param_begin_(alloc)
+            , param_count_(alloc)
+            , cap_require_count_(alloc)
+            , param_data_(alloc)
+            , param_annot_data_(alloc)
+            , line_(alloc)
+            , col_(alloc)
+            // Issue #300: these pmr columns must use the arena alloc passed
+            // to FlatAST (not the default new_delete_resource).
+            , marker_(alloc)
+            , dirty_(alloc)
+            , ppa_dirty_(alloc)
+            , verify_dirty_(alloc)
+            , verification_dirty_(alloc)
+            , macro_dirty_(alloc)
+            , type_id_(alloc)
+            , type_cache_gen_(alloc)
+            , type_cache_binding_gen_(alloc)
+            , schema_cache_(alloc)
+            , error_kind_(alloc)
+            // Issue #1371: tag_arity hash map (declared before value_cache_).
+            , tag_arity_index_(alloc)
+            , value_cache_(alloc)
+            , mutation_log_(alloc)
+            , narrowing_log_(alloc)
+            // Issue #300 follow-up #2: regression from e5f559bf
+            // ("fix warning"). node_first_mutation_ must use the
+            // arena allocator (alloc), not the default
+            // new_delete_resource. Same root cause as the move
+            // ctor fix above — removing it from the init list
+            // caused default-construction with the wrong
+            // allocator and produced a heap-use-after-free on
+            // the binding_gens_ shared_ptr control block during
+            // ~FlatAST() after (arena:defrag) shrank the arena.
+            // Restoring the init-list entry matches declaration
+            // order (node_first_mutation_ declared before
+            // last_seen_epoch_).
+            , node_first_mutation_(alloc)
+            // Issue #320: per-node epoch tracking column.
+            , last_seen_epoch_(alloc)
+            // Issue #339: per-node occurrence-staleness column.
+            , occ_stale_(alloc)
+            , node_gen_(alloc)
+            , free_list_(alloc) {}
 
-        new_tag.reserve(live_count);
-        new_int_val.reserve(live_count);
-        new_float_val.reserve(live_count);
-        new_sym_id.reserve(live_count);
-        new_children.reserve(live_count);
-        new_parent.reserve(live_count);
-        new_param_begin.reserve(live_count);
-        new_param_count.reserve(live_count);
-        new_cap_require_count.reserve(live_count);
-        new_line.reserve(live_count);
-        new_col.reserve(live_count);
-        new_marker.reserve(live_count);
-        new_dirty.reserve(live_count);
-        new_ppa_dirty.reserve(live_count);
-        new_type_id.reserve(live_count);
-        new_type_cache_gen.reserve(live_count);
-        new_type_cache_binding_gen.reserve(live_count);
-        new_error_kind.reserve(live_count);
-        new_node_first_mutation.reserve(live_count);
-        new_node_gen.reserve(live_count);
-        new_value_cache.reserve(live_count);
+        // Issue #300 follow-up #1: release the children_ column before
+        // the rest of ~FlatAST runs. Aliased PCV slots can share one
+        // heap control block with a corrupted use_count (ASAN UAF after
+        // arena:defrag). Swap the column out first so the member dtor is
+        // a no-op, then dedupe-abandon aliases on the detached vector.
+        void release_children_for_teardown() {
+            std::vector<PersistentChildVector<NodeId>> doomed;
+            doomed.swap(children_);
+            std::unordered_set<const void*> seen;
+            for (auto& pcv : doomed) {
+                const void* id = pcv.storage_identity();
+                if (id == nullptr)
+                    continue;
+                if (!seen.insert(id).second)
+                    pcv.abandon_storage();
+            }
+        }
 
-        for (NodeId id = 0; id < old_size; ++id) {
-            if (!live[id])
-                continue;
-            new_tag.push_back(tag_[id]);
-            new_int_val.push_back(int_val_[id]);
-            new_float_val.push_back(float_val_[id]);
-            new_sym_id.push_back(sym_id_[id]);
-            std::vector<NodeId> remapped_children;
-            remapped_children.reserve(children_[id].size());
+        ~FlatAST() {
+            release_children_for_teardown();
+        }
+
+        // ── Builders ───────────────────────────────────────────────
+
+        // Set parent for all children of the given node
+        void link_children(NodeId id) {
+            // Issue #220/221: walk the per-node PCV. The PCV's
+            // iterators are const (the vector is immutable from
+            // the outside), so this is read-only iteration.
             for (auto cid : children_[id]) {
                 if (cid != NULL_NODE)
-                    remapped_children.push_back(remap(cid));
+                    parent_[cid] = id;
             }
-            new_children.emplace_back(remapped_children.begin(), remapped_children.end());
-            new_parent.push_back(remap(parent_[id]));
-            new_param_begin.push_back(param_begin_[id]);
-            new_param_count.push_back(param_count_[id]);
-            new_cap_require_count.push_back(cap_require_count_[id]);
-            new_line.push_back(line_[id]);
-            new_col.push_back(col_[id]);
-            new_marker.push_back(marker_[id]);
-            new_dirty.push_back(dirty_[id]);
-            if (id < ppa_dirty_.size())
-                new_ppa_dirty.push_back(ppa_dirty_[id]);
-            else
-                new_ppa_dirty.push_back(0);
-            // Issue #437: COW the verify_dirty_ bitmask.
-            if (id < verify_dirty_.size())
-                new_verify_dirty.push_back(verify_dirty_[id]);
-            else
-                new_verify_dirty.push_back(0);
-            // Issue #469: COW the verification_dirty_ bitmask.
-            if (id < verification_dirty_.size())
-                new_verification_dirty.push_back(verification_dirty_[id]);
-            else
-                new_verification_dirty.push_back(0);
-            // Issue #290: COW the macro_dirty_ bitmask.
-            if (id < macro_dirty_.size())
-                new_macro_dirty.push_back(macro_dirty_[id]);
-            else
-                new_macro_dirty.push_back(0);
-            new_type_id.push_back(type_id_[id]);
-            // Issue #412: parallel cache gen. After COW we
-            // reset to 0 so the next type-checker pass will
-            // re-populate both fields via
-            // set_type_with_gen().
-            new_type_cache_gen.push_back(0);
-            // Issue #412 follow-up #1: parallel
-            // per-binding cache gen. Also reset to 0
-            // after COW; the next type-checker pass will
-            // re-populate via set_type_with_binding_gen().
-            new_type_cache_binding_gen.push_back(0);
-            new_error_kind.push_back(error_kind_[id]);
-            new_node_first_mutation.push_back(node_first_mutation_[id]);
-            new_node_gen.push_back(generation_);
-            if (id < value_cache_.size())
-                new_value_cache.push_back(value_cache_[id]);
-            else
-                new_value_cache.push_back(kNotCached);
         }
 
-        tag_ = std::move(new_tag);
-        int_val_ = std::move(new_int_val);
-        float_val_ = std::move(new_float_val);
-        sym_id_ = std::move(new_sym_id);
-        children_ = std::move(new_children);
-        parent_ = std::move(new_parent);
-        param_begin_ = std::move(new_param_begin);
-        param_count_ = std::move(new_param_count);
-        cap_require_count_ = std::move(new_cap_require_count);
-        line_ = std::move(new_line);
-        col_ = std::move(new_col);
-        marker_ = std::move(new_marker);
-        dirty_ = std::move(new_dirty);
-        ppa_dirty_ = std::move(new_ppa_dirty);
-        // Issue #437: COW the verify_dirty_ column
-        verify_dirty_ = std::move(new_verify_dirty);
-        // Issue #469: COW the verification_dirty_ column
-        verification_dirty_ = std::move(new_verification_dirty);
-        // Issue #290: COW the macro_dirty_ column
-        macro_dirty_ = std::move(new_macro_dirty);
-        type_id_ = std::move(new_type_id);
-        type_cache_gen_ = std::move(new_type_cache_gen);
-        // Issue #412 follow-up #1: COW the
-        // per-binding cache gen column. The
-        // binding_gens_ map is NOT COW'd — the new flat
-        // starts with an empty map and only entries
-        // that the clone's mutations touch are added.
-        // This ensures mutations on the clone don't
-        // invalidate the parent's cache.
-        type_cache_binding_gen_ = std::move(new_type_cache_binding_gen);
-        // Issue #412 follow-up #1: COW the
-        // binding_gens_ map. The clone gets a fresh
-        // empty map (the COW contract is that mutations
-        // on the clone don't affect the parent). The
-        // existing entries will be re-built lazily as
-        // the clone's mutations bump them.
-        binding_gens_ = std::make_shared<BindingGenMap>();
-        error_kind_ = std::move(new_error_kind);
-        node_first_mutation_ = std::move(new_node_first_mutation);
-        node_gen_ = std::move(new_node_gen);
-        value_cache_ = std::move(new_value_cache);
-        // Issue #490: proactive rebuild after compact remap so
-        // query:tag-arity-count / find_by_tag_arity avoid a
-        // lazy O(n) spike on the next query call.
-        rebuild_tag_arity_index();
-
-        root = remap(root);
-
-        std::pmr::unordered_map<NodeId, std::uint8_t> new_region_by_lambda(alloc);
-        for (const auto& [lid, region] : region_by_lambda_id_) {
-            auto nlid = remap(lid);
-            if (nlid != NULL_NODE)
-                new_region_by_lambda[nlid] = region;
-        }
-        region_by_lambda_id_ = std::move(new_region_by_lambda);
-
-        std::vector<MatchClauseInfo> new_match_info(live_count);
-        for (NodeId id = 0; id < old_size; ++id) {
-            if (!live[id])
-                continue;
-            auto new_id = old_to_new[id];
-            if (has_match_info(id))
-                new_match_info[new_id] = match_info_[id];
-        }
-        match_info_ = std::move(new_match_info);
-
-        for (auto& rec : mutation_log_) {
-            rec.target_node = remap(rec.target_node);
-            rec.parent_id = remap(rec.parent_id);
+        [[nodiscard]] NodeId add_literal_float(double val) {
+            auto id = add_node(NodeTag::LiteralFloat);
+            float_val_[id] = val;
+            link_children(id);
+            return id;
         }
 
-        free_list_.clear();
-
-        const auto reclaimed = old_size - live_count;
-        node_compact_total_.fetch_add(reclaimed, std::memory_order_relaxed);
-        return reclaimed;
-    }
-
-    [[nodiscard]] NodeLifecycleStats node_lifecycle_stats() const noexcept {
-        NodeLifecycleStats stats;
-        stats.total_slots = size();
-        stats.free_slots = free_list_.size();
-        auto live = mark_live_nodes();
-        for (bool is_live : live) {
-            if (is_live)
-                ++stats.live_nodes;
+        [[nodiscard]] NodeId add_literalstring(SymId name) {
+            auto id = add_node(NodeTag::LiteralString);
+            sym_id_[id] = name;
+            link_children(id);
+            return id;
         }
-        if (stats.total_slots > 0) {
-            const auto dead = stats.total_slots - stats.live_nodes;
-            stats.fragmentation_ratio =
-                static_cast<double>(dead) / static_cast<double>(stats.total_slots);
+
+        [[nodiscard]] NodeId add_literal(std::int64_t val) {
+            auto id = add_node(NodeTag::LiteralInt);
+            int_val_[id] = val;
+            // Issue #402: literal int doesn't trigger any
+            // fallback-relevant flag (LiteralInt is IR-native).
+            link_children(id);
+            return id;
         }
-        return stats;
-    }
 
-    std::uint64_t node_recycle_total() const noexcept {
-        return node_recycle_total_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t node_slot_reuse_count() const noexcept {
-        return node_slot_reuse_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t node_compact_total() const noexcept {
-        return node_compact_total_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t soft_compact_count() const noexcept {
-        return soft_compact_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t stale_ref_auto_refresh_count() const noexcept {
-        return stale_ref_auto_refresh_count_.load(std::memory_order_relaxed);
-    }
-    void record_stale_ref_auto_refresh() noexcept {
-        stale_ref_auto_refresh_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Issue #1346: lock-free StableNodeRef validate path counter.
-    mutable std::atomic<std::uint64_t> lockfree_stable_ref_validate_count_{0};
-    void record_lockfree_stable_ref_validate() noexcept {
-        lockfree_stable_ref_validate_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t lockfree_stable_ref_validate_count() const noexcept {
-        return lockfree_stable_ref_validate_count_.load(std::memory_order_relaxed);
-    }
-    // Issue #1345 / #1346 observability accessors.
-    [[nodiscard]] std::uint64_t mark_dirty_boundary_prune_count() const noexcept {
-        return mark_dirty_boundary_prune_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t auto_compact_on_commit_count() const noexcept {
-        return auto_compact_on_commit_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t live_nodes_threshold_warn_count() const noexcept {
-        return live_nodes_threshold_warn_count_.load(std::memory_order_relaxed);
-    }
-    void set_compaction_free_list_threshold(std::size_t n) noexcept {
-        compaction_free_list_threshold_ = n == 0 ? 1 : n;
-    }
-    void set_max_live_nodes_warn(std::size_t n) noexcept { max_live_nodes_warn_ = n == 0 ? 1 : n; }
-    [[nodiscard]] std::size_t compaction_free_list_threshold() const noexcept {
-        return compaction_free_list_threshold_;
-    }
-    [[nodiscard]] std::size_t max_live_nodes_warn() const noexcept { return max_live_nodes_warn_; }
-
-    void clear() {
-        tag_.clear();
-        int_val_.clear();
-        float_val_.clear();
-        sym_id_.clear();
-        children_.clear();
-        parent_.clear();
-        param_begin_.clear();
-        param_count_.clear();
-        cap_require_count_.clear();
-        param_data_.clear();
-        param_annot_data_.clear();
-        line_.clear();
-        col_.clear();
-        marker_.clear();
-        // Issue #402: clear summary flags alongside the
-        // per-node columns. The next add_node will rebuild
-        // the bit-set from scratch.
-        summary_flags_ = 0;
-        dirty_.clear();
-        ppa_dirty_.clear();
-        // Issue #437: clear verify_dirty_ alongside ppa_dirty_
-        verify_dirty_.clear();
-        // Issue #469: clear verification_dirty_ alongside the
-        // other dirty columns. Populated by
-        // apply_verification_dirty_bits (from
-        // (verify:parse-coverage-feedback) /
-        // (verify:parse-assert-failure)).
-        verification_dirty_.clear();
-        // Issue #290: clear macro_dirty_ alongside the other
-        // dirty columns. Populated by
-        // apply_macro_dirty_bits (from clone_macro_body and
-        // self-evolution).
-        macro_dirty_.clear();
-        // Issue #447: clear the tag+arity index on full
-        // reset. The next query:pattern call will rebuild
-        // it lazily.
-        tag_arity_index_.clear();
-        tag_arity_index_built_size_ = 0;
-        type_id_.clear();
-        mutation_log_.clear();
-        // Issue #282: clear narrowing provenance on FlatAST reset.
-        narrowing_log_.clear();
-        node_first_mutation_.clear();
-        node_gen_.clear();
-        free_list_.clear();
-        next_mutation_id_ = 1;
-        generation_ = 1;
-        match_info_.clear();
-        root = NULL_NODE;
-    }
-
-    std::size_t size() const { return tag_.size(); }
-    bool empty() const { return tag_.empty(); }
-
-    // Issue #402: walk only the root subtree (iterative
-    // DFS, bounded by max_nodes as a safety net). Returns
-    // the number of nodes visited. The visitor is called
-    // for every node in the subtree, in pre-order.
-    //
-    // Why subtree-only: needs_tree_walker_fallback was
-    // iterating over the ENTIRE flat (all historical
-    // defines, macros, etc.) on every eval. For typical
-    // expressions like `(+ 1 2)`, the root subtree has 4
-    // nodes vs flat.size() of 100+ — a 25x+ reduction in
-    // loop iterations per eval. Historical nodes that
-    // contain MacroDef / DefineType / etc. don't affect
-    // the current eval's fallback decision; only the
-    // reachable-from-root subgraph does.
-    template <typename Visitor>
-    std::size_t walk_subtree(NodeId root, Visitor&& visit, std::size_t max_nodes = 1024) const {
-        if (root == NULL_NODE || root >= tag_.size())
-            return 0;
-        std::size_t visited = 0;
-        // Iterative DFS using an explicit stack (avoids
-        // recursion blow-up for deep ASTs).
-        std::vector<NodeId> stack;
-        stack.push_back(root);
-        while (!stack.empty() && visited < max_nodes) {
-            auto id = stack.back();
-            stack.pop_back();
-            if (id == NULL_NODE || id >= tag_.size())
-                continue;
-            if (is_free_slot(id))
-                continue;
-            visit(id);
-            ++visited;
-            auto v = get(id);
-            for (auto c : v.children)
-                stack.push_back(c);
+        [[nodiscard]] NodeId add_variable(SymId name) {
+            auto id = add_node(NodeTag::Variable);
+            sym_id_[id] = name;
+            // Issue #402: lazy sym_id bit deferred. Keyword
+            // Variables (':foo') need tree-walker fallback, but
+            // resolving the sym_id requires the pool, which is
+            // out of scope here. The fast-path's subtree walk
+            // covers the keyword check (it walks the root
+            // subtree and applies the existing per-NodeTag /
+            // per-sym_id logic without paying the full-flat
+            // iteration cost).
+            link_children(id);
+            return id;
         }
-        return visited;
-    }
 
-    // ── Issue #217 Cycle 14 (P2): FlatAST SoA custom serialize ─
-    //
-    // The production FlatAST has 23 PRIVATE SoA columns
-    // (tag_/int_val_/float_val_/sym_id_/child_begin_/
-    // child_count_/child_data_/parent_/param_begin_/
-    // param_count_/cap_require_count_/param_data_/
-    // param_annot_data_/line_/col_/marker_/dirty_/type_id_/
-    // error_kind_/value_cache_/node_first_mutation_/
-    // node_gen_). The generic reflect_members<T>() can't
-    // see private members, so the generic auto_serialize
-    // path doesn't work. These custom methods iterate the
-    // SoA columns directly.
-    //
-    // Issue #220: the children_ field is a per-node
-    // std::pmr::vector<NodeId>, so the wire format replaces
-    // the 3 legacy child_* columns (child_begin_ + child_count_ +
-    // child_data_) with 2 new columns (per-node count + flat
-    // children). This is the same column count (22 → 22) but
-    // the structure is different. Old v1 cache files won't
-    // roundtrip with the new format.
-    //
-    // Wire format (matches tests/test_issue_217.cpp Test 18/19):
-    //   [u32 format_version = 2]  (v1 still readable)
-    //   [u32 num_nodes]
-    //   For each of 22 SoA columns (fixed order, see below):
-    //     [u32 count]
-    //     [count * sizeof(elem) raw bytes]
-    //   [u32 next_mutation_id_ (low 32 bits)]
-    //   [u16 generation_]
-    //   [u16 reserved]
-    //
-    // The 22 SoA columns in order:
-    //   1. tag_           (u32 = NodeTag)
-    //   2. int_val_       (i64)
-    //   3. float_val_     (f64)
-    //   4. sym_id_        (u32 = SymId)
-    //   5. child_count_per_node_ (u32 per node)  ← NEW (#220)
-    //   6. child_data     (u32 = NodeId, flat concatenation)  ← NEW (#220)
-    //   7. parent_        (u32 = NodeId)
-    //   8. param_begin_   (u32)
-    //   9. param_count_   (u32)
-    //  10. cap_require_count_ (u32)
-    //  11. param_data_    (u32 = SymId)
-    //  12. param_annot_data_ (u32 = NodeId)
-    //  13. line_         (u32)
-    //  14. col_          (u32)
-    //  15. marker_        (u8 = SyntaxMarker)
-    //  16. dirty_         (u8)
-    //  17. type_id_       (u32)
-    //  18. error_kind_    (u8)
-    //  19. value_cache_   (i64)
-    //  20. node_first_mutation_ (u32)
-    //  21. node_gen_      (u16)
-    //
-    // The legacy 3 columns (child_begin_ + child_count_ +
-    // child_data_ as a flat child array) are replaced by
-    // child_count_per_node_ + child_data.
-    //
-    // v2 additions (Issue #269 — hand-inlined; no reflect.hh in module):
-    //   - mutation_log_ (vector<MutationRecord>)
-    //   - match_info_ (vector<MatchClauseInfo>, 3 wire fields)
-    //   - region_by_sym_ / region_by_lambda_id_ (manual map)
-    //   - root (NodeId scalar)
-
-    static void wire_write_string(std::vector<char>& buf, std::string_view s) {
-        std::uint32_t len = static_cast<std::uint32_t>(s.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
-        buf.insert(buf.end(), s.begin(), s.end());
-    }
-
-    static void wire_write_vec_u32(std::vector<char>& buf, const std::vector<SymId>& v) {
-        std::uint32_t sz = static_cast<std::uint32_t>(v.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
-        if (!v.empty()) {
-            buf.insert(buf.end(), reinterpret_cast<const char*>(v.data()),
-                       reinterpret_cast<const char*>(v.data()) + v.size() * sizeof(SymId));
+        [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
+            auto id = add_node(NodeTag::Call);
+            children_[id] =
+                PersistentChildVector<NodeId>(1 + args.size(), [&](std::size_t i) -> NodeId {
+                    if (i == 0)
+                        return func;
+                    return args[i - 1];
+                });
+            link_children(id);
+            return id;
         }
-    }
 
-    static void wire_write_match_clause_info(std::vector<char>& buf, const MatchClauseInfo& m) {
-        wire_write_vec_u32(buf, m.used_constructors);
-        wire_write_vec_u32(buf, m.candidate_constructors);
-        buf.push_back(m.has_wildcard ? '\1' : '\0');
-    }
-
-    static void
-    wire_write_map_u32_u8(std::vector<char>& buf,
-                          const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
-        std::uint32_t count = static_cast<std::uint32_t>(m.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
-        for (const auto& [k, v] : m) {
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
-                       reinterpret_cast<const char*>(&k) + 4);
-            buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
-                       reinterpret_cast<const char*>(&v) + 1);
+        [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
+            auto id = add_node(NodeTag::IfExpr);
+            children_[id] = PersistentChildVector<NodeId>(3, [&](std::size_t i) -> NodeId {
+                return (i == 0 ? cond : (i == 1 ? then_b : else_b));
+            });
+            link_children(id);
+            return id;
         }
-    }
 
-    static std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
-        std::uint32_t len;
-        std::memcpy(&len, &buf[pos], 4);
-        pos += 4;
-        std::string s(buf.data() + pos, buf.data() + pos + len);
-        pos += len;
-        return s;
-    }
-
-    static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf, std::size_t& pos) {
-        std::uint32_t sz;
-        std::memcpy(&sz, &buf[pos], 4);
-        pos += 4;
-        std::vector<SymId> v(sz);
-        if (sz > 0) {
-            std::memcpy(v.data(), &buf[pos], sz * sizeof(SymId));
-            pos += sz * sizeof(SymId);
+        [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body,
+                                        bool dotted = false) {
+            return add_lambda(params, {}, body, dotted);
         }
-        return v;
-    }
-
-    static MatchClauseInfo wire_read_match_clause_info(const std::vector<char>& buf,
-                                                       std::size_t& pos) {
-        MatchClauseInfo m;
-        m.used_constructors = wire_read_vec_u32(buf, pos);
-        m.candidate_constructors = wire_read_vec_u32(buf, pos);
-        m.has_wildcard = buf[pos++] != 0;
-        return m;
-    }
-
-    static void wire_read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
-                                     std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
-        std::uint32_t count;
-        std::memcpy(&count, &buf[pos], 4);
-        pos += 4;
-        m.clear();
-        for (std::uint32_t i = 0; i < count; ++i) {
-            std::uint32_t k;
-            std::uint8_t v;
-            std::memcpy(&k, &buf[pos], 4);
-            pos += 4;
-            std::memcpy(&v, &buf[pos], 1);
-            pos += 1;
-            m[k] = v;
+        [[nodiscard]] NodeId add_lambda(std::span<const SymId> params,
+                                        std::span<const NodeId> annots, NodeId body,
+                                        bool dotted = false) {
+            auto id = add_node(NodeTag::Lambda);
+            int_val_[id] = dotted ? 1 : 0; // store dotted flag
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), params.begin(), params.end());
+            // Store annotations (or NULL_NODE if not provided)
+            param_annot_data_.resize(param_annot_data_.size() + params.size(),
+                                     aura::ast::NULL_NODE);
+            for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
+                param_annot_data_[pstart + i] = annots[i];
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(params.size());
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
+            link_children(id);
+            return id;
         }
-    }
 
-    void serialize_soa(std::vector<char>& buf) const {
-        // Format version (v2 includes side-data fields)
-        std::uint32_t version = 2;
-        buf.insert(buf.end(), reinterpret_cast<char*>(&version),
-                   reinterpret_cast<char*>(&version) + 4);
-        // Num nodes (informational; per-node columns derive their size)
-        std::uint32_t num_nodes = static_cast<std::uint32_t>(tag_.size());
-        buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
-                   reinterpret_cast<char*>(&num_nodes) + 4);
+        // Issue #1266: set params on an existing Lambda (used by
+        // mutate:inline-call clone path — add_lambda with empty params
+        // then copy params after body wire-up).
+        void set_lambda_params(NodeId id, std::span<const SymId> params,
+                               std::span<const NodeId> annots = {}) {
+            if (id >= param_begin_.size() || id >= param_count_.size())
+                return;
+            if (id >= tag_.size() || tag_[id] != NodeTag::Lambda)
+                return;
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), params.begin(), params.end());
+            param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
+            for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
+                param_annot_data_[pstart + i] = annots[i];
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(params.size());
+        }
 
-        // Helper: serialize a pmr::vector<T> as count + raw bytes
-        auto write_column = [&buf](const auto& col) {
-            std::uint32_t count = static_cast<std::uint32_t>(col.size());
+        [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
+            auto id = add_node(NodeTag::Let);
+            sym_id_[id] = name;
+            children_[id] = PersistentChildVector<NodeId>(
+                2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
+            auto id = add_node(NodeTag::LetRec);
+            sym_id_[id] = name;
+            children_[id] = PersistentChildVector<NodeId>(
+                2, [&](std::size_t i) -> NodeId { return (i == 0 ? val : body); });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
+            auto id = add_node(NodeTag::Define);
+            sym_id_[id] = name;
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
+            link_children(id);
+            return id;
+        }
+
+        // Issue #150 Phase 1: region annotation side-table.
+        // Maps either a define's name (SymId) or a lambda's
+        // NodeId (for anonymous lambdas) to the user's
+        // performance-region / evolution-region hint. The
+        // lowering pass (FlatFnBuilder in lowering_impl.cpp)
+        // reads this table to set IRFunction::region on the
+        // corresponding IRFunction. The side-table is keyed by
+        // either a SymId (for defines) or a NodeId (for anonymous
+        // lambdas) — we use two parallel maps to keep the
+        // namespaces separate.
+        //
+        // The parser populates this via set_function_region(sym, r)
+        // for a define, and set_function_region(node_id, r) for a
+        // lambda. The lowering pass queries via
+        // get_function_region_for_sym(sym) and
+        // get_function_region_for_lambda(node_id) — both return
+        // std::optional<std::uint8_t>; nullopt means no annotation.
+        void set_function_region(SymId name, std::uint8_t region) {
+            region_by_sym_[name] = region;
+        }
+        // Overload tag: pass a 0 literal to disambiguate. We
+        // use a sentinel parameter (an unused int) so the two
+        // overloads don't collide on the same uint32_t underlying
+        // type. Callers use set_function_region_sym and
+        // set_function_region_lambda explicitly.
+        void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
+            region_by_lambda_id_[lambda_id] = region;
+        }
+        [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
+            auto it = region_by_sym_.find(name);
+            if (it == region_by_sym_.end())
+                return std::nullopt;
+            return it->second;
+        }
+        [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_lambda(NodeId lambda_id)
+            const {
+            auto it = region_by_lambda_id_.find(lambda_id);
+            if (it == region_by_lambda_id_.end())
+                return std::nullopt;
+            return it->second;
+        }
+
+        // Issue #150 Phase 3: mutation impact analysis helper.
+        // Given a SymId (the name that was mutated), find all
+        // Define nodes whose value subtree references that
+        // sym. Returns the list of Define node IDs whose
+        // functions are potentially affected by a
+        // mutate:rebind on the given name.
+        //
+        // Conservative MVP: direct reference only. A function
+        // that calls another function which uses the mutated
+        // name is NOT flagged (transitive analysis is a
+        // follow-up). This is a safe underestimate: a function
+        // that DOES directly reference the mutated sym is
+        // flagged, and the caller of such a function MAY also
+        // need invalidation but isn't flagged. The follow-up
+        // (Phase 3b) would walk the call graph from these
+        // results to find the transitive set.
+        [[nodiscard]] std::pmr::vector<aura::ast::NodeId> defines_referencing_sym(SymId sym) const {
+            std::pmr::vector<aura::ast::NodeId> result(
+                std::pmr::polymorphic_allocator<aura::ast::NodeId>{});
+            for (aura::ast::NodeId i = 0; i < size(); ++i) {
+                if (i >= size())
+                    break;
+                auto v = get(i);
+                if (v.tag != aura::ast::NodeTag::Define)
+                    continue;
+                if (v.sym_id == sym)
+                    continue; // the mutated Define itself
+                if (v.children.empty())
+                    continue;
+                if (subtree_uses_sym(v.child(0), sym)) {
+                    result.push_back(i);
+                }
+            }
+            return result;
+        }
+
+        // Recursive helper: does the subtree rooted at `root`
+        // contain a Variable node whose sym_id == `sym`?
+        //
+        // Phase A hoisting migration: now uses
+        // aura::ast::find_first_node_with<Id, C, P> from the
+        // generic AST traversal helpers (originally defined in
+        // aura.compiler.query, hoisted here to break the ast ↔
+        // query import cycle). Same semantics — walks the subtree
+        // recursively, returns true on first matching Variable
+        // node. Zero behavior change at -O3 (template-inlined).
+        bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
+            if (root == aura::ast::NULL_NODE || root >= size())
+                return false;
+            auto found =
+                find_first_node_with<std::uint32_t>(*this, root, [this, sym](aura::ast::NodeId id) {
+                    auto v = this->get(id);
+                    return v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym;
+                });
+            return found.has_value();
+        }
+
+        // Issue #372: name-based Define lookup.
+        //
+        // Walks the AST subtree rooted at `root_` (or an explicit
+        // root override) and returns the first Define node whose
+        // sym_id matches the given name in the supplied pool.
+        //
+        // The pool is a separate argument (rather than a stored
+        // member) because FlatAST is the AST data, not the
+        // symbol-table — multiple Flats can share a single
+        // StringPool (e.g. parent layer → child layer after COW
+        // clone), or one Flat can be parsed against multiple
+        // pools across its lifetime. The caller is responsible
+        // for passing the pool that this Flat was parsed against
+        // (workspace_flat_'s companion workspace_pool_).
+        //
+        // Returns std::nullopt if the name isn't interned in the
+        // pool, the root is NULL_NODE, or no Define with that
+        // sym_id exists in the reachable subtree.
+        [[nodiscard]] std::optional<aura::ast::NodeId> find_define_by_name(
+            const StringPool& pool, std::string_view name,
+            std::optional<aura::ast::NodeId> search_root = std::nullopt) const {
+            const auto sym = pool.find_by_name(name);
+            if (!sym)
+                return std::nullopt;
+            const auto start = search_root.value_or(root);
+            if (start == aura::ast::NULL_NODE || start >= size())
+                return std::nullopt;
+            return find_first_node_with<std::uint32_t>(
+                *this, start, [this, sym_id = *sym](aura::ast::NodeId id) {
+                    auto v = this->get(id);
+                    return v.tag == aura::ast::NodeTag::Define && v.sym_id == sym_id;
+                });
+        }
+
+        [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
+                                             std::span<const NodeId> ctors) {
+            auto id = add_node(NodeTag::DefineType);
+            sym_id_[id] = name;
+            // Store type params in param_data_
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), params.begin(), params.end());
+            param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(params.size());
+            children_[id] = PersistentChildVector<NodeId>(ctors.begin(), ctors.end());
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_begin(NodeId * exprs, std::uint32_t count) {
+            auto id = add_node(NodeTag::Begin);
+            // Build the N-element PCV directly from the exprs array via
+            // the fill-constructor (single allocation, no temp vector).
+            children_[id] = PersistentChildVector<NodeId>(
+                count, [&](std::size_t i) -> NodeId { return exprs[i]; });
+            link_children(id);
+            return id;
+        }
+        [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
+            auto id = add_node(NodeTag::Begin);
+            children_[id] = PersistentChildVector<NodeId>(
+                exprs.size(), [&](std::size_t i) -> NodeId { return exprs[i]; });
+            link_children(id);
+            return id;
+        }
+
+        // Export: (export sym1 sym2 ...) — children = Variable nodes
+        [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params) {
+            auto id = add_node(NodeTag::DefineModule);
+            sym_id_[id] = name;
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+            param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(type_params.size());
+            return id;
+        }
+        [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params,
+                                               std::span<const SymId> cap_require) {
+            auto id = add_node(NodeTag::DefineModule);
+            sym_id_[id] = name;
+            // type params first
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+            param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
+            // capability requirements after type params (no separator needed, we store count)
+            param_data_.insert(param_data_.end(), cap_require.begin(), cap_require.end());
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(type_params.size());
+            cap_require_count_[id] = static_cast<std::uint32_t>(cap_require.size());
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
+            auto id = add_node(NodeTag::Export);
+            children_[id] = PersistentChildVector<NodeId>(
+                syms.size(), [&](std::size_t i) -> NodeId { return syms[i]; });
+            link_children(id);
+            return id;
+        }
+
+        // Issue #311: SV `interface` builder. Mirrors add_export's
+        // shape (PersistentChildVector of body NodeIds) + stores
+        // the interface name in `sym_id_` (same shape as
+        // add_define_module's param_data_ side-table would, but
+        // body items are NodeIds — signal declarations, nested
+        // modport nodes, etc. — rather than bare symbols). Uses
+        // the PCV fill-constructor pattern to preserve copy-on-
+        // write semantics, and calls link_children() to wire up
+        // parent_[child] = id for each body item.
+        //
+        // The body items can be any NodeId (Define for signal
+        // decls, Modport for nested modports, Begin for module
+        // bodies, etc.). The builder doesn't constrain what the
+        // body contains — the parser / EDSL surface is
+        // responsible for that.
+        [[nodiscard]] NodeId add_interface(SymId name, std::span<const NodeId> body) {
+            auto id = add_node(NodeTag::Interface);
+            sym_id_[id] = name;
+            children_[id] = PersistentChildVector<NodeId>(
+                body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
+            link_children(id);
+            return id;
+        }
+
+        // Issue #311: SV `modport` builder. Uses the param_data_
+        // side-table (same shape as add_define_module's
+        // type_params) to store the port-direction list as a
+        // flat symbol vector with offset/count indices. The
+        // direction information (input/output/inout) is captured
+        // implicitly via the port symbol's name (a future parser
+        // surface will decode e.g. "input data" -> {data, INPUT}
+        // and emit the modport accordingly; the builder just
+        // records the symbol list for now).
+        //
+        // Like add_define_module, no children_ is set (a modport
+        // is a leaf construct carrying only the port list); the
+        // param_data_ side-table is the canonical payload.
+        [[nodiscard]] NodeId add_modport(SymId name, std::span<const SymId> ports) {
+            auto id = add_node(NodeTag::Modport);
+            sym_id_[id] = name;
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), ports.begin(), ports.end());
+            param_annot_data_.resize(param_annot_data_.size() + ports.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(ports.size());
+            return id;
+        }
+
+        // Issue #694: SVA builders. Property/Sequence store the expr as a
+        // LiteralString child; Coverpoint uses param_data_ for bins (like
+        // Modport); Covergroup stores Coverpoint children; Assert references
+        // a Property child.
+        [[nodiscard]] NodeId add_property(SymId name, SymId expr_sym) {
+            auto expr_id = add_literalstring(expr_sym);
+            auto id = add_node(NodeTag::Property);
+            sym_id_[id] = name;
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_sequence(SymId name, SymId expr_sym) {
+            auto expr_id = add_literalstring(expr_sym);
+            auto id = add_node(NodeTag::Sequence);
+            sym_id_[id] = name;
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t) -> NodeId { return expr_id; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_coverpoint(SymId var, std::span<const SymId> bins) {
+            auto id = add_node(NodeTag::Coverpoint);
+            sym_id_[id] = var;
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), bins.begin(), bins.end());
+            param_annot_data_.resize(param_annot_data_.size() + bins.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(bins.size());
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_covergroup(SymId name, std::span<const NodeId> coverpoints) {
+            auto id = add_node(NodeTag::Covergroup);
+            sym_id_[id] = name;
+            children_[id] = PersistentChildVector<NodeId>(
+                coverpoints.size(), [&](std::size_t i) -> NodeId { return coverpoints[i]; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_assert(SymId name, NodeId property_id) {
+            auto id = add_node(NodeTag::Assert);
+            sym_id_[id] = name;
+            children_[id] = PersistentChildVector<NodeId>(
+                1, [&](std::size_t) -> NodeId { return property_id; });
+            link_children(id);
+            return id;
+        }
+
+        // Issue #496: SV constraint builder. Expressions stored in param_data_
+        // (same side-table shape as Coverpoint bins / Modport ports).
+        [[nodiscard]] NodeId add_constraint(SymId name, std::span<const SymId> expressions) {
+            auto id = add_node(NodeTag::Constraint);
+            sym_id_[id] = name;
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), expressions.begin(), expressions.end());
+            param_annot_data_.resize(param_annot_data_.size() + expressions.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(expressions.size());
+            return id;
+        }
+
+        // Issue #496: SV class builder. Optional base class stored as the first
+        // param_data_ entry when base_sym != INVALID_SYM; body items are children_.
+        [[nodiscard]] NodeId add_class(SymId name, SymId base_sym, std::span<const NodeId> body) {
+            auto id = add_node(NodeTag::Class);
+            sym_id_[id] = name;
+            if (base_sym != INVALID_SYM) {
+                auto pstart = static_cast<std::uint32_t>(param_data_.size());
+                param_data_.push_back(base_sym);
+                param_annot_data_.push_back(NULL_NODE);
+                param_begin_[id] = pstart;
+                param_count_[id] = 1;
+            }
+            children_[id] = PersistentChildVector<NodeId>(
+                body.size(), [&](std::size_t i) -> NodeId { return body[i]; });
+            link_children(id);
+            return id;
+        }
+
+        void append_param(NodeId id, SymId val) {
+            if (id >= param_begin_.size())
+                return;
+            param_data_.push_back(val);
+            param_annot_data_.push_back(NULL_NODE);
+            ++param_count_[id];
+        }
+
+        [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
+            auto id = add_node(NodeTag::Set);
+            sym_id_[id] = name;
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body,
+                                          bool dotted = false, bool hygienic = false,
+                                          bool preserved = false) {
+            auto id = add_node(NodeTag::MacroDef);
+            sym_id_[id] = name;
+            // Issue #120: dotted in bit 0, hygienic in bit 1.
+            // Issue #230 #2: bit 2 = preserved. When set, this macro
+            // uses the env-binding expansion path (params bound in a
+            // child env, no AST subst) instead of the AST-subst
+            // path. The env-binding path is what symbol-generating
+            // macros like define-struct need: the body can reference
+            // the user's actual struct name and field list as
+            // Variables and get the literal values back. The `&`
+            // sigil in the param list is just a marker for
+            // readability — if the macro is `define-hygienic-macro*`
+            // (preserved), ALL params use the env-binding semantics.
+            int_val_[id] = (preserved ? 4 : 0) | (hygienic ? 2 : 0) | (dotted ? 1 : 0);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return body; });
+            // Issue #484 follow-up: link_children so the body's parent_
+            // points to this MacroDef. Without this, the macro body
+            // is an orphan (parent_ = NULL), which causes query:pattern
+            // to exclude it (orphan-skip after #484). The test
+            // test_issue_140 AC2.3 and AC4.2 depend on the macro body
+            // being queryable as User-marker code.
+            link_children(id);
+            auto pstart = static_cast<std::uint32_t>(param_data_.size());
+            param_data_.insert(param_data_.end(), params.begin(), params.end());
+            param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
+            param_begin_[id] = pstart;
+            param_count_[id] = static_cast<std::uint32_t>(params.size());
+            return id;
+        }
+
+        // Issue #120: query the hygienic flag on a MacroDef node.
+        // Encoded in bit 1 of int_val_ (dotted is bit 0).
+        bool is_hygienic_macrodef(NodeId id) const {
+            if (id >= int_val_.size())
+                return false;
+            return (int_val_[id] & 2) != 0;
+        }
+        bool is_dotted_macrodef(NodeId id) const {
+            if (id >= int_val_.size())
+                return false;
+            return (int_val_[id] & 1) != 0;
+        }
+        // Issue #230 #2: query the preserved flag (set by
+        // `define-hygienic-macro*`). When true, the macro uses
+        // env-binding expansion (params bound in a child env)
+        // instead of AST substitution.
+        bool is_preserved_macrodef(NodeId id) const {
+            if (id >= int_val_.size())
+                return false;
+            return (int_val_[id] & 4) != 0;
+        }
+
+        [[nodiscard]] NodeId add_quote(NodeId val) {
+            auto id = add_node(NodeTag::Quote);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return val; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
+            auto id = add_node(NodeTag::Pair);
+            children_[id] = PersistentChildVector<NodeId>(
+                2, [&](std::size_t i) -> NodeId { return (i == 0 ? car : cdr); });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner,
+                                                 SymId var_sym = INVALID_SYM) {
+            auto id = add_node(NodeTag::TypeAnnotation);
+            sym_id_[id] = type_name;
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            if (var_sym != INVALID_SYM) {
+                int_val_[id] = static_cast<std::int64_t>(var_sym);
+            }
+            link_children(id);
+            return id;
+        }
+
+        bool has_var_annot(NodeId id) const {
+            return id < size() && int_val_[id] != 0;
+        }
+        SymId var_annot_sym(NodeId id) const {
+            return static_cast<SymId>(int_val_[id]);
+        }
+
+        [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
+            auto id = add_node(NodeTag::Coercion);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            type_id_[id] = type_id;
+            link_children(id);
+            return id;
+        }
+        [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag,
+                                          std::uint32_t type_id) {
+            auto id = add_node(NodeTag::Coercion);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            int_val_[id] = static_cast<std::int64_t>(type_tag);
+            type_id_[id] = type_id;
+            link_children(id);
+            return id;
+        }
+        // ── M4 Linear ownership builders ───────────────────────────
+        [[nodiscard]] NodeId add_linear(NodeId inner) {
+            auto id = add_node(NodeTag::Linear);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_move(NodeId inner) {
+            auto id = add_node(NodeTag::Move);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_borrow(NodeId inner) {
+            auto id = add_node(NodeTag::Borrow);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
+            auto id = add_node(NodeTag::MutBorrow);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            link_children(id);
+            return id;
+        }
+
+        [[nodiscard]] NodeId add_drop(NodeId inner) {
+            auto id = add_node(NodeTag::Drop);
+            children_[id] =
+                PersistentChildVector<NodeId>(1, [&](std::size_t i) -> NodeId { return inner; });
+            link_children(id);
+            return id;
+        }
+
+        // ── Access ─────────────────────────────────────────────────
+
+        NodeView get(NodeId id) const {
+            if (id >= tag_.size()) {
+                // Defensive: stale or invalid NodeId. Return a default
+                // NodeView (empty spans, NULL_NODE-like values). The
+                // parser can produce invalid NodeIds during
+                // quasiquote expansion (Issue #219 regression) when a
+                // previously-captured NodeView's underlying buffer
+                // moved. Without this check, the next access would
+                // crash on tag_[id] / child_data_[begin] / etc.
+                return NodeView{
+                    .id = id,
+                    .tag = static_cast<NodeTag>(0),
+                    .int_value = 0,
+                    .float_value = 0.0,
+                    .sym_id = INVALID_SYM,
+                    .line = 0,
+                    .col = 0,
+                    .type_id = 0u,
+                    .children = {},
+                    .params = {},
+                    .param_annotations = {},
+                    .marker = SyntaxMarker::User,
+                };
+            }
+            return NodeView{
+                .id = id,
+                .tag = tag_[id],
+                .int_value = int_val_[id],
+                .float_value = float_val_[id],
+                .sym_id = sym_id_[id],
+                .line = id < line_.size() ? line_[id] : 0,
+                .col = id < col_.size() ? col_[id] : 0,
+                // Issue #73 Phase 2: populate type_id on the view so
+                // callers can read it without a separate flat.type_id()
+                // lookup. Same value as flat.type_id(id).
+                .type_id = id < type_id_.size() ? type_id_[id] : 0u,
+                .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
+                .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
+                .param_annotations =
+                    std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
+                .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
+            };
+        }
+
+        // ── Location ──────────────────────────────────────────────
+        void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) pre(id < line_.size())
+            pre(id < col_.size()) {
+            line_[id] = line;
+            col_[id] = col;
+        }
+        std::uint32_t line(NodeId id) const {
+            return line_[id];
+        }
+        std::uint32_t col(NodeId id) const {
+            return col_[id];
+        }
+
+        // Direct field access (for mutation)
+        NodeTag& tag(NodeId id) {
+            return tag_[id];
+        }
+        std::int64_t& int_val(NodeId id) {
+            return int_val_[id];
+        }
+        SymId& sym_id(NodeId id) {
+            return sym_id_[id];
+        }
+
+        // Const overloads so ASTContainer<const FlatAST, Id>
+        // is satisfied (concept requires `ast.tag(id)` callable
+        // on const ast). Used by find_first_node_with<Id, const
+        // FlatAST, P> when called from const methods like
+        // FlatAST::subtree_uses_sym.
+        // Issue #1321: hot SoA column accessors — contract pre(id valid) in debug
+        // so AI mutation corruption is caught early (release: no-op).
+        [[nodiscard]] NodeTag tag(NodeId id) const noexcept {
+            contract_assert(id < tag_.size());
+            return tag_[id];
+        }
+        [[nodiscard]] std::int64_t int_val(NodeId id) const noexcept {
+            contract_assert(id < int_val_.size());
+            return int_val_[id];
+        }
+        [[nodiscard]] SymId sym_id(NodeId id) const noexcept {
+            contract_assert(id < sym_id_.size());
+            return sym_id_[id];
+        }
+
+        // ── Parent access ──────────────────────────────────────────
+        NodeId parent_of(NodeId id) const {
+            // Issue #256: bump the call counter (lifetime total).
+            parent_of_call_count_.fetch_add(1, std::memory_order_relaxed);
+            return id < parent_.size() ? parent_[id] : NULL_NODE;
+        }
+
+        // ── Child field access ─────────────────────────────────────
+
+        std::span<const NodeId> children(NodeId id) const {
+            // Issue #256: bump the call counter (lifetime total).
+            // The early-return on out-of-range still bumps — we
+            // want to count how often callers probe with bad ids
+            // (cheap error metric).
+            children_call_count_.fetch_add(1, std::memory_order_relaxed);
+            if (id >= children_.size())
+                return {};
+            // WARNING (Issue #370): the returned std::span borrows
+            // the underlying storage. If callers cache this span
+            // across mutations (set_child / insert_child /
+            // remove_child / rollback_to_size), the span WILL
+            // dangle when the storage's last shared_ptr is
+            // released. Use children_safe(id) for lifetime-pinned
+            // views; reserve raw children(id) for single-statement
+            // use within the same mutation boundary.
+            return std::span<const NodeId>(children_[id].data(), children_[id].size());
+        }
+
+        // Issue #370: lifetime-pinned accessor. Returns a
+        // SafePCVSpan<NodeId> that bundles the std::span with the
+        // underlying storage shared_ptr. As long as the
+        // SafePCVSpan is alive, the storage stays alive — so the
+        // returned span stays valid across mutate operations +
+        // rollback. One atomic refcount bump per call (amortized
+        // over all reads via the same handle).
+        // Issue #370/#678: lifetime-pinned children accessor.
+        [[nodiscard]] SafePCVSpan<NodeId> children_safe_view(NodeId id) const {
+            children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
+            if (id >= children_.size())
+                return {};
+            auto keep = share_storage(children_[id]);
+            std::span<const NodeId> sp(children_[id].data(), children_[id].size());
+            return SafePCVSpan<NodeId>(sp, std::move(keep));
+        }
+
+        [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
+            return children_safe_view(id);
+        }
+
+        // Mutable overload (for code paths that need to write through
+        // the children list, e.g. fixup_deltas in ast_impl.cpp).
+        // PCV is immutable; this returns a const span. For
+        // mutation, use insert_child / remove_child / set_child
+        // (which return a new PCV and assign back to children_[id]).
+        std::span<const NodeId> children_mutable(NodeId id) {
+            if (id >= children_.size())
+                return {};
+            return std::span<const NodeId>(children_[id].data(), children_[id].size());
+        }
+
+        // ── Issue #222: structural mutation guard ────────────────────
+        //
+        // RAII wrapper that holds an exclusive lock on structural_mtx_
+        // for its lifetime. On destruction:
+        //   1. Bumps generation_ (invalidates StableNodeRef).
+        //   2. Releases the exclusive lock.
+        //
+        // The lock + generation bump is the atomicity guarantee for
+        // structural mutations. A reader that wants to see consistent
+        // state across (read generation → read children_) can:
+        //   - capture generation_ before the read
+        //   - read children_
+        //   - verify generation_ unchanged after the read
+        //   - if changed, retry (with the new generation)
+        //
+        // Or, use try_acquire_reader_lock() for a longer-lived read
+        // transaction.
+        //
+        // The set_child / insert_child / remove_child methods acquire
+        // this guard internally. Callers who need to apply a multi-step
+        // mutation atomically (e.g. swap two children in a single
+        // "transaction") can acquire the guard explicitly:
+        //
+        //   {
+        //     auto guard = ast.begin_structural_mutation();
+        //     auto a = ast.children(id_a);
+        //     ast.set_child(id_a, 0, ...);
+        //     ast.set_child(id_b, 0, ...);
+        //     // guard's dtor bumps generation_ once, releases the lock.
+        //   }
+        //
+        // Move-only. The dtor is the single point that releases the
+        // lock + bumps the generation, so even exception paths are safe.
+        class StructuralMutationGuard {
+        public:
+            StructuralMutationGuard() noexcept = default;
+            explicit StructuralMutationGuard(FlatAST* ast) noexcept
+                : ast_(ast)
+                , lock_() {
+                if (ast_)
+                    lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
+            }
+            ~StructuralMutationGuard() {
+                if (ast_) {
+                    // Issue #250: count suppressed bumps in the
+                    // FlatAST's atomic_batch_bumps_saved_ counter.
+                    // The actual bump is still done by FlatAST's
+                    // bump_generation() method, which short-circuits
+                    // when bump_generation_suppressed_ is set.
+                    if (ast_->bump_generation_suppressed_) {
+                        ++ast_->atomic_batch_bumps_saved_;
+                    }
+                    ast_->bump_generation();
+                }
+                // unique_lock's dtor releases the lock.
+            }
+            StructuralMutationGuard(const StructuralMutationGuard&) = delete;
+            StructuralMutationGuard& operator=(const StructuralMutationGuard&) = delete;
+            StructuralMutationGuard(StructuralMutationGuard&& o) noexcept
+                : ast_(o.ast_)
+                , lock_(std::move(o.lock_)) {
+                o.ast_ = nullptr;
+            }
+            StructuralMutationGuard& operator=(StructuralMutationGuard&& o) noexcept {
+                if (this != &o) {
+                    // Release any current lock first.
+                    if (ast_)
+                        ast_->bump_generation();
+                    ast_ = o.ast_;
+                    lock_ = std::move(o.lock_);
+                    o.ast_ = nullptr;
+                }
+                return *this;
+            }
+            // Returns true if the guard holds a valid lock.
+            [[nodiscard]] explicit operator bool() const noexcept {
+                return ast_ != nullptr && lock_.owns_lock();
+            }
+
+        private:
+            FlatAST* ast_ = nullptr;
+            std::unique_lock<std::shared_mutex> lock_;
+        };
+
+        // Acquire an exclusive lock on structural_mtx_ for the
+        // duration of the returned guard's lifetime. Used by
+        // set_child / insert_child / remove_child internally;
+        // callers can also acquire it explicitly for multi-step
+        // atomic mutations.
+        [[nodiscard]] StructuralMutationGuard begin_structural_mutation() {
+            return StructuralMutationGuard(this);
+        }
+
+        // Acquire a SHARED (reader) lock on structural_mtx_.
+        // The returned guard's lifetime is the duration of the
+        // reader's transaction. Use for long-lived reads that
+        // need a consistent view of children_ across multiple
+        // calls. For short reads (one children(id) call), the
+        // PCV's COW semantics + generation_ check are sufficient.
+        class ReaderLockGuard {
+        public:
+            ReaderLockGuard() noexcept = default;
+            explicit ReaderLockGuard(const FlatAST* ast) noexcept
+                : ast_(ast)
+                , lock_() {
+                if (ast_)
+                    lock_ = std::shared_lock<std::shared_mutex>(ast->structural_mtx_.mutable_get());
+            }
+            ~ReaderLockGuard() = default;
+            ReaderLockGuard(const ReaderLockGuard&) = delete;
+            ReaderLockGuard& operator=(const ReaderLockGuard&) = delete;
+            ReaderLockGuard(ReaderLockGuard&& o) noexcept
+                : ast_(o.ast_)
+                , lock_(std::move(o.lock_)) {
+                o.ast_ = nullptr;
+            }
+            ReaderLockGuard& operator=(ReaderLockGuard&& o) noexcept {
+                if (this != &o) {
+                    ast_ = o.ast_;
+                    lock_ = std::move(o.lock_);
+                    o.ast_ = nullptr;
+                }
+                return *this;
+            }
+            [[nodiscard]] explicit operator bool() const noexcept {
+                return ast_ != nullptr && lock_.owns_lock();
+            }
+
+        private:
+            const FlatAST* ast_ = nullptr;
+            std::shared_lock<std::shared_mutex> lock_;
+        };
+        [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const {
+            return ReaderLockGuard(this);
+        }
+
+        // Issue #222 slice 3/3: _locked() variants of the structural
+        // mutators. Caller MUST hold the structural mutation lock
+        // (e.g. is inside a begin_structural_mutation() scope). Used
+        // for multi-step atomic mutations where the caller wants to
+        // batch several set_child / insert_child / remove_child calls
+        // under a single lock + single generation bump. Without these,
+        // calling set_child inside begin_structural_mutation would
+        // double-lock the non-recursive std::shared_mutex and deadlock.
+        //
+        // The body is identical to the public version except for the
+        // guard acquisition.
+        void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+            const auto& list = children_[id];
+            if (idx >= list.size())
+                return;
+            auto old_cid = list[idx];
+            if (old_cid != NULL_NODE && old_cid < parent_.size())
+                parent_[old_cid] = NULL_NODE;
+            children_[id] = list.with_set(idx, child);
+            if (child != NULL_NODE && child < parent_.size())
+                parent_[child] = id;
+            add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
+        }
+        void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+            const auto& list = children_[id];
+            auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
+            children_[id] = list.with_insert(pos, child);
+            if (child != NULL_NODE && child < parent_.size())
+                parent_[child] = id;
+            add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
+            // Issue #1319 Phase 1: count structural inserts; full GapBuffer-backed
+            // children_ column is progressive (PCV COW retained for snapshot/rollback).
+            structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        void remove_child_locked(NodeId id, std::uint32_t idx) {
+            const auto& list = children_[id];
+            if (idx < list.size()) {
+                auto cid = list[idx];
+                if (cid != NULL_NODE && cid < parent_.size())
+                    parent_[cid] = NULL_NODE;
+                children_[id] = list.with_erase(idx);
+                add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
+                structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        void set_child(NodeId id, std::uint32_t idx, NodeId child) {
+            // Issue #222: acquire the structural mutation guard. The
+            // guard's dtor bumps generation_ + releases the lock.
+            StructuralMutationGuard guard(this);
+            set_child_locked(id, idx, child);
+        }
+
+        // Insert a child at position idx (0 = first, child_count = append)
+        // Shifts all subsequent children and updates child_begin_ for later nodes.
+        void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
+            // Issue #222: acquire the structural mutation guard.
+            StructuralMutationGuard guard(this);
+            insert_child_locked(id, idx, child);
+        }
+
+        // Remove a child at position idx by replacing with NULL_NODE
+        void remove_child(NodeId id, std::uint32_t idx) {
+            // Issue #222: acquire the structural mutation guard.
+            StructuralMutationGuard guard(this);
+            remove_child_locked(id, idx);
+        }
+
+        // ── Bulk ───────────────────────────────────────────────────
+
+        // Issue #221: capture a snapshot of children_ for rollback
+        // (#177 MutationCheckpoint integration). The returned vector
+        // contains PCV copies that share the underlying storage with
+        // children_ (PCV COW); the snapshot is O(1) per node.
+        // Returns std::pmr::vector to match children_'s allocator.
+        std::vector<PersistentChildVector<NodeId>> snapshot_children() const {
+            return children_; // vector copy ctor; each PCV is shared_ptr copy
+        }
+
+        // Issue #221: restore children_ from a pre-captured snapshot.
+        // The passed-in vector is moved (its shared_ptrs are now bound
+        // to children_; back-references to the old PCVs in the
+        // snapshot are released as the snapshot goes out of scope).
+        void restore_children(std::vector<PersistentChildVector<NodeId>> && snapshot) {
+            // Issue #487: pad the snapshot up to children_'s current
+            // size before the move. Without padding, if the in-flight
+            // mutation added nodes (e.g. set-code inside a MutationBoundary
+            // guard, or any primitive that grew children_ before the
+            // rollback fires), the snapshot would be smaller than the
+            // current children_. The subsequent move would shrink
+            // children_, and any access to children_[id] for id >=
+            // snapshot.size() (e.g. a destructor that walks every node)
+            // would trigger std::vector::operator[]'s debug-mode
+            // assertion. This was crashing test_issue_192 tests 3.1 +
+            // 4.1 (the atomic-batch bad-op path).
+            //
+            // The padding is cheap (empty PCVs are zero-sized; the
+            // per-node COW means a moved-empty PCV is a single
+            // shared_ptr that doesn't allocate).
+            // Issue #1299/#1300: nodes allocated during the failed mutation
+            // (id >= pre-mutation size) become orphan "ghosts" if we only
+            // pad children_ with empty PCVs. Free those slots so queries
+            // and restamp_all_node_generations skip them.
+            const std::size_t pre_size = snapshot.size();
+            const std::size_t post_size = children_.size();
+            if (snapshot.size() < children_.size()) {
+                snapshot.resize(children_.size());
+            }
+            children_ = std::move(snapshot);
+            if (post_size > pre_size)
+                free_orphan_nodes_from(static_cast<NodeId>(pre_size));
+            // Issue #1281: every PCV topology restore is a fidelity event.
+            children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
+            bump_generation();
+            // Issue #1282: if a wrap was observed mid-mutation, restamp now.
+            maybe_auto_restamp_on_wrap();
+        }
+
+        // Issue #1299/#1300: mark nodes [begin, size()) as free (node_gen_=0)
+        // and push onto free_list_. Used after rollback when mutations added
+        // nodes that are no longer reachable after children_ restore.
+        std::size_t free_orphan_nodes_from(NodeId begin) {
+            std::size_t freed = 0;
+            for (NodeId id = begin; id < size(); ++id) {
+                if (id >= node_gen_.size())
+                    break;
+                if (node_gen_[id] == 0)
+                    continue; // already free
+                node_gen_[id] = 0;
+                free_list_.push_back(id);
+                ++freed;
+            }
+            if (freed > 0) {
+                node_recycle_total_.fetch_add(freed, std::memory_order_relaxed);
+                ghost_orphan_nodes_freed_.fetch_add(freed, std::memory_order_relaxed);
+            }
+            return freed;
+        }
+
+        [[nodiscard]] std::uint64_t ghost_orphan_nodes_freed() const noexcept {
+            return ghost_orphan_nodes_freed_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #266: capture / restore sym_id_ for fine-grained rollback
+        // of bulk rename operations (mutate:rename-symbol).
+        std::pmr::vector<SymId> snapshot_sym_id() const {
+            return sym_id_;
+        }
+        void restore_sym_id(std::pmr::vector<SymId> && snapshot) {
+            sym_id_ = std::move(snapshot);
+            bump_generation();
+        }
+
+        // Issue #266: Lambda param columns used by rename-symbol.
+        struct ParamColumnsSnapshot {
+            std::pmr::vector<SymId> param_data;
+            std::pmr::vector<std::uint32_t> param_begin;
+            std::pmr::vector<std::uint32_t> param_count;
+        };
+        ParamColumnsSnapshot snapshot_param_columns() const {
+            return {param_data_, param_begin_, param_count_};
+        }
+        void restore_param_columns(ParamColumnsSnapshot && snapshot) {
+            param_data_ = std::move(snapshot.param_data);
+            param_begin_ = std::move(snapshot.param_begin);
+            param_count_ = std::move(snapshot.param_count);
+            bump_generation();
+        }
+
+        // ── Issue #261: NodeId lifecycle / SoA compaction ────────────
+        //
+        // recycle_dead_nodes() marks unreachable slots (not reachable
+        // from root via children, plus region_by_lambda_id_ roots) as
+        // free (node_gen_=0) and pushes them onto free_list_ for reuse
+        // by add_node(). Does NOT shrink the SoA columns — use
+        // compact_nodes() for densification + cache locality.
+        //
+        // compact_nodes() rebuilds dense 0..live-1 SoA columns,
+        // remaps all NodeId references, clears free_list_, and bumps
+        // generation_ (invalidates all StableNodeRefs).
+        [[nodiscard]] std::size_t recycle_dead_nodes() {
+            auto live = mark_live_nodes();
+            std::size_t recycled = 0;
+            for (NodeId id = 0; id < size(); ++id) {
+                if (is_free_slot(id))
+                    continue;
+                if (!live[id]) {
+                    node_gen_[id] = 0;
+                    free_list_.push_back(id);
+                    ++recycled;
+                }
+            }
+            if (recycled > 0)
+                node_recycle_total_.fetch_add(recycled, std::memory_order_relaxed);
+            return recycled;
+        }
+
+        // Issue #497: recycle dead slots without full SoA remap or
+        // generation bump (avoids invalidating all StableNodeRefs).
+        [[nodiscard]] std::size_t compact_nodes_soft() {
+            const auto recycled = recycle_dead_nodes();
+            if (recycled > 0)
+                soft_compact_count_.fetch_add(1, std::memory_order_relaxed);
+            return recycled;
+        }
+
+        [[nodiscard]] std::size_t compact_nodes() {
+            auto live = mark_live_nodes();
+            std::size_t live_count = 0;
+            for (bool is_live : live) {
+                if (is_live)
+                    ++live_count;
+            }
+            const auto old_size = size();
+            if (live_count == 0) {
+                clear();
+                if (old_size > 0)
+                    node_compact_total_.fetch_add(old_size, std::memory_order_relaxed);
+                return old_size;
+            }
+            if (live_count == old_size)
+                return 0;
+
+            std::vector<NodeId> old_to_new(old_size, NULL_NODE);
+            NodeId next = 0;
+            for (NodeId id = 0; id < old_size; ++id) {
+                if (live[id])
+                    old_to_new[id] = next++;
+            }
+
+            auto remap = [&](NodeId id) -> NodeId {
+                if (id == NULL_NODE || id >= old_to_new.size())
+                    return NULL_NODE;
+                return old_to_new[id];
+            };
+
+            StructuralMutationGuard guard(this);
+
+            auto alloc = tag_.get_allocator();
+            std::pmr::vector<NodeTag> new_tag(alloc);
+            std::pmr::vector<std::int64_t> new_int_val(alloc);
+            std::pmr::vector<double> new_float_val(alloc);
+            std::pmr::vector<SymId> new_sym_id(alloc);
+            std::vector<PersistentChildVector<NodeId>> new_children;
+            std::pmr::vector<NodeId> new_parent(alloc);
+            std::pmr::vector<std::uint32_t> new_param_begin(alloc);
+            std::pmr::vector<std::uint32_t> new_param_count(alloc);
+            std::pmr::vector<std::uint32_t> new_cap_require_count(alloc);
+            std::pmr::vector<std::uint32_t> new_line(alloc);
+            std::pmr::vector<std::uint32_t> new_col(alloc);
+            std::pmr::vector<SyntaxMarker> new_marker(alloc);
+            std::pmr::vector<std::uint8_t> new_dirty(alloc);
+            std::pmr::vector<std::uint8_t> new_ppa_dirty(alloc);
+            // Issue #437: COW scratch for verify_dirty_
+            std::pmr::vector<std::uint8_t> new_verify_dirty(alloc);
+            // Issue #469: COW scratch for verification_dirty_
+            std::pmr::vector<std::uint8_t> new_verification_dirty(alloc);
+            // Issue #290: COW scratch for macro_dirty_
+            std::pmr::vector<std::uint8_t> new_macro_dirty(alloc);
+            std::pmr::vector<std::uint32_t> new_type_id(alloc);
+            // Issue #412: COW scratch for type_cache_gen_.
+            std::pmr::vector<std::uint32_t> new_type_cache_gen(alloc);
+            // Issue #412 follow-up #1: COW scratch for
+            // per-binding cache gen.
+            std::pmr::vector<std::uint32_t> new_type_cache_binding_gen(alloc);
+            std::pmr::vector<std::uint8_t> new_error_kind(alloc);
+            std::pmr::vector<std::uint32_t> new_node_first_mutation(alloc);
+            std::pmr::vector<std::uint16_t> new_node_gen(alloc);
+            std::pmr::vector<std::int64_t> new_value_cache(alloc);
+
+            new_tag.reserve(live_count);
+            new_int_val.reserve(live_count);
+            new_float_val.reserve(live_count);
+            new_sym_id.reserve(live_count);
+            new_children.reserve(live_count);
+            new_parent.reserve(live_count);
+            new_param_begin.reserve(live_count);
+            new_param_count.reserve(live_count);
+            new_cap_require_count.reserve(live_count);
+            new_line.reserve(live_count);
+            new_col.reserve(live_count);
+            new_marker.reserve(live_count);
+            new_dirty.reserve(live_count);
+            new_ppa_dirty.reserve(live_count);
+            new_type_id.reserve(live_count);
+            new_type_cache_gen.reserve(live_count);
+            new_type_cache_binding_gen.reserve(live_count);
+            new_error_kind.reserve(live_count);
+            new_node_first_mutation.reserve(live_count);
+            new_node_gen.reserve(live_count);
+            new_value_cache.reserve(live_count);
+
+            for (NodeId id = 0; id < old_size; ++id) {
+                if (!live[id])
+                    continue;
+                new_tag.push_back(tag_[id]);
+                new_int_val.push_back(int_val_[id]);
+                new_float_val.push_back(float_val_[id]);
+                new_sym_id.push_back(sym_id_[id]);
+                std::vector<NodeId> remapped_children;
+                remapped_children.reserve(children_[id].size());
+                for (auto cid : children_[id]) {
+                    if (cid != NULL_NODE)
+                        remapped_children.push_back(remap(cid));
+                }
+                new_children.emplace_back(remapped_children.begin(), remapped_children.end());
+                new_parent.push_back(remap(parent_[id]));
+                new_param_begin.push_back(param_begin_[id]);
+                new_param_count.push_back(param_count_[id]);
+                new_cap_require_count.push_back(cap_require_count_[id]);
+                new_line.push_back(line_[id]);
+                new_col.push_back(col_[id]);
+                new_marker.push_back(marker_[id]);
+                new_dirty.push_back(dirty_[id]);
+                if (id < ppa_dirty_.size())
+                    new_ppa_dirty.push_back(ppa_dirty_[id]);
+                else
+                    new_ppa_dirty.push_back(0);
+                // Issue #437: COW the verify_dirty_ bitmask.
+                if (id < verify_dirty_.size())
+                    new_verify_dirty.push_back(verify_dirty_[id]);
+                else
+                    new_verify_dirty.push_back(0);
+                // Issue #469: COW the verification_dirty_ bitmask.
+                if (id < verification_dirty_.size())
+                    new_verification_dirty.push_back(verification_dirty_[id]);
+                else
+                    new_verification_dirty.push_back(0);
+                // Issue #290: COW the macro_dirty_ bitmask.
+                if (id < macro_dirty_.size())
+                    new_macro_dirty.push_back(macro_dirty_[id]);
+                else
+                    new_macro_dirty.push_back(0);
+                new_type_id.push_back(type_id_[id]);
+                // Issue #412: parallel cache gen. After COW we
+                // reset to 0 so the next type-checker pass will
+                // re-populate both fields via
+                // set_type_with_gen().
+                new_type_cache_gen.push_back(0);
+                // Issue #412 follow-up #1: parallel
+                // per-binding cache gen. Also reset to 0
+                // after COW; the next type-checker pass will
+                // re-populate via set_type_with_binding_gen().
+                new_type_cache_binding_gen.push_back(0);
+                new_error_kind.push_back(error_kind_[id]);
+                new_node_first_mutation.push_back(node_first_mutation_[id]);
+                new_node_gen.push_back(generation_);
+                if (id < value_cache_.size())
+                    new_value_cache.push_back(value_cache_[id]);
+                else
+                    new_value_cache.push_back(kNotCached);
+            }
+
+            tag_ = std::move(new_tag);
+            int_val_ = std::move(new_int_val);
+            float_val_ = std::move(new_float_val);
+            sym_id_ = std::move(new_sym_id);
+            children_ = std::move(new_children);
+            parent_ = std::move(new_parent);
+            param_begin_ = std::move(new_param_begin);
+            param_count_ = std::move(new_param_count);
+            cap_require_count_ = std::move(new_cap_require_count);
+            line_ = std::move(new_line);
+            col_ = std::move(new_col);
+            marker_ = std::move(new_marker);
+            dirty_ = std::move(new_dirty);
+            ppa_dirty_ = std::move(new_ppa_dirty);
+            // Issue #437: COW the verify_dirty_ column
+            verify_dirty_ = std::move(new_verify_dirty);
+            // Issue #469: COW the verification_dirty_ column
+            verification_dirty_ = std::move(new_verification_dirty);
+            // Issue #290: COW the macro_dirty_ column
+            macro_dirty_ = std::move(new_macro_dirty);
+            type_id_ = std::move(new_type_id);
+            type_cache_gen_ = std::move(new_type_cache_gen);
+            // Issue #412 follow-up #1: COW the
+            // per-binding cache gen column. The
+            // binding_gens_ map is NOT COW'd — the new flat
+            // starts with an empty map and only entries
+            // that the clone's mutations touch are added.
+            // This ensures mutations on the clone don't
+            // invalidate the parent's cache.
+            type_cache_binding_gen_ = std::move(new_type_cache_binding_gen);
+            // Issue #412 follow-up #1: COW the
+            // binding_gens_ map. The clone gets a fresh
+            // empty map (the COW contract is that mutations
+            // on the clone don't affect the parent). The
+            // existing entries will be re-built lazily as
+            // the clone's mutations bump them.
+            binding_gens_ = std::make_shared<BindingGenMap>();
+            error_kind_ = std::move(new_error_kind);
+            node_first_mutation_ = std::move(new_node_first_mutation);
+            node_gen_ = std::move(new_node_gen);
+            value_cache_ = std::move(new_value_cache);
+            // Issue #490: proactive rebuild after compact remap so
+            // query:tag-arity-count / find_by_tag_arity avoid a
+            // lazy O(n) spike on the next query call.
+            rebuild_tag_arity_index();
+
+            root = remap(root);
+
+            std::pmr::unordered_map<NodeId, std::uint8_t> new_region_by_lambda(alloc);
+            for (const auto& [lid, region] : region_by_lambda_id_) {
+                auto nlid = remap(lid);
+                if (nlid != NULL_NODE)
+                    new_region_by_lambda[nlid] = region;
+            }
+            region_by_lambda_id_ = std::move(new_region_by_lambda);
+
+            std::vector<MatchClauseInfo> new_match_info(live_count);
+            for (NodeId id = 0; id < old_size; ++id) {
+                if (!live[id])
+                    continue;
+                auto new_id = old_to_new[id];
+                if (has_match_info(id))
+                    new_match_info[new_id] = match_info_[id];
+            }
+            match_info_ = std::move(new_match_info);
+
+            for (auto& rec : mutation_log_) {
+                rec.target_node = remap(rec.target_node);
+                rec.parent_id = remap(rec.parent_id);
+            }
+
+            free_list_.clear();
+
+            const auto reclaimed = old_size - live_count;
+            node_compact_total_.fetch_add(reclaimed, std::memory_order_relaxed);
+            return reclaimed;
+        }
+
+        [[nodiscard]] NodeLifecycleStats node_lifecycle_stats() const noexcept {
+            NodeLifecycleStats stats;
+            stats.total_slots = size();
+            stats.free_slots = free_list_.size();
+            auto live = mark_live_nodes();
+            for (bool is_live : live) {
+                if (is_live)
+                    ++stats.live_nodes;
+            }
+            if (stats.total_slots > 0) {
+                const auto dead = stats.total_slots - stats.live_nodes;
+                stats.fragmentation_ratio =
+                    static_cast<double>(dead) / static_cast<double>(stats.total_slots);
+            }
+            return stats;
+        }
+
+        std::uint64_t node_recycle_total() const noexcept {
+            return node_recycle_total_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t node_slot_reuse_count() const noexcept {
+            return node_slot_reuse_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t node_compact_total() const noexcept {
+            return node_compact_total_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t soft_compact_count() const noexcept {
+            return soft_compact_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t stale_ref_auto_refresh_count() const noexcept {
+            return stale_ref_auto_refresh_count_.load(std::memory_order_relaxed);
+        }
+        void record_stale_ref_auto_refresh() noexcept {
+            stale_ref_auto_refresh_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #1346: lock-free StableNodeRef validate path counter.
+        mutable std::atomic<std::uint64_t> lockfree_stable_ref_validate_count_{0};
+        void record_lockfree_stable_ref_validate() noexcept {
+            lockfree_stable_ref_validate_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t lockfree_stable_ref_validate_count() const noexcept {
+            return lockfree_stable_ref_validate_count_.load(std::memory_order_relaxed);
+        }
+        // Issue #1345 / #1346 observability accessors.
+        [[nodiscard]] std::uint64_t mark_dirty_boundary_prune_count() const noexcept {
+            return mark_dirty_boundary_prune_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t auto_compact_on_commit_count() const noexcept {
+            return auto_compact_on_commit_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t live_nodes_threshold_warn_count() const noexcept {
+            return live_nodes_threshold_warn_count_.load(std::memory_order_relaxed);
+        }
+        void set_compaction_free_list_threshold(std::size_t n) noexcept {
+            compaction_free_list_threshold_ = n == 0 ? 1 : n;
+        }
+        void set_max_live_nodes_warn(std::size_t n) noexcept {
+            max_live_nodes_warn_ = n == 0 ? 1 : n;
+        }
+        [[nodiscard]] std::size_t compaction_free_list_threshold() const noexcept {
+            return compaction_free_list_threshold_;
+        }
+        [[nodiscard]] std::size_t max_live_nodes_warn() const noexcept {
+            return max_live_nodes_warn_;
+        }
+
+        void clear() {
+            tag_.clear();
+            int_val_.clear();
+            float_val_.clear();
+            sym_id_.clear();
+            children_.clear();
+            parent_.clear();
+            param_begin_.clear();
+            param_count_.clear();
+            cap_require_count_.clear();
+            param_data_.clear();
+            param_annot_data_.clear();
+            line_.clear();
+            col_.clear();
+            marker_.clear();
+            // Issue #402: clear summary flags alongside the
+            // per-node columns. The next add_node will rebuild
+            // the bit-set from scratch.
+            summary_flags_ = 0;
+            dirty_.clear();
+            ppa_dirty_.clear();
+            // Issue #437: clear verify_dirty_ alongside ppa_dirty_
+            verify_dirty_.clear();
+            // Issue #469: clear verification_dirty_ alongside the
+            // other dirty columns. Populated by
+            // apply_verification_dirty_bits (from
+            // (verify:parse-coverage-feedback) /
+            // (verify:parse-assert-failure)).
+            verification_dirty_.clear();
+            // Issue #290: clear macro_dirty_ alongside the other
+            // dirty columns. Populated by
+            // apply_macro_dirty_bits (from clone_macro_body and
+            // self-evolution).
+            macro_dirty_.clear();
+            // Issue #447: clear the tag+arity index on full
+            // reset. The next query:pattern call will rebuild
+            // it lazily.
+            tag_arity_index_.clear();
+            tag_arity_index_built_size_ = 0;
+            type_id_.clear();
+            mutation_log_.clear();
+            // Issue #282: clear narrowing provenance on FlatAST reset.
+            narrowing_log_.clear();
+            node_first_mutation_.clear();
+            node_gen_.clear();
+            free_list_.clear();
+            next_mutation_id_ = 1;
+            generation_ = 1;
+            match_info_.clear();
+            root = NULL_NODE;
+        }
+
+        std::size_t size() const {
+            return tag_.size();
+        }
+        bool empty() const {
+            return tag_.empty();
+        }
+
+        // Issue #402: walk only the root subtree (iterative
+        // DFS, bounded by max_nodes as a safety net). Returns
+        // the number of nodes visited. The visitor is called
+        // for every node in the subtree, in pre-order.
+        //
+        // Why subtree-only: needs_tree_walker_fallback was
+        // iterating over the ENTIRE flat (all historical
+        // defines, macros, etc.) on every eval. For typical
+        // expressions like `(+ 1 2)`, the root subtree has 4
+        // nodes vs flat.size() of 100+ — a 25x+ reduction in
+        // loop iterations per eval. Historical nodes that
+        // contain MacroDef / DefineType / etc. don't affect
+        // the current eval's fallback decision; only the
+        // reachable-from-root subgraph does.
+        template <typename Visitor>
+        std::size_t walk_subtree(NodeId root, Visitor && visit, std::size_t max_nodes = 1024)
+            const {
+            if (root == NULL_NODE || root >= tag_.size())
+                return 0;
+            std::size_t visited = 0;
+            // Iterative DFS using an explicit stack (avoids
+            // recursion blow-up for deep ASTs).
+            std::vector<NodeId> stack;
+            stack.push_back(root);
+            while (!stack.empty() && visited < max_nodes) {
+                auto id = stack.back();
+                stack.pop_back();
+                if (id == NULL_NODE || id >= tag_.size())
+                    continue;
+                if (is_free_slot(id))
+                    continue;
+                visit(id);
+                ++visited;
+                auto v = get(id);
+                for (auto c : v.children)
+                    stack.push_back(c);
+            }
+            return visited;
+        }
+
+        // ── Issue #217 Cycle 14 (P2): FlatAST SoA custom serialize ─
+        //
+        // The production FlatAST has 23 PRIVATE SoA columns
+        // (tag_/int_val_/float_val_/sym_id_/child_begin_/
+        // child_count_/child_data_/parent_/param_begin_/
+        // param_count_/cap_require_count_/param_data_/
+        // param_annot_data_/line_/col_/marker_/dirty_/type_id_/
+        // error_kind_/value_cache_/node_first_mutation_/
+        // node_gen_). The generic reflect_members<T>() can't
+        // see private members, so the generic auto_serialize
+        // path doesn't work. These custom methods iterate the
+        // SoA columns directly.
+        //
+        // Issue #220: the children_ field is a per-node
+        // std::pmr::vector<NodeId>, so the wire format replaces
+        // the 3 legacy child_* columns (child_begin_ + child_count_ +
+        // child_data_) with 2 new columns (per-node count + flat
+        // children). This is the same column count (22 → 22) but
+        // the structure is different. Old v1 cache files won't
+        // roundtrip with the new format.
+        //
+        // Wire format (matches tests/test_issue_217.cpp Test 18/19):
+        //   [u32 format_version = 2]  (v1 still readable)
+        //   [u32 num_nodes]
+        //   For each of 22 SoA columns (fixed order, see below):
+        //     [u32 count]
+        //     [count * sizeof(elem) raw bytes]
+        //   [u32 next_mutation_id_ (low 32 bits)]
+        //   [u16 generation_]
+        //   [u16 reserved]
+        //
+        // The 22 SoA columns in order:
+        //   1. tag_           (u32 = NodeTag)
+        //   2. int_val_       (i64)
+        //   3. float_val_     (f64)
+        //   4. sym_id_        (u32 = SymId)
+        //   5. child_count_per_node_ (u32 per node)  ← NEW (#220)
+        //   6. child_data     (u32 = NodeId, flat concatenation)  ← NEW (#220)
+        //   7. parent_        (u32 = NodeId)
+        //   8. param_begin_   (u32)
+        //   9. param_count_   (u32)
+        //  10. cap_require_count_ (u32)
+        //  11. param_data_    (u32 = SymId)
+        //  12. param_annot_data_ (u32 = NodeId)
+        //  13. line_         (u32)
+        //  14. col_          (u32)
+        //  15. marker_        (u8 = SyntaxMarker)
+        //  16. dirty_         (u8)
+        //  17. type_id_       (u32)
+        //  18. error_kind_    (u8)
+        //  19. value_cache_   (i64)
+        //  20. node_first_mutation_ (u32)
+        //  21. node_gen_      (u16)
+        //
+        // The legacy 3 columns (child_begin_ + child_count_ +
+        // child_data_ as a flat child array) are replaced by
+        // child_count_per_node_ + child_data.
+        //
+        // v2 additions (Issue #269 — hand-inlined; no reflect.hh in module):
+        //   - mutation_log_ (vector<MutationRecord>)
+        //   - match_info_ (vector<MatchClauseInfo>, 3 wire fields)
+        //   - region_by_sym_ / region_by_lambda_id_ (manual map)
+        //   - root (NodeId scalar)
+
+        static void wire_write_string(std::vector<char> & buf, std::string_view s) {
+            std::uint32_t len = static_cast<std::uint32_t>(s.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
+            buf.insert(buf.end(), s.begin(), s.end());
+        }
+
+        static void wire_write_vec_u32(std::vector<char> & buf, const std::vector<SymId>& v) {
+            std::uint32_t sz = static_cast<std::uint32_t>(v.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
+            if (!v.empty()) {
+                buf.insert(buf.end(), reinterpret_cast<const char*>(v.data()),
+                           reinterpret_cast<const char*>(v.data()) + v.size() * sizeof(SymId));
+            }
+        }
+
+        static void wire_write_match_clause_info(std::vector<char> & buf,
+                                                 const MatchClauseInfo& m) {
+            wire_write_vec_u32(buf, m.used_constructors);
+            wire_write_vec_u32(buf, m.candidate_constructors);
+            buf.push_back(m.has_wildcard ? '\1' : '\0');
+        }
+
+        static void wire_write_map_u32_u8(
+            std::vector<char> & buf,
+            const std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
+            std::uint32_t count = static_cast<std::uint32_t>(m.size());
             buf.insert(buf.end(), reinterpret_cast<char*>(&count),
                        reinterpret_cast<char*>(&count) + 4);
-            if (!col.empty()) {
-                buf.insert(
-                    buf.end(), reinterpret_cast<const char*>(col.data()),
-                    reinterpret_cast<const char*>(col.data()) +
-                        col.size() *
-                            sizeof(
-                                typename std::remove_reference<decltype(col)>::type::value_type));
+            for (const auto& [k, v] : m) {
+                buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
+                           reinterpret_cast<const char*>(&k) + 4);
+                buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
+                           reinterpret_cast<const char*>(&v) + 1);
             }
-        };
-        // 19 SoA columns + 2 children columns (per-node count +
-        // flat children) = 21 columns total. The legacy
-        // child_begin_/child_count_/child_data_ are gone (see
-        // children_ field which is the new source of truth).
-        write_column(tag_);
-        write_column(int_val_);
-        write_column(float_val_);
-        write_column(sym_id_);
-        // Issue #220: write the per-node children as two
-        // columns. (1) per-node count, (2) flat concatenation
-        // of all children. The reader reconstructs children_
-        // from these.
-        {
-            std::vector<std::uint32_t> child_counts(num_nodes);
-            std::uint32_t total_children = 0;
-            for (NodeId i = 0; i < num_nodes; ++i) {
-                child_counts[i] = static_cast<std::uint32_t>(children_[i].size());
-                total_children += child_counts[i];
+        }
+
+        static std::string wire_read_string(const std::vector<char>& buf, std::size_t& pos) {
+            std::uint32_t len;
+            std::memcpy(&len, &buf[pos], 4);
+            pos += 4;
+            std::string s(buf.data() + pos, buf.data() + pos + len);
+            pos += len;
+            return s;
+        }
+
+        static std::vector<SymId> wire_read_vec_u32(const std::vector<char>& buf,
+                                                    std::size_t& pos) {
+            std::uint32_t sz;
+            std::memcpy(&sz, &buf[pos], 4);
+            pos += 4;
+            std::vector<SymId> v(sz);
+            if (sz > 0) {
+                std::memcpy(v.data(), &buf[pos], sz * sizeof(SymId));
+                pos += sz * sizeof(SymId);
             }
-            write_column(child_counts);
-            std::vector<NodeId> flat_children;
-            flat_children.reserve(total_children);
-            for (NodeId i = 0; i < num_nodes; ++i) {
-                flat_children.insert(flat_children.end(), children_[i].begin(), children_[i].end());
-            }
-            write_column(flat_children);
+            return v;
         }
-        write_column(parent_);
-        write_column(param_begin_);
-        write_column(param_count_);
-        write_column(cap_require_count_);
-        write_column(param_data_);
-        write_column(param_annot_data_);
-        write_column(line_);
-        write_column(col_);
-        write_column(marker_);
-        write_column(dirty_);
-        // Issue #437: serialize verify_dirty_ alongside ppa_dirty_
-        // (the serializer writes the columns in lockstep, so we
-        // need to add it here to keep binary compat). Insert
-        // before type_id_ to match the read order.
-        write_column(verify_dirty_);
-        write_column(type_id_);
-        write_column(error_kind_);
-        write_column(value_cache_);
-        write_column(node_first_mutation_);
-        write_column(node_gen_);
-        // Scalars
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&next_mutation_id_),
-                   reinterpret_cast<const char*>(&next_mutation_id_) + 4);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
-                   reinterpret_cast<const char*>(&generation_) + 2);
-        // 2 bytes padding (v1 compat; v2 side-data follows)
-        std::uint16_t reserved = 0;
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
-                   reinterpret_cast<const char*>(&reserved) + 2);
 
-        // v2 side-data (Issue #269)
-        {
-            std::uint32_t log_count = static_cast<std::uint32_t>(mutation_log_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&log_count),
-                       reinterpret_cast<char*>(&log_count) + 4);
-            for (const auto& rec : mutation_log_)
-                mutation::wire_write_mutation_record(buf, rec);
+        static MatchClauseInfo wire_read_match_clause_info(const std::vector<char>& buf,
+                                                           std::size_t& pos) {
+            MatchClauseInfo m;
+            m.used_constructors = wire_read_vec_u32(buf, pos);
+            m.candidate_constructors = wire_read_vec_u32(buf, pos);
+            m.has_wildcard = buf[pos++] != 0;
+            return m;
         }
-        {
-            std::uint32_t mi_count = static_cast<std::uint32_t>(match_info_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&mi_count),
-                       reinterpret_cast<char*>(&mi_count) + 4);
-            for (const auto& mi : match_info_)
-                wire_write_match_clause_info(buf, mi);
-        }
-        wire_write_map_u32_u8(buf, region_by_sym_);
-        wire_write_map_u32_u8(buf, region_by_lambda_id_);
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
-                   reinterpret_cast<const char*>(&root) + 4);
-        // Issue #277: optional v2 extension — PPA dirty column.
-        write_column(ppa_dirty_);
-        // Issue #290: optional v2 extension — macro_dirty_
-        // column. Appended after ppa_dirty_ so older readers
-        // (which stop at the EOF after ppa_dirty_) skip it
-        // gracefully (read_column checks size).
-        write_column(macro_dirty_);
-    }
 
-    // Static (no instance needed). Returns a freshly-constructed
-    // FlatAST populated from the wire format. The FlatAST uses
-    // a default std::pmr::polymorphic_allocator (no arena) — if
-    // the caller needs arena-backed deserialization, they should
-    // pass an allocator to the FlatAST constructor after the
-    // call.
-    //
-    // v1 omits side-data (mutation_log_, match_info_, region_by_*,
-    // root stay default). v2 includes all five fields.
-    static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
-        FlatAST ast;
-        std::uint32_t version;
-        std::memcpy(&version, &buf[pos], 4);
-        pos += 4;
-        if (version != 1 && version != 2) {
-            pos = buf.size();
-            return ast;
-        }
-        const bool is_v2 = (version == 2);
-        std::uint32_t num_nodes;
-        std::memcpy(&num_nodes, &buf[pos], 4);
-        pos += 4;
-
-        auto read_column = [&buf, &pos](auto& col) {
-            using T = typename std::remove_reference<decltype(col)>::type::value_type;
+        static void wire_read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
+                                         std::pmr::unordered_map<std::uint32_t, std::uint8_t>& m) {
             std::uint32_t count;
             std::memcpy(&count, &buf[pos], 4);
             pos += 4;
-            col.resize(count);
-            // Issue #219: GapBuffer's `data()` is not contiguous
-            // when the gap is in the middle. compact() moves the
-            // gap to the end so data() returns a contiguous
-            // pointer. For pmr::vector this is a no-op (the
-            // compiler optimizes it away for trivial types).
-            if constexpr (requires { col.compact(); }) {
-                col.compact();
-            }
-            if (count > 0) {
-                std::memcpy(col.data(), &buf[pos], count * sizeof(T));
-                pos += count * sizeof(T);
-            }
-        };
-        read_column(ast.tag_);
-        read_column(ast.int_val_);
-        read_column(ast.float_val_);
-        read_column(ast.sym_id_);
-        // Issue #220: read the per-node children columns and
-        // populate ast.children_ from them. The legacy
-        // child_begin_/child_count_/child_data_ columns are
-        // gone (the children_ field is the new source of
-        // truth, populated by all add_X methods).
-        {
-            std::vector<std::uint32_t> child_counts;
-            read_column(child_counts);
-            std::vector<NodeId> flat_children;
-            read_column(flat_children);
-            ast.children_.resize(num_nodes);
-            std::size_t offset = 0;
-            for (NodeId i = 0; i < num_nodes; ++i) {
-                auto count = child_counts[i];
-                // Issue #221: build each per-node PCV from the
-                // flat column via the range constructor.
-                ast.children_[i] = PersistentChildVector<NodeId>(
-                    flat_children.begin() + offset, flat_children.begin() + offset + count);
-                offset += count;
+            m.clear();
+            for (std::uint32_t i = 0; i < count; ++i) {
+                std::uint32_t k;
+                std::uint8_t v;
+                std::memcpy(&k, &buf[pos], 4);
+                pos += 4;
+                std::memcpy(&v, &buf[pos], 1);
+                pos += 1;
+                m[k] = v;
             }
         }
-        read_column(ast.parent_);
-        read_column(ast.param_begin_);
-        read_column(ast.param_count_);
-        read_column(ast.cap_require_count_);
-        read_column(ast.param_data_);
-        read_column(ast.param_annot_data_);
-        read_column(ast.line_);
-        read_column(ast.col_);
-        read_column(ast.marker_);
-        read_column(ast.dirty_);
-        // Issue #437: verify_dirty_ column (u8 per node), written by
-        // serialize_soa since #437. Hand-built v1 fixtures must
-        // include it between dirty_ and type_id_.
-        read_column(ast.verify_dirty_);
-        read_column(ast.type_id_);
-        read_column(ast.error_kind_);
-        read_column(ast.value_cache_);
-        read_column(ast.node_first_mutation_);
-        read_column(ast.node_gen_);
-        std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
-        pos += 4;
-        std::memcpy(&ast.generation_, &buf[pos], 2);
-        pos += 2;
-        pos += 2; // reserved
 
-        if (is_v2) {
-            std::uint32_t log_count;
-            std::memcpy(&log_count, &buf[pos], 4);
-            pos += 4;
-            ast.mutation_log_.clear();
-            ast.mutation_log_.reserve(log_count);
-            for (std::uint32_t i = 0; i < log_count; ++i)
-                ast.mutation_log_.push_back(mutation::wire_read_mutation_record(buf, pos));
+        void serialize_soa(std::vector<char> & buf) const {
+            // Format version (v2 includes side-data fields)
+            std::uint32_t version = 2;
+            buf.insert(buf.end(), reinterpret_cast<char*>(&version),
+                       reinterpret_cast<char*>(&version) + 4);
+            // Num nodes (informational; per-node columns derive their size)
+            std::uint32_t num_nodes = static_cast<std::uint32_t>(tag_.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
+                       reinterpret_cast<char*>(&num_nodes) + 4);
 
-            std::uint32_t mi_count;
-            std::memcpy(&mi_count, &buf[pos], 4);
-            pos += 4;
-            ast.match_info_.resize(mi_count);
-            for (std::uint32_t i = 0; i < mi_count; ++i)
-                ast.match_info_[i] = wire_read_match_clause_info(buf, pos);
-
-            wire_read_map_u32_u8(buf, pos, ast.region_by_sym_);
-            wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
-            std::memcpy(&ast.root, &buf[pos], 4);
-            pos += 4;
-            // Issue #277: backward-compatible optional PPA dirty column.
-            if (pos + 4 <= buf.size()) {
-                read_column(ast.ppa_dirty_);
+            // Helper: serialize a pmr::vector<T> as count + raw bytes
+            auto write_column = [&buf](const auto& col) {
+                std::uint32_t count = static_cast<std::uint32_t>(col.size());
+                buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                           reinterpret_cast<char*>(&count) + 4);
+                if (!col.empty()) {
+                    buf.insert(buf.end(), reinterpret_cast<const char*>(col.data()),
+                               reinterpret_cast<const char*>(col.data()) +
+                                   col.size() * sizeof(typename std::remove_reference<
+                                                       decltype(col)>::type::value_type));
+                }
+            };
+            // 19 SoA columns + 2 children columns (per-node count +
+            // flat children) = 21 columns total. The legacy
+            // child_begin_/child_count_/child_data_ are gone (see
+            // children_ field which is the new source of truth).
+            write_column(tag_);
+            write_column(int_val_);
+            write_column(float_val_);
+            write_column(sym_id_);
+            // Issue #220: write the per-node children as two
+            // columns. (1) per-node count, (2) flat concatenation
+            // of all children. The reader reconstructs children_
+            // from these.
+            {
+                std::vector<std::uint32_t> child_counts(num_nodes);
+                std::uint32_t total_children = 0;
+                for (NodeId i = 0; i < num_nodes; ++i) {
+                    child_counts[i] = static_cast<std::uint32_t>(children_[i].size());
+                    total_children += child_counts[i];
+                }
+                write_column(child_counts);
+                std::vector<NodeId> flat_children;
+                flat_children.reserve(total_children);
+                for (NodeId i = 0; i < num_nodes; ++i) {
+                    flat_children.insert(flat_children.end(), children_[i].begin(),
+                                         children_[i].end());
+                }
+                write_column(flat_children);
             }
-            // Issue #290: backward-compatible optional
-            // macro_dirty_ column. Appended after ppa_dirty_;
-            // older serialized blobs (pre-#290) stop here, so
-            // the guard `pos + 4 <= buf.size()` is sufficient.
-            if (pos + 4 <= buf.size()) {
-                read_column(ast.macro_dirty_);
+            write_column(parent_);
+            write_column(param_begin_);
+            write_column(param_count_);
+            write_column(cap_require_count_);
+            write_column(param_data_);
+            write_column(param_annot_data_);
+            write_column(line_);
+            write_column(col_);
+            write_column(marker_);
+            write_column(dirty_);
+            // Issue #437: serialize verify_dirty_ alongside ppa_dirty_
+            // (the serializer writes the columns in lockstep, so we
+            // need to add it here to keep binary compat). Insert
+            // before type_id_ to match the read order.
+            write_column(verify_dirty_);
+            write_column(type_id_);
+            write_column(error_kind_);
+            write_column(value_cache_);
+            write_column(node_first_mutation_);
+            write_column(node_gen_);
+            // Scalars
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&next_mutation_id_),
+                       reinterpret_cast<const char*>(&next_mutation_id_) + 4);
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
+                       reinterpret_cast<const char*>(&generation_) + 2);
+            // 2 bytes padding (v1 compat; v2 side-data follows)
+            std::uint16_t reserved = 0;
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
+                       reinterpret_cast<const char*>(&reserved) + 2);
+
+            // v2 side-data (Issue #269)
+            {
+                std::uint32_t log_count = static_cast<std::uint32_t>(mutation_log_.size());
+                buf.insert(buf.end(), reinterpret_cast<char*>(&log_count),
+                           reinterpret_cast<char*>(&log_count) + 4);
+                for (const auto& rec : mutation_log_)
+                    mutation::wire_write_mutation_record(buf, rec);
             }
+            {
+                std::uint32_t mi_count = static_cast<std::uint32_t>(match_info_.size());
+                buf.insert(buf.end(), reinterpret_cast<char*>(&mi_count),
+                           reinterpret_cast<char*>(&mi_count) + 4);
+                for (const auto& mi : match_info_)
+                    wire_write_match_clause_info(buf, mi);
+            }
+            wire_write_map_u32_u8(buf, region_by_sym_);
+            wire_write_map_u32_u8(buf, region_by_lambda_id_);
+            buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
+                       reinterpret_cast<const char*>(&root) + 4);
+            // Issue #277: optional v2 extension — PPA dirty column.
+            write_column(ppa_dirty_);
+            // Issue #290: optional v2 extension — macro_dirty_
+            // column. Appended after ppa_dirty_ so older readers
+            // (which stop at the EOF after ppa_dirty_) skip it
+            // gracefully (read_column checks size).
+            write_column(macro_dirty_);
         }
-        return ast;
-    }
 
-    // ── Marker access ─────────────────────────────────────────
-
-    void set_marker(NodeId id, SyntaxMarker m)
-        // Issue #144: markers are a hygiene signal used by
-        // query:pattern and mutate:replace-subtree (Issue #140,
-        // #142). A silent no-op on stale id would let a
-        // macro-introduced node appear user-written.
-        pre(id < marker_.size()) {
-        marker_[id] = m;
-    }
-    SyntaxMarker marker(NodeId id) const {
-        return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
-    }
-
-    // Issue #397: centralized hygiene check. Returns true iff
-    // the node at `id` was introduced by macro expansion (or by
-    // a structural transformation that respects the hygiene
-    // contract, such as mutate:extract-function). Out-of-bounds
-    // ids default to false (the marker() accessor returns User
-    // for those). Used by query:pattern + mutate:replace-subtree
-    // (and other primitives that need to distinguish user-written
-    // from macro-introduced code).
-    //
-    // Hygiene contract:
-    //   - MacroIntroduced nodes are query-visible (they appear
-    //     in (query:defines), (query:children), etc.) so the user
-    //     can introspect the expanded body.
-    //   - MacroIntroduced nodes are mutation-protected by default
-    //     (mutate:replace-subtree returns a hygiene error if you
-    //     try to overwrite one). This is provenance tracking +
-    //     hygiene, not full α-renaming at expansion time.
-    [[nodiscard]] bool is_macro_introduced(NodeId id) const noexcept {
-        return marker(id) == SyntaxMarker::MacroIntroduced;
-    }
-
-    // ── Dirty tracking (incremental compilation) ───────────────
-    //
-    // Issue #188: per-node dirty bitmask. The dirty_ column is
-    // repurposed as a bitmask where each bit represents a different
-    // reason for invalidation. This lets the type checker do
-    // *targeted* re-analysis (only re-run occurrence-narrowing when
-    // a predicate changed, only re-validate ownership when a Linear
-    // binding changed, etc.) instead of the coarse "re-infer
-    // everything dirty" pass.
-    //
-    // The old single-bit semantics are preserved: `is_dirty(id)` is
-    // `true` iff ANY bit is set, so existing callers see no behavior
-    // change. New callers can use `is_dirty_for(id, reason)` for
-    // targeted re-analysis.
-
-    // Issue #188: dirty-reason bits. Each can be OR'd together when
-    // a single mutation triggers multiple concerns. Bit 0 (kGeneral)
-    // is the backward-compatible "this node needs re-inference" bit.
-    enum DirtyReason : std::uint8_t {
-        kGeneralDirty = 0x01,    // node type must be re-inferred
-        kConstraintDirty = 0x02, // constraints involving this var changed
-        kOccurrenceDirty = 0x04, // occurrence-narrowing affected
-        kOwnershipDirty = 0x08,  // Linear/Move/Borrow state changed
-        kCoercionDirty = 0x10,   // deferred coercion needs re-apply
-        // Issue #262: infra dirty bits for precise incremental paths.
-        kStructDirty = 0x20,  // structural shape changed (children/parent)
-        kDefUseDirty = 0x40,  // def-use / caller graph may be stale
-        kPpaHintDirty = 0x80, // PPA-hint metadata needs refresh
-    };
-
-    // Issue #277: PPA-specific dirty bits stored in the orthogonal
-    // ppa_dirty_ column (DirtyReason uint8_t is full). Setting any
-    // PPA bit also ORs kPpaHintDirty on dirty_ for backward-compat
-    // with dirty:counts "ppa-hint" aggregation.
-    enum PpaDirtyReason : std::uint8_t {
-        kTimingDirty = 0x01, // timing closure stale
-        kPowerDirty = 0x02,  // power estimate stale
-        kAreaDirty = 0x04,   // area estimate stale
-        kBackendHint = 0x08, // Verilog/HW backend should re-emit
-    };
-
-    // Issue #277: OR PPA bits into ppa_dirty_ and mirror kPpaHintDirty
-    // on dirty_ so legacy dirty:counts aggregation stays accurate.
-    void apply_ppa_dirty_bits(NodeId id, std::uint8_t ppa_reasons) {
-        if (ppa_reasons == 0)
-            return;
-        if (id >= ppa_dirty_.size())
-            ppa_dirty_.resize(id + 1, 0);
-        ppa_dirty_[id] |= ppa_reasons;
-        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty | kPpaHintDirty));
-    }
-
-    // Issue #437: verification-specific dirty bits stored in the
-    // orthogonal verify_dirty_ column. Setting any verify bit also
-    // ORs kGeneralDirty on dirty_ for backward-compat.
-    enum VerifyDirtyReason : std::uint8_t {
-        kAssertionDirty = 0x01,            // assertion failed
-        kCoverageDirty = 0x02,             // coverage hole detected
-        kSvaDirty = 0x04,                  // SVA property/sequence affected
-        kFormalCounterexampleDirty = 0x08, // formal proof counterexample
-    };
-
-    // Issue #469: verification_dirty_ enum (separate from
-    // VerifyDirtyReason so we can use 2 bits without
-    // collision with the #437 / #455 / #458 bits).
-    enum VerificationDirtyReason : std::uint8_t {
-        kCoverageFeedbackDirty = 0x01, // coverage hole from external tool
-        kAssertFailureDirty = 0x02,    // assertion failure from external tool
-    };
-
-    // Issue #437: OR verify bits into verify_dirty_ and mirror
-    // kGeneralDirty on dirty_ so legacy is_dirty() callers still
-    // see "this node needs work". The public definition is
-    // in the public section below.
-    // (No forward declaration needed; the public definition
-    //  at line ~775 is reachable from the dirty_observability
-    //  path via class-internal lookup.)
-
-    // Issue #469: OR verification bits into
-    // verification_dirty_ and mirror kGeneralDirty on dirty_.
-    // Defined in the public section below alongside the
-    // other Issue #437/469 accessors.
-
-    // Issue #188: mark a node dirty for one or more specific reasons.
-    // The `kGeneralDirty` bit is set automatically so existing
-    // is_dirty() callers still see "this node needs work".
-    //
-    // Issue #399: pre-reserve capacity for all the per-node
-    // "dirty" side-table columns (dirty_, ppa_dirty_,
-    // verify_dirty_, verification_dirty_, macro_dirty_) so
-    // that mark_dirty's resize() fallback is a no-op in the
-    // hot path. The automatic reserve in add_node keeps
-    // dirty_ in lockstep with tag_ for the normal growth
-    // path; this public helper lets external code (workspace
-    // bulk-loaders, snapshot/clone paths) reserve up-front
-    // for known-large ASTs without paying the amortized
-    // 2x reallocations.
-    //
-    // Idempotent: a second call with a smaller n is a no-op
-    // (std::vector::reserve only grows). The reservation is
-    // amortized O(1) across N add_node calls when called
-    // once with the final size.
-    void reserve_dirty(std::size_t n) noexcept {
-        dirty_.reserve(n);
-        ppa_dirty_.reserve(n);
-        verify_dirty_.reserve(n);
-        verification_dirty_.reserve(n);
-        macro_dirty_.reserve(n);
-    }
-
-    // Issue #302: pre-Contract added so a NodeId out-of-bounds for
-    // the current tag_ column is caught at the boundary instead of
-    // silently growing dirty_ to ~4G (which would happen for
-    // NULL_NODE = 0xFFFFFFFF on a 32-bit NodeId). Note: NULL_NODE
-    // is 0 by default for small ASTs (it can be redefined), so the
-    // contract catches genuine OOB like passing a stale NodeId from
-    // a released child.
-    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) pre(id < tag_.size()) {
-        if (id >= dirty_.size())
-            dirty_.resize(id + 1, 0);
-        dirty_[id] |= reasons;
-        clear_cached_value(id); // invalidate result cache
-        // Issue #320: stamp the per-node epoch with the
-        // current mutation epoch (if known). The
-        // synthesize_flat cache will compare this against
-        // cache_epoch_ to decide per-node invalidation
-        // (follow-up wiring). For now (this PR is the
-        // foundation), the column is populated but not
-        // consulted.
+        // Static (no instance needed). Returns a freshly-constructed
+        // FlatAST populated from the wire format. The FlatAST uses
+        // a default std::pmr::polymorphic_allocator (no arena) — if
+        // the caller needs arena-backed deserialization, they should
+        // pass an allocator to the FlatAST constructor after the
+        // call.
         //
-        // The mark_dirty signature doesn't take an
-        // explicit epoch (callers don't always have one
-        // handy). The stamp uses a separate helper
-        // stamp_last_seen_epoch() that the higher-level
-        // mark_dirty_upward() / typed_mutate paths call
-        // with the current global mutation_epoch_.
-        // Here we just bump the column by 1 from the
-        // previous value to give a "touched" signal for
-        // tests + introspection (the value isn't yet
-        // meaningful for the cache check; that's a
-        // follow-up).
-        if (id < last_seen_epoch_.size())
-            last_seen_epoch_[id] += 1;
-    }
-
-    // Issue #320: mark_dirty_for_reinfer helper.
-    // Combines mark_dirty + explicit epoch stamp. The
-    // caller passes the current global mutation_epoch_
-    // (from CompilerService::mutation_epoch_). The
-    // synthesize_flat cache check (follow-up wiring)
-    // will compare this against cache_epoch_ to decide
-    // per-node invalidation.
-    //
-    // For now (this PR is the foundation), this helper
-    // exists so typed_mutate / mark_dirty_upward can
-    // opt into the per-node epoch path when the global
-    // epoch is available. Callers that don't have the
-    // global epoch handy can fall back to plain
-    // mark_dirty (which still bumps the column by 1).
-    void mark_dirty_for_reinfer(NodeId id, std::uint64_t current_epoch) {
-        mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
-        stamp_last_seen_epoch(id, current_epoch);
-    }
-    void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty,
-                            std::uint8_t ppa_reasons = 0) {
-        mark_dirty(id, reasons);
-        apply_ppa_dirty_bits(id, ppa_reasons);
-        auto v = get(id);
-        for (auto c : v.children) {
-            if (c != NULL_NODE)
-                mark_subtree_dirty(c, reasons, ppa_reasons);
-        }
-    }
-    // Issue #188: backward-compatible single-bit semantics — true if
-    // any dirty bit is set. The pre-#188 callers that asked "is this
-    // node dirty?" still get the right answer.
-    bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id] != 0; }
-
-    // Issue #337: flat views over SoA columns. C++23
-    // std::span gives a non-owning, bounds-checked
-    // view of contiguous memory; combined with
-    // std::views::zip (C++23), the caller can iterate
-    // multiple columns in lockstep without
-    // per-element overhead. The view is invalidated
-    // by any add_node / reset_all / push_back call
-    // (the underlying vector may reallocate); callers
-    // that hold a view across mutations should
-    // re-acquire it.
-    //
-    // The views are the foundation for the C++23
-    // modernization issue; concrete pass-level
-    // adoption (query:pattern, mark_dirty_upward_fast,
-    // IRFunctionSoA scans) is follow-up work.
-    [[nodiscard]] std::span<const std::uint8_t> dirty_view() const noexcept {
-        return std::span<const std::uint8_t>(dirty_.data(), dirty_.size());
-    }
-    [[nodiscard]] std::span<const std::uint8_t> ppa_dirty_view() const noexcept {
-        return std::span<const std::uint8_t>(ppa_dirty_.data(), ppa_dirty_.size());
-    }
-    // Issue #320: per-node epoch column view.
-    [[nodiscard]] std::span<const std::uint64_t> last_seen_epoch_view() const noexcept {
-        return std::span<const std::uint64_t>(last_seen_epoch_.data(), last_seen_epoch_.size());
-    }
-    // Issue #456: dirty column accessor (the main dirty_).
-    [[nodiscard]] std::span<const std::uint8_t> verify_dirty_view() const noexcept {
-        return std::span<const std::uint8_t>(verify_dirty_.data(), verify_dirty_.size());
-    }
-    [[nodiscard]] std::span<const std::uint8_t> verification_dirty_view() const noexcept {
-        return std::span<const std::uint8_t>(verification_dirty_.data(),
-                                             verification_dirty_.size());
-    }
-
-    // Issue #346: mutation_log view (most-recent first).
-    // Non-owning span over the log. The vector grows
-    // unbounded (no eviction); for production runs
-    // with many mutations, the agent can sample via
-    // (query:mutations-since <last_id>) instead of
-    // walking the whole log.
-    [[nodiscard]] std::span<const MutationRecord> mutation_log_view() const noexcept {
-        return std::span<const MutationRecord>(mutation_log_.data(), mutation_log_.size());
-    }
-    // Issue #188: targeted check — true if a specific reason bit
-    // (or any of the bits in the reason mask) is set. Lets the type
-    // checker say "this node's occurrence narrowing is stale but
-    // ownership is fine" and re-narrow only.
-    bool is_dirty_for(NodeId id, std::uint8_t reason_mask) const {
-        return id < dirty_.size() && (dirty_[id] & reason_mask) != 0;
-    }
-    // Issue #188: return the full dirty bitmask (for diagnostics).
-    std::uint8_t dirty_reasons(NodeId id) const { return id < dirty_.size() ? dirty_[id] : 0; }
-    void clear_dirty(NodeId id) {
-        if (id < dirty_.size())
-            dirty_[id] = 0;
-    }
-    // Issue #188: clear specific reason bits (leaves others set).
-    // Used after a targeted re-analysis pass so the bit for the
-    // resolved concern is cleared but other stale reasons remain.
-    void clear_dirty_for(NodeId id, std::uint8_t reason_mask) {
-        if (id < dirty_.size())
-            dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
-    }
-    // Issue #188: read-only view of the dirty column for
-    // observability/aggregation. Used by the (dirty:counts)
-    // primitive to walk all nodes in O(n) without a per-node
-    // accessor call.
-    [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
-        return dirty_;
-    }
-    // Issue #277: PPA dirty accessors (orthogonal column).
-    void mark_ppa_dirty(NodeId id, std::uint8_t ppa_reasons) {
-        apply_ppa_dirty_bits(id, ppa_reasons);
-    }
-    bool is_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) const {
-        return id < ppa_dirty_.size() && (ppa_dirty_[id] & ppa_mask) != 0;
-    }
-    std::uint8_t ppa_dirty_reasons(NodeId id) const {
-        return id < ppa_dirty_.size() ? ppa_dirty_[id] : 0;
-    }
-    void clear_ppa_dirty(NodeId id) {
-        if (id < ppa_dirty_.size())
-            ppa_dirty_[id] = 0;
-    }
-    void clear_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) {
-        if (id < ppa_dirty_.size())
-            ppa_dirty_[id] &= static_cast<std::uint8_t>(~ppa_mask);
-    }
-    [[nodiscard]] const std::pmr::vector<std::uint8_t>& ppa_dirty_column() const noexcept {
-        return ppa_dirty_;
-    }
-    // Issue #190: read-only view of the marker column for
-    // observability/aggregation. Used by the (syntax-marker-counts)
-    // primitive to walk all nodes in O(n).
-    [[nodiscard]] const std::pmr::vector<SyntaxMarker>& marker_column() const noexcept {
-        return marker_;
-    }
-
-    // Issue #367: per-node provenance accessor + setter.
-    // provenance_id is an index into the FlatAST's own
-    // MarkerProvenanceTable (so it's per-FlatAST — no cross-AST
-    // lookup required). 0 means "no provenance recorded".
-    void set_provenance(NodeId id, std::uint32_t prov_id) noexcept {
-        if (id < provenance_.size())
-            provenance_[id] = prov_id;
-    }
-    [[nodiscard]] std::uint32_t provenance(NodeId id) const noexcept {
-        if (id >= provenance_.size())
-            return 0;
-        return provenance_[id];
-    }
-    [[nodiscard]] const std::pmr::vector<std::uint32_t>& provenance_column() const noexcept {
-        return provenance_;
-    }
-
-    // ── Node validation (NodeMeta invariants) ─────────────────
-    // Checks a single node against its NodeMeta invariants.
-    // Returns a description of the first violation, or empty string if valid.
-    // If fail_on_error is true, asserts on violation.
-    std::string validate_node(NodeId id, bool fail_on_error = true) const;
-
-    // Validate all nodes in the FlatAST. Returns total violations found.
-    // If fail_on_error is true, asserts on first violation.
-    std::size_t validate_all_nodes(bool fail_on_error = true) const;
-
-    // Validation note type (for non-fatal reporting)
-    struct ValidationError {
-        NodeId node;
-        std::string message;
-        std::string expected;
-        std::string actual;
-    };
-    // Validate all nodes, populating errors vector instead of asserting.
-    std::size_t validate_all_nodes(std::vector<ValidationError>& errors) const;
-
-    // Issue #263: post-restore consistency check. Verifies generation_
-    // / node_gen_ alignment, parent/child bidirectional integrity, and
-    // that all child spans reference live nodes. Populates `errors` when
-    // non-null. Returns violation count (0 = consistent).
-    [[nodiscard]] PostRestoreReport
-    validate_post_restore(std::vector<ValidationError>* errors = nullptr) const;
-
-    // ── Value result cache (for incremental eval) ────────────
-    // Stores the last EvalValue result for each node.
-    // kNotCached = not yet evaluated or cache invalidated.
-    // When a node is marked dirty, its cache is cleared automatically.
-    static constexpr std::int64_t kNotCached = 0x7FFFFFFFFFFFFFFFLL; // INT64_MAX as sentinel
-    std::int64_t get_cached_value(NodeId id) const {
-        return id < static_cast<NodeId>(value_cache_.size()) ? value_cache_[id] : kNotCached;
-    }
-    void set_cached_value(NodeId id, std::int64_t val) {
-        if (id >= static_cast<NodeId>(value_cache_.size()))
-            value_cache_.resize(static_cast<std::size_t>(id) + 1, kNotCached);
-        value_cache_[id] = val;
-    }
-    void clear_cached_value(NodeId id) {
-        if (id < static_cast<NodeId>(value_cache_.size()))
-            value_cache_[id] = kNotCached;
-    }
-
-    // ── Match clause metadata ────────────────────────────────
-    void set_match_info(NodeId id, MatchClauseInfo info) {
-        if (id >= match_info_.size())
-            match_info_.resize(id + 1);
-        match_info_[id] = std::move(info);
-    }
-    bool has_match_info(NodeId id) const {
-        if (id >= match_info_.size())
-            return false;
-        const auto& mi = match_info_[id];
-        return !mi.used_constructors.empty() || !mi.candidate_constructors.empty() ||
-               mi.has_wildcard;
-    }
-    const MatchClauseInfo* get_match_info(NodeId id) const {
-        if (!has_match_info(id))
-            return nullptr;
-        return &match_info_[id];
-    }
-    // Propagate dirty upward: mark this node AND all ancestors dirty
-    // Uses parent_ SoA column for O(depth) traversal (iterative, no recursion)
-    // Issue #188: optional `reasons` parameter propagates the bitmask
-    // from the leaf to all ancestors. Default is kGeneralDirty for
-    // backward compatibility with the 30+ callers that don't yet
-    // classify their mutations.
-    // Issue #1251: production bounds for dirty propagation under
-    // large-scale AI multi-round editing. Configurable via these
-    // constants; Agent can observe truncations via counters.
-    static constexpr std::uint64_t kMarkDirtyMaxDepth = 64;
-    static constexpr std::uint64_t kMarkDirtyCountThreshold = 4096;
-
-    void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty,
-                           std::uint8_t ppa_reasons = 0)
-        // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
-        pre(id < tag_.size()) {
-        // Issue #256: bump the call counter + track total nodes
-        // touched. The ratio (total_nodes / call_count) gives
-        // the average dirty-propagation depth per mutation —
-        // the key metric for whether the std::meta refactor is
-        // worth it.
-        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #693: SV structural / SVA feedback nodes propagate
-        // verify_dirty_ upward for targeted sv_ir re-emit hints.
-        bool propagate_sva_verify = false;
-        if (id < tag_.size()) {
-            const auto src_tag = tag_[id];
-            propagate_sva_verify = (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
-                                    src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
-                                    src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
-                                    src_tag == NodeTag::Coverpoint ||
-                                    src_tag == NodeTag::Constraint || src_tag == NodeTag::Class);
-        }
-        if (!propagate_sva_verify && id < verify_dirty_.size())
-            propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
-        std::uint64_t touched = 0;
-        bool truncated = false;
-        std::deque<NodeId> queue;
-        queue.push_back(id);
-        while (!queue.empty()) {
-            // Issue #1251: bound depth/count to avoid p99 latency spikes
-            // on pathological parent chains / SoC-scale ASTs.
-            if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
-                truncated = true;
-                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
-                // Still stamp the current chain top so Define-level
-                // subtree_gen consumers observe invalidation.
-                if (!queue.empty()) {
-                    auto top = queue.front();
-                    mark_dirty(top, reasons);
-                    if (top < tag_.size())
-                        bump_generation_subtree(top);
-                }
-                break;
+        // v1 omits side-data (mutation_log_, match_info_, region_by_*,
+        // root stay default). v2 includes all five fields.
+        static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
+            FlatAST ast;
+            std::uint32_t version;
+            std::memcpy(&version, &buf[pos], 4);
+            pos += 4;
+            if (version != 1 && version != 2) {
+                pos = buf.size();
+                return ast;
             }
-            auto nid = queue.front();
-            queue.pop_front();
-            mark_dirty(nid, reasons);
-            apply_ppa_dirty_bits(nid, ppa_reasons);
-            if (propagate_sva_verify)
-                apply_verify_dirty_bits(nid, kSvaDirty);
-            ++touched;
-            auto p = parent_[nid];
-            if (p != NULL_NODE)
-                queue.push_back(p);
+            const bool is_v2 = (version == 2);
+            std::uint32_t num_nodes;
+            std::memcpy(&num_nodes, &buf[pos], 4);
+            pos += 4;
+
+            auto read_column = [&buf, &pos](auto& col) {
+                using T = typename std::remove_reference<decltype(col)>::type::value_type;
+                std::uint32_t count;
+                std::memcpy(&count, &buf[pos], 4);
+                pos += 4;
+                col.resize(count);
+                // Issue #219: GapBuffer's `data()` is not contiguous
+                // when the gap is in the middle. compact() moves the
+                // gap to the end so data() returns a contiguous
+                // pointer. For pmr::vector this is a no-op (the
+                // compiler optimizes it away for trivial types).
+                if constexpr (requires { col.compact(); }) {
+                    col.compact();
+                }
+                if (count > 0) {
+                    std::memcpy(col.data(), &buf[pos], count * sizeof(T));
+                    pos += count * sizeof(T);
+                }
+            };
+            read_column(ast.tag_);
+            read_column(ast.int_val_);
+            read_column(ast.float_val_);
+            read_column(ast.sym_id_);
+            // Issue #220: read the per-node children columns and
+            // populate ast.children_ from them. The legacy
+            // child_begin_/child_count_/child_data_ columns are
+            // gone (the children_ field is the new source of
+            // truth, populated by all add_X methods).
+            {
+                std::vector<std::uint32_t> child_counts;
+                read_column(child_counts);
+                std::vector<NodeId> flat_children;
+                read_column(flat_children);
+                ast.children_.resize(num_nodes);
+                std::size_t offset = 0;
+                for (NodeId i = 0; i < num_nodes; ++i) {
+                    auto count = child_counts[i];
+                    // Issue #221: build each per-node PCV from the
+                    // flat column via the range constructor.
+                    ast.children_[i] = PersistentChildVector<NodeId>(
+                        flat_children.begin() + offset, flat_children.begin() + offset + count);
+                    offset += count;
+                }
+            }
+            read_column(ast.parent_);
+            read_column(ast.param_begin_);
+            read_column(ast.param_count_);
+            read_column(ast.cap_require_count_);
+            read_column(ast.param_data_);
+            read_column(ast.param_annot_data_);
+            read_column(ast.line_);
+            read_column(ast.col_);
+            read_column(ast.marker_);
+            read_column(ast.dirty_);
+            // Issue #437: verify_dirty_ column (u8 per node), written by
+            // serialize_soa since #437. Hand-built v1 fixtures must
+            // include it between dirty_ and type_id_.
+            read_column(ast.verify_dirty_);
+            read_column(ast.type_id_);
+            read_column(ast.error_kind_);
+            read_column(ast.value_cache_);
+            read_column(ast.node_first_mutation_);
+            read_column(ast.node_gen_);
+            std::memcpy(&ast.next_mutation_id_, &buf[pos], 4);
+            pos += 4;
+            std::memcpy(&ast.generation_, &buf[pos], 2);
+            pos += 2;
+            pos += 2; // reserved
+
+            if (is_v2) {
+                std::uint32_t log_count;
+                std::memcpy(&log_count, &buf[pos], 4);
+                pos += 4;
+                ast.mutation_log_.clear();
+                ast.mutation_log_.reserve(log_count);
+                for (std::uint32_t i = 0; i < log_count; ++i)
+                    ast.mutation_log_.push_back(mutation::wire_read_mutation_record(buf, pos));
+
+                std::uint32_t mi_count;
+                std::memcpy(&mi_count, &buf[pos], 4);
+                pos += 4;
+                ast.match_info_.resize(mi_count);
+                for (std::uint32_t i = 0; i < mi_count; ++i)
+                    ast.match_info_[i] = wire_read_match_clause_info(buf, pos);
+
+                wire_read_map_u32_u8(buf, pos, ast.region_by_sym_);
+                wire_read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
+                std::memcpy(&ast.root, &buf[pos], 4);
+                pos += 4;
+                // Issue #277: backward-compatible optional PPA dirty column.
+                if (pos + 4 <= buf.size()) {
+                    read_column(ast.ppa_dirty_);
+                }
+                // Issue #290: backward-compatible optional
+                // macro_dirty_ column. Appended after ppa_dirty_;
+                // older serialized blobs (pre-#290) stop here, so
+                // the guard `pos + 4 <= buf.size()` is sufficient.
+                if (pos + 4 <= buf.size()) {
+                    read_column(ast.macro_dirty_);
+                }
+            }
+            return ast;
         }
-        (void)truncated;
-        // Issue #471: track max traversal depth. The
-        // max-depth is the deepest BFS level reached in
-        // this call. Atomic max — CAS loop.
-        {
-            const std::uint64_t depth = touched;
-            std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
-            while (depth > cur) {
-                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+
+        // ── Marker access ─────────────────────────────────────────
+
+        void set_marker(NodeId id, SyntaxMarker m)
+            // Issue #144: markers are a hygiene signal used by
+            // query:pattern and mutate:replace-subtree (Issue #140,
+            // #142). A silent no-op on stale id would let a
+            // macro-introduced node appear user-written.
+            pre(id < marker_.size()) {
+            marker_[id] = m;
+        }
+        SyntaxMarker marker(NodeId id) const {
+            return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
+        }
+
+        // Issue #397: centralized hygiene check. Returns true iff
+        // the node at `id` was introduced by macro expansion (or by
+        // a structural transformation that respects the hygiene
+        // contract, such as mutate:extract-function). Out-of-bounds
+        // ids default to false (the marker() accessor returns User
+        // for those). Used by query:pattern + mutate:replace-subtree
+        // (and other primitives that need to distinguish user-written
+        // from macro-introduced code).
+        //
+        // Hygiene contract:
+        //   - MacroIntroduced nodes are query-visible (they appear
+        //     in (query:defines), (query:children), etc.) so the user
+        //     can introspect the expanded body.
+        //   - MacroIntroduced nodes are mutation-protected by default
+        //     (mutate:replace-subtree returns a hygiene error if you
+        //     try to overwrite one). This is provenance tracking +
+        //     hygiene, not full α-renaming at expansion time.
+        [[nodiscard]] bool is_macro_introduced(NodeId id) const noexcept {
+            return marker(id) == SyntaxMarker::MacroIntroduced;
+        }
+
+        // ── Dirty tracking (incremental compilation) ───────────────
+        //
+        // Issue #188: per-node dirty bitmask. The dirty_ column is
+        // repurposed as a bitmask where each bit represents a different
+        // reason for invalidation. This lets the type checker do
+        // *targeted* re-analysis (only re-run occurrence-narrowing when
+        // a predicate changed, only re-validate ownership when a Linear
+        // binding changed, etc.) instead of the coarse "re-infer
+        // everything dirty" pass.
+        //
+        // The old single-bit semantics are preserved: `is_dirty(id)` is
+        // `true` iff ANY bit is set, so existing callers see no behavior
+        // change. New callers can use `is_dirty_for(id, reason)` for
+        // targeted re-analysis.
+
+        // Issue #188: dirty-reason bits. Each can be OR'd together when
+        // a single mutation triggers multiple concerns. Bit 0 (kGeneral)
+        // is the backward-compatible "this node needs re-inference" bit.
+        enum DirtyReason : std::uint8_t {
+            kGeneralDirty = 0x01,    // node type must be re-inferred
+            kConstraintDirty = 0x02, // constraints involving this var changed
+            kOccurrenceDirty = 0x04, // occurrence-narrowing affected
+            kOwnershipDirty = 0x08,  // Linear/Move/Borrow state changed
+            kCoercionDirty = 0x10,   // deferred coercion needs re-apply
+            // Issue #262: infra dirty bits for precise incremental paths.
+            kStructDirty = 0x20,  // structural shape changed (children/parent)
+            kDefUseDirty = 0x40,  // def-use / caller graph may be stale
+            kPpaHintDirty = 0x80, // PPA-hint metadata needs refresh
+        };
+
+        // Issue #277: PPA-specific dirty bits stored in the orthogonal
+        // ppa_dirty_ column (DirtyReason uint8_t is full). Setting any
+        // PPA bit also ORs kPpaHintDirty on dirty_ for backward-compat
+        // with dirty:counts "ppa-hint" aggregation.
+        enum PpaDirtyReason : std::uint8_t {
+            kTimingDirty = 0x01, // timing closure stale
+            kPowerDirty = 0x02,  // power estimate stale
+            kAreaDirty = 0x04,   // area estimate stale
+            kBackendHint = 0x08, // Verilog/HW backend should re-emit
+        };
+
+        // Issue #277: OR PPA bits into ppa_dirty_ and mirror kPpaHintDirty
+        // on dirty_ so legacy dirty:counts aggregation stays accurate.
+        void apply_ppa_dirty_bits(NodeId id, std::uint8_t ppa_reasons) {
+            if (ppa_reasons == 0)
+                return;
+            if (id >= ppa_dirty_.size())
+                ppa_dirty_.resize(id + 1, 0);
+            ppa_dirty_[id] |= ppa_reasons;
+            mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty | kPpaHintDirty));
+        }
+
+        // Issue #437: verification-specific dirty bits stored in the
+        // orthogonal verify_dirty_ column. Setting any verify bit also
+        // ORs kGeneralDirty on dirty_ for backward-compat.
+        enum VerifyDirtyReason : std::uint8_t {
+            kAssertionDirty = 0x01,            // assertion failed
+            kCoverageDirty = 0x02,             // coverage hole detected
+            kSvaDirty = 0x04,                  // SVA property/sequence affected
+            kFormalCounterexampleDirty = 0x08, // formal proof counterexample
+        };
+
+        // Issue #469: verification_dirty_ enum (separate from
+        // VerifyDirtyReason so we can use 2 bits without
+        // collision with the #437 / #455 / #458 bits).
+        enum VerificationDirtyReason : std::uint8_t {
+            kCoverageFeedbackDirty = 0x01, // coverage hole from external tool
+            kAssertFailureDirty = 0x02,    // assertion failure from external tool
+        };
+
+        // Issue #437: OR verify bits into verify_dirty_ and mirror
+        // kGeneralDirty on dirty_ so legacy is_dirty() callers still
+        // see "this node needs work". The public definition is
+        // in the public section below.
+        // (No forward declaration needed; the public definition
+        //  at line ~775 is reachable from the dirty_observability
+        //  path via class-internal lookup.)
+
+        // Issue #469: OR verification bits into
+        // verification_dirty_ and mirror kGeneralDirty on dirty_.
+        // Defined in the public section below alongside the
+        // other Issue #437/469 accessors.
+
+        // Issue #188: mark a node dirty for one or more specific reasons.
+        // The `kGeneralDirty` bit is set automatically so existing
+        // is_dirty() callers still see "this node needs work".
+        //
+        // Issue #399: pre-reserve capacity for all the per-node
+        // "dirty" side-table columns (dirty_, ppa_dirty_,
+        // verify_dirty_, verification_dirty_, macro_dirty_) so
+        // that mark_dirty's resize() fallback is a no-op in the
+        // hot path. The automatic reserve in add_node keeps
+        // dirty_ in lockstep with tag_ for the normal growth
+        // path; this public helper lets external code (workspace
+        // bulk-loaders, snapshot/clone paths) reserve up-front
+        // for known-large ASTs without paying the amortized
+        // 2x reallocations.
+        //
+        // Idempotent: a second call with a smaller n is a no-op
+        // (std::vector::reserve only grows). The reservation is
+        // amortized O(1) across N add_node calls when called
+        // once with the final size.
+        void reserve_dirty(std::size_t n) noexcept {
+            dirty_.reserve(n);
+            ppa_dirty_.reserve(n);
+            verify_dirty_.reserve(n);
+            verification_dirty_.reserve(n);
+            macro_dirty_.reserve(n);
+        }
+
+        // Issue #302: pre-Contract added so a NodeId out-of-bounds for
+        // the current tag_ column is caught at the boundary instead of
+        // silently growing dirty_ to ~4G (which would happen for
+        // NULL_NODE = 0xFFFFFFFF on a 32-bit NodeId). Note: NULL_NODE
+        // is 0 by default for small ASTs (it can be redefined), so the
+        // contract catches genuine OOB like passing a stale NodeId from
+        // a released child.
+        void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) pre(id < tag_.size()) {
+            if (id >= dirty_.size())
+                dirty_.resize(id + 1, 0);
+            dirty_[id] |= reasons;
+            clear_cached_value(id); // invalidate result cache
+            // Issue #320: stamp the per-node epoch with the
+            // current mutation epoch (if known). The
+            // synthesize_flat cache will compare this against
+            // cache_epoch_ to decide per-node invalidation
+            // (follow-up wiring). For now (this PR is the
+            // foundation), the column is populated but not
+            // consulted.
+            //
+            // The mark_dirty signature doesn't take an
+            // explicit epoch (callers don't always have one
+            // handy). The stamp uses a separate helper
+            // stamp_last_seen_epoch() that the higher-level
+            // mark_dirty_upward() / typed_mutate paths call
+            // with the current global mutation_epoch_.
+            // Here we just bump the column by 1 from the
+            // previous value to give a "touched" signal for
+            // tests + introspection (the value isn't yet
+            // meaningful for the cache check; that's a
+            // follow-up).
+            if (id < last_seen_epoch_.size())
+                last_seen_epoch_[id] += 1;
+        }
+
+        // Issue #320: mark_dirty_for_reinfer helper.
+        // Combines mark_dirty + explicit epoch stamp. The
+        // caller passes the current global mutation_epoch_
+        // (from CompilerService::mutation_epoch_). The
+        // synthesize_flat cache check (follow-up wiring)
+        // will compare this against cache_epoch_ to decide
+        // per-node invalidation.
+        //
+        // For now (this PR is the foundation), this helper
+        // exists so typed_mutate / mark_dirty_upward can
+        // opt into the per-node epoch path when the global
+        // epoch is available. Callers that don't have the
+        // global epoch handy can fall back to plain
+        // mark_dirty (which still bumps the column by 1).
+        void mark_dirty_for_reinfer(NodeId id, std::uint64_t current_epoch) {
+            mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
+            stamp_last_seen_epoch(id, current_epoch);
+        }
+        void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty,
+                                std::uint8_t ppa_reasons = 0) {
+            mark_dirty(id, reasons);
+            apply_ppa_dirty_bits(id, ppa_reasons);
+            auto v = get(id);
+            for (auto c : v.children) {
+                if (c != NULL_NODE)
+                    mark_subtree_dirty(c, reasons, ppa_reasons);
+            }
+        }
+        // Issue #188: backward-compatible single-bit semantics — true if
+        // any dirty bit is set. The pre-#188 callers that asked "is this
+        // node dirty?" still get the right answer.
+        bool is_dirty(NodeId id) const {
+            return id < dirty_.size() && dirty_[id] != 0;
+        }
+
+        // Issue #337: flat views over SoA columns. C++23
+        // std::span gives a non-owning, bounds-checked
+        // view of contiguous memory; combined with
+        // std::views::zip (C++23), the caller can iterate
+        // multiple columns in lockstep without
+        // per-element overhead. The view is invalidated
+        // by any add_node / reset_all / push_back call
+        // (the underlying vector may reallocate); callers
+        // that hold a view across mutations should
+        // re-acquire it.
+        //
+        // The views are the foundation for the C++23
+        // modernization issue; concrete pass-level
+        // adoption (query:pattern, mark_dirty_upward_fast,
+        // IRFunctionSoA scans) is follow-up work.
+        [[nodiscard]] std::span<const std::uint8_t> dirty_view() const noexcept {
+            return std::span<const std::uint8_t>(dirty_.data(), dirty_.size());
+        }
+        [[nodiscard]] std::span<const std::uint8_t> ppa_dirty_view() const noexcept {
+            return std::span<const std::uint8_t>(ppa_dirty_.data(), ppa_dirty_.size());
+        }
+        // Issue #320: per-node epoch column view.
+        [[nodiscard]] std::span<const std::uint64_t> last_seen_epoch_view() const noexcept {
+            return std::span<const std::uint64_t>(last_seen_epoch_.data(), last_seen_epoch_.size());
+        }
+        // Issue #456: dirty column accessor (the main dirty_).
+        [[nodiscard]] std::span<const std::uint8_t> verify_dirty_view() const noexcept {
+            return std::span<const std::uint8_t>(verify_dirty_.data(), verify_dirty_.size());
+        }
+        [[nodiscard]] std::span<const std::uint8_t> verification_dirty_view() const noexcept {
+            return std::span<const std::uint8_t>(verification_dirty_.data(),
+                                                 verification_dirty_.size());
+        }
+
+        // Issue #346: mutation_log view (most-recent first).
+        // Non-owning span over the log. The vector grows
+        // unbounded (no eviction); for production runs
+        // with many mutations, the agent can sample via
+        // (query:mutations-since <last_id>) instead of
+        // walking the whole log.
+        [[nodiscard]] std::span<const MutationRecord> mutation_log_view() const noexcept {
+            return std::span<const MutationRecord>(mutation_log_.data(), mutation_log_.size());
+        }
+        // Issue #188: targeted check — true if a specific reason bit
+        // (or any of the bits in the reason mask) is set. Lets the type
+        // checker say "this node's occurrence narrowing is stale but
+        // ownership is fine" and re-narrow only.
+        bool is_dirty_for(NodeId id, std::uint8_t reason_mask) const {
+            return id < dirty_.size() && (dirty_[id] & reason_mask) != 0;
+        }
+        // Issue #188: return the full dirty bitmask (for diagnostics).
+        std::uint8_t dirty_reasons(NodeId id) const {
+            return id < dirty_.size() ? dirty_[id] : 0;
+        }
+        void clear_dirty(NodeId id) {
+            if (id < dirty_.size())
+                dirty_[id] = 0;
+        }
+        // Issue #188: clear specific reason bits (leaves others set).
+        // Used after a targeted re-analysis pass so the bit for the
+        // resolved concern is cleared but other stale reasons remain.
+        void clear_dirty_for(NodeId id, std::uint8_t reason_mask) {
+            if (id < dirty_.size())
+                dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
+        }
+        // Issue #188: read-only view of the dirty column for
+        // observability/aggregation. Used by the (dirty:counts)
+        // primitive to walk all nodes in O(n) without a per-node
+        // accessor call.
+        [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
+            return dirty_;
+        }
+        // Issue #277: PPA dirty accessors (orthogonal column).
+        void mark_ppa_dirty(NodeId id, std::uint8_t ppa_reasons) {
+            apply_ppa_dirty_bits(id, ppa_reasons);
+        }
+        bool is_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) const {
+            return id < ppa_dirty_.size() && (ppa_dirty_[id] & ppa_mask) != 0;
+        }
+        std::uint8_t ppa_dirty_reasons(NodeId id) const {
+            return id < ppa_dirty_.size() ? ppa_dirty_[id] : 0;
+        }
+        void clear_ppa_dirty(NodeId id) {
+            if (id < ppa_dirty_.size())
+                ppa_dirty_[id] = 0;
+        }
+        void clear_ppa_dirty_for(NodeId id, std::uint8_t ppa_mask) {
+            if (id < ppa_dirty_.size())
+                ppa_dirty_[id] &= static_cast<std::uint8_t>(~ppa_mask);
+        }
+        [[nodiscard]] const std::pmr::vector<std::uint8_t>& ppa_dirty_column() const noexcept {
+            return ppa_dirty_;
+        }
+        // Issue #190: read-only view of the marker column for
+        // observability/aggregation. Used by the (syntax-marker-counts)
+        // primitive to walk all nodes in O(n).
+        [[nodiscard]] const std::pmr::vector<SyntaxMarker>& marker_column() const noexcept {
+            return marker_;
+        }
+
+        // Issue #367: per-node provenance accessor + setter.
+        // provenance_id is an index into the FlatAST's own
+        // MarkerProvenanceTable (so it's per-FlatAST — no cross-AST
+        // lookup required). 0 means "no provenance recorded".
+        void set_provenance(NodeId id, std::uint32_t prov_id) noexcept {
+            if (id < provenance_.size())
+                provenance_[id] = prov_id;
+        }
+        [[nodiscard]] std::uint32_t provenance(NodeId id) const noexcept {
+            if (id >= provenance_.size())
+                return 0;
+            return provenance_[id];
+        }
+        [[nodiscard]] const std::pmr::vector<std::uint32_t>& provenance_column() const noexcept {
+            return provenance_;
+        }
+
+        // ── Node validation (NodeMeta invariants) ─────────────────
+        // Checks a single node against its NodeMeta invariants.
+        // Returns a description of the first violation, or empty string if valid.
+        // If fail_on_error is true, asserts on violation.
+        std::string validate_node(NodeId id, bool fail_on_error = true) const;
+
+        // Validate all nodes in the FlatAST. Returns total violations found.
+        // If fail_on_error is true, asserts on first violation.
+        std::size_t validate_all_nodes(bool fail_on_error = true) const;
+
+        // Validation note type (for non-fatal reporting)
+        struct ValidationError {
+            NodeId node;
+            std::string message;
+            std::string expected;
+            std::string actual;
+        };
+        // Validate all nodes, populating errors vector instead of asserting.
+        std::size_t validate_all_nodes(std::vector<ValidationError> & errors) const;
+
+        // Issue #263: post-restore consistency check. Verifies generation_
+        // / node_gen_ alignment, parent/child bidirectional integrity, and
+        // that all child spans reference live nodes. Populates `errors` when
+        // non-null. Returns violation count (0 = consistent).
+        [[nodiscard]] PostRestoreReport validate_post_restore(std::vector<ValidationError>* errors =
+                                                                  nullptr) const;
+
+        // ── Value result cache (for incremental eval) ────────────
+        // Stores the last EvalValue result for each node.
+        // kNotCached = not yet evaluated or cache invalidated.
+        // When a node is marked dirty, its cache is cleared automatically.
+        static constexpr std::int64_t kNotCached = 0x7FFFFFFFFFFFFFFFLL; // INT64_MAX as sentinel
+        std::int64_t get_cached_value(NodeId id) const {
+            return id < static_cast<NodeId>(value_cache_.size()) ? value_cache_[id] : kNotCached;
+        }
+        void set_cached_value(NodeId id, std::int64_t val) {
+            if (id >= static_cast<NodeId>(value_cache_.size()))
+                value_cache_.resize(static_cast<std::size_t>(id) + 1, kNotCached);
+            value_cache_[id] = val;
+        }
+        void clear_cached_value(NodeId id) {
+            if (id < static_cast<NodeId>(value_cache_.size()))
+                value_cache_[id] = kNotCached;
+        }
+
+        // ── Match clause metadata ────────────────────────────────
+        void set_match_info(NodeId id, MatchClauseInfo info) {
+            if (id >= match_info_.size())
+                match_info_.resize(id + 1);
+            match_info_[id] = std::move(info);
+        }
+        bool has_match_info(NodeId id) const {
+            if (id >= match_info_.size())
+                return false;
+            const auto& mi = match_info_[id];
+            return !mi.used_constructors.empty() || !mi.candidate_constructors.empty() ||
+                   mi.has_wildcard;
+        }
+        const MatchClauseInfo* get_match_info(NodeId id) const {
+            if (!has_match_info(id))
+                return nullptr;
+            return &match_info_[id];
+        }
+        // Propagate dirty upward: mark this node AND all ancestors dirty
+        // Uses parent_ SoA column for O(depth) traversal (iterative, no recursion)
+        // Issue #188: optional `reasons` parameter propagates the bitmask
+        // from the leaf to all ancestors. Default is kGeneralDirty for
+        // backward compatibility with the 30+ callers that don't yet
+        // classify their mutations.
+        // Issue #1251: production bounds for dirty propagation under
+        // large-scale AI multi-round editing. Configurable via these
+        // constants; Agent can observe truncations via counters.
+        static constexpr std::uint64_t kMarkDirtyMaxDepth = 64;
+        static constexpr std::uint64_t kMarkDirtyCountThreshold = 4096;
+
+        void mark_dirty_upward(const NodeId id, std::uint8_t reasons = kGeneralDirty,
+                               std::uint8_t ppa_reasons = 0)
+            // Issue #273: node must be in-bounds; NULL_NODE would resize dirty_ to ~4G.
+            pre(id < tag_.size()) {
+            // Issue #256: bump the call counter + track total nodes
+            // touched. The ratio (total_nodes / call_count) gives
+            // the average dirty-propagation depth per mutation —
+            // the key metric for whether the std::meta refactor is
+            // worth it.
+            mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #693: SV structural / SVA feedback nodes propagate
+            // verify_dirty_ upward for targeted sv_ir re-emit hints.
+            bool propagate_sva_verify = false;
+            if (id < tag_.size()) {
+                const auto src_tag = tag_[id];
+                propagate_sva_verify =
+                    (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
+                     src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
+                     src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
+                     src_tag == NodeTag::Coverpoint || src_tag == NodeTag::Constraint ||
+                     src_tag == NodeTag::Class);
+            }
+            if (!propagate_sva_verify && id < verify_dirty_.size())
+                propagate_sva_verify = (verify_dirty_[id] & kSvaDirty) != 0;
+            std::uint64_t touched = 0;
+            bool truncated = false;
+            std::deque<NodeId> queue;
+            queue.push_back(id);
+            while (!queue.empty()) {
+                // Issue #1251: bound depth/count to avoid p99 latency spikes
+                // on pathological parent chains / SoC-scale ASTs.
+                if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
+                    truncated = true;
+                    mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
+                    // Still stamp the current chain top so Define-level
+                    // subtree_gen consumers observe invalidation.
+                    if (!queue.empty()) {
+                        auto top = queue.front();
+                        mark_dirty(top, reasons);
+                        if (top < tag_.size())
+                            bump_generation_subtree(top);
+                    }
                     break;
-            }
-        }
-        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
-        // Issue #547: mark the tag_arity_index dirty so the
-        // next (query:pattern) call knows to rebuild (or
-        // patch) the index. mark_tag_arity_index_dirty()
-        // bumps the dirty_marks counter (stats).
-        mark_tag_arity_index_dirty();
-        // Issue #412: bump the type cache generation. Every
-        // mark_dirty_upward() call invalidates ALL cached
-        // type_id_ entries (they were computed against an
-        // older binding/predicate context). Cache entries
-        // captured at the current gen will be re-checked
-        // on the next hit and recomputed if the gen
-        // diverges. See set_type_with_gen() and
-        // synthesize_flat()'s cache hit path.
-        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #412 follow-up #1: per-binding gen. If the
-        // target node is a binding (Define/Let/LetRec)
-        // with a valid sym_id, bump THAT binding's gen
-        // (not just the global gen). This is the
-        // per-binding granular invalidation signal: the
-        // global gen invalidates ALL cache entries (over-
-        // invalidating), the per-binding gen only
-        // invalidates cache entries that depend on this
-        // specific binding. For non-binding targets (sub-
-        // expression mutations), only the global gen
-        // bumps (no binding to bump).
-        if (id < tag_.size()) {
-            auto tgv = get(id);
-            if ((tgv.tag == NodeTag::Define || tgv.tag == NodeTag::Let ||
-                 tgv.tag == NodeTag::LetRec) &&
-                tgv.sym_id != INVALID_SYM) {
-                bump_binding_gen(tgv.sym_id);
-                // Issue #413: record the (mutation_id,
-                // SymId) pair so users can trace
-                // invalidation back to the mutation.
-                // The most recent mutation_id is
-                // next_mutation_id_ - 1 (the counter
-                // was bumped in add_mutation / add_subtree
-                // before mark_dirty_upward was called).
-                if (next_mutation_id_ > 1) {
-                    const std::uint64_t mid = next_mutation_id_ - 1;
-                    invalidation_trace_.push_back({
-                        .sym = tgv.sym_id,
-                        .mutation_id = mid,
-                        .binding_gen_at_bump = binding_gen(tgv.sym_id),
-                    });
-                    invalidation_trace_records_total_.fetch_add(1, std::memory_order_relaxed);
                 }
-            }
-        }
-        // Issue #639: invalidate narrowing provenance in the
-        // mutated subtree. Any mark_dirty_upward may affect
-        // predicate/if-context bindings downstream.
-        (void)invalidate_narrowings_in_subtree(
-            id, type_cache_generation_.load(std::memory_order_relaxed));
-    }
-
-    // Issue #336: optimized variant of mark_dirty_upward.
-    // Early-exits the upward walk when a parent already
-    // has the target reason bits set (leverages the
-    // bitmask as a fixed-point check). This is the
-    // "fine-grained" optimization the issue asks for:
-    // when the parent already has the bits, the BFS
-    // stops there (no need to mark the grandparent
-    // again — it inherits the bits through the parent
-    // anyway, since any analysis that checks
-    // `is_dirty_for(p, mask)` walks up via parent_).
-    //
-    // Win: in deep ASTs with many small mutations
-    // (common in AI self-modification loops), the
-    // average propagation depth drops because we don't
-    // re-mark ancestors that are already dirty for
-    // these reasons.
-    //
-    // The early-exit check uses the existing
-    // is_dirty_for(id, mask) which is a single
-    // 8-bit AND — much cheaper than the BFS step
-    // it skips (queue.push_back + pop_front + mark_dirty
-    // + apply_ppa_dirty_bits + per-call counter bump).
-    //
-    // The stats counter dirty_upward_fast_fixed_point_hits_
-    // tracks how many times the early-exit fired (for
-    // perf benchmarking). On workloads with lots of
-    // repeated small mutations in deep ASTs, this
-    // should fire often.
-    // Issue #1345: optional max_depth (-1 = default kMarkDirtyMaxDepth)
-    // and stop_at_boundary (Define/Interface/Module/Modport prune).
-    void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
-                                std::uint8_t ppa_reasons = 0, int max_depth = -1,
-                                bool stop_at_boundary = false) pre(id < tag_.size()) {
-        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
-        std::uint64_t touched = 0;
-        std::uint64_t fixed_point_hits = 0;
-        // max_depth < 0 → unlimited (must not silently use kMarkDirtyMaxDepth).
-        const bool limit_depth = max_depth >= 0;
-        const std::uint64_t depth_cap =
-            limit_depth ? static_cast<std::uint64_t>(max_depth) : UINT64_MAX;
-        std::deque<NodeId> queue;
-        queue.push_back(id);
-        while (!queue.empty()) {
-            if (limit_depth && touched >= depth_cap) {
-                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
-                break;
-            }
-            auto nid = queue.front();
-            queue.pop_front();
-            // Issue #336: if the node is already dirty
-            // for ALL the target reasons, skip the
-            // mark (the bitmask is idempotent under OR).
-            if (!is_dirty_for(nid, reasons)) {
+                auto nid = queue.front();
+                queue.pop_front();
                 mark_dirty(nid, reasons);
                 apply_ppa_dirty_bits(nid, ppa_reasons);
+                if (propagate_sva_verify)
+                    apply_verify_dirty_bits(nid, kSvaDirty);
                 ++touched;
+                auto p = parent_[nid];
+                if (p != NULL_NODE)
+                    queue.push_back(p);
             }
-            // Issue #1345: configurable boundary prune — stop
-            // ascending at module/interface/define roots so
-            // large SoC ASTs do not re-dirty the entire tree.
-            if (stop_at_boundary && nid < tag_.size()) {
-                const auto t = tag_[nid];
-                if (t == NodeTag::Define || t == NodeTag::Interface || t == NodeTag::DefineModule ||
-                    t == NodeTag::Modport) {
-                    mark_dirty_boundary_prune_count_.fetch_add(1, std::memory_order_relaxed);
-                    continue;
+            (void)truncated;
+            // Issue #471: track max traversal depth. The
+            // max-depth is the deepest BFS level reached in
+            // this call. Atomic max — CAS loop.
+            {
+                const std::uint64_t depth = touched;
+                std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
+                while (depth > cur) {
+                    if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+                        break;
                 }
             }
-            auto p = parent_[nid];
-            if (p == NULL_NODE)
-                continue;
-            // Issue #336: early-exit when the parent
-            // already has all the target reason bits
-            // set. The parent's parents will inherit
-            // the bits through it (any analysis that
-            // checks the parent will see "dirty for
-            // these reasons" and propagate further
-            // itself if needed).
-            if (is_dirty_for(p, reasons)) {
-                ++fixed_point_hits;
-                // Issue #471: also bump the lifetime
-                // mark_dirty_early_exit_count_ for
-                // (query:dirty-propagation-stats).
-                mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
-                continue;
+            mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+            // Issue #547: mark the tag_arity_index dirty so the
+            // next (query:pattern) call knows to rebuild (or
+            // patch) the index. mark_tag_arity_index_dirty()
+            // bumps the dirty_marks counter (stats).
+            mark_tag_arity_index_dirty();
+            // Issue #412: bump the type cache generation. Every
+            // mark_dirty_upward() call invalidates ALL cached
+            // type_id_ entries (they were computed against an
+            // older binding/predicate context). Cache entries
+            // captured at the current gen will be re-checked
+            // on the next hit and recomputed if the gen
+            // diverges. See set_type_with_gen() and
+            // synthesize_flat()'s cache hit path.
+            type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #412 follow-up #1: per-binding gen. If the
+            // target node is a binding (Define/Let/LetRec)
+            // with a valid sym_id, bump THAT binding's gen
+            // (not just the global gen). This is the
+            // per-binding granular invalidation signal: the
+            // global gen invalidates ALL cache entries (over-
+            // invalidating), the per-binding gen only
+            // invalidates cache entries that depend on this
+            // specific binding. For non-binding targets (sub-
+            // expression mutations), only the global gen
+            // bumps (no binding to bump).
+            if (id < tag_.size()) {
+                auto tgv = get(id);
+                if ((tgv.tag == NodeTag::Define || tgv.tag == NodeTag::Let ||
+                     tgv.tag == NodeTag::LetRec) &&
+                    tgv.sym_id != INVALID_SYM) {
+                    bump_binding_gen(tgv.sym_id);
+                    // Issue #413: record the (mutation_id,
+                    // SymId) pair so users can trace
+                    // invalidation back to the mutation.
+                    // The most recent mutation_id is
+                    // next_mutation_id_ - 1 (the counter
+                    // was bumped in add_mutation / add_subtree
+                    // before mark_dirty_upward was called).
+                    if (next_mutation_id_ > 1) {
+                        const std::uint64_t mid = next_mutation_id_ - 1;
+                        invalidation_trace_.push_back({
+                            .sym = tgv.sym_id,
+                            .mutation_id = mid,
+                            .binding_gen_at_bump = binding_gen(tgv.sym_id),
+                        });
+                        invalidation_trace_records_total_.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
             }
-            queue.push_back(p);
+            // Issue #639: invalidate narrowing provenance in the
+            // mutated subtree. Any mark_dirty_upward may affect
+            // predicate/if-context bindings downstream.
+            (void)invalidate_narrowings_in_subtree(
+                id, type_cache_generation_.load(std::memory_order_relaxed));
         }
-        // Issue #471: track max depth seen on fast path
-        // (same atomic max as the plain mark_dirty_upward).
-        {
-            const std::uint64_t depth = touched;
-            std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
-            while (depth > cur) {
-                if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+
+        // Issue #336: optimized variant of mark_dirty_upward.
+        // Early-exits the upward walk when a parent already
+        // has the target reason bits set (leverages the
+        // bitmask as a fixed-point check). This is the
+        // "fine-grained" optimization the issue asks for:
+        // when the parent already has the bits, the BFS
+        // stops there (no need to mark the grandparent
+        // again — it inherits the bits through the parent
+        // anyway, since any analysis that checks
+        // `is_dirty_for(p, mask)` walks up via parent_).
+        //
+        // Win: in deep ASTs with many small mutations
+        // (common in AI self-modification loops), the
+        // average propagation depth drops because we don't
+        // re-mark ancestors that are already dirty for
+        // these reasons.
+        //
+        // The early-exit check uses the existing
+        // is_dirty_for(id, mask) which is a single
+        // 8-bit AND — much cheaper than the BFS step
+        // it skips (queue.push_back + pop_front + mark_dirty
+        // + apply_ppa_dirty_bits + per-call counter bump).
+        //
+        // The stats counter dirty_upward_fast_fixed_point_hits_
+        // tracks how many times the early-exit fired (for
+        // perf benchmarking). On workloads with lots of
+        // repeated small mutations in deep ASTs, this
+        // should fire often.
+        // Issue #1345: optional max_depth (-1 = default kMarkDirtyMaxDepth)
+        // and stop_at_boundary (Define/Interface/Module/Modport prune).
+        void mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons = kGeneralDirty,
+                                    std::uint8_t ppa_reasons = 0, int max_depth = -1,
+                                    bool stop_at_boundary = false) pre(id < tag_.size()) {
+            mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+            std::uint64_t touched = 0;
+            std::uint64_t fixed_point_hits = 0;
+            // max_depth < 0 → unlimited (must not silently use kMarkDirtyMaxDepth).
+            const bool limit_depth = max_depth >= 0;
+            const std::uint64_t depth_cap =
+                limit_depth ? static_cast<std::uint64_t>(max_depth) : UINT64_MAX;
+            std::deque<NodeId> queue;
+            queue.push_back(id);
+            while (!queue.empty()) {
+                if (limit_depth && touched >= depth_cap) {
+                    mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
                     break;
+                }
+                auto nid = queue.front();
+                queue.pop_front();
+                // Issue #336: if the node is already dirty
+                // for ALL the target reasons, skip the
+                // mark (the bitmask is idempotent under OR).
+                if (!is_dirty_for(nid, reasons)) {
+                    mark_dirty(nid, reasons);
+                    apply_ppa_dirty_bits(nid, ppa_reasons);
+                    ++touched;
+                }
+                // Issue #1345: configurable boundary prune — stop
+                // ascending at module/interface/define roots so
+                // large SoC ASTs do not re-dirty the entire tree.
+                if (stop_at_boundary && nid < tag_.size()) {
+                    const auto t = tag_[nid];
+                    if (t == NodeTag::Define || t == NodeTag::Interface ||
+                        t == NodeTag::DefineModule || t == NodeTag::Modport) {
+                        mark_dirty_boundary_prune_count_.fetch_add(1, std::memory_order_relaxed);
+                        continue;
+                    }
+                }
+                auto p = parent_[nid];
+                if (p == NULL_NODE)
+                    continue;
+                // Issue #336: early-exit when the parent
+                // already has all the target reason bits
+                // set. The parent's parents will inherit
+                // the bits through it (any analysis that
+                // checks the parent will see "dirty for
+                // these reasons" and propagate further
+                // itself if needed).
+                if (is_dirty_for(p, reasons)) {
+                    ++fixed_point_hits;
+                    // Issue #471: also bump the lifetime
+                    // mark_dirty_early_exit_count_ for
+                    // (query:dirty-propagation-stats).
+                    mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                queue.push_back(p);
+            }
+            // Issue #471: track max depth seen on fast path
+            // (same atomic max as the plain mark_dirty_upward).
+            {
+                const std::uint64_t depth = touched;
+                std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
+                while (depth > cur) {
+                    if (mark_dirty_max_depth_observed_.compare_exchange_weak(cur, depth))
+                        break;
+                }
+            }
+            mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+            dirty_upward_fast_fixed_point_hits_.fetch_add(fixed_point_hits,
+                                                          std::memory_order_relaxed);
+            mark_tag_arity_index_dirty();
+            type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #336: clear specific bits on a node and
+        // all descendants. The pre-existing clear_dirty_for
+        // (line ~3747) handles the single-node case; this
+        // is the range variant for re-analysis passes
+        // that have already propagated the cleared bits'
+        // new value upward.
+        void clear_dirty_for_subtree(NodeId id, std::uint8_t reason_mask) {
+            if (id < dirty_.size())
+                dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
+            auto v = get(id);
+            for (auto c : v.children) {
+                if (c != NULL_NODE)
+                    clear_dirty_for_subtree(c, reason_mask);
             }
         }
-        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
-        dirty_upward_fast_fixed_point_hits_.fetch_add(fixed_point_hits, std::memory_order_relaxed);
-        mark_tag_arity_index_dirty();
-        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
-    }
 
-    // Issue #336: clear specific bits on a node and
-    // all descendants. The pre-existing clear_dirty_for
-    // (line ~3747) handles the single-node case; this
-    // is the range variant for re-analysis passes
-    // that have already propagated the cleared bits'
-    // new value upward.
-    void clear_dirty_for_subtree(NodeId id, std::uint8_t reason_mask) {
-        if (id < dirty_.size())
-            dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
-        auto v = get(id);
-        for (auto c : v.children) {
-            if (c != NULL_NODE)
-                clear_dirty_for_subtree(c, reason_mask);
+        // Issue #336: counter for the fast-path early-exit
+        // hits. Surfaced via (compile:dirty-fast-stats)
+        // for observability.
+        [[nodiscard]] std::uint64_t dirty_upward_fast_fixed_point_count() const noexcept {
+            return dirty_upward_fast_fixed_point_hits_.load(std::memory_order_relaxed);
         }
-    }
 
-    // Issue #336: counter for the fast-path early-exit
-    // hits. Surfaced via (compile:dirty-fast-stats)
-    // for observability.
-    [[nodiscard]] std::uint64_t dirty_upward_fast_fixed_point_count() const noexcept {
-        return dirty_upward_fast_fixed_point_hits_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
-    // Marks `id` and ancestors until (but not including) `stop_at`.
-    // If `stop_at` is NULL_NODE, behaves like mark_dirty_upward.
-    void mark_dirty_upward_until(NodeId id, std::uint8_t reasons, NodeId stop_at,
-                                 std::uint8_t ppa_reasons = 0) {
-        mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
-        std::uint64_t touched = 0;
-        auto cur = id;
-        while (cur != NULL_NODE && cur != stop_at) {
-            mark_dirty(cur, reasons);
-            apply_ppa_dirty_bits(cur, ppa_reasons);
-            ++touched;
-            cur = parent_[cur];
+        // Issue #262: propagate dirty upward but stop at `stop_at` (exclusive).
+        // Marks `id` and ancestors until (but not including) `stop_at`.
+        // If `stop_at` is NULL_NODE, behaves like mark_dirty_upward.
+        void mark_dirty_upward_until(NodeId id, std::uint8_t reasons, NodeId stop_at,
+                                     std::uint8_t ppa_reasons = 0) {
+            mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+            std::uint64_t touched = 0;
+            auto cur = id;
+            while (cur != NULL_NODE && cur != stop_at) {
+                mark_dirty(cur, reasons);
+                apply_ppa_dirty_bits(cur, ppa_reasons);
+                ++touched;
+                cur = parent_[cur];
+            }
+            mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+            // Issue #412: see mark_dirty_upward() for the rationale.
+            // Bump the type cache generation here too — the
+            // until-stop variant is used by structural mutations
+            // that want to invalidate the cache for a subtree
+            // but preserve ancestor caches (e.g., re-typing a
+            // single function body without re-typing its
+            // callers). Same gen bump as the unbounded variant.
+            type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
         }
-        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
-        // Issue #412: see mark_dirty_upward() for the rationale.
-        // Bump the type cache generation here too — the
-        // until-stop variant is used by structural mutations
-        // that want to invalidate the cache for a subtree
-        // but preserve ancestor caches (e.g., re-typing a
-        // single function body without re-typing its
-        // callers). Same gen bump as the unbounded variant.
-        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
-    }
 
-    // Issue #262: mark def-use entry nodes and propagate the combined
-    // reason mask (including kDefUseDirty) upward through ancestors.
-    // Used when a mutation affects a known set of caller/use sites.
-    void mark_dirty_defuse_entries(std::span<const NodeId> entries, std::uint8_t reasons,
-                                   std::uint8_t ppa_reasons = 0) {
-        auto combined = static_cast<std::uint8_t>(reasons | kDefUseDirty);
-        for (auto entry : entries) {
-            if (entry < size())
-                mark_dirty_upward(entry, combined, ppa_reasons);
+        // Issue #262: mark def-use entry nodes and propagate the combined
+        // reason mask (including kDefUseDirty) upward through ancestors.
+        // Used when a mutation affects a known set of caller/use sites.
+        void mark_dirty_defuse_entries(std::span<const NodeId> entries, std::uint8_t reasons,
+                                       std::uint8_t ppa_reasons = 0) {
+            auto combined = static_cast<std::uint8_t>(reasons | kDefUseDirty);
+            for (auto entry : entries) {
+                if (entry < size())
+                    mark_dirty_upward(entry, combined, ppa_reasons);
+            }
         }
-    }
 
-    // Check if any node in a subtree (including the root) is dirty
-    bool has_dirty_subtree(NodeId id) const {
-        if (is_dirty(id))
-            return true;
-        auto v = get(id);
-        for (auto c : v.children) {
-            if (c != NULL_NODE && has_dirty_subtree(c))
+        // Check if any node in a subtree (including the root) is dirty
+        bool has_dirty_subtree(NodeId id) const {
+            if (is_dirty(id))
                 return true;
+            auto v = get(id);
+            for (auto c : v.children) {
+                if (c != NULL_NODE && has_dirty_subtree(c))
+                    return true;
+            }
+            return false;
         }
-        return false;
-    }
 
-    void clear_all_dirty() {
-        std::fill(dirty_.begin(), dirty_.end(), 0);
-        std::fill(ppa_dirty_.begin(), ppa_dirty_.end(), 0);
-        // DO NOT clear value_cache_ here! The value cache persists across
-        // eval-current calls so that non-dirty subtrees keep their cached
-        // results. Only mark_dirty() (called on mutation) clears individual
-        // cache entries. This enables subtree-level incremental re-evaluation:
-        // after eval-current, the cache is populated. On the next call, clean
-        // nodes return cached results immediately (see eval_flat cache check).
-        // When a mutation marks nodes dirty, their cache entries are cleared
-        // by mark_dirty() → clear_cached_value().
-    }
+        void clear_all_dirty() {
+            std::fill(dirty_.begin(), dirty_.end(), 0);
+            std::fill(ppa_dirty_.begin(), ppa_dirty_.end(), 0);
+            // DO NOT clear value_cache_ here! The value cache persists across
+            // eval-current calls so that non-dirty subtrees keep their cached
+            // results. Only mark_dirty() (called on mutation) clears individual
+            // cache entries. This enables subtree-level incremental re-evaluation:
+            // after eval-current, the cache is populated. On the next call, clean
+            // nodes return cached results immediately (see eval_flat cache check).
+            // When a mutation marks nodes dirty, their cache entries are cleared
+            // by mark_dirty() → clear_cached_value().
+        }
 
-    // ── Mutation audit ──────────────────────────────────────────
+        // ── Mutation audit ──────────────────────────────────────────
 
-    // Issue #1419: compound provenance context stamped into every
-    // new MutationRecord. 0 = system / no parent / no composite
-    // (backward compatible with pre-#1412 records). Set by
-    // Evaluator::set_current_agent_fingerprint and
-    // TypedTransactionGuard for atomic multi-mutate.
-    void set_mutation_author_fingerprint(std::uint64_t fp) noexcept {
-        mutation_author_fingerprint_ = fp;
-    }
-    [[nodiscard]] std::uint64_t mutation_author_fingerprint() const noexcept {
-        return mutation_author_fingerprint_;
-    }
-    void set_mutation_parent_mutation_id(std::uint64_t id) noexcept {
-        mutation_parent_mutation_id_ = id;
-    }
-    [[nodiscard]] std::uint64_t mutation_parent_mutation_id() const noexcept {
-        return mutation_parent_mutation_id_;
-    }
-    void set_mutation_composite_transaction_id(std::uint64_t id) noexcept {
-        mutation_composite_transaction_id_ = id;
-    }
-    [[nodiscard]] std::uint64_t mutation_composite_transaction_id() const noexcept {
-        return mutation_composite_transaction_id_;
-    }
+        // Issue #1419: compound provenance context stamped into every
+        // new MutationRecord. 0 = system / no parent / no composite
+        // (backward compatible with pre-#1412 records). Set by
+        // Evaluator::set_current_agent_fingerprint and
+        // TypedTransactionGuard for atomic multi-mutate.
+        void set_mutation_author_fingerprint(std::uint64_t fp) noexcept {
+            mutation_author_fingerprint_ = fp;
+        }
+        [[nodiscard]] std::uint64_t mutation_author_fingerprint() const noexcept {
+            return mutation_author_fingerprint_;
+        }
+        void set_mutation_parent_mutation_id(std::uint64_t id) noexcept {
+            mutation_parent_mutation_id_ = id;
+        }
+        [[nodiscard]] std::uint64_t mutation_parent_mutation_id() const noexcept {
+            return mutation_parent_mutation_id_;
+        }
+        void set_mutation_composite_transaction_id(std::uint64_t id) noexcept {
+            mutation_composite_transaction_id_ = id;
+        }
+        [[nodiscard]] std::uint64_t mutation_composite_transaction_id() const noexcept {
+            return mutation_composite_transaction_id_;
+        }
 
-    // Record a mutation on a node. Returns the mutation_id.
-    std::uint64_t add_mutation(NodeId node, std::string_view op_name, std::string_view old_type,
-                               std::string_view new_type, std::string_view summary,
-                               MutationStatus status = MutationStatus::Committed) {
-        return add_mutation_with_rollback(node, op_name, old_type, new_type, summary, status, 0, 0,
-                                          0, false);
-    }
+        // Record a mutation on a node. Returns the mutation_id.
+        std::uint64_t add_mutation(NodeId node, std::string_view op_name, std::string_view old_type,
+                                   std::string_view new_type, std::string_view summary,
+                                   MutationStatus status = MutationStatus::Committed) {
+            return add_mutation_with_rollback(node, op_name, old_type, new_type, summary, status, 0,
+                                              0, 0, false);
+        }
 
-    // Record a mutation with rollback data (field_offset + old/new_value)
-    std::uint64_t add_mutation_with_rollback(const NodeId node, std::string_view op_name,
-                                             std::string_view old_type, std::string_view new_type,
-                                             std::string_view summary, MutationStatus status,
-                                             std::uint32_t field_offset, std::uint64_t old_value,
-                                             std::uint64_t new_value, bool has_rollback)
-        pre(node < tag_.size()) post(r : r >= 1) {
-        const std::uint64_t mid = next_mutation_id_++;
-        // Issue #1355: under render lightweight checkpoint, field-level
-        // records go to a side stack (not mutation_log_) so hot-path
-        // frames do not inflate the durable log.
-        if (render_lightweight_active_ && has_rollback && !lightweight_frames_.empty()) {
-            MutationRecord rec = mutation::create_mutation_record({
+        // Record a mutation with rollback data (field_offset + old/new_value)
+        std::uint64_t add_mutation_with_rollback(
+            const NodeId node, std::string_view op_name, std::string_view old_type,
+            std::string_view new_type, std::string_view summary, MutationStatus status,
+            std::uint32_t field_offset, std::uint64_t old_value, std::uint64_t new_value,
+            bool has_rollback) pre(node < tag_.size()) post(r : r >= 1) {
+            const std::uint64_t mid = next_mutation_id_++;
+            // Issue #1355: under render lightweight checkpoint, field-level
+            // records go to a side stack (not mutation_log_) so hot-path
+            // frames do not inflate the durable log.
+            if (render_lightweight_active_ && has_rollback && !lightweight_frames_.empty()) {
+                MutationRecord rec = mutation::create_mutation_record({
+                    .mutation_id = mid,
+                    .target_node = node,
+                    .operator_name = op_name,
+                    .old_type_str = old_type,
+                    .new_type_str = new_type,
+                    .summary = summary,
+                    .status = status,
+                    .field_offset = field_offset,
+                    .old_value = old_value,
+                    .new_value = new_value,
+                    .has_rollback_data = has_rollback,
+                    .author_fingerprint = mutation_author_fingerprint_,
+                    .parent_mutation_id = mutation_parent_mutation_id_,
+                    .composite_transaction_id = mutation_composite_transaction_id_,
+                });
+                lightweight_frames_.back().push_back(std::move(rec));
+                lightweight_records_total_.fetch_add(1, std::memory_order_relaxed);
+                mark_dirty_upward(node);
+                return mid;
+            }
+            mutation_log_.push_back(mutation::create_mutation_record({
                 .mutation_id = mid,
                 .target_node = node,
                 .operator_name = op_name,
@@ -5195,1974 +5296,1992 @@ public:
                 .author_fingerprint = mutation_author_fingerprint_,
                 .parent_mutation_id = mutation_parent_mutation_id_,
                 .composite_transaction_id = mutation_composite_transaction_id_,
-            });
-            lightweight_frames_.back().push_back(std::move(rec));
-            lightweight_records_total_.fetch_add(1, std::memory_order_relaxed);
+            }));
             mark_dirty_upward(node);
+            if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
+                node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
+            // Issue #1362: auto-compact committed prefix when log is huge
+            maybe_auto_compact_mutation_log();
             return mid;
         }
-        mutation_log_.push_back(mutation::create_mutation_record({
-            .mutation_id = mid,
-            .target_node = node,
-            .operator_name = op_name,
-            .old_type_str = old_type,
-            .new_type_str = new_type,
-            .summary = summary,
-            .status = status,
-            .field_offset = field_offset,
-            .old_value = old_value,
-            .new_value = new_value,
-            .has_rollback_data = has_rollback,
-            .author_fingerprint = mutation_author_fingerprint_,
-            .parent_mutation_id = mutation_parent_mutation_id_,
-            .composite_transaction_id = mutation_composite_transaction_id_,
-        }));
-        mark_dirty_upward(node);
-        if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
-            node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
-        // Issue #1362: auto-compact committed prefix when log is huge
-        maybe_auto_compact_mutation_log();
-        return mid;
-    }
 
-    // ── Issue #1355: render hot-path lightweight checkpoints ──
-    void begin_render_lightweight_checkpoint() noexcept {
-        lightweight_frames_.emplace_back();
-        render_lightweight_active_ = true;
-        lightweight_total_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    void commit_render_lightweight_checkpoint() noexcept {
-        if (lightweight_frames_.empty()) {
-            render_lightweight_active_ = false;
-            return;
+        // ── Issue #1355: render hot-path lightweight checkpoints ──
+        void begin_render_lightweight_checkpoint() noexcept {
+            lightweight_frames_.emplace_back();
+            render_lightweight_active_ = true;
+            lightweight_total_.fetch_add(1, std::memory_order_relaxed);
         }
-        lightweight_frames_.pop_back(); // discard side log (committed)
-        render_lightweight_active_ = !lightweight_frames_.empty();
-        lightweight_commit_total_.fetch_add(1, std::memory_order_relaxed);
-    }
 
-    // Roll back field mutations stored in the current lightweight frame.
-    std::size_t rollback_render_lightweight_checkpoint() noexcept {
-        if (lightweight_frames_.empty()) {
-            render_lightweight_active_ = false;
-            return 0;
+        void commit_render_lightweight_checkpoint() noexcept {
+            if (lightweight_frames_.empty()) {
+                render_lightweight_active_ = false;
+                return;
+            }
+            lightweight_frames_.pop_back(); // discard side log (committed)
+            render_lightweight_active_ = !lightweight_frames_.empty();
+            lightweight_commit_total_.fetch_add(1, std::memory_order_relaxed);
         }
-        auto& frame = lightweight_frames_.back();
-        std::size_t count = 0;
-        const bool prev_defer = defer_rollback_restamp_;
-        defer_rollback_restamp_ = true;
-        for (auto it = frame.rbegin(); it != frame.rend(); ++it) {
-            if (it->status != MutationStatus::Committed)
-                continue;
-            if (try_rollback_record(*it).has_value())
-                ++count;
+
+        // Roll back field mutations stored in the current lightweight frame.
+        std::size_t rollback_render_lightweight_checkpoint() noexcept {
+            if (lightweight_frames_.empty()) {
+                render_lightweight_active_ = false;
+                return 0;
+            }
+            auto& frame = lightweight_frames_.back();
+            std::size_t count = 0;
+            const bool prev_defer = defer_rollback_restamp_;
+            defer_rollback_restamp_ = true;
+            for (auto it = frame.rbegin(); it != frame.rend(); ++it) {
+                if (it->status != MutationStatus::Committed)
+                    continue;
+                if (try_rollback_record(*it).has_value())
+                    ++count;
+            }
+            defer_rollback_restamp_ = prev_defer;
+            if (count > 0)
+                restamp_all_node_generations();
+            lightweight_frames_.pop_back();
+            render_lightweight_active_ = !lightweight_frames_.empty();
+            lightweight_rollback_total_.fetch_add(1, std::memory_order_relaxed);
+            return count;
         }
-        defer_rollback_restamp_ = prev_defer;
-        if (count > 0)
-            restamp_all_node_generations();
-        lightweight_frames_.pop_back();
-        render_lightweight_active_ = !lightweight_frames_.empty();
-        lightweight_rollback_total_.fetch_add(1, std::memory_order_relaxed);
-        return count;
-    }
 
-    // Commit all nested lightweight frames (frame boundary auto-commit).
-    std::size_t commit_all_render_lightweight_checkpoints() noexcept {
-        std::size_t n = 0;
-        while (!lightweight_frames_.empty()) {
-            commit_render_lightweight_checkpoint();
-            ++n;
-        }
-        return n;
-    }
-
-    [[nodiscard]] bool render_lightweight_active() const noexcept {
-        return render_lightweight_active_;
-    }
-    [[nodiscard]] std::size_t render_lightweight_depth() const noexcept {
-        return lightweight_frames_.size();
-    }
-    [[nodiscard]] std::uint64_t lightweight_total() const noexcept {
-        return lightweight_total_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t lightweight_commit_total() const noexcept {
-        return lightweight_commit_total_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t lightweight_rollback_total() const noexcept {
-        return lightweight_rollback_total_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t lightweight_records_total() const noexcept {
-        return lightweight_records_total_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #142: record a subtree-level mutation (e.g. mutate:replace-subtree).
-    // The target_node here is the NEW subtree's root. The old_subtree_source is
-    // kept verbatim so rollback can re-parse and re-attach without needing
-    // a generation-aware node lookup.
-    std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
-                                       std::uint32_t child_idx, std::string_view old_subtree_source,
-                                       std::string_view op_name, std::string_view summary) {
-        const std::uint64_t mid = next_mutation_id_++;
-        mutation_log_.push_back(mutation::create_subtree_mutation_record({
-            .mutation_id = mid,
-            .target_node = target_node,
-            .parent_id = parent_id,
-            .child_idx = child_idx,
-            .old_subtree_source = old_subtree_source,
-            .operator_name = op_name,
-            .summary = summary,
-            .author_fingerprint = mutation_author_fingerprint_,
-            .parent_mutation_id = mutation_parent_mutation_id_,
-            .composite_transaction_id = mutation_composite_transaction_id_,
-        }));
-        if (target_node != NULL_NODE)
-            mark_dirty_upward(target_node);
-        if (parent_id != NULL_NODE)
-            mark_dirty_upward(parent_id);
-        if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0)
-            node_first_mutation_[target_node] = static_cast<std::uint32_t>(mutation_log_.size());
-        // Issue #1362: auto-compact committed prefix when log is huge
-        maybe_auto_compact_mutation_log();
-        return mid;
-    }
-
-    // Issue #222 slice 2/3: record a structural child-list mutation
-    // (set_child / insert_child / remove_child). Captures parent,
-    // child_idx, old child NodeId, new child NodeId. Rollback is via
-    // the #221 children_snapshot (capture in the #177 MutationCheckpoint)
-    // + rollback_to_size on the mutation log; has_rollback=true signals
-    // that the caller has set up a snapshot for rollback.
-    //
-    // Calls mark_dirty_upward(parent) so the parent + ancestors are
-    // marked dirty for incremental re-eval (#148) / dirty-aware
-    // caching (#188). The "structural-" prefix on op_name distinguishes
-    // these from typed_mutate's "replace-type" / "replace-value" kinds.
-    std::uint64_t add_mutation_child_op(NodeId parent, std::uint32_t child_idx, NodeId old_child,
-                                        NodeId new_child, std::string_view op_name) {
-        return add_mutation_with_rollback(
-            parent, op_name, "", "", op_name, MutationStatus::Committed, child_idx,
-            static_cast<std::uint64_t>(old_child), static_cast<std::uint64_t>(new_child),
-            /*has_rollback=*/true);
-    }
-
-    // Issue #369: convenience wrapper for Aura-level mutate
-    // primitives that mutate the children_ column. Remaps the
-    // wrapper-op name (e.g. "remove-node") to a canonical
-    // "structural-X-child" name so that
-    // try_rollback_structural_child_op (which dispatches on the
-    // canonical name) can roll back the children_ SoA column.
-    // Wrapper primitives should prefer this over flat.add_mutation()
-    // for any op that modifies the children_ column.
-    std::uint64_t add_structural_mutation_log_entry(NodeId parent, std::uint32_t child_idx,
-                                                    NodeId old_child, NodeId new_child,
-                                                    std::string_view op_name) {
-        std::string canonical;
-        if (op_name == "remove-node" || op_name == "remove-child" ||
-            op_name == "structural-remove-child")
-            canonical = "structural-remove-child";
-        else if (op_name == "insert-child" || op_name == "structural-insert-child")
-            canonical = "structural-insert-child";
-        else if (op_name == "set-body" || op_name == "set-child" ||
-                 op_name == "structural-set-child")
-            canonical = "structural-set-child";
-        else
-            canonical = std::string(
-                op_name); // pass through; try_rollback_structural_child_op may still skip
-        return add_mutation_child_op(parent, child_idx, old_child, new_child, canonical);
-    }
-
-    // Get mutation history for a specific node (0 == no history)
-    // Get mutation history for a specific node (filters from log, O(n) in log size)
-    std::pmr::vector<MutationRecord> mutation_history(NodeId node) const {
-        std::pmr::vector<MutationRecord> result;
-        for (auto& rec : mutation_log_) {
-            if (rec.target_node == node)
-                result.push_back(rec);
-        }
-        return result;
-    }
-
-    // Total number of mutations recorded
-    std::size_t mutation_count() const { return mutation_log_.size(); }
-
-    // Issue #1408: Count of mutations that are still Committed (i.e.
-    // not yet RolledBack). The mutation_log_ retains RolledBack records
-    // for audit (see Issue #1301 follow-up `mutation_log_compacted_records_`),
-    // so the raw mutation_count() is not a useful "how many effects
-    // are currently applied" metric. Use this for atomic-multi-mutate
-    // tests that need to verify "0 new committed mutations" after a
-    // TypedTransactionGuard dtor rollback.
-    std::size_t committed_mutation_count() const {
-        std::size_t n = 0;
-        for (const auto& rec : mutation_log_) {
-            if (rec.status == MutationStatus::Committed)
+        // Commit all nested lightweight frames (frame boundary auto-commit).
+        std::size_t commit_all_render_lightweight_checkpoints() noexcept {
+            std::size_t n = 0;
+            while (!lightweight_frames_.empty()) {
+                commit_render_lightweight_checkpoint();
                 ++n;
+            }
+            return n;
         }
-        return n;
-    }
 
-    // Issue #1408: Physically erase all mutation records with
-    // mutation_id >= since_id from the log. Used by TypedTransactionGuard's
-    // dtor to implement strict atomic-batch rollback: even when
-    // try_rollback_record() can't undo some ops (pre-#1441 rebind lacked
-    // rollback data), this method removes the record from the log so the
-    // "0 applied" AC holds (committed_mutation_count() returns to its
-    // pre-batch value). Issue #1441: rebind now has try_rollback_rebind_op
-    // so Phase-1 rollback restores Define bodies when has_rollback_data.
-    //
-    // next_mutation_id_ is NOT reset here (it's monotonically increasing
-    // within a session; resetting it could break other holders of the
-    // higher ids).
-    //
-    // Returns the number of records erased.
-    std::size_t erase_mutations_since(std::uint64_t since_id) {
-        const auto old_size = mutation_log_.size();
-        mutation_log_.erase(std::remove_if(mutation_log_.begin(), mutation_log_.end(),
-                                           [since_id](const MutationRecord& r) {
-                                               return r.mutation_id >= since_id;
-                                           }),
-                            mutation_log_.end());
-        return old_size - mutation_log_.size();
-    }
-    std::uint64_t next_mutation_id() const { return next_mutation_id_; }
-
-    // Get all mutation records (unfiltered).
-    const std::pmr::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
-    std::pmr::vector<MutationRecord>& all_mutations() { return mutation_log_; }
-
-    // Issue #282: Occurrence Typing provenance accessors.
-    // narrowing_log_ is captured at synthesize_flat_if time
-    // (see type_checker_impl.cpp). Same lifecycle as
-    // mutation_log_: cleared on FlatAST reset, persists
-    // across typecheck cycles within a generation.
-    std::size_t narrowing_count() const { return narrowing_log_.size(); }
-    const std::pmr::vector<NarrowingRecord>& all_narrowings() const { return narrowing_log_; }
-    std::pmr::vector<NarrowingRecord>& all_narrowings() { return narrowing_log_; }
-    // Issue #282: append a new narrowing record. Called from
-    // type_checker_impl.cpp's synthesize_flat_if after a
-    // successful Occurrence Typing refinement. Monotonic
-    // record_id for ordering.
-    void record_narrowing(NarrowingRecord rec) {
-        rec.record_id = narrowing_log_.size() + 1;
-        narrowing_log_.push_back(std::move(rec));
-    }
-
-    // Issue #639: mark narrowing records stale when a mutation
-    // affects their if/cond subtree or capture_epoch is behind
-    // the current type-cache generation.
-    std::size_t invalidate_narrowings_in_subtree(NodeId root, std::uint64_t current_epoch) {
-        if (root == NULL_NODE || root >= tag_.size())
-            return 0;
-        std::unordered_set<NodeId> in_subtree;
-        std::vector<NodeId> stack;
-        stack.push_back(root);
-        while (!stack.empty()) {
-            const auto id = stack.back();
-            stack.pop_back();
-            if (id == NULL_NODE || id >= tag_.size())
-                continue;
-            if (!in_subtree.insert(id).second)
-                continue;
-            const auto v = get(id);
-            for (auto c : v.children)
-                stack.push_back(c);
+        [[nodiscard]] bool render_lightweight_active() const noexcept {
+            return render_lightweight_active_;
         }
-        std::size_t count = 0;
-        for (auto& rec : narrowing_log_) {
-            if (rec.stale)
-                continue;
-            if (in_subtree.count(rec.if_node) || in_subtree.count(rec.cond_node) ||
-                rec.capture_epoch < current_epoch) {
-                rec.stale = true;
-                ++count;
+        [[nodiscard]] std::size_t render_lightweight_depth() const noexcept {
+            return lightweight_frames_.size();
+        }
+        [[nodiscard]] std::uint64_t lightweight_total() const noexcept {
+            return lightweight_total_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t lightweight_commit_total() const noexcept {
+            return lightweight_commit_total_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t lightweight_rollback_total() const noexcept {
+            return lightweight_rollback_total_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t lightweight_records_total() const noexcept {
+            return lightweight_records_total_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #142: record a subtree-level mutation (e.g. mutate:replace-subtree).
+        // The target_node here is the NEW subtree's root. The old_subtree_source is
+        // kept verbatim so rollback can re-parse and re-attach without needing
+        // a generation-aware node lookup.
+        std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
+                                           std::uint32_t child_idx,
+                                           std::string_view old_subtree_source,
+                                           std::string_view op_name, std::string_view summary) {
+            const std::uint64_t mid = next_mutation_id_++;
+            mutation_log_.push_back(mutation::create_subtree_mutation_record({
+                .mutation_id = mid,
+                .target_node = target_node,
+                .parent_id = parent_id,
+                .child_idx = child_idx,
+                .old_subtree_source = old_subtree_source,
+                .operator_name = op_name,
+                .summary = summary,
+                .author_fingerprint = mutation_author_fingerprint_,
+                .parent_mutation_id = mutation_parent_mutation_id_,
+                .composite_transaction_id = mutation_composite_transaction_id_,
+            }));
+            if (target_node != NULL_NODE)
+                mark_dirty_upward(target_node);
+            if (parent_id != NULL_NODE)
+                mark_dirty_upward(parent_id);
+            if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0)
+                node_first_mutation_[target_node] =
+                    static_cast<std::uint32_t>(mutation_log_.size());
+            // Issue #1362: auto-compact committed prefix when log is huge
+            maybe_auto_compact_mutation_log();
+            return mid;
+        }
+
+        // Issue #222 slice 2/3: record a structural child-list mutation
+        // (set_child / insert_child / remove_child). Captures parent,
+        // child_idx, old child NodeId, new child NodeId. Rollback is via
+        // the #221 children_snapshot (capture in the #177 MutationCheckpoint)
+        // + rollback_to_size on the mutation log; has_rollback=true signals
+        // that the caller has set up a snapshot for rollback.
+        //
+        // Calls mark_dirty_upward(parent) so the parent + ancestors are
+        // marked dirty for incremental re-eval (#148) / dirty-aware
+        // caching (#188). The "structural-" prefix on op_name distinguishes
+        // these from typed_mutate's "replace-type" / "replace-value" kinds.
+        std::uint64_t add_mutation_child_op(NodeId parent, std::uint32_t child_idx,
+                                            NodeId old_child, NodeId new_child,
+                                            std::string_view op_name) {
+            return add_mutation_with_rollback(
+                parent, op_name, "", "", op_name, MutationStatus::Committed, child_idx,
+                static_cast<std::uint64_t>(old_child), static_cast<std::uint64_t>(new_child),
+                /*has_rollback=*/true);
+        }
+
+        // Issue #369: convenience wrapper for Aura-level mutate
+        // primitives that mutate the children_ column. Remaps the
+        // wrapper-op name (e.g. "remove-node") to a canonical
+        // "structural-X-child" name so that
+        // try_rollback_structural_child_op (which dispatches on the
+        // canonical name) can roll back the children_ SoA column.
+        // Wrapper primitives should prefer this over flat.add_mutation()
+        // for any op that modifies the children_ column.
+        std::uint64_t add_structural_mutation_log_entry(NodeId parent, std::uint32_t child_idx,
+                                                        NodeId old_child, NodeId new_child,
+                                                        std::string_view op_name) {
+            std::string canonical;
+            if (op_name == "remove-node" || op_name == "remove-child" ||
+                op_name == "structural-remove-child")
+                canonical = "structural-remove-child";
+            else if (op_name == "insert-child" || op_name == "structural-insert-child")
+                canonical = "structural-insert-child";
+            else if (op_name == "set-body" || op_name == "set-child" ||
+                     op_name == "structural-set-child")
+                canonical = "structural-set-child";
+            else
+                canonical = std::string(
+                    op_name); // pass through; try_rollback_structural_child_op may still skip
+            return add_mutation_child_op(parent, child_idx, old_child, new_child, canonical);
+        }
+
+        // Get mutation history for a specific node (0 == no history)
+        // Get mutation history for a specific node (filters from log, O(n) in log size)
+        std::pmr::vector<MutationRecord> mutation_history(NodeId node) const {
+            std::pmr::vector<MutationRecord> result;
+            for (auto& rec : mutation_log_) {
+                if (rec.target_node == node)
+                    result.push_back(rec);
+            }
+            return result;
+        }
+
+        // Total number of mutations recorded
+        std::size_t mutation_count() const {
+            return mutation_log_.size();
+        }
+
+        // Issue #1408: Count of mutations that are still Committed (i.e.
+        // not yet RolledBack). The mutation_log_ retains RolledBack records
+        // for audit (see Issue #1301 follow-up `mutation_log_compacted_records_`),
+        // so the raw mutation_count() is not a useful "how many effects
+        // are currently applied" metric. Use this for atomic-multi-mutate
+        // tests that need to verify "0 new committed mutations" after a
+        // TypedTransactionGuard dtor rollback.
+        std::size_t committed_mutation_count() const {
+            std::size_t n = 0;
+            for (const auto& rec : mutation_log_) {
+                if (rec.status == MutationStatus::Committed)
+                    ++n;
+            }
+            return n;
+        }
+
+        // Issue #1408: Physically erase all mutation records with
+        // mutation_id >= since_id from the log. Used by TypedTransactionGuard's
+        // dtor to implement strict atomic-batch rollback: even when
+        // try_rollback_record() can't undo some ops (pre-#1441 rebind lacked
+        // rollback data), this method removes the record from the log so the
+        // "0 applied" AC holds (committed_mutation_count() returns to its
+        // pre-batch value). Issue #1441: rebind now has try_rollback_rebind_op
+        // so Phase-1 rollback restores Define bodies when has_rollback_data.
+        //
+        // next_mutation_id_ is NOT reset here (it's monotonically increasing
+        // within a session; resetting it could break other holders of the
+        // higher ids).
+        //
+        // Returns the number of records erased.
+        std::size_t erase_mutations_since(std::uint64_t since_id) {
+            const auto old_size = mutation_log_.size();
+            mutation_log_.erase(std::remove_if(mutation_log_.begin(), mutation_log_.end(),
+                                               [since_id](const MutationRecord& r) {
+                                                   return r.mutation_id >= since_id;
+                                               }),
+                                mutation_log_.end());
+            return old_size - mutation_log_.size();
+        }
+        std::uint64_t next_mutation_id() const {
+            return next_mutation_id_;
+        }
+
+        // Get all mutation records (unfiltered).
+        const std::pmr::vector<MutationRecord>& all_mutations() const {
+            return mutation_log_;
+        }
+        std::pmr::vector<MutationRecord>& all_mutations() {
+            return mutation_log_;
+        }
+
+        // Issue #282: Occurrence Typing provenance accessors.
+        // narrowing_log_ is captured at synthesize_flat_if time
+        // (see type_checker_impl.cpp). Same lifecycle as
+        // mutation_log_: cleared on FlatAST reset, persists
+        // across typecheck cycles within a generation.
+        std::size_t narrowing_count() const {
+            return narrowing_log_.size();
+        }
+        const std::pmr::vector<NarrowingRecord>& all_narrowings() const {
+            return narrowing_log_;
+        }
+        std::pmr::vector<NarrowingRecord>& all_narrowings() {
+            return narrowing_log_;
+        }
+        // Issue #282: append a new narrowing record. Called from
+        // type_checker_impl.cpp's synthesize_flat_if after a
+        // successful Occurrence Typing refinement. Monotonic
+        // record_id for ordering.
+        void record_narrowing(NarrowingRecord rec) {
+            rec.record_id = narrowing_log_.size() + 1;
+            narrowing_log_.push_back(std::move(rec));
+        }
+
+        // Issue #639: mark narrowing records stale when a mutation
+        // affects their if/cond subtree or capture_epoch is behind
+        // the current type-cache generation.
+        std::size_t invalidate_narrowings_in_subtree(NodeId root, std::uint64_t current_epoch) {
+            if (root == NULL_NODE || root >= tag_.size())
+                return 0;
+            std::unordered_set<NodeId> in_subtree;
+            std::vector<NodeId> stack;
+            stack.push_back(root);
+            while (!stack.empty()) {
+                const auto id = stack.back();
+                stack.pop_back();
+                if (id == NULL_NODE || id >= tag_.size())
+                    continue;
+                if (!in_subtree.insert(id).second)
+                    continue;
+                const auto v = get(id);
+                for (auto c : v.children)
+                    stack.push_back(c);
+            }
+            std::size_t count = 0;
+            for (auto& rec : narrowing_log_) {
+                if (rec.stale)
+                    continue;
+                if (in_subtree.count(rec.if_node) || in_subtree.count(rec.cond_node) ||
+                    rec.capture_epoch < current_epoch) {
+                    rec.stale = true;
+                    ++count;
+                }
+            }
+            narrow_invalidation_post_mutate_ += count;
+            return count;
+        }
+
+        [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id, std::uint64_t current_epoch)
+            const {
+            for (const auto& rec : narrowing_log_) {
+                if (rec.if_node == if_id && (rec.stale || rec.capture_epoch < current_epoch))
+                    return true;
+            }
+            return false;
+        }
+
+        [[nodiscard]] std::size_t stale_narrowing_record_count() const {
+            std::size_t n = 0;
+            for (const auto& rec : narrowing_log_)
+                if (rec.stale)
+                    ++n;
+            return n;
+        }
+
+        [[nodiscard]] std::uint64_t narrow_invalidation_post_mutate_count() const {
+            return narrow_invalidation_post_mutate_;
+        }
+
+        // Rollback a mutation by ID. Returns true if successful.
+        // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.
+        std::uint16_t generation() const {
+            return generation_;
+        }
+
+        // Issue #276: live slot check without generation equality (cross-layer resolve).
+        [[nodiscard]] bool is_live_node(NodeId id) const noexcept {
+            return id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
+                   node_gen_[id] != 0;
+        }
+
+        // Check if a NodeId is valid (in-bounds and from the current generation).
+        bool is_valid(const NodeId id)
+            const post(r : r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
+                                 node_gen_[id] == generation_)) {
+            // Issue #255: bump the check counter (lifetime total).
+            is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
+            if (id == NULL_NODE)
+                return false;
+            if (id >= tag_.size() || id >= node_gen_.size()) {
+                // Issue #457: stale access (out-of-range
+                // NodeId) — bump the stale counter. This
+                // catches dangling references that escaped
+                // a structural mutation without going
+                // through a StableNodeRef.
+                node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            if (node_gen_[id] != generation_) {
+                // Issue #457: stale access (gen mismatch) —
+                // same path as out-of-range. The caller
+                // should have used a StableNodeRef which
+                // would have caught this; raw NodeId
+                // access is dangerous in long-running
+                // mutates.
+                node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            return true;
+        }
+
+        // Validate NodeId — panics on stale/dangling NodeIds.
+        // Use in debug paths to catch post-rollback staleness early.
+        // Issue #273: contract_assert replaces manual abort branches.
+        void validate(NodeId id) const {
+            if (id != NULL_NODE) [[likely]] {
+                contract_assert(id < tag_.size());
+                contract_assert(id < node_gen_.size());
+                contract_assert(node_gen_[id] == generation_);
             }
         }
-        narrow_invalidation_post_mutate_ += count;
-        return count;
-    }
 
-    [[nodiscard]] bool has_stale_narrowing_for_if(NodeId if_id, std::uint64_t current_epoch) const {
-        for (const auto& rec : narrowing_log_) {
-            if (rec.if_node == if_id && (rec.stale || rec.capture_epoch < current_epoch))
-                return true;
+        // Safe get — returns nullopt on stale/invalid NodeId.
+        std::optional<NodeView> get_safe(const NodeId id)
+            const post(r : !r.has_value() || (id < tag_.size() && id < node_gen_.size() &&
+                                              node_gen_[id] == generation_)) {
+            if (!is_valid(id))
+                return std::nullopt;
+            return get(id);
         }
-        return false;
-    }
 
-    [[nodiscard]] std::size_t stale_narrowing_record_count() const {
-        std::size_t n = 0;
-        for (const auto& rec : narrowing_log_)
-            if (rec.stale)
-                ++n;
-        return n;
-    }
+        // Issue #191: StableNodeRef — a safe handle that bundles a
+        // NodeId with the FlatAST generation it was captured from.
+        // If the generation has changed (because a structural
+        // mutation happened between capture and use), the ref is
+        // invalid even if the NodeId is still in-bounds.
+        //
+        // This is the recommended way to store NodeIds across
+        // mutation calls in EDSL / query / mutate primitives. The
+        // raw NodeId API is kept for performance-critical paths
+        // where the caller knows the ID is fresh.
+        struct StableNodeRef {
+            NodeId id = NULL_NODE;
+            std::uint16_t gen = 0;
+            // Issue #291: provenance + workspace awareness. These
+            // default to 0 / NULL_NODE which matches pre-#291
+            // behavior — refs created via make_ref() will populate
+            // them from the current FlatAST state. The on-disk
+            // format is a packed binary blob (see
+            // serialize_stable_ref / deserialize_stable_ref
+            // below) so existing in-memory callers see no change.
+            //   - mutation_id_at_capture: next_mutation_id_ at the
+            //     time the ref was captured. Lets us answer "which
+            //     mutations happened after this ref was taken" by
+            //     scanning mutation_log_ for entries with id >
+            //     mutation_id_at_capture. Full history lookup is a
+            //     follow-up; this field exists so the
+            //     serialization format is forward-compatible.
+            //   - workspace_id: layer index in the WorkspaceTree
+            //     (0 = root). Default 0 keeps single-workspace
+            //     callers unchanged. Cross-workspace ref
+            //     resolution via WorkspaceTree::resolve_stable_ref
+            //     uses this field to know which layer to resolve
+            //     against.
+            std::uint64_t mutation_id_at_capture = 0;
+            std::uint32_t workspace_id = 0;
+            // Issue #303: fiber_id for cross-fiber provenance
+            // tracking. Default 0 means "not in a fiber context"
+            // (single-threaded / synchronous caller). Callers in a
+            // fiber / agent loop should set this via
+            // make_safe_ref(id, fiber_id) or capture_for_fiber()
+            // to make ref-stealing bugs visible: a ref that ends up
+            // on a different fiber than where it was captured is a
+            // candidate stale usage (the lifetime of `fiber_id`
+            // is per-mutation-context, not per-evaluator).
+            std::uint32_t fiber_id = 0;
+            // Issue #303: last_validated_generation. Updated by
+            // validate_with_provenance() to record the generation
+            // at which the ref was last checked. Lets us answer
+            // "how stale is this ref since last validation" via
+            // (query:ref-provenance). Defaults to 0 to match
+            // pre-#303 behavior.
+            std::uint16_t last_validated_generation = 0;
+            // Issue #368: wrap_epoch at capture time. Bumped by
+            // FlatAST::bump_generation() every time generation_
+            // (uint16_t) wraps back to 1. is_valid() compares this
+            // to the current wrap_epoch_ — mismatch means the ref
+            // was captured at a different wrap cycle. Without this
+            // check, a ref captured before wrap #1 could false-
+            // positive after wrap #2 returns generation_ to the
+            // same numeric value (~130K mutates in). Captured at
+            // make_ref() time. Default 0 = pre-#368 ref.
+            std::uint32_t wrap_epoch = 0;
+            // Issue #392: subtree gen at capture time. The
+            // per-top-level-Define counter (subtree_gen_[T])
+            // captured at make_ref() time, for T = top-level Define
+            // ancestor of the ref's node. Used by
+            // is_valid_subtree() to accept refs from subtrees that
+            // were NOT scoped-bumped since capture (the over-
+            // invalidation fix for EDA / long-running workspaces).
+            // Default 0 means "no captured subtree gen" — pre-#392
+            // refs (and refs whose node has no enclosing Define)
+            // are still accepted by is_valid_subtree() because
+            // subtree_gen_[T] starts at 0.
+            std::uint16_t subtree_gen_at_capture = 0;
+            // Issue #738: COW epoch at capture for cross-boundary
+            // validity. Compared against the workspace layer's
+            // cow_epoch on lazy clone to detect parent→child
+            // boundary crossings without over-invalidating refs
+            // that remain live in the child COW copy.
+            std::uint64_t cow_epoch_at_capture = 0;
+            // Issue #738: set when pin_for_cow() records this ref
+            // in the evaluator's boundary pin registry.
+            bool boundary_pinned = false;
 
-    [[nodiscard]] std::uint64_t narrow_invalidation_post_mutate_count() const {
-        return narrow_invalidation_post_mutate_;
-    }
+            // Issue #738: mark this ref as pinned across a COW
+            // boundary (no-op on the ref itself; Evaluator
+            // registry does the bookkeeping).
+            void pin_for_cow() noexcept { boundary_pinned = true; }
 
-    // Rollback a mutation by ID. Returns true if successful.
-    // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.
-    std::uint16_t generation() const { return generation_; }
+            // Issue #379: bodies of these methods moved to
+            // src/core/ast_stability.cpp (impl unit of aura.core.ast).
+            // The class declarations stay here so the public API is
+            // unchanged; only the definitions moved. All three methods
+            // access FlatAST only through its public interface
+            // (ast.is_valid() and ast.generation()), so no friend
+            // access is needed.
+            bool is_valid_in(const FlatAST& ast) const noexcept;
+            // Issue #715: cross-layer StableNodeRef validity check
+            // for WorkspaceTree multi-workspace setups. Combines
+            // is_valid_in(ast) + workspace_id match + COW epoch
+            // match (unless pin_for_cow was called). Pure read;
+            // does not update last_validated_generation or bump
+            // any counters. Body in src/core/ast_stability.cpp.
+            bool is_valid_in_layer(const FlatAST& ast,
+                                   std::uint32_t target_workspace_id = 0) const noexcept;
+            bool validate_with_provenance(const FlatAST& ast) noexcept;
 
-    // Issue #276: live slot check without generation equality (cross-layer resolve).
-    [[nodiscard]] bool is_live_node(NodeId id) const noexcept {
-        return id != NULL_NODE && id < tag_.size() && id < node_gen_.size() && node_gen_[id] != 0;
-    }
+            // Issue #497: refresh gen/wrap from a still-live node id when
+            // invalidation is gen-only (same wrap epoch, slot not recycled).
+            bool refresh_if_stale(FlatAST& ast) noexcept;
+            std::optional<NodeView> validate_or_refresh(FlatAST& ast) noexcept;
 
-    // Check if a NodeId is valid (in-bounds and from the current generation).
-    bool is_valid(const NodeId id) const
-        post(r : r == (id != NULL_NODE && id < tag_.size() && id < node_gen_.size() &&
-                       node_gen_[id] == generation_)) {
-        // Issue #255: bump the check counter (lifetime total).
-        is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
-        if (id == NULL_NODE)
-            return false;
-        if (id >= tag_.size() || id >= node_gen_.size()) {
-            // Issue #457: stale access (out-of-range
-            // NodeId) — bump the stale counter. This
-            // catches dangling references that escaped
-            // a structural mutation without going
-            // through a StableNodeRef.
-            node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-        if (node_gen_[id] != generation_) {
-            // Issue #457: stale access (gen mismatch) —
-            // same path as out-of-range. The caller
-            // should have used a StableNodeRef which
-            // would have caught this; raw NodeId
-            // access is dangerous in long-running
-            // mutates.
-            node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
-        return true;
-    }
+            // Issue #303: get provenance snapshot. Returns a tuple
+            // describing where the ref came from. Pure read — does
+            // not validate the ref.
+            struct Provenance {
+                NodeId captured_id;
+                std::uint16_t captured_gen;
+                std::uint64_t mutation_id_at_capture;
+                std::uint32_t workspace_id;
+                std::uint32_t fiber_id;
+                std::uint16_t last_validated_generation;
+            };
+            [[nodiscard]] Provenance get_provenance() const noexcept;
 
-    // Validate NodeId — panics on stale/dangling NodeIds.
-    // Use in debug paths to catch post-rollback staleness early.
-    // Issue #273: contract_assert replaces manual abort branches.
-    void validate(NodeId id) const {
-        if (id != NULL_NODE) [[likely]] {
-            contract_assert(id < tag_.size());
-            contract_assert(id < node_gen_.size());
-            contract_assert(node_gen_[id] == generation_);
-        }
-    }
-
-    // Safe get — returns nullopt on stale/invalid NodeId.
-    std::optional<NodeView> get_safe(const NodeId id) const
-        post(r : !r.has_value() ||
-             (id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_)) {
-        if (!is_valid(id))
-            return std::nullopt;
-        return get(id);
-    }
-
-    // Issue #191: StableNodeRef — a safe handle that bundles a
-    // NodeId with the FlatAST generation it was captured from.
-    // If the generation has changed (because a structural
-    // mutation happened between capture and use), the ref is
-    // invalid even if the NodeId is still in-bounds.
-    //
-    // This is the recommended way to store NodeIds across
-    // mutation calls in EDSL / query / mutate primitives. The
-    // raw NodeId API is kept for performance-critical paths
-    // where the caller knows the ID is fresh.
-    struct StableNodeRef {
-        NodeId id = NULL_NODE;
-        std::uint16_t gen = 0;
-        // Issue #291: provenance + workspace awareness. These
-        // default to 0 / NULL_NODE which matches pre-#291
-        // behavior — refs created via make_ref() will populate
-        // them from the current FlatAST state. The on-disk
-        // format is a packed binary blob (see
-        // serialize_stable_ref / deserialize_stable_ref
-        // below) so existing in-memory callers see no change.
-        //   - mutation_id_at_capture: next_mutation_id_ at the
-        //     time the ref was captured. Lets us answer "which
-        //     mutations happened after this ref was taken" by
-        //     scanning mutation_log_ for entries with id >
-        //     mutation_id_at_capture. Full history lookup is a
-        //     follow-up; this field exists so the
-        //     serialization format is forward-compatible.
-        //   - workspace_id: layer index in the WorkspaceTree
-        //     (0 = root). Default 0 keeps single-workspace
-        //     callers unchanged. Cross-workspace ref
-        //     resolution via WorkspaceTree::resolve_stable_ref
-        //     uses this field to know which layer to resolve
-        //     against.
-        std::uint64_t mutation_id_at_capture = 0;
-        std::uint32_t workspace_id = 0;
-        // Issue #303: fiber_id for cross-fiber provenance
-        // tracking. Default 0 means "not in a fiber context"
-        // (single-threaded / synchronous caller). Callers in a
-        // fiber / agent loop should set this via
-        // make_safe_ref(id, fiber_id) or capture_for_fiber()
-        // to make ref-stealing bugs visible: a ref that ends up
-        // on a different fiber than where it was captured is a
-        // candidate stale usage (the lifetime of `fiber_id`
-        // is per-mutation-context, not per-evaluator).
-        std::uint32_t fiber_id = 0;
-        // Issue #303: last_validated_generation. Updated by
-        // validate_with_provenance() to record the generation
-        // at which the ref was last checked. Lets us answer
-        // "how stale is this ref since last validation" via
-        // (query:ref-provenance). Defaults to 0 to match
-        // pre-#303 behavior.
-        std::uint16_t last_validated_generation = 0;
-        // Issue #368: wrap_epoch at capture time. Bumped by
-        // FlatAST::bump_generation() every time generation_
-        // (uint16_t) wraps back to 1. is_valid() compares this
-        // to the current wrap_epoch_ — mismatch means the ref
-        // was captured at a different wrap cycle. Without this
-        // check, a ref captured before wrap #1 could false-
-        // positive after wrap #2 returns generation_ to the
-        // same numeric value (~130K mutates in). Captured at
-        // make_ref() time. Default 0 = pre-#368 ref.
-        std::uint32_t wrap_epoch = 0;
-        // Issue #392: subtree gen at capture time. The
-        // per-top-level-Define counter (subtree_gen_[T])
-        // captured at make_ref() time, for T = top-level Define
-        // ancestor of the ref's node. Used by
-        // is_valid_subtree() to accept refs from subtrees that
-        // were NOT scoped-bumped since capture (the over-
-        // invalidation fix for EDA / long-running workspaces).
-        // Default 0 means "no captured subtree gen" — pre-#392
-        // refs (and refs whose node has no enclosing Define)
-        // are still accepted by is_valid_subtree() because
-        // subtree_gen_[T] starts at 0.
-        std::uint16_t subtree_gen_at_capture = 0;
-        // Issue #738: COW epoch at capture for cross-boundary
-        // validity. Compared against the workspace layer's
-        // cow_epoch on lazy clone to detect parent→child
-        // boundary crossings without over-invalidating refs
-        // that remain live in the child COW copy.
-        std::uint64_t cow_epoch_at_capture = 0;
-        // Issue #738: set when pin_for_cow() records this ref
-        // in the evaluator's boundary pin registry.
-        bool boundary_pinned = false;
-
-        // Issue #738: mark this ref as pinned across a COW
-        // boundary (no-op on the ref itself; Evaluator
-        // registry does the bookkeeping).
-        void pin_for_cow() noexcept { boundary_pinned = true; }
-
-        // Issue #379: bodies of these methods moved to
-        // src/core/ast_stability.cpp (impl unit of aura.core.ast).
-        // The class declarations stay here so the public API is
-        // unchanged; only the definitions moved. All three methods
-        // access FlatAST only through its public interface
-        // (ast.is_valid() and ast.generation()), so no friend
-        // access is needed.
-        bool is_valid_in(const FlatAST& ast) const noexcept;
-        // Issue #715: cross-layer StableNodeRef validity check
-        // for WorkspaceTree multi-workspace setups. Combines
-        // is_valid_in(ast) + workspace_id match + COW epoch
-        // match (unless pin_for_cow was called). Pure read;
-        // does not update last_validated_generation or bump
-        // any counters. Body in src/core/ast_stability.cpp.
-        bool is_valid_in_layer(const FlatAST& ast,
-                               std::uint32_t target_workspace_id = 0) const noexcept;
-        bool validate_with_provenance(const FlatAST& ast) noexcept;
-
-        // Issue #497: refresh gen/wrap from a still-live node id when
-        // invalidation is gen-only (same wrap epoch, slot not recycled).
-        bool refresh_if_stale(FlatAST& ast) noexcept;
-        std::optional<NodeView> validate_or_refresh(FlatAST& ast) noexcept;
-
-        // Issue #303: get provenance snapshot. Returns a tuple
-        // describing where the ref came from. Pure read — does
-        // not validate the ref.
-        struct Provenance {
-            NodeId captured_id;
-            std::uint16_t captured_gen;
-            std::uint64_t mutation_id_at_capture;
-            std::uint32_t workspace_id;
-            std::uint32_t fiber_id;
-            std::uint16_t last_validated_generation;
+            // Issue #489: ergonomics for EDSL primitive validation paths.
+            [[nodiscard]] explicit operator bool() const noexcept { return id != NULL_NODE; }
+            [[nodiscard]] NodeId value_or(NodeId fallback) const noexcept {
+                return id != NULL_NODE ? id : fallback;
+            }
         };
-        [[nodiscard]] Provenance get_provenance() const noexcept;
 
-        // Issue #489: ergonomics for EDSL primitive validation paths.
-        [[nodiscard]] explicit operator bool() const noexcept { return id != NULL_NODE; }
-        [[nodiscard]] NodeId value_or(NodeId fallback) const noexcept {
-            return id != NULL_NODE ? id : fallback;
+        // Issue #291: serialize a StableNodeRef to a compact
+        // 16-byte binary blob. Format (little-endian):
+        //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32
+        //   reserved] = 4+4+2+2+8+4+4 = 24 bytes
+        // The packed form is designed to be:
+        //   - trivially memcpy-able (no host-endian conversion needed
+        //     for use within one process; cross-endian callers
+        //     should use the Aura helper (ast:ref-serialize) which
+        //     returns a string in canonical order)
+        //   - forward-compatible: new fields can be appended without
+        //     breaking existing readers (just bump the version byte
+        //     and ignore unknown trailing data)
+        //   - distinguishable from old (id, gen)-only refs: the new
+        //     format starts with a 4-byte magic number
+        //     (0x2901A17A) so readers can tell a #291+ serialized
+        //     blob from a raw (id, gen) binary.
+        // Issue #379: kStableRefSerializedSize + kStableRefMagic stay
+        // as class statics (callers reference them as
+        // FlatAST::kStableRefSerializedSize). Moving them to a free
+        // constexpr would change the public API.
+        static constexpr std::size_t kStableRefSerializedSize = 24;
+        static constexpr std::uint32_t kStableRefMagic = 0x2901A17A; // #291 + AURA tag
+
+        // Issue #291: pack a StableNodeRef into a 20-byte buffer.
+        // Returns the number of bytes written (= kStableRefSerializedSize).
+        // Issue #379: body moved to src/core/ast_stability.cpp.
+        [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref, std::uint8_t* out)
+            const noexcept;
+
+        // Issue #291: deserialize a 20-byte buffer back to a
+        // StableNodeRef. Returns false if the magic doesn't match
+        // or buffer is too small. The caller is responsible for
+        // checking is_valid() AFTER deserializing to confirm the
+        // ref still points to a live node in the current flat.
+        // Issue #379: body moved to src/core/ast_stability.cpp.
+        [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf, std::size_t buf_size,
+                                                  StableNodeRef& out) const noexcept;
+
+        // Issue #191: make a StableNodeRef capturing the current
+        // generation. Use this in EDSL / query / mutate primitives
+        // to safely hold a reference to a node across calls.
+        [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
+            // Issue #291: also capture mutation_id_at_capture so
+            // downstream callers can answer "which mutations
+            // affected this node since capture" (full lookup is a
+            // follow-up; the field is captured now to make the
+            // serialization format forward-compatible). workspace_id
+            // defaults to 0 (root); callers working across
+            // WorkspaceTree layers can set it explicitly via
+            // make_ref_in_layer(id, workspace_id).
+            // Issue #368: also capture wrap_epoch_ so is_valid()
+            // can detect false positives from a second generation_
+            // wrap returning to the original numeric value.
+            // Issue #392: also capture subtree_gen_at_capture
+            // (the subtree_gen_ counter for the top-level Define
+            // ancestor of `id`) so is_valid_subtree() can skip
+            // invalidating refs in untouched subtrees.
+            //
+            // Backward-compat (Issue #303 Scenario 1): fiber_id and
+            // last_validated_generation both default to 0 here.
+            // last_validated_generation == 0 means "no validation
+            // history" — make_ref() captures don't imply validation.
+            // Callers that want provenance should use make_safe_ref().
+            return StableNodeRef{id,
+                                 generation_,
+                                 next_mutation_id_,
+                                 0,
+                                 0,
+                                 0,
+                                 wrap_epoch_.load(std::memory_order_relaxed),
+                                 subtree_generation(id),
+                                 workspace_cow_epoch_};
         }
+
+        // Issue #291: make_ref variant that also tags the ref
+        // with a specific WorkspaceTree layer index. Used by
+        // query/mutate primitives that operate on a child
+        // workspace.
+        [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id, std::uint32_t workspace_id)
+            const noexcept {
+            // Issue #392: capture subtree_gen_at_capture too.
+            // Backward-compat: fiber_id and last_validated_generation
+            // both default to 0 (no fiber context, no validation
+            // history). Same convention as make_ref().
+            return StableNodeRef{id,
+                                 generation_,
+                                 next_mutation_id_,
+                                 workspace_id,
+                                 0,
+                                 0,
+                                 wrap_epoch_.load(std::memory_order_relaxed),
+                                 subtree_generation(id),
+                                 workspace_cow_epoch_};
+        }
+
+        // Issue #303: make_safe_ref records full provenance
+        // (workspace_id, fiber_id, mutation_id_at_capture,
+        // current generation). Prefer this over make_ref when
+        // the ref will be stored across mutation boundaries or
+        // used from a fiber / agent loop. Existing callers of
+        // make_ref() continue to work unchanged (fiber_id
+        // defaults to 0 = "not in a fiber").
+        [[nodiscard]] StableNodeRef make_safe_ref(NodeId id, std::uint32_t workspace_id = 0,
+                                                  std::uint32_t fiber_id = 0) const noexcept {
+            // Issue #392: capture subtree_gen_at_capture too.
+            return StableNodeRef{id,
+                                 generation_,
+                                 next_mutation_id_,
+                                 workspace_id,
+                                 fiber_id,
+                                 generation_,
+                                 wrap_epoch_.load(std::memory_order_relaxed),
+                                 subtree_generation(id),
+                                 workspace_cow_epoch_};
+        }
+
+        // Issue #303: capture_for_fiber is a shorthand for
+        // make_safe_ref with workspace_id=0 and fiber_id set.
+        // The returned ref has last_validated_generation =
+        // current generation_ (i.e., freshly captured).
+        [[nodiscard]] StableNodeRef capture_for_fiber(NodeId id, std::uint32_t fiber_id)
+            const noexcept {
+            return make_safe_ref(id, 0, fiber_id);
+        }
+
+        // Issue #393: explicit (id, gen) pair construction. Use
+        // this when you have a `gen` value from an external
+        // source (a serialized StableNodeRef buffer, a
+        // cross-workspace handoff, or a manual annotation) and
+        // want to wrap it as a StableNodeRef without going
+        // through make_ref() / make_safe_ref(). Captures the
+        // current `mutation_id_at_capture`, `workspace_id`,
+        // `fiber_id`, `last_validated_generation`, and
+        // `wrap_epoch` from the FlatAST state — only the `id`
+        // and `gen` come from the caller's arguments.
+        //
+        // This is the C++ analog of `(query:children-stable)` /
+        // `(query:parent-stable)` for cases where the caller
+        // already knows the generation (e.g. a checkpoint file
+        // from a prior session, or a cross-workspace handoff).
+        [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id, std::uint16_t gen) const noexcept {
+            return StableNodeRef{id,
+                                 gen,
+                                 next_mutation_id_,
+                                 0,
+                                 0,
+                                 gen,
+                                 wrap_epoch_.load(std::memory_order_relaxed),
+                                 subtree_generation(id),
+                                 workspace_cow_epoch_};
+        }
+
+        // Issue #393: flat-style validity check for callers that
+        // have an (id, gen) pair but don't want to allocate a
+        // StableNodeRef wrapper (e.g. in hot query primitives
+        // that read thousands of pairs from a side-vector).
+        // Returns true iff the slot at `id` is in-bounds AND its
+        // stored generation (node_gen_[id]) matches `gen` AND
+        // the FlatAST's wrap_epoch matches the captured epoch
+        // (passed as `wrap_epoch_at_capture`, default = current
+        // wrap_epoch_ which matches fresh captures).
+        //
+        // Does NOT consult generation_ — that's the whole
+        // point. The caller decides what gen counts as "valid"
+        // (typically the value they captured at, which may be
+        // older than the current global gen if they're using
+        // scoped ref tracking or a checkpoint file).
+        [[nodiscard]] bool is_valid_id_gen(NodeId id, std::uint16_t gen,
+                                           std::uint32_t wrap_epoch_at_capture =
+                                               0 /* 0 = use current */) const noexcept {
+            if (id == NULL_NODE || id >= tag_.size() || id >= node_gen_.size())
+                return false;
+            if (node_gen_[id] != gen)
+                return false;
+            const auto we = (wrap_epoch_at_capture == 0)
+                                ? wrap_epoch_.load(std::memory_order_relaxed)
+                                : wrap_epoch_at_capture;
+            // Issue #368: catch second-wrap false positives. If
+            // the caller passed a specific wrap_epoch, check
+            // against the current one (mismatch = wrapped).
+            // If they passed 0 (default), use the current epoch
+            // (skip the check — fresh captures are always safe).
+            if (wrap_epoch_at_capture != 0 &&
+                wrap_epoch_at_capture != wrap_epoch_.load(std::memory_order_relaxed))
+                return false;
+            (void)we;
+            return true;
+        }
+
+        // Issue #191: validation + safe get that take a StableNodeRef.
+        // The ref's gen is compared to the FlatAST's current gen; if
+        // they differ, the ref is stale (a structural mutation
+        // happened in between).
+        [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept post(
+            r : r == (ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
+                      node_gen_[ref.id] == ref.gen && ref.gen == generation_ &&
+                      // Issue #368: generation_ is uint16_t; after
+                      // ~130K mutates a second wrap could match
+                      // the ref's captured gen by accident. Check
+                      // wrap_epoch explicitly (uint32_t, wraps
+                      // every ~2.6e14 mutates).
+                      ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
+            // Issue #255: bump the check counter (lifetime total).
+            is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
+            bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
+                      node_gen_[ref.id] == ref.gen &&
+                      ref.gen == generation_ && // gen must also match current
+                      // Issue #368: catch second-wrap false positives.
+                      ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed);
+            if (!ok) {
+                // Stale ref — bump the invalidations counter.
+                // The whole point of StableNodeRef is to detect
+                // this case; counting it tells us how often the
+                // mechanism actually catches a stale handle.
+                stable_ref_invalidations_.fetch_add(1, std::memory_order_relaxed);
+            }
+            return ok;
+        }
+
+        // Issue #392: subtree-aware StableRef validity check.
+        // Returns true when:
+        //   - ref.id is in-bounds,
+        //   - the slot has not been modified since capture
+        //     (node_gen_[ref.id] == ref.gen), AND
+        //   - the wrap epoch matches (no second-wrap false
+        //     positives), AND
+        //   - the top-level Define containing ref.id has not
+        //     been scoped-bumped since capture
+        //     (subtree_gen_[top_define_of(ref.id)] ==
+        //      ref.subtree_gen_at_capture).
+        //
+        // This RELAXED check is the value-prop of #392: refs in
+        // subtrees that were NOT touched by a scoped bump stay
+        // valid even when other subtrees get bumped. Use this in
+        // hot paths that hold many refs across long mutation
+        // sequences (AI agent loops, EDA RTL/SV workspaces).
+        //
+        // Backward compatibility: the strict is_valid() above is
+        // unchanged. Callers that don't capture the new
+        // subtree_gen_at_capture field (default 0) still work
+        // because subtree_gen_ defaults to 0 — the check accepts
+        // them as long as no scoped bump has touched their
+        // subtree.
+        [[nodiscard]] bool is_valid_subtree(const StableNodeRef& ref) const noexcept {
+            if (ref.id == NULL_NODE || ref.id >= tag_.size() || ref.id >= node_gen_.size())
+                return false;
+            if (node_gen_[ref.id] != ref.gen)
+                return false;
+            if (ref.wrap_epoch != wrap_epoch_.load(std::memory_order_relaxed))
+                return false;
+            // Subtree check: find the top-level Define ancestor
+            // and compare subtree_gen_[T] against the captured
+            // value. For nodes with no enclosing Define, top_define_of
+            // returns NULL_NODE → we treat them as "no subtree
+            // scoping" and accept (subtree_gen_ stays at 0).
+            auto top = top_define_of(ref.id);
+            if (top == NULL_NODE)
+                return true; // no enclosing Define → can't be scope-invalidated
+            if (top >= subtree_gen_.size())
+                return true; // subtree_gen_ not populated → no scoped bump yet
+            return subtree_gen_[top] == ref.subtree_gen_at_capture;
+        }
+        [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref)
+            const noexcept post(r : !r.has_value() || is_valid(ref)) {
+            if (!is_valid(ref))
+                return std::nullopt;
+            return get(ref.id);
+        }
+
+        // Issue #368: accessor for the current wrap_epoch_.
+        // Returned by (ast:generation-stats) under the wrap-epoch key
+        // so AI agents can checkpoint / compact before the next
+        // generation_ wrap creates a wave of false-positive refs in
+        // their long-running workspaces.
+        [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
+            return wrap_epoch_.load(std::memory_order_relaxed);
+        }
+        // Issue #369: structural-rollback counters.
+        [[nodiscard]] std::uint64_t structural_rollback_success() const noexcept {
+            return structural_rollback_success_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t structural_rollback_besteffort() const noexcept {
+            return structural_rollback_besteffort_.load(std::memory_order_relaxed);
+        }
+        // Issue #1281: children_ PCV topology restores (snapshot path).
+        [[nodiscard]] std::uint64_t children_topology_restore_count() const noexcept {
+            return children_topology_restore_count_.load(std::memory_order_relaxed);
+        }
+        // Issue #1282: auto-restamp after generation wrap.
+        [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {
+            return auto_restamp_on_wrap_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] bool auto_restamp_pending() const noexcept {
+            return auto_restamp_pending_.load(std::memory_order_relaxed);
+        }
+        // Issue #370: lifetime-safe view call counter.
+        [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
+            return children_safe_view_count_.load(std::memory_order_relaxed);
+        }
+        // Issue #678: parent_safe_view call counter.
+        [[nodiscard]] std::uint64_t parent_safe_view_count() const noexcept {
+            return parent_safe_view_count_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #191: bump the generation counter (with wrap-around
+        // to 1, skipping 0 which is reserved). Called automatically
+        // by structural mutation methods (set_child / insert_child /
+        // remove_child) to invalidate all stale NodeIds in the
+        // workspace. Also exposed publicly for the mutation
+        // primitives to call after a non-SoA-mutating structural
+        // change (e.g., a workspace-level COW swap).
+        // Issue #273: refresh node_gen_ after a generation bump that does
+        // not invalidate the whole FlatAST (e.g. hygienic macro rewrite).
+        void restamp_all_node_generations() {
+            // node_gen_==0 marks free-list slots, but live nodes at
+            // generation_==0 also carry 0 — do not use is_free_slot here.
+            std::vector<std::uint8_t> on_free(size(), 0);
+            for (NodeId fid : free_list_) {
+                if (fid < on_free.size())
+                    on_free[fid] = 1;
+            }
+            for (NodeId id = 0; id < size(); ++id) {
+                if (!on_free[id] && id < node_gen_.size())
+                    node_gen_[id] = generation_;
+            }
+            // Issue #1282: if restamp was pending due to uint16 wrap,
+            // clear the flag and count the recovery (Agent-visible via
+            // ast:generation-stats / production-sweep-1281-1285-stats).
+            if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
+                auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        // Issue #1282: if a generation wrap marked auto_restamp_pending_,
+        // restamp live node_gen_ now. Safe to call from non-noexcept
+        // paths (restore_children, mutation boundary exit).
+        void maybe_auto_restamp_on_wrap() {
+            if (!auto_restamp_pending_.load(std::memory_order_relaxed))
+                return;
+            restamp_all_node_generations();
+        }
+
+        // Refresh node_gen_ on one subtree (narrower than restamp_all).
+        void restamp_subtree_generation(NodeId root) {
+            if (root == NULL_NODE || root >= size())
+                return;
+            std::vector<NodeId> stack;
+            stack.push_back(root);
+            std::vector<std::uint8_t> seen(size(), 0);
+            while (!stack.empty()) {
+                auto id = stack.back();
+                stack.pop_back();
+                if (id == NULL_NODE || id >= size() || seen[id])
+                    continue;
+                seen[id] = 1;
+                if (id < node_gen_.size())
+                    node_gen_[id] = generation_;
+                for (auto cid : children(id)) {
+                    if (cid != NULL_NODE)
+                        stack.push_back(cid);
+                }
+            }
+        }
+
+        void bump_generation() noexcept post(generation_ != 0) {
+            if (bump_generation_suppressed_) {
+                // Issue #250: inside an atomic batch, individual
+                // structural mutations (set_child / insert_child /
+                // remove_child) skip the per-op generation bump.
+                // The batch commits with a single bump at the end,
+                // so the per-op bumps would be redundant.
+                return;
+            }
+            ++generation_;
+            if (generation_ == 0) {
+                generation_ = 1;
+                // Issue #457: detected a uint16_t wrap-around.
+                // generation_ is uint16_t (1..65535) and we
+                // wrap 65535 → 0 → 1. After 65K structural
+                // mutations in the same FlatAST, every
+                // outstanding StableNodeRef becomes invalid
+                // (gen mismatch). Bump the wrap counter so
+                // the AI Agent can (query:stable-ref-stats)
+                // and decide whether to checkpoint / compact.
+                generation_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+                // Issue #368: bump wrap_epoch_ so StableNodeRefs
+                // captured before this wrap become invalid even
+                // after the SECOND wrap returns generation_ to
+                // its prior value (~130K mutates in).
+                // uint32_t: ~2.6e14 mutates per wrap_epoch wrap.
+                wrap_epoch_.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1282: schedule automatic restamp of live
+                // node_gen_ (restamp itself allocates; cannot run in
+                // this noexcept path). Consumed by maybe_auto_restamp_on_wrap
+                // / restamp_all_node_generations on the next safe path.
+                auto_restamp_pending_.store(true, std::memory_order_relaxed);
+            }
+            // Issue #255: only count actual bumps (suppressed
+            // ones are accounted for via atomic_batch_commits_).
+            bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #392: scoped generation bumping for a single
+        // top-level Define subtree. Walks up from subtree_root to
+        // find the containing Define, then bumps that Define's
+        // subtree_gen_ counter. ALSO bumps the global generation_
+        // for backward compatibility with callers using the
+        // existing is_valid() path (which checks global gen).
+        //
+        // The benefit for callers using the new
+        // is_valid_subtree() path: refs to nodes in OTHER
+        // subtrees stay valid because their subtree_gen_ was not
+        // bumped. is_valid_subtree() compares the captured
+        // subtree_gen_at_capture against the current subtree_gen_
+        // for the top-level Define containing the ref's node.
+        //
+        // subtree_root must be a node inside the target subtree
+        // (the walk-up handles arbitrary nesting). Pass NULL_NODE
+        // to no-op safely.
+        void bump_generation_subtree(NodeId subtree_root) noexcept {
+            if (subtree_root == NULL_NODE || subtree_root >= size())
+                return;
+            auto top = top_define_of(subtree_root);
+            if (top == NULL_NODE)
+                return; // no enclosing Define → cannot scope
+            // Lazily grow the per-node subtree_gen_ vector.
+            if (subtree_gen_.size() < size())
+                subtree_gen_.resize(size(), 0);
+            // Bump the global generation_ so existing is_valid()
+            // continues to behave as before (backward compat).
+            bump_generation();
+            // Advance the per-subtree counter for this top-level
+            // Define. Same uint16_t wrap semantics as the global
+            // generation_ (1..65535, skip 0, bump wrap_count_
+            // + wrap_epoch_ on wrap).
+            std::uint16_t& sg = subtree_gen_[top];
+            ++sg;
+            if (sg == 0) {
+                sg = 1;
+                subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
+            }
+            subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #392 fix: restamp node_gen_ for the entire
+            // subtree so that refs captured AFTER the bump can
+            // still pass is_valid_subtree() (which checks
+            // node_gen_[id] == ref.gen for the slot, not just
+            // the subtree counter). Without this, a ref captured
+            // immediately after bump_generation_subtree(T) would
+            // have ref.gen = new global gen, but node_gen_[N]
+            // for N in T's subtree would still be the OLD
+            // generation → slot check fails → ref is invalid
+            // even though the subtree counter matches. The
+            // restamp aligns node_gen_ with the new generation
+            // so the slot check passes for fresh captures in
+            // the bumped subtree.
+            restamp_subtree_generation(subtree_root);
+        }
+
+        // Issue #392: read the current per-subtree generation for
+        // the top-level Define containing subtree_root. Returns 0
+        // if there is no enclosing Define (flat AST root with no
+        // top-level Define) or if subtree_root is NULL/out-of-
+        // bounds. Pair with bump_generation_subtree() and
+        // is_valid_subtree() to build subtree-aware StableRef
+        // invalidation logic.
+        [[nodiscard]] std::uint16_t subtree_generation(NodeId subtree_root) const noexcept {
+            if (subtree_root == NULL_NODE || subtree_root >= size())
+                return 0;
+            auto top = top_define_of(subtree_root);
+            if (top == NULL_NODE || top >= subtree_gen_.size())
+                return 0;
+            return subtree_gen_[top];
+        }
+
+        // Issue #392: walk up the parent chain to find the
+        // top-level Define root that contains `node`. Returns
+        // NULL_NODE if there is no enclosing Define (e.g., the
+        // AST root is a bare expression, not wrapped in Define).
+        // The walk is bounded by AST depth — O(depth) per call.
+        // Callers that need O(1) lookup should cache the result
+        // (e.g., add a side-vector `top_define_of_[id]`).
+        [[nodiscard]] NodeId top_define_of(NodeId node) const noexcept {
+            if (node == NULL_NODE || node >= size())
+                return NULL_NODE;
+            NodeId cur = node;
+            std::uint32_t safety = 0;
+            while (cur != NULL_NODE && cur < size()) {
+                if (cur < tag_.size() && tag_[cur] == NodeTag::Define)
+                    return cur;
+                auto parent = (cur < parent_.size()) ? parent_[cur] : NULL_NODE;
+                if (parent == NULL_NODE)
+                    return NULL_NODE;
+                cur = parent;
+                if (++safety > 1000000) // cycle guard
+                    return NULL_NODE;
+            }
+            return NULL_NODE;
+        }
+
+        // Issue #392: lifetime total of bump_generation_subtree()
+        // calls (excludes the no-op when subtree_root has no
+        // enclosing Define). Read via the
+        // (compile:subtree-bump-count) Aura primitive or
+        // directly from the compiler service metrics.
+        [[nodiscard]] std::uint64_t subtree_bump_count() const noexcept {
+            return subtree_bump_count_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #250: atomic-batch API. When begin_atomic_batch()
+        // is active, bump_generation() and mark_dirty_upward are
+        // suppressed for individual structural mutates, and
+        // accumulated for a single end-of-batch commit. The batch
+        // holds the structural_mtx_ exclusive lock for its entire
+        // lifetime (via the RAII guard).
+        //
+        // begin_atomic_batch() / commit_atomic_batch() / rollback_atomic_batch()
+        // are intended to be called from mutate:atomic-batch
+        // (and any future caller that wants true all-or-nothing
+        // semantics for a multi-step mutation).
+        //
+        // IMPORTANT: begin_atomic_batch() must be called while
+        // already holding structural_mtx_ (e.g., from the outer
+        // MutationBoundaryGuard). The batch guard does NOT acquire
+        // the lock itself — the caller's existing lock is
+        // extended to cover the entire batch. This is the
+        // standard pattern: caller acquires the lock once, then
+        // does many mutations under it.
+        void begin_atomic_batch() noexcept {
+            bump_generation_suppressed_ = true;
+            atomic_batch_bumps_saved_ = 0; // reset counter for this batch
+        }
+
+        // Commit the batch. Calls bump_generation() once, marks
+        // all batched nodes dirty, releases the suppression.
+        void commit_atomic_batch() noexcept {
+            bump_generation_suppressed_ = false;
+            ++generation_;
+            if (generation_ == 0)
+                generation_ = 1;
+            // Note: we don't have a per-batch dirty list (would
+            // require tracking all touched nodes in the lockless
+            // mutates). The first post-commit structural mutate
+            // will trigger the regular mark_dirty_upward path.
+            // The single bump + single future dirty sweep is
+            // still much cheaper than N bumps + N dirty sweeps.
+            // Issue #255: bump the actual gen + the batch counter.
+            // commit_atomic_batch() does its own generation bump
+            // (not via bump_generation() — that would respect the
+            // suppression flag we just cleared, and we want the
+            // bump to happen unconditionally). Count it here.
+            bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
+            atomic_batch_commits_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1348: long-run soft compaction policy — when the
+            // free_list_ grows past the threshold (or live size exceeds
+            // the warn cap), recycle dead slots without invalidating
+            // StableNodeRefs (compact_nodes_soft does not remap ids).
+            if (free_list_.size() >= compaction_free_list_threshold_ ||
+                size() >= max_live_nodes_warn_) {
+                (void)compact_nodes_soft();
+                auto_compact_on_commit_count_.fetch_add(1, std::memory_order_relaxed);
+                if (size() >= max_live_nodes_warn_)
+                    live_nodes_threshold_warn_count_.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Issue #1371: after batch commit, refresh tag_arity
+            // index via delta when only appends occurred; otherwise
+            // leave dirty for ensure_tag_arity_index on next query.
+            if (tag_arity_index_dirty_.load(std::memory_order_acquire)) {
+                const std::size_t n = size();
+                if (!tag_arity_index_.empty() && n > tag_arity_index_built_size_) {
+                    rebuild_tag_arity_index_delta(static_cast<NodeId>(tag_arity_index_built_size_),
+                                                  static_cast<NodeId>(n));
+                }
+                // else: in-place mutates or empty index — keep dirty
+                // so ensure_tag_arity_index() full-rebuilds later.
+            }
+        }
+
+        // Roll back the batch. No bump (the changes were never
+        // visible — gen didn't change). Releases the suppression.
+        void rollback_atomic_batch() noexcept {
+            bump_generation_suppressed_ = false;
+            // No bump. No dirty sweep. The lockless helper's
+            // own rollback_since() has already reverted the
+            // mutation_log_ entries; readers holding the
+            // pre-batch generation_ see no change.
+        }
+
+        // Issue #250: how many generation bumps the latest batch
+        // saved by suppressing per-op bumps. Updated on each
+        // commit. Exposed via observability snapshot.
+        std::uint64_t atomic_batch_bumps_saved() const noexcept {
+            return atomic_batch_bumps_saved_;
+        }
+        [[nodiscard]] std::uint64_t atomic_batch_commits() const noexcept {
+            return atomic_batch_commits_.load(std::memory_order_relaxed);
+        }
+
+        // True iff an atomic batch is active. Used by
+        // mark_dirty_upward to skip dirty propagation during
+        // a batch (the commit path handles it).
+        bool atomic_batch_active() const noexcept {
+            return bump_generation_suppressed_;
+        }
+        // Issue #255: reference stability observability accessors.
+        // Read by CompilerService::snapshot() (service.ixx) to
+        // accumulate into CompilerMetrics for the
+        // (compile:invalidations-stats) Aura primitive and the
+        // --evo-explain output.
+        std::uint64_t bump_generation_count() const noexcept {
+            return bump_generation_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t is_valid_check_count() const noexcept {
+            return is_valid_check_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t stable_ref_invalidations() const noexcept {
+            return stable_ref_invalidations_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t workspace_cow_epoch() const noexcept {
+            return workspace_cow_epoch_;
+        }
+        void set_workspace_cow_epoch(std::uint64_t epoch) noexcept {
+            workspace_cow_epoch_ = epoch;
+        }
+        [[nodiscard]] std::uint64_t pinned_across_boundaries() const noexcept {
+            return pinned_across_boundaries_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t cross_boundary_validations() const noexcept {
+            return cross_boundary_validations_.load(std::memory_order_relaxed);
+        }
+        void bump_pinned_across_boundaries() const noexcept {
+            pinned_across_boundaries_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #1406: counter for pins dropped by the bounded-retention
+        // cap in Evaluator::pin_stable_ref_for_cow_boundary. Observability
+        // only — not a correctness signal (dropped pins fall back to
+        // is_valid() per the cap-policy docstring).
+        void bump_pinned_across_boundaries_dropped() const noexcept {
+            pinned_across_boundaries_dropped_.fetch_add(1, std::memory_order_relaxed);
+        }
+        void bump_cross_boundary_validations() const noexcept {
+            cross_boundary_validations_.fetch_add(1, std::memory_order_relaxed);
+        }
+        void reset_boundary_observability_counters() noexcept {
+            pinned_across_boundaries_.store(0, std::memory_order_relaxed);
+            cross_boundary_validations_.store(0, std::memory_order_relaxed);
+        }
+        // Issue #457: generation_ / node_gen_ lifecycle
+        // observability accessors. Public so the
+        // (query:stable-ref-stats) primitive can read them
+        // from evaluator_primitives_query.cpp.
+        [[nodiscard]] std::uint64_t generation_wrap_count() const noexcept {
+            return generation_wrap_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t node_gen_stale_access_count() const noexcept {
+            return node_gen_stale_access_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint16_t current_generation() const noexcept {
+            return generation_;
+        }
+        std::uint64_t atomic_batch_commits_v() const noexcept {
+            return atomic_batch_commits_.load(std::memory_order_relaxed);
+        }
+        // Issue #256: AST operation observability accessors.
+        // Read by CompilerService::snapshot() to accumulate into
+        // CompilerMetrics for the (compile:ast-ops-stats) Aura
+        // primitive.
+        std::uint64_t children_call_count() const noexcept {
+            return children_call_count_.load(std::memory_order_relaxed);
+        }
+        // Issue #1319
+        std::uint64_t structural_mutate_insert_total() const noexcept {
+            return structural_mutate_insert_total_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t structural_mutate_erase_total() const noexcept {
+            return structural_mutate_erase_total_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t parent_of_call_count() const noexcept {
+            return parent_of_call_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t mark_dirty_upward_call_count() const noexcept {
+            return mark_dirty_upward_call_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t mark_dirty_total_nodes() const noexcept {
+            return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
+        }
+        // Issue #471: SV-scale dirty propagation observability
+        // (returns the # of times the mark_dirty_upward_fast
+        // early-exit fixed-point check fired + the max depth
+        // observed across all mark_dirty_upward(_fast) calls).
+        std::uint64_t mark_dirty_early_exit_count() const noexcept {
+            return mark_dirty_early_exit_count_.load(std::memory_order_relaxed);
+        }
+        std::uint64_t mark_dirty_max_depth_observed() const noexcept {
+            return mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
+        }
+        // Issue #1251: dirty propagation bound truncations + rollback compaction.
+        [[nodiscard]] std::uint64_t mark_dirty_truncated_count() const noexcept {
+            return mark_dirty_truncated_count_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t rollback_compaction_triggered() const noexcept {
+            return rollback_compaction_triggered_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #275: std::expected rollback entry point.
+        [[nodiscard]] std::expected<void, MutationError> try_rollback_record(MutationRecord & rec) {
+            if (auto valid = mutation::validate_rollback_record(rec, tag_.size()); !valid)
+                return valid;
+            auto kind = mutation::classify_rollback(rec);
+            if (!kind)
+                return std::unexpected(kind.error());
+
+            switch (*kind) {
+                case RollbackKind::SubtreeMark:
+                    rec.status = MutationStatus::RolledBack;
+                    bump_generation_on_rollback();
+                    if (rec.parent_id < tag_.size())
+                        mark_dirty_upward(rec.parent_id);
+                    return {};
+
+                case RollbackKind::Structural:
+                    return try_rollback_structural_child_op(rec);
+
+                // Issue #1441: mutate:rebind — restore Define body from rec.old_value.
+                case RollbackKind::Rebind:
+                    return try_rollback_rebind_op(rec);
+
+                case RollbackKind::ScalarInt:
+                    if (rec.target_node >= int_val_.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    int_val_[rec.target_node] = mutation::scalar_int_old_value(rec);
+                    break;
+                case RollbackKind::ScalarTypeId:
+                    if (rec.target_node >= type_id_.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    type_id_[rec.target_node] = mutation::scalar_type_old_value(rec);
+                    break;
+                case RollbackKind::ScalarSymId:
+                    if (rec.target_node >= sym_id_.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    sym_id_[rec.target_node] = mutation::scalar_sym_old_value(rec);
+                    break;
+                case RollbackKind::ScalarFloat:
+                    if (rec.target_node >= float_val_.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    float_val_[rec.target_node] = mutation::scalar_float_old_value(rec);
+                    break;
+            }
+
+            rec.status = MutationStatus::RolledBack;
+            bump_generation_on_rollback();
+            return {};
+        }
+
+        bool rollback(std::uint64_t mutation_id) pre(mutation_id != 0) {
+            for (auto& rec : mutation_log_) {
+                if (rec.mutation_id == mutation_id)
+                    return try_rollback_record(rec).has_value();
+            }
+            return false;
+        }
+
+    private:
+        // When true, bump_generation_on_rollback only advances generation_
+        // and defers restamp_all_node_generations to the batch end
+        // (rollback_since). Avoids O(records × |flat|) restamp storms that
+        // timed out jit_late1/late3 (600s) after #1441.
+        bool defer_rollback_restamp_ = false;
+
+        void bump_generation_on_rollback() {
+            ++generation_;
+            if (generation_ == 0)
+                generation_ = 1;
+            if (!defer_rollback_restamp_)
+                restamp_all_node_generations();
+        }
+
+        [[nodiscard]] std::expected<void, MutationError> try_rollback_structural_child_op(
+            MutationRecord & rec) {
+            auto op = mutation::structural_rollback_op(rec.operator_name);
+            if (!op)
+                return std::unexpected(op.error());
+
+            NodeId parent = rec.target_node;
+            if (parent >= children_.size())
+                return std::unexpected(MutationError::InvalidParent);
+
+            const auto idx = rec.field_offset;
+            const auto old_child = static_cast<NodeId>(rec.old_value);
+            const auto new_child = static_cast<NodeId>(rec.new_value);
+            auto& list = children_[parent];
+
+            switch (*op) {
+                case StructuralRollbackOp::SetChild:
+                    if (idx >= list.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    if (new_child != NULL_NODE && new_child < parent_.size())
+                        parent_[new_child] = NULL_NODE;
+                    children_[parent] = list.with_set(idx, old_child);
+                    if (old_child != NULL_NODE && old_child < parent_.size())
+                        parent_[old_child] = parent;
+                    break;
+                case StructuralRollbackOp::InsertChild:
+                    if (idx > list.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    if (new_child != NULL_NODE && new_child < parent_.size())
+                        parent_[new_child] = NULL_NODE;
+                    children_[parent] = list.with_erase(idx);
+                    break;
+                case StructuralRollbackOp::RemoveChild:
+                    if (idx > list.size())
+                        return std::unexpected(MutationError::OutOfRange);
+                    children_[parent] = list.with_insert(idx, old_child);
+                    if (old_child != NULL_NODE && old_child < parent_.size())
+                        parent_[old_child] = parent;
+                    break;
+            }
+
+            rec.status = MutationStatus::RolledBack;
+            bump_generation_on_rollback(); // restamp unless deferred by rollback_since
+            mark_dirty_upward(parent);
+            // Issue #369: bump the per-category counter. Success
+            // means the children_ column was restored via the
+            // structural op (parent, child_idx, old_child, new_child
+            // all valid).
+            structural_rollback_success_.fetch_add(1, std::memory_order_relaxed);
+            return {};
+        }
+
+        // Issue #1441: variable-state rollback for mutate:rebind.
+        // rec.target_node = Define node; rec.old_value / rec.new_value = body NodeIds;
+        // rec.field_offset = body child index (0). Restores children_[define][idx]
+        // and parent_ links, marks RolledBack.
+        [[nodiscard]] std::expected<void, MutationError> try_rollback_rebind_op(MutationRecord &
+                                                                                rec) {
+            if (!rec.has_rollback_data)
+                return std::unexpected(MutationError::NoRollbackData);
+            if (rec.operator_name != "rebind" && rec.operator_name != "batch-rebind")
+                return std::unexpected(MutationError::UnknownStructuralOp);
+
+            const NodeId define_node = rec.target_node;
+            if (define_node >= children_.size() || define_node >= tag_.size())
+                return std::unexpected(MutationError::InvalidTarget);
+
+            const auto idx = rec.field_offset; // body slot (normally 0)
+            const auto old_child = static_cast<NodeId>(rec.old_value);
+            const auto new_child = static_cast<NodeId>(rec.new_value);
+            auto& list = children_[define_node];
+            if (idx >= list.size())
+                return std::unexpected(MutationError::OutOfRange);
+
+            // Inverse of set_child: detach new body, reattach old body.
+            if (new_child != NULL_NODE && new_child < parent_.size())
+                parent_[new_child] = NULL_NODE;
+            children_[define_node] = list.with_set(idx, old_child);
+            if (old_child != NULL_NODE && old_child < parent_.size())
+                parent_[old_child] = define_node;
+
+            rec.status = MutationStatus::RolledBack;
+            bump_generation_on_rollback(); // restamp unless deferred by rollback_since
+            mark_dirty_upward(define_node);
+            return {};
+        }
+
+    public:
+        // Rollback all mutations since (and including) the given ID.
+        // Defers restamp_all_node_generations to a single pass after the
+        // reverse walk (Issue #1441 + jit_late1/late3 timeout fix).
+        std::size_t rollback_since(std::uint64_t since_id) {
+            std::size_t count = 0;
+            const bool prev_defer = defer_rollback_restamp_;
+            defer_rollback_restamp_ = true;
+            for (auto it = mutation_log_.rbegin(); it != mutation_log_.rend(); ++it) {
+                if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
+                    if (rollback(it->mutation_id))
+                        ++count;
+                }
+            }
+            defer_rollback_restamp_ = prev_defer;
+            if (count > 0)
+                restamp_all_node_generations();
+            return count;
+        }
+
+        // Issue #213 Cycle 1: rollback all mutations appended to
+        // the log after `checkpoint_size` (i.e. the log size at
+        // boundary entry). Walks the log in reverse from the end
+        // down to the checkpoint, calling `rollback` on each
+        // committed record. Returns the number of records that
+        // were successfully rolled back.
+        //
+        // Why size-based and not id-based: the log is append-only,
+        // so the log size at boundary entry is a stable handle.
+        // A mid-mutation `mutation_id` could be re-used in the
+        // future (after wrap-around at uint64_t max), but the
+        // log size is monotonically non-decreasing within a
+        // session.
+        std::size_t rollback_to_size(std::size_t checkpoint_size)
+            // Issue #213 follow-up: C++26 contract. The function
+            // is total — handles any checkpoint_size (including
+            // past the log end, in which case it's a no-op). The
+            // contract documents the semantic: result count
+            // is 0 when checkpoint_size >= log.size().
+            pre(true) {
+            if (mutation_log_.size() <= checkpoint_size)
+                return 0;
+            // Issue #1251: before replaying a large mutation log, soft-
+            // compact dead node slots to bound memory growth under long
+            // AI multi-round edit sessions.
+            static constexpr std::size_t kRollbackCompactionLogThreshold = 10'000;
+            if (mutation_log_.size() > kRollbackCompactionLogThreshold) {
+                if (compact_nodes_soft() > 0)
+                    rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
+                else
+                    // Still record the decision point so Agents see the
+                    // hot path even when free_list_ had nothing to recycle.
+                    rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
+            }
+            std::size_t count = 0;
+            // Same restamp deferral as rollback_since (jit_late timeout fix).
+            const bool prev_defer = defer_rollback_restamp_;
+            defer_rollback_restamp_ = true;
+            for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
+                auto& rec = mutation_log_[i - 1];
+                if (rec.status == MutationStatus::Committed) {
+                    if (rollback(rec.mutation_id))
+                        ++count;
+                }
+            }
+            defer_rollback_restamp_ = prev_defer;
+            if (count > 0)
+                restamp_all_node_generations();
+            // Issue #1301 (P1) + #213: keep RolledBack records for audit
+            // by default (status already set by rollback()). Only truncate
+            // the rolled-back suffix when the log is huge so long AI
+            // sessions cannot OOM. Small rollbacks must retain entries —
+            // test_issue_213 and tooling inspect RolledBack status in-place.
+            static constexpr std::size_t kMutationLogTruncateThreshold = 10'000;
+            if (mutation_log_.size() > checkpoint_size &&
+                mutation_log_.size() > kMutationLogTruncateThreshold) {
+                const std::size_t dropped = mutation_log_.size() - checkpoint_size;
+                mutation_log_.resize(checkpoint_size);
+                mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
+                mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
+            }
+            return count;
+        }
+
+        [[nodiscard]] std::uint64_t mutation_log_compacted_records() const noexcept {
+            return mutation_log_compacted_records_.load(std::memory_order_relaxed);
+        }
+        [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
+            return mutation_log_compact_ops_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #1362: drop old Committed records so long-running agents
+        // do not accumulate ~200 bytes/mutation forever. keep_recent tail
+        // is always retained. When keep_all_rolledback is true, older
+        // RolledBack records are also retained (diagnostics for #1299).
+        // Returns number of records dropped. Idempotent when log is small.
+        // Default keep_recent=1000 bounds log to ~1K + RolledBack count.
+        [[nodiscard]] std::size_t compact_mutation_log(std::size_t keep_recent = 1000,
+                                                       bool keep_all_rolledback = true) {
+            if (mutation_log_.size() <= keep_recent)
+                return 0;
+            const std::size_t drop_to = mutation_log_.size() - keep_recent;
+            std::size_t dropped = 0;
+            std::pmr::vector<MutationRecord> kept{mutation_log_.get_allocator()};
+            kept.reserve(mutation_log_.size());
+            if (keep_all_rolledback) {
+                for (std::size_t i = 0; i < drop_to; ++i) {
+                    if (mutation_log_[i].status == MutationStatus::RolledBack)
+                        kept.push_back(std::move(mutation_log_[i]));
+                    else
+                        ++dropped;
+                }
+                for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
+                    kept.push_back(std::move(mutation_log_[i]));
+            } else {
+                for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
+                    kept.push_back(std::move(mutation_log_[i]));
+                dropped = drop_to;
+            }
+            mutation_log_ = std::move(kept);
+            // Rebuild node_first_mutation_ indices (old offsets are invalid).
+            std::fill(node_first_mutation_.begin(), node_first_mutation_.end(), 0);
+            for (std::size_t i = 0; i < mutation_log_.size(); ++i) {
+                const NodeId n = mutation_log_[i].target_node;
+                if (n < node_first_mutation_.size() && node_first_mutation_[n] == 0)
+                    node_first_mutation_[n] = static_cast<std::uint32_t>(i + 1);
+            }
+            if (dropped > 0) {
+                mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
+                mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
+            }
+            return dropped;
+        }
+
+        // Issue #1362: auto-trigger threshold (log size) — public for tests/tuning.
+        static constexpr std::size_t kMutationLogAutoCompactThreshold = 10'000;
+        static constexpr std::size_t kMutationLogAutoCompactKeepRecent = 1000;
+
+        // Issue #1362: auto-compact when log exceeds threshold (called after append).
+        void maybe_auto_compact_mutation_log() {
+            if (mutation_log_.size() > kMutationLogAutoCompactThreshold) {
+                (void)compact_mutation_log(kMutationLogAutoCompactKeepRecent,
+                                           /*keep_all_rolledback=*/true);
+            }
+        }
+
+        // ── Type ID access ─────────────────────────────────────────
+
+        std::uint32_t type_id(NodeId id) const {
+            return id < type_id_.size() ? type_id_[id] : 0;
+        }
+
+        void set_type(NodeId id, std::uint32_t tid) {
+            if (id < type_id_.size())
+                type_id_[id] = tid;
+            // Issue #412: stamp the cache entry with the current
+            // generation. The cache hit path compares this against
+            // type_cache_generation() — if they match, the entry
+            // is still valid (no structural mutation has
+            // invalidated it since it was populated). Without this
+            // stamp, the gen check would reject every entry (gen
+            // would always be 0 in the cache vs. non-zero current).
+            if (id < type_cache_gen_.size())
+                type_cache_gen_[id] = type_cache_generation_.load(std::memory_order_relaxed);
+        }
+
+        // Issue #412: type cache generation accessors. The gen
+        // is bumped on every mark_dirty_upward() call (and via
+        // the explicit bump_type_cache_generation() accessor for
+        // structural changes that don't go through the dirty
+        // path, e.g., a new define in a re-eval). Cache hit
+        // path reads type_cache_generation() and compares
+        // against the per-node value stored at cache time.
+        std::uint32_t type_cache_generation() const {
+            return type_cache_generation_.load(std::memory_order_relaxed);
+        }
+        void bump_type_cache_generation() {
+            type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Per-node cache gen accessor (read / write). Mirrors
+        // type_id() / set_type(). set_type_with_gen() is the
+        // canonical call site for the type-checker — it stores
+        // both the type and the current gen atomically.
+        std::uint32_t type_cache_gen(NodeId id) const {
+            return id < type_cache_gen_.size() ? type_cache_gen_[id] : 0;
+        }
+        void set_type_with_gen(NodeId id, std::uint32_t tid, std::uint32_t gen) {
+            if (id >= type_id_.size() || id >= type_cache_gen_.size())
+                return;
+            type_id_[id] = tid;
+            type_cache_gen_[id] = gen;
+        }
+
+        // Issue #412 follow-up #1: per-binding type cache
+        // generation accessors. Each binding (identified by
+        // SymId) has its own gen counter that bumps only
+        // when THAT specific binding's structure changes
+        // (e.g. mutate:rebind on a top-level define). The
+        // per-binding gen is finer-grained than the global
+        // type_cache_generation_ (which bumps on every
+        // dirty event): bumping on every dirty event would
+        // be over-invalidating. The per-binding gen
+        // rescues cache entries that don't depend on the
+        // mutated binding from being re-inferred.
+        //
+        // The map is a per-FlatAST map from SymId to atomic
+        // gen. The type-checker reads the gen when
+        // populating a cache entry (alongside the global
+        // gen) and on cache hit to validate. Bumps happen
+        // when a binding's structure actually changes
+        // (mutate:* primitives that target a Define / Let /
+        // LetRec node).
+        //
+        // Returns 0 for bindings that haven't been touched
+        // yet (the default-constructed gen). The 0 sentinel
+        // matches the global gen's pre-#412 behavior (0 =
+        // no cache entry yet).
+        std::uint32_t binding_gen(SymId sym) const {
+            if (!binding_gens_)
+                return 0;
+            auto it = binding_gens_->gens.find(sym);
+            if (it == binding_gens_->gens.end())
+                return 0;
+            return it->second;
+        }
+        void bump_binding_gen(SymId sym) {
+            if (!binding_gens_)
+                binding_gens_ = std::make_shared<BindingGenMap>();
+            binding_gens_->gens[sym]++;
+            binding_gen_bumps_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #412 follow-up #1: per-binding gen bump
+        // counter accessor. Returns the lifetime total of
+        // per-binding gen bumps (one per call to
+        // bump_binding_gen). Plumbed to CompilerMetrics via
+        // the snapshot for observability.
+        std::uint64_t binding_gen_bumps_total() const {
+            return binding_gen_bumps_total_.load(std::memory_order_relaxed);
+        }
+        // Issue #390: per-node schema cache accessors.
+        // schema_cache(id) returns the cached schema for
+        // node id (0 = no schema, the type checker
+        // will infer normally). set_schema_cache(id, tid)
+        // sets the schema. The type-checker's cache hit
+        // path consults this column (alongside type_id_
+        // and type_cache_gen_) to short-circuit
+        // re-inference for macro-introduced nodes.
+        std::uint32_t schema_cache(aura::ast::NodeId id) const {
+            return id < schema_cache_.size() ? schema_cache_[id] : 0;
+        }
+        void set_schema_cache(aura::ast::NodeId id, std::uint32_t tid) {
+            if (id >= schema_cache_.size())
+                schema_cache_.resize(id + 1, 0);
+            schema_cache_[id] = tid;
+        }
+        // Issue #413: invalidation trace accessors. The
+        // invalidation_trace_ vector grows by one entry per
+        // per-binding gen bump (one per mark_dirty_upward on
+        // a binding node with valid sym_id). Cleared on full
+        // FlatAST reset, same lifecycle as mutation_log_.
+        // size_invalidations() returns the lifetime total.
+        // last_invalidation_for(mutation_id) returns the
+        // most recent InvalidationRecord for that mutation
+        // (a single mutation may invalidate multiple bindings
+        // — the trace keeps all of them).
+        std::size_t invalidation_trace_size() const {
+            return invalidation_trace_.size();
+        }
+        std::optional<InvalidationRecord> last_invalidation_for(std::uint64_t mutation_id) const {
+            for (auto it = invalidation_trace_.rbegin(); it != invalidation_trace_.rend(); ++it) {
+                if (it->mutation_id == mutation_id)
+                    return *it;
+            }
+            return std::nullopt;
+        }
+        // Plumbed to CompilerMetrics via the snapshot for
+        // observability. Counter incremented on every
+        // per-binding gen bump that gets traced.
+        mutable std::atomic<std::uint64_t> invalidation_trace_records_total_{0};
+        // Counter accessor.
+        std::uint64_t invalidation_trace_records_total() const {
+            return invalidation_trace_records_total_.load(std::memory_order_relaxed);
+        }
+        // Per-node cache gen accessor for the BINDING the
+        // cache entry is for. 0 = no binding context.
+        // Mirrors type_cache_gen() / type_cache_binding_gen_
+        // column.
+        std::uint32_t type_cache_binding_gen(NodeId id) const {
+            return id < type_cache_binding_gen_.size() ? type_cache_binding_gen_[id] : 0;
+        }
+        // The canonical call site for the type-checker when
+        // populating a cache entry for a Variable node (or
+        // any node whose type depends on a specific binding).
+        // Stores the type, the global gen, and the per-binding
+        // gen. On cache hit, the check is: global gen matches
+        // AND per-binding gen matches → entry is fresh.
+        void set_type_with_binding_gen(NodeId id, std::uint32_t tid, std::uint32_t global_gen,
+                                       std::uint32_t binding_gen_val) {
+            if (id >= type_id_.size() || id >= type_cache_gen_.size() ||
+                id >= type_cache_binding_gen_.size())
+                return;
+            type_id_[id] = tid;
+            type_cache_gen_[id] = global_gen;
+            type_cache_binding_gen_[id] = binding_gen_val;
+        }
+
+        // ── Error kind access (Issue #79) ────────────────────────
+        // 0 = no error, non-zero = ErrorKind enum value. Lets the type-checker
+        // and runtime evaluator tag the offending node so AuraQuery
+        // `(has-error? N)` can find it without scanning all diagnostics.
+        std::uint8_t node_error(NodeId id) const {
+            return id < error_kind_.size() ? error_kind_[id] : 0;
+        }
+        void set_node_error(NodeId id, std::uint8_t kind) {
+            if (id < error_kind_.size())
+                error_kind_[id] = kind;
+        }
+        void clear_node_error(NodeId id) {
+            if (id < error_kind_.size())
+                error_kind_[id] = 0;
+        }
+
+        void set_int(NodeId id, std::int64_t val)
+            // Issue #144: id must be a valid node. Without this,
+            // a stale NodeId from a previous generation would
+            // silently no-op (the size check below) and the mutation
+            // would vanish without a diagnostic.
+            pre(id < int_val_.size()) {
+            int_val_[id] = val;
+        }
+        void set_float(NodeId id, double val) pre(id < float_val_.size()) {
+            float_val_[id] = val;
+        }
+        void set_sym(NodeId id, SymId val) pre(id < sym_id_.size()) {
+            sym_id_[id] = val;
+        }
+
+        // Capability require count for DefineModule nodes
+        std::uint32_t cap_require_count(NodeId id) const {
+            return id < cap_require_count_.size() ? cap_require_count_[id] : 0;
+        }
+
+        // Access a param by apparent index across the combined param+cap_require storage
+        SymId param_at(NodeId id, std::uint32_t idx) const {
+            if (idx < param_count_[id] + cap_require_count_[id] &&
+                param_begin_[id] + idx < param_data_.size())
+                return param_data_[param_begin_[id] + idx];
+            return INVALID_SYM;
+        }
+
+        // Set a param by index. Used by mutate:rename-symbol to rename
+        // Lambda parameters (whose symbols live in param_data_, not
+        // sym_id_). Issue #139.
+        void set_param_at(NodeId id, std::uint32_t idx, SymId val) {
+            if (idx < param_count_[id] + cap_require_count_[id] &&
+                param_begin_[id] + idx < param_data_.size())
+                param_data_[param_begin_[id] + idx] = val;
+        }
+
+        // Issue #139: convenience wrapper that iterates the params of a
+        // Lambda (or any node with params) and replaces any param with
+        // sym_id matching `oldsym` to `newsym`. Returns the count of
+        // replacements. Used by mutate:rename-symbol so the param list
+        // of `(lambda (x) ...)` is updated when the caller renames `x`.
+        template <typename Callback>
+        std::size_t rename_param(NodeId id, SymId oldsym, SymId newsym, Callback next_idx) {
+            if (id >= param_count_.size() || id >= param_begin_.size())
+                return 0;
+            std::size_t n = 0;
+            for (std::uint32_t i = 0; i < param_count_[id] + cap_require_count_[id]; ++i) {
+                if (param_data_[param_begin_[id] + i] == oldsym) {
+                    param_data_[param_begin_[id] + i] = newsym;
+                    ++n;
+                    if constexpr (!std::is_null_pointer_v<Callback>)
+                        next_idx(i);
+                }
+            }
+            return n;
+        }
+
+        // Resolve type names → TypeIds for all TypeAnnotation nodes
+        // Requires TypeRegistry for name resolution
+        void resolve_type_ids(class aura::core::TypeRegistry & reg, StringPool & pool);
+
+        // Issue #249: stable child / parent accessors. These return
+        // StableNodeRef (a NodeId + generation pair) so the caller
+        // can safely hold the result across structural mutations.
+        // If a structural mutation happens after capturing, the
+        // ref's generation no longer matches FlatAST::generation_,
+        // and is_valid(ref) returns false. This is the recommended
+        // way to use NodeIds in EDSL / query / mutate code that
+        // may span multiple mutating calls.
+        [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
+            if (id >= parent_.size())
+                return StableNodeRef{};
+            auto pid = parent_[id];
+            if (pid == NULL_NODE)
+                return StableNodeRef{};
+            return StableNodeRef{pid, generation_};
+        }
+
+        // Issue #678: generation-tagged parent accessor for query
+        // paths that may span structural mutations. Unlike parent_of()
+        // (scalar NodeId), the returned StableNodeRef can be validated
+        // via is_valid() after a concurrent mutate.
+        [[nodiscard]] StableNodeRef parent_safe_view(NodeId id) const noexcept {
+            parent_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
+            return parent_stable(id);
+        }
+
+        [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
+            std::vector<StableNodeRef> out;
+            if (id >= children_.size())
+                return out;
+            const auto& pcv = children_[id];
+            out.reserve(pcv.size());
+            for (std::size_t i = 0; i < pcv.size(); ++i) {
+                auto cid = pcv[i];
+                if (cid == NULL_NODE)
+                    continue;
+                out.push_back(StableNodeRef{cid, generation_});
+            }
+            return out;
+        }
+
+        // Issue #398: zero-allocation iteration over stable
+        // children. Equivalent to children_stable() but does NOT
+        // allocate a vector — each non-NULL child is delivered to
+        // the callback as a `StableNodeRef` (with the current
+        // generation_ captured at call time). The callback may
+        // return any type (typically void or a count).
+        //
+        // Use this in hot paths (AI Agent multi-round loops,
+        // production EDSL navigation) where the caller only needs
+        // to iterate once. For callers that need to store the
+        // refs (e.g. across mutation boundaries), use the
+        // allocating `children_stable()` instead.
+        //
+        // The callback signature: `void(StableNodeRef)`. Order
+        // matches the underlying children span (left-to-right
+        // = first-to-last child). NULL_NODE children are
+        // filtered out (same as children_stable()).
+        //
+        // Out-of-range ids are silently a no-op (no callback
+        // invocation, same as the allocating version's empty
+        // vector).
+        template <typename Fn> void for_each_stable_child(NodeId id, Fn && fn) const {
+            if (id >= children_.size())
+                return;
+            const auto& pcv = children_[id];
+            for (std::size_t i = 0; i < pcv.size(); ++i) {
+                auto cid = pcv[i];
+                if (cid == NULL_NODE)
+                    continue;
+                fn(StableNodeRef{cid, generation_});
+            }
+        }
+
+        // Issue #398: count of non-NULL stable children. O(N)
+        // in the children span. Use to size a pre-allocated
+        // buffer if the caller wants to use the allocating
+        // children_stable() but pre-allocate the right size
+        // (currently children_stable() already does this via
+        // reserve, but the count is useful for callers that
+        // need the size before allocating).
+        [[nodiscard]] std::size_t stable_child_count(NodeId id) const noexcept {
+            if (id >= children_.size())
+                return 0;
+            const auto& pcv = children_[id];
+            std::size_t n = 0;
+            for (std::size_t i = 0; i < pcv.size(); ++i) {
+                if (pcv[i] != NULL_NODE)
+                    ++n;
+            }
+            return n;
+        }
+
+        NodeId root = NULL_NODE;
+
+        // Issue #738: workspace-layer COW epoch mirrored from
+        // WorkspaceNode::cow_epoch on switch / lazy clone.
+        std::uint64_t workspace_cow_epoch_ = 0;
+        mutable std::atomic<std::uint64_t> pinned_across_boundaries_{0};
+        // Issue #1406: counter for pins dropped by bounded-retention cap.
+        mutable std::atomic<std::uint64_t> pinned_across_boundaries_dropped_{0};
+        mutable std::atomic<std::uint64_t> cross_boundary_validations_{0};
+
+        // Issue #1355: nested lightweight field-mutation frames (side log).
+        // Not part of durable mutation_log_; committed frames are discarded.
+        std::vector<std::vector<MutationRecord>> lightweight_frames_;
+        bool render_lightweight_active_ = false;
+
+        // Issue #250: atomic-batch state. Placed at the end of the
+        // class (after `root`) to preserve the SoA field ordering
+        // invariant — the pmr::vector<...> fields above must be
+        // contiguous for the FlatAST's load / clear / mutate paths
+        // to work. These two scalars come last so they don't shift
+        // the offsets of any SoA columns.
+        //
+        // When true, individual structural mutations (set_child /
+        // insert_child / remove_child) skip the per-op generation
+        // bump. The batch commits with a single bump at the end,
+        // so per-op bumps would be redundant.
+        // Set by begin_atomic_batch(); cleared by commit / rollback.
+        bool bump_generation_suppressed_ = false;
+        // Issue #250: how many per-op bumps were suppressed during
+        // the most recent batch. Updated on commit; exposed via
+        // atomic_batch_bumps_saved() and observability snapshot.
+        std::uint64_t atomic_batch_bumps_saved_ = 0;
     };
 
-    // Issue #291: serialize a StableNodeRef to a compact
-    // 16-byte binary blob. Format (little-endian):
-    //   [u32 magic=0x2901A17A][u32 id][u16 gen][u16 pad][u64 mutation_id][u32 workspace_id][u32
-    //   reserved] = 4+4+2+2+8+4+4 = 24 bytes
-    // The packed form is designed to be:
-    //   - trivially memcpy-able (no host-endian conversion needed
-    //     for use within one process; cross-endian callers
-    //     should use the Aura helper (ast:ref-serialize) which
-    //     returns a string in canonical order)
-    //   - forward-compatible: new fields can be appended without
-    //     breaking existing readers (just bump the version byte
-    //     and ignore unknown trailing data)
-    //   - distinguishable from old (id, gen)-only refs: the new
-    //     format starts with a 4-byte magic number
-    //     (0x2901A17A) so readers can tell a #291+ serialized
-    //     blob from a raw (id, gen) binary.
-    // Issue #379: kStableRefSerializedSize + kStableRefMagic stay
-    // as class statics (callers reference them as
-    // FlatAST::kStableRefSerializedSize). Moving them to a free
-    // constexpr would change the public API.
-    static constexpr std::size_t kStableRefSerializedSize = 24;
-    static constexpr std::uint32_t kStableRefMagic = 0x2901A17A; // #291 + AURA tag
-
-    // Issue #291: pack a StableNodeRef into a 20-byte buffer.
-    // Returns the number of bytes written (= kStableRefSerializedSize).
-    // Issue #379: body moved to src/core/ast_stability.cpp.
-    [[nodiscard]] std::size_t serialize_stable_ref(const StableNodeRef& ref,
-                                                   std::uint8_t* out) const noexcept;
-
-    // Issue #291: deserialize a 20-byte buffer back to a
-    // StableNodeRef. Returns false if the magic doesn't match
-    // or buffer is too small. The caller is responsible for
-    // checking is_valid() AFTER deserializing to confirm the
-    // ref still points to a live node in the current flat.
-    // Issue #379: body moved to src/core/ast_stability.cpp.
-    [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf, std::size_t buf_size,
-                                              StableNodeRef& out) const noexcept;
-
-    // Issue #191: make a StableNodeRef capturing the current
-    // generation. Use this in EDSL / query / mutate primitives
-    // to safely hold a reference to a node across calls.
-    [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
-        // Issue #291: also capture mutation_id_at_capture so
-        // downstream callers can answer "which mutations
-        // affected this node since capture" (full lookup is a
-        // follow-up; the field is captured now to make the
-        // serialization format forward-compatible). workspace_id
-        // defaults to 0 (root); callers working across
-        // WorkspaceTree layers can set it explicitly via
-        // make_ref_in_layer(id, workspace_id).
-        // Issue #368: also capture wrap_epoch_ so is_valid()
-        // can detect false positives from a second generation_
-        // wrap returning to the original numeric value.
-        // Issue #392: also capture subtree_gen_at_capture
-        // (the subtree_gen_ counter for the top-level Define
-        // ancestor of `id`) so is_valid_subtree() can skip
-        // invalidating refs in untouched subtrees.
-        //
-        // Backward-compat (Issue #303 Scenario 1): fiber_id and
-        // last_validated_generation both default to 0 here.
-        // last_validated_generation == 0 means "no validation
-        // history" — make_ref() captures don't imply validation.
-        // Callers that want provenance should use make_safe_ref().
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             0,
-                             0,
-                             0,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
-    }
-
-    // Issue #291: make_ref variant that also tags the ref
-    // with a specific WorkspaceTree layer index. Used by
-    // query/mutate primitives that operate on a child
-    // workspace.
-    [[nodiscard]] StableNodeRef make_ref_in_layer(NodeId id,
-                                                  std::uint32_t workspace_id) const noexcept {
-        // Issue #392: capture subtree_gen_at_capture too.
-        // Backward-compat: fiber_id and last_validated_generation
-        // both default to 0 (no fiber context, no validation
-        // history). Same convention as make_ref().
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             workspace_id,
-                             0,
-                             0,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
-    }
-
-    // Issue #303: make_safe_ref records full provenance
-    // (workspace_id, fiber_id, mutation_id_at_capture,
-    // current generation). Prefer this over make_ref when
-    // the ref will be stored across mutation boundaries or
-    // used from a fiber / agent loop. Existing callers of
-    // make_ref() continue to work unchanged (fiber_id
-    // defaults to 0 = "not in a fiber").
-    [[nodiscard]] StableNodeRef make_safe_ref(NodeId id, std::uint32_t workspace_id = 0,
-                                              std::uint32_t fiber_id = 0) const noexcept {
-        // Issue #392: capture subtree_gen_at_capture too.
-        return StableNodeRef{id,
-                             generation_,
-                             next_mutation_id_,
-                             workspace_id,
-                             fiber_id,
-                             generation_,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
-    }
-
-    // Issue #303: capture_for_fiber is a shorthand for
-    // make_safe_ref with workspace_id=0 and fiber_id set.
-    // The returned ref has last_validated_generation =
-    // current generation_ (i.e., freshly captured).
-    [[nodiscard]] StableNodeRef capture_for_fiber(NodeId id,
-                                                  std::uint32_t fiber_id) const noexcept {
-        return make_safe_ref(id, 0, fiber_id);
-    }
-
-    // Issue #393: explicit (id, gen) pair construction. Use
-    // this when you have a `gen` value from an external
-    // source (a serialized StableNodeRef buffer, a
-    // cross-workspace handoff, or a manual annotation) and
-    // want to wrap it as a StableNodeRef without going
-    // through make_ref() / make_safe_ref(). Captures the
-    // current `mutation_id_at_capture`, `workspace_id`,
-    // `fiber_id`, `last_validated_generation`, and
-    // `wrap_epoch` from the FlatAST state — only the `id`
-    // and `gen` come from the caller's arguments.
+    // ── MutationVisitor concept (Issue #274) ─────────────────────
     //
-    // This is the C++ analog of `(query:children-stable)` /
-    // `(query:parent-stable)` for cases where the caller
-    // already knows the generation (e.g. a checkpoint file
-    // from a prior session, or a cross-workspace handoff).
-    [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id, std::uint16_t gen) const noexcept {
-        return StableNodeRef{id,
-                             gen,
-                             next_mutation_id_,
-                             0,
-                             0,
-                             gen,
-                             wrap_epoch_.load(std::memory_order_relaxed),
-                             subtree_generation(id),
-                             workspace_cow_epoch_};
+    // Mirrors the Pass / AnalysisPass pattern in pass_manager.ixx,
+    // but for FlatAST mutation records instead of IRModule transforms.
+    // Visitors observe or react to committed mutations; the pipeline
+    // folds over the mutation log with short-circuit on has_error().
+    export template <typename V>
+    concept MutationVisitor = requires(V& v, FlatAST& flat, const MutationRecord& rec) {
+        { v.visit_mutation(flat, rec) } -> std::same_as<void>;
+        { v.has_error() } -> std::convertible_to<bool>;
+    };
+
+    // Pure-function mutation callbacks (no persistent visitor state).
+    export template <typename Fn>
+    concept PureMutationFn = requires(Fn& fn, FlatAST& flat, const MutationRecord& rec) {
+        { fn(flat, rec) } -> std::same_as<void>;
+    };
+
+    export template <PureMutationFn Fn> class MutationFnWrap {
+    public:
+        explicit MutationFnWrap(Fn& fn)
+            : fn_(&fn) {}
+
+        void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
+        bool has_error() const { return false; }
+
+    private:
+        Fn* fn_;
+    };
+
+    // ── StableNodeRef + MutationRecord helpers ───────────────────
+    // Issue #378: bodies moved to ast_impl.cpp (non-template post-class
+    // items). Templates above (MutationFnWrap / run_mutation_*) MUST stay
+    // in this interface unit because templates with external visibility
+    // can't be defined in a non-exported module implementation unit.
+    export [[nodiscard]] FlatAST::StableNodeRef
+    mutation_target_ref(const FlatAST& flat, const MutationRecord& rec) noexcept;
+    export [[nodiscard]] FlatAST::StableNodeRef
+    mutation_parent_ref(const FlatAST& flat, const MutationRecord& rec) noexcept;
+    export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
+                                                       const MutationRecord& rec) noexcept;
+    export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
+                                                       const MutationRecord& rec) noexcept;
+
+    // ── run_mutation_pipeline — fold over mutation log ───────────
+    export template <MutationVisitor V>
+    bool run_mutation_visitor_one(FlatAST& flat, const MutationRecord& rec, V& visitor) {
+        visitor.visit_mutation(flat, rec);
+        return !visitor.has_error();
     }
 
-    // Issue #393: flat-style validity check for callers that
-    // have an (id, gen) pair but don't want to allocate a
-    // StableNodeRef wrapper (e.g. in hot query primitives
-    // that read thousands of pairs from a side-vector).
-    // Returns true iff the slot at `id` is in-bounds AND its
-    // stored generation (node_gen_[id]) matches `gen` AND
-    // the FlatAST's wrap_epoch matches the captured epoch
-    // (passed as `wrap_epoch_at_capture`, default = current
-    // wrap_epoch_ which matches fresh captures).
-    //
-    // Does NOT consult generation_ — that's the whole
-    // point. The caller decides what gen counts as "valid"
-    // (typically the value they captured at, which may be
-    // older than the current global gen if they're using
-    // scoped ref tracking or a checkpoint file).
-    [[nodiscard]] bool
-    is_valid_id_gen(NodeId id, std::uint16_t gen,
-                    std::uint32_t wrap_epoch_at_capture = 0 /* 0 = use current */) const noexcept {
-        if (id == NULL_NODE || id >= tag_.size() || id >= node_gen_.size())
-            return false;
-        if (node_gen_[id] != gen)
-            return false;
-        const auto we = (wrap_epoch_at_capture == 0) ? wrap_epoch_.load(std::memory_order_relaxed)
-                                                     : wrap_epoch_at_capture;
-        // Issue #368: catch second-wrap false positives. If
-        // the caller passed a specific wrap_epoch, check
-        // against the current one (mismatch = wrapped).
-        // If they passed 0 (default), use the current epoch
-        // (skip the check — fresh captures are always safe).
-        if (wrap_epoch_at_capture != 0 &&
-            wrap_epoch_at_capture != wrap_epoch_.load(std::memory_order_relaxed))
-            return false;
-        (void)we;
+    export template <MutationVisitor... Visitors>
+    bool run_mutation_one(FlatAST& flat, const MutationRecord& rec, Visitors&... visitors) {
+        return (run_mutation_visitor_one(flat, rec, visitors) && ...);
+    }
+
+    export template <MutationVisitor... Visitors>
+    bool run_mutation_pipeline(FlatAST& flat, Visitors&... visitors) {
+        for (const auto& rec : flat.all_mutations()) {
+            if (!run_mutation_one(flat, rec, visitors...))
+                return false;
+        }
         return true;
     }
 
-    // Issue #191: validation + safe get that take a StableNodeRef.
-    // The ref's gen is compared to the FlatAST's current gen; if
-    // they differ, the ref is stale (a structural mutation
-    // happened in between).
-    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
-        post(r : r == (ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
-                       node_gen_[ref.id] == ref.gen && ref.gen == generation_ &&
-                       // Issue #368: generation_ is uint16_t; after
-                       // ~130K mutates a second wrap could match
-                       // the ref's captured gen by accident. Check
-                       // wrap_epoch explicitly (uint32_t, wraps
-                       // every ~2.6e14 mutates).
-                       ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
-        // Issue #255: bump the check counter (lifetime total).
-        is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
-        bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
-                  node_gen_[ref.id] == ref.gen &&
-                  ref.gen == generation_ && // gen must also match current
-                  // Issue #368: catch second-wrap false positives.
-                  ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed);
-        if (!ok) {
-            // Stale ref — bump the invalidations counter.
-            // The whole point of StableNodeRef is to detect
-            // this case; counting it tells us how often the
-            // mechanism actually catches a stale handle.
-            stable_ref_invalidations_.fetch_add(1, std::memory_order_relaxed);
+    export template <MutationVisitor... Visitors>
+    bool run_mutation_pipeline(FlatAST& flat, std::span<const MutationRecord> records,
+                               Visitors&... visitors) {
+        for (const auto& rec : records) {
+            if (!run_mutation_one(flat, rec, visitors...))
+                return false;
         }
-        return ok;
-    }
-
-    // Issue #392: subtree-aware StableRef validity check.
-    // Returns true when:
-    //   - ref.id is in-bounds,
-    //   - the slot has not been modified since capture
-    //     (node_gen_[ref.id] == ref.gen), AND
-    //   - the wrap epoch matches (no second-wrap false
-    //     positives), AND
-    //   - the top-level Define containing ref.id has not
-    //     been scoped-bumped since capture
-    //     (subtree_gen_[top_define_of(ref.id)] ==
-    //      ref.subtree_gen_at_capture).
-    //
-    // This RELAXED check is the value-prop of #392: refs in
-    // subtrees that were NOT touched by a scoped bump stay
-    // valid even when other subtrees get bumped. Use this in
-    // hot paths that hold many refs across long mutation
-    // sequences (AI agent loops, EDA RTL/SV workspaces).
-    //
-    // Backward compatibility: the strict is_valid() above is
-    // unchanged. Callers that don't capture the new
-    // subtree_gen_at_capture field (default 0) still work
-    // because subtree_gen_ defaults to 0 — the check accepts
-    // them as long as no scoped bump has touched their
-    // subtree.
-    [[nodiscard]] bool is_valid_subtree(const StableNodeRef& ref) const noexcept {
-        if (ref.id == NULL_NODE || ref.id >= tag_.size() || ref.id >= node_gen_.size())
-            return false;
-        if (node_gen_[ref.id] != ref.gen)
-            return false;
-        if (ref.wrap_epoch != wrap_epoch_.load(std::memory_order_relaxed))
-            return false;
-        // Subtree check: find the top-level Define ancestor
-        // and compare subtree_gen_[T] against the captured
-        // value. For nodes with no enclosing Define, top_define_of
-        // returns NULL_NODE → we treat them as "no subtree
-        // scoping" and accept (subtree_gen_ stays at 0).
-        auto top = top_define_of(ref.id);
-        if (top == NULL_NODE)
-            return true; // no enclosing Define → can't be scope-invalidated
-        if (top >= subtree_gen_.size())
-            return true; // subtree_gen_ not populated → no scoped bump yet
-        return subtree_gen_[top] == ref.subtree_gen_at_capture;
-    }
-    [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept
-        post(r : !r.has_value() || is_valid(ref)) {
-        if (!is_valid(ref))
-            return std::nullopt;
-        return get(ref.id);
-    }
-
-    // Issue #368: accessor for the current wrap_epoch_.
-    // Returned by (ast:generation-stats) under the wrap-epoch key
-    // so AI agents can checkpoint / compact before the next
-    // generation_ wrap creates a wave of false-positive refs in
-    // their long-running workspaces.
-    [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
-        return wrap_epoch_.load(std::memory_order_relaxed);
-    }
-    // Issue #369: structural-rollback counters.
-    [[nodiscard]] std::uint64_t structural_rollback_success() const noexcept {
-        return structural_rollback_success_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t structural_rollback_besteffort() const noexcept {
-        return structural_rollback_besteffort_.load(std::memory_order_relaxed);
-    }
-    // Issue #1281: children_ PCV topology restores (snapshot path).
-    [[nodiscard]] std::uint64_t children_topology_restore_count() const noexcept {
-        return children_topology_restore_count_.load(std::memory_order_relaxed);
-    }
-    // Issue #1282: auto-restamp after generation wrap.
-    [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {
-        return auto_restamp_on_wrap_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] bool auto_restamp_pending() const noexcept {
-        return auto_restamp_pending_.load(std::memory_order_relaxed);
-    }
-    // Issue #370: lifetime-safe view call counter.
-    [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
-        return children_safe_view_count_.load(std::memory_order_relaxed);
-    }
-    // Issue #678: parent_safe_view call counter.
-    [[nodiscard]] std::uint64_t parent_safe_view_count() const noexcept {
-        return parent_safe_view_count_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #191: bump the generation counter (with wrap-around
-    // to 1, skipping 0 which is reserved). Called automatically
-    // by structural mutation methods (set_child / insert_child /
-    // remove_child) to invalidate all stale NodeIds in the
-    // workspace. Also exposed publicly for the mutation
-    // primitives to call after a non-SoA-mutating structural
-    // change (e.g., a workspace-level COW swap).
-    // Issue #273: refresh node_gen_ after a generation bump that does
-    // not invalidate the whole FlatAST (e.g. hygienic macro rewrite).
-    void restamp_all_node_generations() {
-        // node_gen_==0 marks free-list slots, but live nodes at
-        // generation_==0 also carry 0 — do not use is_free_slot here.
-        std::vector<std::uint8_t> on_free(size(), 0);
-        for (NodeId fid : free_list_) {
-            if (fid < on_free.size())
-                on_free[fid] = 1;
-        }
-        for (NodeId id = 0; id < size(); ++id) {
-            if (!on_free[id] && id < node_gen_.size())
-                node_gen_[id] = generation_;
-        }
-        // Issue #1282: if restamp was pending due to uint16 wrap,
-        // clear the flag and count the recovery (Agent-visible via
-        // ast:generation-stats / production-sweep-1281-1285-stats).
-        if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
-            auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-
-    // Issue #1282: if a generation wrap marked auto_restamp_pending_,
-    // restamp live node_gen_ now. Safe to call from non-noexcept
-    // paths (restore_children, mutation boundary exit).
-    void maybe_auto_restamp_on_wrap() {
-        if (!auto_restamp_pending_.load(std::memory_order_relaxed))
-            return;
-        restamp_all_node_generations();
-    }
-
-    // Refresh node_gen_ on one subtree (narrower than restamp_all).
-    void restamp_subtree_generation(NodeId root) {
-        if (root == NULL_NODE || root >= size())
-            return;
-        std::vector<NodeId> stack;
-        stack.push_back(root);
-        std::vector<std::uint8_t> seen(size(), 0);
-        while (!stack.empty()) {
-            auto id = stack.back();
-            stack.pop_back();
-            if (id == NULL_NODE || id >= size() || seen[id])
-                continue;
-            seen[id] = 1;
-            if (id < node_gen_.size())
-                node_gen_[id] = generation_;
-            for (auto cid : children(id)) {
-                if (cid != NULL_NODE)
-                    stack.push_back(cid);
-            }
-        }
-    }
-
-    void bump_generation() noexcept post(generation_ != 0) {
-        if (bump_generation_suppressed_) {
-            // Issue #250: inside an atomic batch, individual
-            // structural mutations (set_child / insert_child /
-            // remove_child) skip the per-op generation bump.
-            // The batch commits with a single bump at the end,
-            // so the per-op bumps would be redundant.
-            return;
-        }
-        ++generation_;
-        if (generation_ == 0) {
-            generation_ = 1;
-            // Issue #457: detected a uint16_t wrap-around.
-            // generation_ is uint16_t (1..65535) and we
-            // wrap 65535 → 0 → 1. After 65K structural
-            // mutations in the same FlatAST, every
-            // outstanding StableNodeRef becomes invalid
-            // (gen mismatch). Bump the wrap counter so
-            // the AI Agent can (query:stable-ref-stats)
-            // and decide whether to checkpoint / compact.
-            generation_wrap_count_.fetch_add(1, std::memory_order_relaxed);
-            // Issue #368: bump wrap_epoch_ so StableNodeRefs
-            // captured before this wrap become invalid even
-            // after the SECOND wrap returns generation_ to
-            // its prior value (~130K mutates in).
-            // uint32_t: ~2.6e14 mutates per wrap_epoch wrap.
-            wrap_epoch_.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1282: schedule automatic restamp of live
-            // node_gen_ (restamp itself allocates; cannot run in
-            // this noexcept path). Consumed by maybe_auto_restamp_on_wrap
-            // / restamp_all_node_generations on the next safe path.
-            auto_restamp_pending_.store(true, std::memory_order_relaxed);
-        }
-        // Issue #255: only count actual bumps (suppressed
-        // ones are accounted for via atomic_batch_commits_).
-        bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Issue #392: scoped generation bumping for a single
-    // top-level Define subtree. Walks up from subtree_root to
-    // find the containing Define, then bumps that Define's
-    // subtree_gen_ counter. ALSO bumps the global generation_
-    // for backward compatibility with callers using the
-    // existing is_valid() path (which checks global gen).
-    //
-    // The benefit for callers using the new
-    // is_valid_subtree() path: refs to nodes in OTHER
-    // subtrees stay valid because their subtree_gen_ was not
-    // bumped. is_valid_subtree() compares the captured
-    // subtree_gen_at_capture against the current subtree_gen_
-    // for the top-level Define containing the ref's node.
-    //
-    // subtree_root must be a node inside the target subtree
-    // (the walk-up handles arbitrary nesting). Pass NULL_NODE
-    // to no-op safely.
-    void bump_generation_subtree(NodeId subtree_root) noexcept {
-        if (subtree_root == NULL_NODE || subtree_root >= size())
-            return;
-        auto top = top_define_of(subtree_root);
-        if (top == NULL_NODE)
-            return; // no enclosing Define → cannot scope
-        // Lazily grow the per-node subtree_gen_ vector.
-        if (subtree_gen_.size() < size())
-            subtree_gen_.resize(size(), 0);
-        // Bump the global generation_ so existing is_valid()
-        // continues to behave as before (backward compat).
-        bump_generation();
-        // Advance the per-subtree counter for this top-level
-        // Define. Same uint16_t wrap semantics as the global
-        // generation_ (1..65535, skip 0, bump wrap_count_
-        // + wrap_epoch_ on wrap).
-        std::uint16_t& sg = subtree_gen_[top];
-        ++sg;
-        if (sg == 0) {
-            sg = 1;
-            subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
-        }
-        subtree_bump_count_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #392 fix: restamp node_gen_ for the entire
-        // subtree so that refs captured AFTER the bump can
-        // still pass is_valid_subtree() (which checks
-        // node_gen_[id] == ref.gen for the slot, not just
-        // the subtree counter). Without this, a ref captured
-        // immediately after bump_generation_subtree(T) would
-        // have ref.gen = new global gen, but node_gen_[N]
-        // for N in T's subtree would still be the OLD
-        // generation → slot check fails → ref is invalid
-        // even though the subtree counter matches. The
-        // restamp aligns node_gen_ with the new generation
-        // so the slot check passes for fresh captures in
-        // the bumped subtree.
-        restamp_subtree_generation(subtree_root);
-    }
-
-    // Issue #392: read the current per-subtree generation for
-    // the top-level Define containing subtree_root. Returns 0
-    // if there is no enclosing Define (flat AST root with no
-    // top-level Define) or if subtree_root is NULL/out-of-
-    // bounds. Pair with bump_generation_subtree() and
-    // is_valid_subtree() to build subtree-aware StableRef
-    // invalidation logic.
-    [[nodiscard]] std::uint16_t subtree_generation(NodeId subtree_root) const noexcept {
-        if (subtree_root == NULL_NODE || subtree_root >= size())
-            return 0;
-        auto top = top_define_of(subtree_root);
-        if (top == NULL_NODE || top >= subtree_gen_.size())
-            return 0;
-        return subtree_gen_[top];
-    }
-
-    // Issue #392: walk up the parent chain to find the
-    // top-level Define root that contains `node`. Returns
-    // NULL_NODE if there is no enclosing Define (e.g., the
-    // AST root is a bare expression, not wrapped in Define).
-    // The walk is bounded by AST depth — O(depth) per call.
-    // Callers that need O(1) lookup should cache the result
-    // (e.g., add a side-vector `top_define_of_[id]`).
-    [[nodiscard]] NodeId top_define_of(NodeId node) const noexcept {
-        if (node == NULL_NODE || node >= size())
-            return NULL_NODE;
-        NodeId cur = node;
-        std::uint32_t safety = 0;
-        while (cur != NULL_NODE && cur < size()) {
-            if (cur < tag_.size() && tag_[cur] == NodeTag::Define)
-                return cur;
-            auto parent = (cur < parent_.size()) ? parent_[cur] : NULL_NODE;
-            if (parent == NULL_NODE)
-                return NULL_NODE;
-            cur = parent;
-            if (++safety > 1000000) // cycle guard
-                return NULL_NODE;
-        }
-        return NULL_NODE;
-    }
-
-    // Issue #392: lifetime total of bump_generation_subtree()
-    // calls (excludes the no-op when subtree_root has no
-    // enclosing Define). Read via the
-    // (compile:subtree-bump-count) Aura primitive or
-    // directly from the compiler service metrics.
-    [[nodiscard]] std::uint64_t subtree_bump_count() const noexcept {
-        return subtree_bump_count_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #250: atomic-batch API. When begin_atomic_batch()
-    // is active, bump_generation() and mark_dirty_upward are
-    // suppressed for individual structural mutates, and
-    // accumulated for a single end-of-batch commit. The batch
-    // holds the structural_mtx_ exclusive lock for its entire
-    // lifetime (via the RAII guard).
-    //
-    // begin_atomic_batch() / commit_atomic_batch() / rollback_atomic_batch()
-    // are intended to be called from mutate:atomic-batch
-    // (and any future caller that wants true all-or-nothing
-    // semantics for a multi-step mutation).
-    //
-    // IMPORTANT: begin_atomic_batch() must be called while
-    // already holding structural_mtx_ (e.g., from the outer
-    // MutationBoundaryGuard). The batch guard does NOT acquire
-    // the lock itself — the caller's existing lock is
-    // extended to cover the entire batch. This is the
-    // standard pattern: caller acquires the lock once, then
-    // does many mutations under it.
-    void begin_atomic_batch() noexcept {
-        bump_generation_suppressed_ = true;
-        atomic_batch_bumps_saved_ = 0; // reset counter for this batch
-    }
-
-    // Commit the batch. Calls bump_generation() once, marks
-    // all batched nodes dirty, releases the suppression.
-    void commit_atomic_batch() noexcept {
-        bump_generation_suppressed_ = false;
-        ++generation_;
-        if (generation_ == 0)
-            generation_ = 1;
-        // Note: we don't have a per-batch dirty list (would
-        // require tracking all touched nodes in the lockless
-        // mutates). The first post-commit structural mutate
-        // will trigger the regular mark_dirty_upward path.
-        // The single bump + single future dirty sweep is
-        // still much cheaper than N bumps + N dirty sweeps.
-        // Issue #255: bump the actual gen + the batch counter.
-        // commit_atomic_batch() does its own generation bump
-        // (not via bump_generation() — that would respect the
-        // suppression flag we just cleared, and we want the
-        // bump to happen unconditionally). Count it here.
-        bump_generation_count_.fetch_add(1, std::memory_order_relaxed);
-        atomic_batch_commits_.fetch_add(1, std::memory_order_relaxed);
-        // Issue #1348: long-run soft compaction policy — when the
-        // free_list_ grows past the threshold (or live size exceeds
-        // the warn cap), recycle dead slots without invalidating
-        // StableNodeRefs (compact_nodes_soft does not remap ids).
-        if (free_list_.size() >= compaction_free_list_threshold_ ||
-            size() >= max_live_nodes_warn_) {
-            (void)compact_nodes_soft();
-            auto_compact_on_commit_count_.fetch_add(1, std::memory_order_relaxed);
-            if (size() >= max_live_nodes_warn_)
-                live_nodes_threshold_warn_count_.fetch_add(1, std::memory_order_relaxed);
-        }
-        // Issue #1371: after batch commit, refresh tag_arity
-        // index via delta when only appends occurred; otherwise
-        // leave dirty for ensure_tag_arity_index on next query.
-        if (tag_arity_index_dirty_.load(std::memory_order_acquire)) {
-            const std::size_t n = size();
-            if (!tag_arity_index_.empty() && n > tag_arity_index_built_size_) {
-                rebuild_tag_arity_index_delta(static_cast<NodeId>(tag_arity_index_built_size_),
-                                              static_cast<NodeId>(n));
-            }
-            // else: in-place mutates or empty index — keep dirty
-            // so ensure_tag_arity_index() full-rebuilds later.
-        }
-    }
-
-    // Roll back the batch. No bump (the changes were never
-    // visible — gen didn't change). Releases the suppression.
-    void rollback_atomic_batch() noexcept {
-        bump_generation_suppressed_ = false;
-        // No bump. No dirty sweep. The lockless helper's
-        // own rollback_since() has already reverted the
-        // mutation_log_ entries; readers holding the
-        // pre-batch generation_ see no change.
-    }
-
-    // Issue #250: how many generation bumps the latest batch
-    // saved by suppressing per-op bumps. Updated on each
-    // commit. Exposed via observability snapshot.
-    std::uint64_t atomic_batch_bumps_saved() const noexcept { return atomic_batch_bumps_saved_; }
-    [[nodiscard]] std::uint64_t atomic_batch_commits() const noexcept {
-        return atomic_batch_commits_.load(std::memory_order_relaxed);
-    }
-
-    // True iff an atomic batch is active. Used by
-    // mark_dirty_upward to skip dirty propagation during
-    // a batch (the commit path handles it).
-    bool atomic_batch_active() const noexcept { return bump_generation_suppressed_; }
-    // Issue #255: reference stability observability accessors.
-    // Read by CompilerService::snapshot() (service.ixx) to
-    // accumulate into CompilerMetrics for the
-    // (compile:invalidations-stats) Aura primitive and the
-    // --evo-explain output.
-    std::uint64_t bump_generation_count() const noexcept {
-        return bump_generation_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t is_valid_check_count() const noexcept {
-        return is_valid_check_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t stable_ref_invalidations() const noexcept {
-        return stable_ref_invalidations_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t workspace_cow_epoch() const noexcept {
-        return workspace_cow_epoch_;
-    }
-    void set_workspace_cow_epoch(std::uint64_t epoch) noexcept { workspace_cow_epoch_ = epoch; }
-    [[nodiscard]] std::uint64_t pinned_across_boundaries() const noexcept {
-        return pinned_across_boundaries_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t cross_boundary_validations() const noexcept {
-        return cross_boundary_validations_.load(std::memory_order_relaxed);
-    }
-    void bump_pinned_across_boundaries() const noexcept {
-        pinned_across_boundaries_.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Issue #1406: counter for pins dropped by the bounded-retention
-    // cap in Evaluator::pin_stable_ref_for_cow_boundary. Observability
-    // only — not a correctness signal (dropped pins fall back to
-    // is_valid() per the cap-policy docstring).
-    void bump_pinned_across_boundaries_dropped() const noexcept {
-        pinned_across_boundaries_dropped_.fetch_add(1, std::memory_order_relaxed);
-    }
-    void bump_cross_boundary_validations() const noexcept {
-        cross_boundary_validations_.fetch_add(1, std::memory_order_relaxed);
-    }
-    void reset_boundary_observability_counters() noexcept {
-        pinned_across_boundaries_.store(0, std::memory_order_relaxed);
-        cross_boundary_validations_.store(0, std::memory_order_relaxed);
-    }
-    // Issue #457: generation_ / node_gen_ lifecycle
-    // observability accessors. Public so the
-    // (query:stable-ref-stats) primitive can read them
-    // from evaluator_primitives_query.cpp.
-    [[nodiscard]] std::uint64_t generation_wrap_count() const noexcept {
-        return generation_wrap_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t node_gen_stale_access_count() const noexcept {
-        return node_gen_stale_access_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint16_t current_generation() const noexcept { return generation_; }
-    std::uint64_t atomic_batch_commits_v() const noexcept {
-        return atomic_batch_commits_.load(std::memory_order_relaxed);
-    }
-    // Issue #256: AST operation observability accessors.
-    // Read by CompilerService::snapshot() to accumulate into
-    // CompilerMetrics for the (compile:ast-ops-stats) Aura
-    // primitive.
-    std::uint64_t children_call_count() const noexcept {
-        return children_call_count_.load(std::memory_order_relaxed);
-    }
-    // Issue #1319
-    std::uint64_t structural_mutate_insert_total() const noexcept {
-        return structural_mutate_insert_total_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t structural_mutate_erase_total() const noexcept {
-        return structural_mutate_erase_total_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t parent_of_call_count() const noexcept {
-        return parent_of_call_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t mark_dirty_upward_call_count() const noexcept {
-        return mark_dirty_upward_call_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t mark_dirty_total_nodes() const noexcept {
-        return mark_dirty_total_nodes_.load(std::memory_order_relaxed);
-    }
-    // Issue #471: SV-scale dirty propagation observability
-    // (returns the # of times the mark_dirty_upward_fast
-    // early-exit fixed-point check fired + the max depth
-    // observed across all mark_dirty_upward(_fast) calls).
-    std::uint64_t mark_dirty_early_exit_count() const noexcept {
-        return mark_dirty_early_exit_count_.load(std::memory_order_relaxed);
-    }
-    std::uint64_t mark_dirty_max_depth_observed() const noexcept {
-        return mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
-    }
-    // Issue #1251: dirty propagation bound truncations + rollback compaction.
-    [[nodiscard]] std::uint64_t mark_dirty_truncated_count() const noexcept {
-        return mark_dirty_truncated_count_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t rollback_compaction_triggered() const noexcept {
-        return rollback_compaction_triggered_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #275: std::expected rollback entry point.
-    [[nodiscard]] std::expected<void, MutationError> try_rollback_record(MutationRecord& rec) {
-        if (auto valid = mutation::validate_rollback_record(rec, tag_.size()); !valid)
-            return valid;
-        auto kind = mutation::classify_rollback(rec);
-        if (!kind)
-            return std::unexpected(kind.error());
-
-        switch (*kind) {
-            case RollbackKind::SubtreeMark:
-                rec.status = MutationStatus::RolledBack;
-                bump_generation_on_rollback();
-                if (rec.parent_id < tag_.size())
-                    mark_dirty_upward(rec.parent_id);
-                return {};
-
-            case RollbackKind::Structural:
-                return try_rollback_structural_child_op(rec);
-
-            // Issue #1441: mutate:rebind — restore Define body from rec.old_value.
-            case RollbackKind::Rebind:
-                return try_rollback_rebind_op(rec);
-
-            case RollbackKind::ScalarInt:
-                if (rec.target_node >= int_val_.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                int_val_[rec.target_node] = mutation::scalar_int_old_value(rec);
-                break;
-            case RollbackKind::ScalarTypeId:
-                if (rec.target_node >= type_id_.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                type_id_[rec.target_node] = mutation::scalar_type_old_value(rec);
-                break;
-            case RollbackKind::ScalarSymId:
-                if (rec.target_node >= sym_id_.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                sym_id_[rec.target_node] = mutation::scalar_sym_old_value(rec);
-                break;
-            case RollbackKind::ScalarFloat:
-                if (rec.target_node >= float_val_.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                float_val_[rec.target_node] = mutation::scalar_float_old_value(rec);
-                break;
-        }
-
-        rec.status = MutationStatus::RolledBack;
-        bump_generation_on_rollback();
-        return {};
-    }
-
-    bool rollback(std::uint64_t mutation_id) pre(mutation_id != 0) {
-        for (auto& rec : mutation_log_) {
-            if (rec.mutation_id == mutation_id)
-                return try_rollback_record(rec).has_value();
-        }
-        return false;
-    }
-
-private:
-    // When true, bump_generation_on_rollback only advances generation_
-    // and defers restamp_all_node_generations to the batch end
-    // (rollback_since). Avoids O(records × |flat|) restamp storms that
-    // timed out jit_late1/late3 (600s) after #1441.
-    bool defer_rollback_restamp_ = false;
-
-    void bump_generation_on_rollback() {
-        ++generation_;
-        if (generation_ == 0)
-            generation_ = 1;
-        if (!defer_rollback_restamp_)
-            restamp_all_node_generations();
-    }
-
-    [[nodiscard]] std::expected<void, MutationError>
-    try_rollback_structural_child_op(MutationRecord& rec) {
-        auto op = mutation::structural_rollback_op(rec.operator_name);
-        if (!op)
-            return std::unexpected(op.error());
-
-        NodeId parent = rec.target_node;
-        if (parent >= children_.size())
-            return std::unexpected(MutationError::InvalidParent);
-
-        const auto idx = rec.field_offset;
-        const auto old_child = static_cast<NodeId>(rec.old_value);
-        const auto new_child = static_cast<NodeId>(rec.new_value);
-        auto& list = children_[parent];
-
-        switch (*op) {
-            case StructuralRollbackOp::SetChild:
-                if (idx >= list.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                if (new_child != NULL_NODE && new_child < parent_.size())
-                    parent_[new_child] = NULL_NODE;
-                children_[parent] = list.with_set(idx, old_child);
-                if (old_child != NULL_NODE && old_child < parent_.size())
-                    parent_[old_child] = parent;
-                break;
-            case StructuralRollbackOp::InsertChild:
-                if (idx > list.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                if (new_child != NULL_NODE && new_child < parent_.size())
-                    parent_[new_child] = NULL_NODE;
-                children_[parent] = list.with_erase(idx);
-                break;
-            case StructuralRollbackOp::RemoveChild:
-                if (idx > list.size())
-                    return std::unexpected(MutationError::OutOfRange);
-                children_[parent] = list.with_insert(idx, old_child);
-                if (old_child != NULL_NODE && old_child < parent_.size())
-                    parent_[old_child] = parent;
-                break;
-        }
-
-        rec.status = MutationStatus::RolledBack;
-        bump_generation_on_rollback(); // restamp unless deferred by rollback_since
-        mark_dirty_upward(parent);
-        // Issue #369: bump the per-category counter. Success
-        // means the children_ column was restored via the
-        // structural op (parent, child_idx, old_child, new_child
-        // all valid).
-        structural_rollback_success_.fetch_add(1, std::memory_order_relaxed);
-        return {};
-    }
-
-    // Issue #1441: variable-state rollback for mutate:rebind.
-    // rec.target_node = Define node; rec.old_value / rec.new_value = body NodeIds;
-    // rec.field_offset = body child index (0). Restores children_[define][idx]
-    // and parent_ links, marks RolledBack.
-    [[nodiscard]] std::expected<void, MutationError> try_rollback_rebind_op(MutationRecord& rec) {
-        if (!rec.has_rollback_data)
-            return std::unexpected(MutationError::NoRollbackData);
-        if (rec.operator_name != "rebind" && rec.operator_name != "batch-rebind")
-            return std::unexpected(MutationError::UnknownStructuralOp);
-
-        const NodeId define_node = rec.target_node;
-        if (define_node >= children_.size() || define_node >= tag_.size())
-            return std::unexpected(MutationError::InvalidTarget);
-
-        const auto idx = rec.field_offset; // body slot (normally 0)
-        const auto old_child = static_cast<NodeId>(rec.old_value);
-        const auto new_child = static_cast<NodeId>(rec.new_value);
-        auto& list = children_[define_node];
-        if (idx >= list.size())
-            return std::unexpected(MutationError::OutOfRange);
-
-        // Inverse of set_child: detach new body, reattach old body.
-        if (new_child != NULL_NODE && new_child < parent_.size())
-            parent_[new_child] = NULL_NODE;
-        children_[define_node] = list.with_set(idx, old_child);
-        if (old_child != NULL_NODE && old_child < parent_.size())
-            parent_[old_child] = define_node;
-
-        rec.status = MutationStatus::RolledBack;
-        bump_generation_on_rollback(); // restamp unless deferred by rollback_since
-        mark_dirty_upward(define_node);
-        return {};
-    }
-
-public:
-    // Rollback all mutations since (and including) the given ID.
-    // Defers restamp_all_node_generations to a single pass after the
-    // reverse walk (Issue #1441 + jit_late1/late3 timeout fix).
-    std::size_t rollback_since(std::uint64_t since_id) {
-        std::size_t count = 0;
-        const bool prev_defer = defer_rollback_restamp_;
-        defer_rollback_restamp_ = true;
-        for (auto it = mutation_log_.rbegin(); it != mutation_log_.rend(); ++it) {
-            if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
-                if (rollback(it->mutation_id))
-                    ++count;
-            }
-        }
-        defer_rollback_restamp_ = prev_defer;
-        if (count > 0)
-            restamp_all_node_generations();
-        return count;
-    }
-
-    // Issue #213 Cycle 1: rollback all mutations appended to
-    // the log after `checkpoint_size` (i.e. the log size at
-    // boundary entry). Walks the log in reverse from the end
-    // down to the checkpoint, calling `rollback` on each
-    // committed record. Returns the number of records that
-    // were successfully rolled back.
-    //
-    // Why size-based and not id-based: the log is append-only,
-    // so the log size at boundary entry is a stable handle.
-    // A mid-mutation `mutation_id` could be re-used in the
-    // future (after wrap-around at uint64_t max), but the
-    // log size is monotonically non-decreasing within a
-    // session.
-    std::size_t rollback_to_size(std::size_t checkpoint_size)
-        // Issue #213 follow-up: C++26 contract. The function
-        // is total — handles any checkpoint_size (including
-        // past the log end, in which case it's a no-op). The
-        // contract documents the semantic: result count
-        // is 0 when checkpoint_size >= log.size().
-        pre(true) {
-        if (mutation_log_.size() <= checkpoint_size)
-            return 0;
-        // Issue #1251: before replaying a large mutation log, soft-
-        // compact dead node slots to bound memory growth under long
-        // AI multi-round edit sessions.
-        static constexpr std::size_t kRollbackCompactionLogThreshold = 10'000;
-        if (mutation_log_.size() > kRollbackCompactionLogThreshold) {
-            if (compact_nodes_soft() > 0)
-                rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
-            else
-                // Still record the decision point so Agents see the
-                // hot path even when free_list_ had nothing to recycle.
-                rollback_compaction_triggered_.fetch_add(1, std::memory_order_relaxed);
-        }
-        std::size_t count = 0;
-        // Same restamp deferral as rollback_since (jit_late timeout fix).
-        const bool prev_defer = defer_rollback_restamp_;
-        defer_rollback_restamp_ = true;
-        for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
-            auto& rec = mutation_log_[i - 1];
-            if (rec.status == MutationStatus::Committed) {
-                if (rollback(rec.mutation_id))
-                    ++count;
-            }
-        }
-        defer_rollback_restamp_ = prev_defer;
-        if (count > 0)
-            restamp_all_node_generations();
-        // Issue #1301 (P1) + #213: keep RolledBack records for audit
-        // by default (status already set by rollback()). Only truncate
-        // the rolled-back suffix when the log is huge so long AI
-        // sessions cannot OOM. Small rollbacks must retain entries —
-        // test_issue_213 and tooling inspect RolledBack status in-place.
-        static constexpr std::size_t kMutationLogTruncateThreshold = 10'000;
-        if (mutation_log_.size() > checkpoint_size &&
-            mutation_log_.size() > kMutationLogTruncateThreshold) {
-            const std::size_t dropped = mutation_log_.size() - checkpoint_size;
-            mutation_log_.resize(checkpoint_size);
-            mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
-            mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
-        }
-        return count;
-    }
-
-    [[nodiscard]] std::uint64_t mutation_log_compacted_records() const noexcept {
-        return mutation_log_compacted_records_.load(std::memory_order_relaxed);
-    }
-    [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
-        return mutation_log_compact_ops_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #1362: drop old Committed records so long-running agents
-    // do not accumulate ~200 bytes/mutation forever. keep_recent tail
-    // is always retained. When keep_all_rolledback is true, older
-    // RolledBack records are also retained (diagnostics for #1299).
-    // Returns number of records dropped. Idempotent when log is small.
-    // Default keep_recent=1000 bounds log to ~1K + RolledBack count.
-    [[nodiscard]] std::size_t compact_mutation_log(std::size_t keep_recent = 1000,
-                                                   bool keep_all_rolledback = true) {
-        if (mutation_log_.size() <= keep_recent)
-            return 0;
-        const std::size_t drop_to = mutation_log_.size() - keep_recent;
-        std::size_t dropped = 0;
-        std::pmr::vector<MutationRecord> kept{mutation_log_.get_allocator()};
-        kept.reserve(mutation_log_.size());
-        if (keep_all_rolledback) {
-            for (std::size_t i = 0; i < drop_to; ++i) {
-                if (mutation_log_[i].status == MutationStatus::RolledBack)
-                    kept.push_back(std::move(mutation_log_[i]));
-                else
-                    ++dropped;
-            }
-            for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
-                kept.push_back(std::move(mutation_log_[i]));
-        } else {
-            for (std::size_t i = drop_to; i < mutation_log_.size(); ++i)
-                kept.push_back(std::move(mutation_log_[i]));
-            dropped = drop_to;
-        }
-        mutation_log_ = std::move(kept);
-        // Rebuild node_first_mutation_ indices (old offsets are invalid).
-        std::fill(node_first_mutation_.begin(), node_first_mutation_.end(), 0);
-        for (std::size_t i = 0; i < mutation_log_.size(); ++i) {
-            const NodeId n = mutation_log_[i].target_node;
-            if (n < node_first_mutation_.size() && node_first_mutation_[n] == 0)
-                node_first_mutation_[n] = static_cast<std::uint32_t>(i + 1);
-        }
-        if (dropped > 0) {
-            mutation_log_compacted_records_.fetch_add(dropped, std::memory_order_relaxed);
-            mutation_log_compact_ops_.fetch_add(1, std::memory_order_relaxed);
-        }
-        return dropped;
-    }
-
-    // Issue #1362: auto-trigger threshold (log size) — public for tests/tuning.
-    static constexpr std::size_t kMutationLogAutoCompactThreshold = 10'000;
-    static constexpr std::size_t kMutationLogAutoCompactKeepRecent = 1000;
-
-    // Issue #1362: auto-compact when log exceeds threshold (called after append).
-    void maybe_auto_compact_mutation_log() {
-        if (mutation_log_.size() > kMutationLogAutoCompactThreshold) {
-            (void)compact_mutation_log(kMutationLogAutoCompactKeepRecent,
-                                       /*keep_all_rolledback=*/true);
-        }
-    }
-
-    // ── Type ID access ─────────────────────────────────────────
-
-    std::uint32_t type_id(NodeId id) const { return id < type_id_.size() ? type_id_[id] : 0; }
-
-    void set_type(NodeId id, std::uint32_t tid) {
-        if (id < type_id_.size())
-            type_id_[id] = tid;
-        // Issue #412: stamp the cache entry with the current
-        // generation. The cache hit path compares this against
-        // type_cache_generation() — if they match, the entry
-        // is still valid (no structural mutation has
-        // invalidated it since it was populated). Without this
-        // stamp, the gen check would reject every entry (gen
-        // would always be 0 in the cache vs. non-zero current).
-        if (id < type_cache_gen_.size())
-            type_cache_gen_[id] = type_cache_generation_.load(std::memory_order_relaxed);
-    }
-
-    // Issue #412: type cache generation accessors. The gen
-    // is bumped on every mark_dirty_upward() call (and via
-    // the explicit bump_type_cache_generation() accessor for
-    // structural changes that don't go through the dirty
-    // path, e.g., a new define in a re-eval). Cache hit
-    // path reads type_cache_generation() and compares
-    // against the per-node value stored at cache time.
-    std::uint32_t type_cache_generation() const {
-        return type_cache_generation_.load(std::memory_order_relaxed);
-    }
-    void bump_type_cache_generation() {
-        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Per-node cache gen accessor (read / write). Mirrors
-    // type_id() / set_type(). set_type_with_gen() is the
-    // canonical call site for the type-checker — it stores
-    // both the type and the current gen atomically.
-    std::uint32_t type_cache_gen(NodeId id) const {
-        return id < type_cache_gen_.size() ? type_cache_gen_[id] : 0;
-    }
-    void set_type_with_gen(NodeId id, std::uint32_t tid, std::uint32_t gen) {
-        if (id >= type_id_.size() || id >= type_cache_gen_.size())
-            return;
-        type_id_[id] = tid;
-        type_cache_gen_[id] = gen;
-    }
-
-    // Issue #412 follow-up #1: per-binding type cache
-    // generation accessors. Each binding (identified by
-    // SymId) has its own gen counter that bumps only
-    // when THAT specific binding's structure changes
-    // (e.g. mutate:rebind on a top-level define). The
-    // per-binding gen is finer-grained than the global
-    // type_cache_generation_ (which bumps on every
-    // dirty event): bumping on every dirty event would
-    // be over-invalidating. The per-binding gen
-    // rescues cache entries that don't depend on the
-    // mutated binding from being re-inferred.
-    //
-    // The map is a per-FlatAST map from SymId to atomic
-    // gen. The type-checker reads the gen when
-    // populating a cache entry (alongside the global
-    // gen) and on cache hit to validate. Bumps happen
-    // when a binding's structure actually changes
-    // (mutate:* primitives that target a Define / Let /
-    // LetRec node).
-    //
-    // Returns 0 for bindings that haven't been touched
-    // yet (the default-constructed gen). The 0 sentinel
-    // matches the global gen's pre-#412 behavior (0 =
-    // no cache entry yet).
-    std::uint32_t binding_gen(SymId sym) const {
-        if (!binding_gens_)
-            return 0;
-        auto it = binding_gens_->gens.find(sym);
-        if (it == binding_gens_->gens.end())
-            return 0;
-        return it->second;
-    }
-    void bump_binding_gen(SymId sym) {
-        if (!binding_gens_)
-            binding_gens_ = std::make_shared<BindingGenMap>();
-        binding_gens_->gens[sym]++;
-        binding_gen_bumps_total_.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Issue #412 follow-up #1: per-binding gen bump
-    // counter accessor. Returns the lifetime total of
-    // per-binding gen bumps (one per call to
-    // bump_binding_gen). Plumbed to CompilerMetrics via
-    // the snapshot for observability.
-    std::uint64_t binding_gen_bumps_total() const {
-        return binding_gen_bumps_total_.load(std::memory_order_relaxed);
-    }
-    // Issue #390: per-node schema cache accessors.
-    // schema_cache(id) returns the cached schema for
-    // node id (0 = no schema, the type checker
-    // will infer normally). set_schema_cache(id, tid)
-    // sets the schema. The type-checker's cache hit
-    // path consults this column (alongside type_id_
-    // and type_cache_gen_) to short-circuit
-    // re-inference for macro-introduced nodes.
-    std::uint32_t schema_cache(aura::ast::NodeId id) const {
-        return id < schema_cache_.size() ? schema_cache_[id] : 0;
-    }
-    void set_schema_cache(aura::ast::NodeId id, std::uint32_t tid) {
-        if (id >= schema_cache_.size())
-            schema_cache_.resize(id + 1, 0);
-        schema_cache_[id] = tid;
-    }
-    // Issue #413: invalidation trace accessors. The
-    // invalidation_trace_ vector grows by one entry per
-    // per-binding gen bump (one per mark_dirty_upward on
-    // a binding node with valid sym_id). Cleared on full
-    // FlatAST reset, same lifecycle as mutation_log_.
-    // size_invalidations() returns the lifetime total.
-    // last_invalidation_for(mutation_id) returns the
-    // most recent InvalidationRecord for that mutation
-    // (a single mutation may invalidate multiple bindings
-    // — the trace keeps all of them).
-    std::size_t invalidation_trace_size() const { return invalidation_trace_.size(); }
-    std::optional<InvalidationRecord> last_invalidation_for(std::uint64_t mutation_id) const {
-        for (auto it = invalidation_trace_.rbegin(); it != invalidation_trace_.rend(); ++it) {
-            if (it->mutation_id == mutation_id)
-                return *it;
-        }
-        return std::nullopt;
-    }
-    // Plumbed to CompilerMetrics via the snapshot for
-    // observability. Counter incremented on every
-    // per-binding gen bump that gets traced.
-    mutable std::atomic<std::uint64_t> invalidation_trace_records_total_{0};
-    // Counter accessor.
-    std::uint64_t invalidation_trace_records_total() const {
-        return invalidation_trace_records_total_.load(std::memory_order_relaxed);
-    }
-    // Per-node cache gen accessor for the BINDING the
-    // cache entry is for. 0 = no binding context.
-    // Mirrors type_cache_gen() / type_cache_binding_gen_
-    // column.
-    std::uint32_t type_cache_binding_gen(NodeId id) const {
-        return id < type_cache_binding_gen_.size() ? type_cache_binding_gen_[id] : 0;
-    }
-    // The canonical call site for the type-checker when
-    // populating a cache entry for a Variable node (or
-    // any node whose type depends on a specific binding).
-    // Stores the type, the global gen, and the per-binding
-    // gen. On cache hit, the check is: global gen matches
-    // AND per-binding gen matches → entry is fresh.
-    void set_type_with_binding_gen(NodeId id, std::uint32_t tid, std::uint32_t global_gen,
-                                   std::uint32_t binding_gen_val) {
-        if (id >= type_id_.size() || id >= type_cache_gen_.size() ||
-            id >= type_cache_binding_gen_.size())
-            return;
-        type_id_[id] = tid;
-        type_cache_gen_[id] = global_gen;
-        type_cache_binding_gen_[id] = binding_gen_val;
-    }
-
-    // ── Error kind access (Issue #79) ────────────────────────
-    // 0 = no error, non-zero = ErrorKind enum value. Lets the type-checker
-    // and runtime evaluator tag the offending node so AuraQuery
-    // `(has-error? N)` can find it without scanning all diagnostics.
-    std::uint8_t node_error(NodeId id) const {
-        return id < error_kind_.size() ? error_kind_[id] : 0;
-    }
-    void set_node_error(NodeId id, std::uint8_t kind) {
-        if (id < error_kind_.size())
-            error_kind_[id] = kind;
-    }
-    void clear_node_error(NodeId id) {
-        if (id < error_kind_.size())
-            error_kind_[id] = 0;
-    }
-
-    void set_int(NodeId id, std::int64_t val)
-        // Issue #144: id must be a valid node. Without this,
-        // a stale NodeId from a previous generation would
-        // silently no-op (the size check below) and the mutation
-        // would vanish without a diagnostic.
-        pre(id < int_val_.size()) {
-        int_val_[id] = val;
-    }
-    void set_float(NodeId id, double val) pre(id < float_val_.size()) { float_val_[id] = val; }
-    void set_sym(NodeId id, SymId val) pre(id < sym_id_.size()) { sym_id_[id] = val; }
-
-    // Capability require count for DefineModule nodes
-    std::uint32_t cap_require_count(NodeId id) const {
-        return id < cap_require_count_.size() ? cap_require_count_[id] : 0;
-    }
-
-    // Access a param by apparent index across the combined param+cap_require storage
-    SymId param_at(NodeId id, std::uint32_t idx) const {
-        if (idx < param_count_[id] + cap_require_count_[id] &&
-            param_begin_[id] + idx < param_data_.size())
-            return param_data_[param_begin_[id] + idx];
-        return INVALID_SYM;
-    }
-
-    // Set a param by index. Used by mutate:rename-symbol to rename
-    // Lambda parameters (whose symbols live in param_data_, not
-    // sym_id_). Issue #139.
-    void set_param_at(NodeId id, std::uint32_t idx, SymId val) {
-        if (idx < param_count_[id] + cap_require_count_[id] &&
-            param_begin_[id] + idx < param_data_.size())
-            param_data_[param_begin_[id] + idx] = val;
-    }
-
-    // Issue #139: convenience wrapper that iterates the params of a
-    // Lambda (or any node with params) and replaces any param with
-    // sym_id matching `oldsym` to `newsym`. Returns the count of
-    // replacements. Used by mutate:rename-symbol so the param list
-    // of `(lambda (x) ...)` is updated when the caller renames `x`.
-    template <typename Callback>
-    std::size_t rename_param(NodeId id, SymId oldsym, SymId newsym, Callback next_idx) {
-        if (id >= param_count_.size() || id >= param_begin_.size())
-            return 0;
-        std::size_t n = 0;
-        for (std::uint32_t i = 0; i < param_count_[id] + cap_require_count_[id]; ++i) {
-            if (param_data_[param_begin_[id] + i] == oldsym) {
-                param_data_[param_begin_[id] + i] = newsym;
-                ++n;
-                if constexpr (!std::is_null_pointer_v<Callback>)
-                    next_idx(i);
-            }
-        }
-        return n;
-    }
-
-    // Resolve type names → TypeIds for all TypeAnnotation nodes
-    // Requires TypeRegistry for name resolution
-    void resolve_type_ids(class aura::core::TypeRegistry& reg, StringPool& pool);
-
-    // Issue #249: stable child / parent accessors. These return
-    // StableNodeRef (a NodeId + generation pair) so the caller
-    // can safely hold the result across structural mutations.
-    // If a structural mutation happens after capturing, the
-    // ref's generation no longer matches FlatAST::generation_,
-    // and is_valid(ref) returns false. This is the recommended
-    // way to use NodeIds in EDSL / query / mutate code that
-    // may span multiple mutating calls.
-    [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
-        if (id >= parent_.size())
-            return StableNodeRef{};
-        auto pid = parent_[id];
-        if (pid == NULL_NODE)
-            return StableNodeRef{};
-        return StableNodeRef{pid, generation_};
-    }
-
-    // Issue #678: generation-tagged parent accessor for query
-    // paths that may span structural mutations. Unlike parent_of()
-    // (scalar NodeId), the returned StableNodeRef can be validated
-    // via is_valid() after a concurrent mutate.
-    [[nodiscard]] StableNodeRef parent_safe_view(NodeId id) const noexcept {
-        parent_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
-        return parent_stable(id);
-    }
-
-    [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
-        std::vector<StableNodeRef> out;
-        if (id >= children_.size())
-            return out;
-        const auto& pcv = children_[id];
-        out.reserve(pcv.size());
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            auto cid = pcv[i];
-            if (cid == NULL_NODE)
-                continue;
-            out.push_back(StableNodeRef{cid, generation_});
-        }
-        return out;
-    }
-
-    // Issue #398: zero-allocation iteration over stable
-    // children. Equivalent to children_stable() but does NOT
-    // allocate a vector — each non-NULL child is delivered to
-    // the callback as a `StableNodeRef` (with the current
-    // generation_ captured at call time). The callback may
-    // return any type (typically void or a count).
-    //
-    // Use this in hot paths (AI Agent multi-round loops,
-    // production EDSL navigation) where the caller only needs
-    // to iterate once. For callers that need to store the
-    // refs (e.g. across mutation boundaries), use the
-    // allocating `children_stable()` instead.
-    //
-    // The callback signature: `void(StableNodeRef)`. Order
-    // matches the underlying children span (left-to-right
-    // = first-to-last child). NULL_NODE children are
-    // filtered out (same as children_stable()).
-    //
-    // Out-of-range ids are silently a no-op (no callback
-    // invocation, same as the allocating version's empty
-    // vector).
-    template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
-        if (id >= children_.size())
-            return;
-        const auto& pcv = children_[id];
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            auto cid = pcv[i];
-            if (cid == NULL_NODE)
-                continue;
-            fn(StableNodeRef{cid, generation_});
-        }
-    }
-
-    // Issue #398: count of non-NULL stable children. O(N)
-    // in the children span. Use to size a pre-allocated
-    // buffer if the caller wants to use the allocating
-    // children_stable() but pre-allocate the right size
-    // (currently children_stable() already does this via
-    // reserve, but the count is useful for callers that
-    // need the size before allocating).
-    [[nodiscard]] std::size_t stable_child_count(NodeId id) const noexcept {
-        if (id >= children_.size())
-            return 0;
-        const auto& pcv = children_[id];
-        std::size_t n = 0;
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            if (pcv[i] != NULL_NODE)
-                ++n;
-        }
-        return n;
-    }
-
-    NodeId root = NULL_NODE;
-
-    // Issue #738: workspace-layer COW epoch mirrored from
-    // WorkspaceNode::cow_epoch on switch / lazy clone.
-    std::uint64_t workspace_cow_epoch_ = 0;
-    mutable std::atomic<std::uint64_t> pinned_across_boundaries_{0};
-    // Issue #1406: counter for pins dropped by bounded-retention cap.
-    mutable std::atomic<std::uint64_t> pinned_across_boundaries_dropped_{0};
-    mutable std::atomic<std::uint64_t> cross_boundary_validations_{0};
-
-    // Issue #1355: nested lightweight field-mutation frames (side log).
-    // Not part of durable mutation_log_; committed frames are discarded.
-    std::vector<std::vector<MutationRecord>> lightweight_frames_;
-    bool render_lightweight_active_ = false;
-
-    // Issue #250: atomic-batch state. Placed at the end of the
-    // class (after `root`) to preserve the SoA field ordering
-    // invariant — the pmr::vector<...> fields above must be
-    // contiguous for the FlatAST's load / clear / mutate paths
-    // to work. These two scalars come last so they don't shift
-    // the offsets of any SoA columns.
-    //
-    // When true, individual structural mutations (set_child /
-    // insert_child / remove_child) skip the per-op generation
-    // bump. The batch commits with a single bump at the end,
-    // so per-op bumps would be redundant.
-    // Set by begin_atomic_batch(); cleared by commit / rollback.
-    bool bump_generation_suppressed_ = false;
-    // Issue #250: how many per-op bumps were suppressed during
-    // the most recent batch. Updated on commit; exposed via
-    // atomic_batch_bumps_saved() and observability snapshot.
-    std::uint64_t atomic_batch_bumps_saved_ = 0;
-};
-
-// ── MutationVisitor concept (Issue #274) ─────────────────────
-//
-// Mirrors the Pass / AnalysisPass pattern in pass_manager.ixx,
-// but for FlatAST mutation records instead of IRModule transforms.
-// Visitors observe or react to committed mutations; the pipeline
-// folds over the mutation log with short-circuit on has_error().
-export template <typename V>
-concept MutationVisitor = requires(V& v, FlatAST& flat, const MutationRecord& rec) {
-    { v.visit_mutation(flat, rec) } -> std::same_as<void>;
-    { v.has_error() } -> std::convertible_to<bool>;
-};
-
-// Pure-function mutation callbacks (no persistent visitor state).
-export template <typename Fn>
-concept PureMutationFn = requires(Fn& fn, FlatAST& flat, const MutationRecord& rec) {
-    { fn(flat, rec) } -> std::same_as<void>;
-};
-
-export template <PureMutationFn Fn> class MutationFnWrap {
-public:
-    explicit MutationFnWrap(Fn& fn)
-        : fn_(&fn) {}
-
-    void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
-    bool has_error() const { return false; }
-
-private:
-    Fn* fn_;
-};
-
-// ── StableNodeRef + MutationRecord helpers ───────────────────
-// Issue #378: bodies moved to ast_impl.cpp (non-template post-class
-// items). Templates above (MutationFnWrap / run_mutation_*) MUST stay
-// in this interface unit because templates with external visibility
-// can't be defined in a non-exported module implementation unit.
-export [[nodiscard]] FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
-                                                                const MutationRecord& rec) noexcept;
-export [[nodiscard]] FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
-                                                                const MutationRecord& rec) noexcept;
-export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
-                                                   const MutationRecord& rec) noexcept;
-export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
-                                                   const MutationRecord& rec) noexcept;
-
-// ── run_mutation_pipeline — fold over mutation log ───────────
-export template <MutationVisitor V>
-bool run_mutation_visitor_one(FlatAST& flat, const MutationRecord& rec, V& visitor) {
-    visitor.visit_mutation(flat, rec);
-    return !visitor.has_error();
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_one(FlatAST& flat, const MutationRecord& rec, Visitors&... visitors) {
-    return (run_mutation_visitor_one(flat, rec, visitors) && ...);
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_pipeline(FlatAST& flat, Visitors&... visitors) {
-    for (const auto& rec : flat.all_mutations()) {
-        if (!run_mutation_one(flat, rec, visitors...))
-            return false;
-    }
-    return true;
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_pipeline(FlatAST& flat, std::span<const MutationRecord> records,
-                           Visitors&... visitors) {
-    for (const auto& rec : records) {
-        if (!run_mutation_one(flat, rec, visitors...))
-            return false;
-    }
-    return true;
-}
-
-// ── Example mutation visitors ──────────────────────────────────
-// Issue #378: bodies moved to ast_impl.cpp. These classes are non-template
-// and the bodies don't need to be in the interface unit for instantiation
-// — the impl unit provides the definitions.
-export class MutationCountVisitor {
-public:
-    void visit_mutation(FlatAST&, const MutationRecord& rec);
-    bool has_error() const;
-    std::size_t total_count() const;
-    std::size_t committed_count() const;
-
-private:
-    std::size_t total_count_ = 0;
-    std::size_t committed_count_ = 0;
-};
-
-export class MutationTargetValidityVisitor {
-public:
-    void visit_mutation(FlatAST& flat, const MutationRecord& rec);
-    bool has_error() const;
-
-private:
-    bool has_error_ = false;
-};
-
-// Issue #276: resolve a captured stable ref across workspace layers.
-// Issue #378: body moved to ast_impl.cpp (non-template free function).
-export [[nodiscard]] std::optional<FlatAST::StableNodeRef>
-resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
-                     FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
-                     std::uint32_t target_layer) noexcept;
-
-// ── Patch application ──────────────────────────────────────────
-export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
-
-// ── Delta fixup (for deserialization) ──────────────────────────
-export void fixup_deltas(FlatAST& ast);
-
-// ── Bridge from pointer tree to FlatAST ────────────────────────
+        return true;
+    }
+
+    // ── Example mutation visitors ──────────────────────────────────
+    // Issue #378: bodies moved to ast_impl.cpp. These classes are non-template
+    // and the bodies don't need to be in the interface unit for instantiation
+    // — the impl unit provides the definitions.
+    export class MutationCountVisitor {
+    public:
+        void visit_mutation(FlatAST&, const MutationRecord& rec);
+        bool has_error() const;
+        std::size_t total_count() const;
+        std::size_t committed_count() const;
+
+    private:
+        std::size_t total_count_ = 0;
+        std::size_t committed_count_ = 0;
+    };
+
+    export class MutationTargetValidityVisitor {
+    public:
+        void visit_mutation(FlatAST& flat, const MutationRecord& rec);
+        bool has_error() const;
+
+    private:
+        bool has_error_ = false;
+    };
+
+    // Issue #276: resolve a captured stable ref across workspace layers.
+    // Issue #378: body moved to ast_impl.cpp (non-template free function).
+    export [[nodiscard]] std::optional<FlatAST::StableNodeRef>
+    resolve_across_layer(const FlatAST& target_flat, const mutation::NodeIdRemapTable& layer_remap,
+                         FlatAST::StableNodeRef captured, std::uint32_t captured_layer,
+                         std::uint32_t target_layer) noexcept;
+
+    // ── Patch application ──────────────────────────────────────────
+    export bool apply_patches(FlatAST& ast, std::span<const Patch> patches) pre(!patches.empty());
+
+    // ── Delta fixup (for deserialization) ──────────────────────────
+    export void fixup_deltas(FlatAST& ast);
+
+    // ── Bridge from pointer tree to FlatAST ────────────────────────
 
 
 } // namespace aura::ast
