@@ -57,3 +57,33 @@ LLM_MODEL=grok-4.3 LLM_API_KEY="***" python3 tests/edsl_benchmark.py
 | 2026-05-29 | 语法参考 + 提取修复 | 新增 10 个 task + type `:` 支持 | **83%** (改前 0%) | **74%** (改前 62%) | M2.7: 23% |
 | 2026-05-28 | 135 tasks + model routing | 基准线 | — | 76-79% | 21.5% |
 
+## Self-Evolution Closed-Loop Reliability Suite (Issue #1463)
+
+**目标**：补充（不替换）上面的 single-shot EDSL task benchmark — 测的是多轮闭环可靠性，不是单次任务成功率。
+
+**当前状态 (Phase 1 stub)**：
+
+- **入口**：`tests/benchmark_self_evolution.aura` — 加载模块 + 调 `(run-self-evolution-bench :happy-path 50)` 返回 JSON summary。
+- **场景**：只实现了 `:happy-path`（驱动 `lib/std/agent.aura` 的 `auto-grow` 跑到收敛或 max-rounds）。其他 4 个场景（`:panic` / `:rollback` / `:long-mutation` / `:steal`）是 follow-up。
+- **Metrics**：返回的 metrics 块是 placeholder（全 0 / heuristic success）。Decision Metrics contract 落地后才填真值（AC3 follow-up #1463.1）。
+- **CI integration** (AC4)：follow-up #1463.4 — 需要先有 pass/fail 阈值定义。
+- **不重复**：本 benchmark 与上面的 149 个 single-shot EDSL task 是互补关系，不是替代。
+
+**驱动方式（未来）**：
+
+```bash
+# In CI (follow-up #1463.4):
+(import "tests/benchmark-self-evolution")
+(run-self-evolution-bench :happy-path 50)
+; → JSON summary; pass/fail threshold defined later
+```
+
+**Follow-ups**：
+
+- #1463.1 — 接 Agent Decision Metrics contract，metrics 块填真值
+- #1463.2 — `:panic` / `:rollback` / `:long-mutation` / `:steal` 4 个场景
+- #1463.3 — JSON summary schema 文档化 + C++ 解析 helper
+- #1463.4 — CI 集成 + pass/fail 阈值（nightly + on relevant PRs）
+
+Refs: #1463
+
