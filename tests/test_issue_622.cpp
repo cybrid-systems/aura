@@ -9,7 +9,7 @@
 // surface that #622 was assumed to be missing is ALREADY THERE:
 //   - (mutate:atomic-batch ops-list "summary") from #192/#213
 //     (evaluator_primitives_mutate.cpp:2645) — list-call form
-//   - (atomic-batch:stats) from #192
+//   - (stats:get "atomic-batch:stats") from #192
 //     (evaluator_primitives_observability.cpp:1586) — observability hash
 //   - (engine:metrics \"query:atomic-batch-stats\") from #437
 //     (evaluator_primitives_compile.cpp:2098) — int statistic
@@ -21,7 +21,7 @@
 // companion to the existing flat-int (engine:metrics \"query:atomic-batch-stats\")
 // that surfaces per-batch runtime state (active flag, current
 // batch's suppressed-bumps count) that's NOT in either
-// (atomic-batch:stats) or (engine:metrics \"query:atomic-batch-stats\").
+// (stats:get "atomic-batch:stats") or (engine:metrics \"query:atomic-batch-stats\").
 //
 // The remaining #622 AC2 (Guard nesting-depth + per-batch
 // impact_nodes + rollback_success_rate) + AC4 (in-batch
@@ -89,14 +89,14 @@ int aura_issue_622_run() {
         CHECK(schema == 622, std::format("schema == 622 (got {})", schema));
     }
 
-    // AC2: existing (atomic-batch:stats) (#192) + (query:atomic-
+    // AC2: existing (stats:get "atomic-batch:stats") (#192) + (query:atomic-
     // batch-stats) (#437) + (engine:metrics \"query:atomic-batch-rollback-stats\")
     // (#529) primitives remain reachable (#622 doesn't disturb
     // the existing observability surface).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s192 = cs.eval("(atomic-batch:stats)");
-        CHECK(s192.has_value(), "(atomic-batch:stats) reachable (#192 back-compat)");
+        auto s192 = cs.eval("(stats:get \"atomic-batch:stats\")");
+        CHECK(s192.has_value(), "(stats:get \"atomic-batch:stats\") reachable (#192 back-compat)");
         auto s437 = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
         CHECK(s437 && aura::compiler::types::is_int(*s437),
               "(engine:metrics \"query:atomic-batch-stats\") returns an int (#437 back-compat)");

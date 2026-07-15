@@ -74,9 +74,9 @@ bool test_mutation_log_diff() {
     return true;
 }
 
-// AC2: (dirty:summary) returns present-bits + per-reason counts
+// AC2: (stats:get "dirty:summary") returns present-bits + per-reason counts
 bool test_dirty_summary() {
-    std::println("\n--- AC2: (dirty:summary) ---");
+    std::println("\n--- AC2: (stats:get \"dirty:summary\") ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
         ++g_failed;
@@ -88,11 +88,11 @@ bool test_dirty_summary() {
         return false;
     }
     // dirty:summary should return a hash with at least present-bits
-    auto r = cs.eval("(dirty:summary)");
-    CHECK(r.has_value(), "(dirty:summary) returns a value");
-    auto present = run_int(cs, "(hash-ref (dirty:summary) \"present-bits\")");
+    auto r = cs.eval("(stats:get \"dirty:summary\")");
+    CHECK(r.has_value(), "(stats:get \"dirty:summary\") returns a value");
+    auto present = run_int(cs, "(hash-ref (stats:get \"dirty:summary\") \"present-bits\")");
     CHECK(present >= 0, "present-bits >= 0");
-    auto total = run_int(cs, "(hash-ref (dirty:summary) \"total\")");
+    auto total = run_int(cs, "(hash-ref (stats:get \"dirty:summary\") \"total\")");
     CHECK(total >= 0, "total >= 0");
     return true;
 }
@@ -173,10 +173,10 @@ bool test_backward_compat() {
     // Existing primitives still work
     auto r1 = cs.eval("(mutation-log:summary)");
     CHECK(r1.has_value(), "(mutation-log:summary) still works");
-    auto r2 = cs.eval("(dirty:counts)");
-    CHECK(r2.has_value(), "(dirty:counts) still works");
-    auto r3 = cs.eval("(dirty:reasons)");
-    CHECK(r3.has_value(), "(dirty:reasons) still works");
+    auto r2 = cs.eval("(stats:get \"dirty:counts\")");
+    CHECK(r2.has_value(), "(stats:get \"dirty:counts\") still works");
+    auto r3 = cs.eval("(stats:get \"dirty:reasons\")");
+    CHECK(r3.has_value(), "(stats:get \"dirty:reasons\") still works");
     return true;
 }
 

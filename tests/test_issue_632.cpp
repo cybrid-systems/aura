@@ -11,7 +11,7 @@
 // C++ side. Pre-existing primitives:
 //   - (mutate:atomic-batch ops-list "summary") (#192/#213) —
 //     list-call form
-//   - (atomic-batch:stats) (#192) — 5-field observable hash
+//   - (stats:get "atomic-batch:stats") (#192) — 5-field observable hash
 //   - (engine:metrics \"query:atomic-batch-stats\") (#437) — int statistic
 //   - (engine:metrics \"query:atomic-batch-stats-hash\") (#622) — 4-field structured
 //   - (engine:metrics \"query:atomic-batch-rollback-stats\") (#529) — int-sum of
@@ -98,8 +98,9 @@ int aura_issue_632_run() {
     // (back-compat — #632 doesn't disturb the existing surface).
     {
         std::println("\n--- AC2: existing primitives back-compat ---");
-        auto s_stats = cs.eval("(atomic-batch:stats)");
-        CHECK(s_stats.has_value(), "(atomic-batch:stats) reachable (#192 back-compat)");
+        auto s_stats = cs.eval("(stats:get \"atomic-batch:stats\")");
+        CHECK(s_stats.has_value(),
+              "(stats:get \"atomic-batch:stats\") reachable (#192 back-compat)");
         auto s_st = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
         CHECK(s_st && aura::compiler::types::is_int(*s_st),
               "(engine:metrics \"query:atomic-batch-stats\") returns an int (#437 back-compat)");

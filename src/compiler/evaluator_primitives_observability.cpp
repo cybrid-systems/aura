@@ -1288,9 +1288,20 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
         if (rest.ends_with("-health") || rest.ends_with("-readiness") || rest.ends_with("-slo") ||
             rest.ends_with("-score") || rest.ends_with("-fidelity") ||
             rest.ends_with("-invariants") || rest.ends_with("-win") ||
-            rest.ends_with("-contracts") || rest.ends_with("-stability"))
+            rest.ends_with("-contracts") || rest.ends_with("-stability") ||
+            rest.ends_with("-snapshot") || rest.ends_with("-histogram") ||
+            rest.ends_with("-effectiveness") || rest.ends_with("-available") ||
+            rest.ends_with("-audit-log") || rest == "tag-arity-count" ||
+            rest == "epoch-delta-since-last-query")
             return true;
     }
+    // Issue #1449 batch 2: dirty:* and render-*-samples are observability.
+    if (name.starts_with("dirty:"))
+        return true;
+    if (name.starts_with("render-") &&
+        (name.ends_with("-samples") || name == "render-hotpath-depth" ||
+         name.ends_with("-histogram")))
+        return true;
     return false;
 }
 

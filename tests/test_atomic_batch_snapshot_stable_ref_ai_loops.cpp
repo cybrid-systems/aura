@@ -130,7 +130,8 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
         CHECK(snap_hash(cs, "snapshot-captures") >= 0, "snapshot-captures present");
         const auto pinned_after = cs.evaluator().atomic_batch_pinned_refs_total();
         CHECK(pinned_after >= pinned_before, "pinned refs total monotonic");
-        auto abs = cs.eval("(hash-ref (atomic-batch:stats) \"pinned-refs-last-batch\")");
+        auto abs =
+            cs.eval("(hash-ref (stats:get " atomic - batch : stats ") \"pinned-refs-last-batch\")");
         CHECK(abs && aura::compiler::types::is_int(*abs),
               "atomic-batch:stats exposes pinned-refs-last-batch");
     }
@@ -162,10 +163,10 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
     // AC6: regression — existing primitives still work
     {
         std::println("\n--- AC6: atomic-batch primitive regression ---");
-        auto s192 = cs.eval("(atomic-batch:stats)");
+        auto s192 = cs.eval("(stats:get \"atomic-batch:stats\")");
         auto s622 = cs.eval("(engine:metrics \"query:atomic-batch-stats-hash\")");
         auto s529 = cs.eval("(engine:metrics \"query:atomic-batch-rollback-stats\")");
-        CHECK(s192.has_value(), "(atomic-batch:stats) regression");
+        CHECK(s192.has_value(), "(stats:get \"atomic-batch:stats\") regression");
         CHECK(s622 && aura::compiler::types::is_hash(*s622),
               "(engine:metrics \"query:atomic-batch-stats-hash\") regression");
         CHECK(s529.has_value(),

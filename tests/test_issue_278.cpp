@@ -258,9 +258,9 @@ bool test_backward_compat() {
     auto sum = cs.eval("(ast:summary)");
     CHECK(sum.has_value(), "(ast:summary) returns a value (existing primitive)");
 
-    // (dirty:counts) still works.
-    auto dc = cs.eval("(dirty:counts)");
-    CHECK(dc.has_value(), "(dirty:counts) returns a value (existing primitive)");
+    // (stats:get "dirty:counts") still works.
+    auto dc = cs.eval("(stats:get \"dirty:counts\")");
+    CHECK(dc.has_value(), "(stats:get \"dirty:counts\") returns a value (existing primitive)");
 
     return true;
 }

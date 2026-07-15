@@ -546,7 +546,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.exit_render_hotpath();
         return make_bool(true);
     });
-    add("render-hotpath-depth", [](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("render-hotpath-depth", [](const auto&) -> EvalValue {
         return make_int(
             static_cast<std::int64_t>(aura::core::arena_policy::g_render_hotpath_depth));
     });
@@ -652,52 +652,57 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return types::make_string(sidx);
         });
 
-    add("query:render-frame-time-histogram", [&ev](const auto&) -> EvalValue {
-        namespace rt = aura::compiler::render_telemetry;
-        auto& ft = rt::global_frame_time_stats();
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        if (m)
-            m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
-        const auto frames = ft.total_frames.load(std::memory_order_relaxed);
-        const auto tot = ft.total_ns.load(std::memory_order_relaxed);
-        const auto mean = frames ? tot / frames : 0;
-        auto mn = ft.min_ns.load(std::memory_order_relaxed);
-        if (mn == std::numeric_limits<std::uint64_t>::max())
-            mn = 0;
-        const auto mx = ft.max_ns.load(std::memory_order_relaxed);
-        std::string buckets;
-        for (int i = 0; i < rt::kFrameTimeBuckets; ++i) {
-            if (i)
-                buckets += ',';
-            buckets += std::to_string(
-                ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed));
-        }
-        // Frames under 16ms (buckets 0..8 cover 0-16ms)
-        std::uint64_t under_16 = 0;
-        for (int i = 0; i <= 8; ++i)
-            under_16 +=
-                ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed);
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::format(
-            "schema=1357 total_frames={} mean_frame_ns={} min_ns={} max_ns={} under_16ms={} "
-            "buckets=[{}] labels=0-1,1-2,2-4,4-6,6-8,8-10,10-12,12-14,14-16,16-20,20-33,>33ms",
-            frames, mean, mn, mx, under_16, buckets));
-        return types::make_string(sidx);
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:render-frame-time-histogram", [&ev](const auto&) -> EvalValue {
+            namespace rt = aura::compiler::render_telemetry;
+            auto& ft = rt::global_frame_time_stats();
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            if (m)
+                m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+            const auto frames = ft.total_frames.load(std::memory_order_relaxed);
+            const auto tot = ft.total_ns.load(std::memory_order_relaxed);
+            const auto mean = frames ? tot / frames : 0;
+            auto mn = ft.min_ns.load(std::memory_order_relaxed);
+            if (mn == std::numeric_limits<std::uint64_t>::max())
+                mn = 0;
+            const auto mx = ft.max_ns.load(std::memory_order_relaxed);
+            std::string buckets;
+            for (int i = 0; i < rt::kFrameTimeBuckets; ++i) {
+                if (i)
+                    buckets += ',';
+                buckets += std::to_string(
+                    ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed));
+            }
+            // Frames under 16ms (buckets 0..8 cover 0-16ms)
+            std::uint64_t under_16 = 0;
+            for (int i = 0; i <= 8; ++i)
+                under_16 +=
+                    ft.bucket_counts[static_cast<std::size_t>(i)].load(std::memory_order_relaxed);
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::format(
+                "schema=1357 total_frames={} mean_frame_ns={} min_ns={} max_ns={} under_16ms={} "
+                "buckets=[{}] labels=0-1,1-2,2-4,4-6,6-8,8-10,10-12,12-14,14-16,16-20,20-33,>33ms",
+                frames, mean, mn, mx, under_16, buckets));
+            return types::make_string(sidx);
+        });
 
     // Int probes for tests
-    add("render-prim-latency-samples", [&ev](const auto&) -> EvalValue {
-        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-        const auto global = aura::compiler::render_telemetry::g_render_prim_latency_samples.load(
-            std::memory_order_relaxed);
-        if (m)
-            m->render_prim_latency_samples.store(global, std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(global));
-    });
-    add("render-frame-time-samples", [](const auto&) -> EvalValue {
-        auto& ft = aura::compiler::render_telemetry::global_frame_time_stats();
-        return make_int(static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "render-prim-latency-samples", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto global =
+                aura::compiler::render_telemetry::g_render_prim_latency_samples.load(
+                    std::memory_order_relaxed);
+            if (m)
+                m->render_prim_latency_samples.store(global, std::memory_order_relaxed);
+            return make_int(static_cast<std::int64_t>(global));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "render-frame-time-samples", [](const auto&) -> EvalValue {
+            auto& ft = aura::compiler::render_telemetry::global_frame_time_stats();
+            return make_int(
+                static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
+        });
 
     ObservabilityPrims::register_stats_impl(
         "query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
@@ -1024,85 +1029,240 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     //   0x01 = general (re-infer), 0x02 = constraint, 0x04 = occurrence,
     //   0x08 = ownership, 0x10 = coercion, 0x20 = struct, 0x40 = defuse,
     //   0x80 = ppa-hint. Returns 0 for clean nodes or out-of-range ids.
-    add("dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_int(0);
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
+        });
     // (dirty:ppa-reasons node-id) — Issue #277: return the per-node
     // PPA dirty bitmask from the orthogonal ppa_dirty_ column.
     //   0x01 = timing, 0x02 = power, 0x04 = area, 0x08 = backend-hint.
-    add("dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_int(0);
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
+        });
     // (dirty:counts) — Issue #188/#262/#277: aggregate per-reason dirty counts
     // across the workspace. Returns hash with integer fields:
     //   general, constraint, occurrence, ownership, coercion,
     //   struct, defuse, ppa-hint, timing, power, area, backend-hint, total
     //   (total is the number of dirty nodes, not the sum of bits).
     // Built inline using the same hash-build pattern as gc-arena-info.
-    add("dirty:counts", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_void();
-        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
-        std::size_t str = 0, def = 0, ppa = 0, total = 0;
-        std::size_t timing = 0, power = 0, area = 0, backend_hint = 0;
-        const auto& dirty = ev.workspace_flat_->dirty_column();
-        const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
-        const auto n = std::max(dirty.size(), ppa_dirty.size());
-        for (std::size_t i = 0; i < n; ++i) {
-            auto b = i < dirty.size() ? dirty[i] : 0;
-            auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
-            if (b == 0 && pb == 0)
-                continue;
-            ++total;
-            if (b & 0x01)
-                ++gen;
-            if (b & 0x02)
-                ++con;
-            if (b & 0x04)
-                ++occ;
-            if (b & 0x08)
-                ++own;
-            if (b & 0x10)
-                ++coe;
-            if (b & 0x20)
-                ++str;
-            if (b & 0x40)
-                ++def;
-            // Issue #277 follow-up: ppa-hint aggregate counts nodes
-            // that have ANY bit set in the orthogonal ppa_dirty_ column,
-            // not the dirty_ mirror (kPpaHintDirty = 0x80). The mirror
-            // gets wiped by type-checker cleanup (clear_dirty(id))
-            // in infer_flat_partial, which would under-count ppa-hint
-            // for already-re-inferred nodes. Counting directly from
-            // ppa_dirty_ gives the right value regardless of cleanup
-            // state. The timing/power/area/backend-hint fields below
-            // already use this pattern.
-            if (pb != 0)
-                ++ppa;
-            if (pb & 0x01)
-                ++timing;
-            if (pb & 0x02)
-                ++power;
-            if (pb & 0x04)
-                ++area;
-            if (pb & 0x08)
-                ++backend_hint;
-        }
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Issue #277: 13 fields — need capacity > 13 (power of 2).
-            auto* ht = FlatHashTable::create(16);
+    ObservabilityPrims::register_stats_impl(
+        "dirty:counts", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_void();
+            std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
+            std::size_t str = 0, def = 0, ppa = 0, total = 0;
+            std::size_t timing = 0, power = 0, area = 0, backend_hint = 0;
+            const auto& dirty = ev.workspace_flat_->dirty_column();
+            const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
+            const auto n = std::max(dirty.size(), ppa_dirty.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                auto b = i < dirty.size() ? dirty[i] : 0;
+                auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
+                if (b == 0 && pb == 0)
+                    continue;
+                ++total;
+                if (b & 0x01)
+                    ++gen;
+                if (b & 0x02)
+                    ++con;
+                if (b & 0x04)
+                    ++occ;
+                if (b & 0x08)
+                    ++own;
+                if (b & 0x10)
+                    ++coe;
+                if (b & 0x20)
+                    ++str;
+                if (b & 0x40)
+                    ++def;
+                // Issue #277 follow-up: ppa-hint aggregate counts nodes
+                // that have ANY bit set in the orthogonal ppa_dirty_ column,
+                // not the dirty_ mirror (kPpaHintDirty = 0x80). The mirror
+                // gets wiped by type-checker cleanup (clear_dirty(id))
+                // in infer_flat_partial, which would under-count ppa-hint
+                // for already-re-inferred nodes. Counting directly from
+                // ppa_dirty_ gives the right value regardless of cleanup
+                // state. The timing/power/area/backend-hint fields below
+                // already use this pattern.
+                if (pb != 0)
+                    ++ppa;
+                if (pb & 0x01)
+                    ++timing;
+                if (pb & 0x02)
+                    ++power;
+                if (pb & 0x04)
+                    ++area;
+                if (pb & 0x08)
+                    ++backend_hint;
+            }
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                // Issue #277: 13 fields — need capacity > 13 (power of 2).
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"general", make_int(static_cast<std::int64_t>(gen))},
+                {"constraint", make_int(static_cast<std::int64_t>(con))},
+                {"occurrence", make_int(static_cast<std::int64_t>(occ))},
+                {"ownership", make_int(static_cast<std::int64_t>(own))},
+                {"coercion", make_int(static_cast<std::int64_t>(coe))},
+                {"struct", make_int(static_cast<std::int64_t>(str))},
+                {"defuse", make_int(static_cast<std::int64_t>(def))},
+                {"ppa-hint", make_int(static_cast<std::int64_t>(ppa))},
+                {"timing", make_int(static_cast<std::int64_t>(timing))},
+                {"power", make_int(static_cast<std::int64_t>(power))},
+                {"area", make_int(static_cast<std::int64_t>(area))},
+                {"backend-hint", make_int(static_cast<std::int64_t>(backend_hint))},
+                {"total", make_int(static_cast<std::int64_t>(total))},
+            };
+            return build_hash(kv);
+        });
+
+    // Issue #278 follow-up #2: (dirty:summary reason-mask) —
+    // return a compact per-reason summary of dirty nodes, where
+    // reason-mask is a bitmask of the reason bits the caller
+    // cares about (1=general, 2=constraint, 4=occurrence, etc.,
+    // matching the bits in dirty:counts). Returns a hash with
+    // one key per reason that has at least one matching node.
+    //
+    // Use case: AI agent asking "what's currently dirty and
+    // why?" — gets a compact summary without having to
+    // iterate all dirty nodes. Pass 0 to get all reasons
+    // (default).
+    ObservabilityPrims::register_stats_impl(
+        "dirty:summary", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_void();
+            std::uint32_t mask = 0;
+            if (a.size() >= 1 && is_int(a[0])) {
+                mask = static_cast<std::uint32_t>(as_int(a[0]));
+            }
+            if (mask == 0)
+                mask = 0xFFFF; // default: all reasons
+            // Accumulate the unique reason bits present in the
+            // workspace, plus a count of nodes per reason. This
+            // gives a compact per-reason summary without the full
+            // node-id list (which can be 100s of entries).
+            std::uint32_t present_bits = 0;
+            std::size_t total = 0;
+            std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
+            std::size_t str = 0, def = 0, ppa = 0;
+            const auto& dirty = ev.workspace_flat_->dirty_column();
+            const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
+            const auto n = std::max(dirty.size(), ppa_dirty.size());
+            for (std::size_t i = 0; i < n; ++i) {
+                auto b = i < dirty.size() ? dirty[i] : 0;
+                auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
+                if (b == 0 && pb == 0)
+                    continue;
+                ++total;
+                if (b & 0x01) {
+                    present_bits |= 0x01;
+                    ++gen;
+                }
+                if (b & 0x02) {
+                    present_bits |= 0x02;
+                    ++con;
+                }
+                if (b & 0x04) {
+                    present_bits |= 0x04;
+                    ++occ;
+                }
+                if (b & 0x08) {
+                    present_bits |= 0x08;
+                    ++own;
+                }
+                if (b & 0x10) {
+                    present_bits |= 0x10;
+                    ++coe;
+                }
+                if (b & 0x20) {
+                    present_bits |= 0x20;
+                    ++str;
+                }
+                if (b & 0x40) {
+                    present_bits |= 0x40;
+                    ++def;
+                }
+                if (b & 0x80) {
+                    present_bits |= 0x80;
+                    ++ppa;
+                }
+            }
+            // Build the result hash.
+            auto* ht = FlatHashTable::create(8);
             if (!ht)
                 return make_void();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"present-bits", make_int(static_cast<std::int64_t>(present_bits))},
+                {"requested-mask", make_int(static_cast<std::int64_t>(mask))},
+                {"total", make_int(static_cast<std::int64_t>(total))},
+            };
+            // Add per-reason counts only for reasons the caller
+            // requested (mask) AND which are present.
+            if ((mask & 0x01) && (present_bits & 0x01))
+                kv.push_back({"general", make_int(static_cast<std::int64_t>(gen))});
+            if ((mask & 0x02) && (present_bits & 0x02))
+                kv.push_back({"constraint", make_int(static_cast<std::int64_t>(con))});
+            if ((mask & 0x04) && (present_bits & 0x04))
+                kv.push_back({"occurrence", make_int(static_cast<std::int64_t>(occ))});
+            if ((mask & 0x08) && (present_bits & 0x08))
+                kv.push_back({"ownership", make_int(static_cast<std::int64_t>(own))});
+            if ((mask & 0x10) && (present_bits & 0x10))
+                kv.push_back({"coercion", make_int(static_cast<std::int64_t>(coe))});
+            if ((mask & 0x20) && (present_bits & 0x20))
+                kv.push_back({"struct", make_int(static_cast<std::int64_t>(str))});
+            if ((mask & 0x40) && (present_bits & 0x40))
+                kv.push_back({"defuse", make_int(static_cast<std::int64_t>(def))});
+            if ((mask & 0x80) && (present_bits & 0x80))
+                kv.push_back({"ppa-hint", make_int(static_cast<std::int64_t>(ppa))});
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1113,7 +1273,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
                 if (fp == 0xFF)
-                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+                    fp = 0xFE;
                 auto kidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(k);
                 EvalValue key_ev = make_string(kidx);
@@ -1137,157 +1297,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"general", make_int(static_cast<std::int64_t>(gen))},
-            {"constraint", make_int(static_cast<std::int64_t>(con))},
-            {"occurrence", make_int(static_cast<std::int64_t>(occ))},
-            {"ownership", make_int(static_cast<std::int64_t>(own))},
-            {"coercion", make_int(static_cast<std::int64_t>(coe))},
-            {"struct", make_int(static_cast<std::int64_t>(str))},
-            {"defuse", make_int(static_cast<std::int64_t>(def))},
-            {"ppa-hint", make_int(static_cast<std::int64_t>(ppa))},
-            {"timing", make_int(static_cast<std::int64_t>(timing))},
-            {"power", make_int(static_cast<std::int64_t>(power))},
-            {"area", make_int(static_cast<std::int64_t>(area))},
-            {"backend-hint", make_int(static_cast<std::int64_t>(backend_hint))},
-            {"total", make_int(static_cast<std::int64_t>(total))},
-        };
-        return build_hash(kv);
-    });
-
-    // Issue #278 follow-up #2: (dirty:summary reason-mask) —
-    // return a compact per-reason summary of dirty nodes, where
-    // reason-mask is a bitmask of the reason bits the caller
-    // cares about (1=general, 2=constraint, 4=occurrence, etc.,
-    // matching the bits in dirty:counts). Returns a hash with
-    // one key per reason that has at least one matching node.
-    //
-    // Use case: AI agent asking "what's currently dirty and
-    // why?" — gets a compact summary without having to
-    // iterate all dirty nodes. Pass 0 to get all reasons
-    // (default).
-    add("dirty:summary", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_void();
-        std::uint32_t mask = 0;
-        if (a.size() >= 1 && is_int(a[0])) {
-            mask = static_cast<std::uint32_t>(as_int(a[0]));
-        }
-        if (mask == 0)
-            mask = 0xFFFF; // default: all reasons
-        // Accumulate the unique reason bits present in the
-        // workspace, plus a count of nodes per reason. This
-        // gives a compact per-reason summary without the full
-        // node-id list (which can be 100s of entries).
-        std::uint32_t present_bits = 0;
-        std::size_t total = 0;
-        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0;
-        std::size_t str = 0, def = 0, ppa = 0;
-        const auto& dirty = ev.workspace_flat_->dirty_column();
-        const auto& ppa_dirty = ev.workspace_flat_->ppa_dirty_column();
-        const auto n = std::max(dirty.size(), ppa_dirty.size());
-        for (std::size_t i = 0; i < n; ++i) {
-            auto b = i < dirty.size() ? dirty[i] : 0;
-            auto pb = i < ppa_dirty.size() ? ppa_dirty[i] : 0;
-            if (b == 0 && pb == 0)
-                continue;
-            ++total;
-            if (b & 0x01) {
-                present_bits |= 0x01;
-                ++gen;
-            }
-            if (b & 0x02) {
-                present_bits |= 0x02;
-                ++con;
-            }
-            if (b & 0x04) {
-                present_bits |= 0x04;
-                ++occ;
-            }
-            if (b & 0x08) {
-                present_bits |= 0x08;
-                ++own;
-            }
-            if (b & 0x10) {
-                present_bits |= 0x10;
-                ++coe;
-            }
-            if (b & 0x20) {
-                present_bits |= 0x20;
-                ++str;
-            }
-            if (b & 0x40) {
-                present_bits |= 0x40;
-                ++def;
-            }
-            if (b & 0x80) {
-                present_bits |= 0x80;
-                ++ppa;
-            }
-        }
-        // Build the result hash.
-        auto* ht = FlatHashTable::create(8);
-        if (!ht)
-            return make_void();
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"present-bits", make_int(static_cast<std::int64_t>(present_bits))},
-            {"requested-mask", make_int(static_cast<std::int64_t>(mask))},
-            {"total", make_int(static_cast<std::int64_t>(total))},
-        };
-        // Add per-reason counts only for reasons the caller
-        // requested (mask) AND which are present.
-        if ((mask & 0x01) && (present_bits & 0x01))
-            kv.push_back({"general", make_int(static_cast<std::int64_t>(gen))});
-        if ((mask & 0x02) && (present_bits & 0x02))
-            kv.push_back({"constraint", make_int(static_cast<std::int64_t>(con))});
-        if ((mask & 0x04) && (present_bits & 0x04))
-            kv.push_back({"occurrence", make_int(static_cast<std::int64_t>(occ))});
-        if ((mask & 0x08) && (present_bits & 0x08))
-            kv.push_back({"ownership", make_int(static_cast<std::int64_t>(own))});
-        if ((mask & 0x10) && (present_bits & 0x10))
-            kv.push_back({"coercion", make_int(static_cast<std::int64_t>(coe))});
-        if ((mask & 0x20) && (present_bits & 0x20))
-            kv.push_back({"struct", make_int(static_cast<std::int64_t>(str))});
-        if ((mask & 0x40) && (present_bits & 0x40))
-            kv.push_back({"defuse", make_int(static_cast<std::int64_t>(def))});
-        if ((mask & 0x80) && (present_bits & 0x80))
-            kv.push_back({"ppa-hint", make_int(static_cast<std::int64_t>(ppa))});
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            bool inserted = false;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
-                    ht->size++;
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                FlatHashTable::destroy(ht);
-                return make_void();
-            }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+        });
     // (memory-pressure) — Assess overall memory pressure and suggest actions.
     //
     //   Returns hash:

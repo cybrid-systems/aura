@@ -1,67 +1,59 @@
 # Epic #1449 — EDSL Surface Slim v2.0 progress
 
-**Goal**: public engine primitives ≤ **420**; observability via facade; convenience via `lib/std`.
+**Goal**: **core** public engine primitives ≤ **420**; observability via facade; convenience via `lib/std`. Domain verticals (EDA/TUI/git/…) are tracked separately.
 
 | Phase | Issue | Status |
 |-------|-------|--------|
 | Infra (gate, deprecation counter, design) | #1448 | **Done** |
-| Observability facade + residual stats | #1450 | **Done** — Phase1 facade + Phase2 residual public `*-stats` → `register_stats_impl` |
-| Governance policy doc | #1451 | **Done** — `primitive-governance-policy.md` + `(primitive:validate-new)` |
-| Testing framework entry | #1452 | **Done** — harness + binding gate + declarative self-test |
-| Prim test binding hard gate | #1453 | **Done** — coverage umbrella + TestRegistry + PR template |
-| Agent migration guide + shims | #1462 | **Done** (Plan A) |
-| **Demotion batch: dashboards + Tier-1 siblings** | #1449 progress | **Done** (this batch) |
-| Hard removal → public ≤420 | epic remainder | **Open** |
+| Observability facade + residual stats | #1450 | **Done** |
+| Governance / testing / binding | #1451–#1453 | **Done** |
+| Agent migration guide + shims | #1462 | **Done** |
+| Demotion batch 1: dashboards + siblings | #1449 | **Done** |
+| Demotion batch 2: dirty/render + stats leftovers + core budget | #1449 | **Done** (this) |
+| Hard removal → core ≤420 | epic remainder | **Open** (gap ~64 core) |
 
-## #1450 deliverables
+## SlimSurface metrics (batch 2)
 
-| Item | Detail |
-|------|--------|
-| `(stats:get name)` | Engine primitive; routes `register_stats_impl` + public residual aliases |
-| `(stats:prefix p)` | Engine list of catalog names with prefix |
-| `(engine:surface)` | Inventory hash: public-count, stats-catalog-count, budgets, deprecation counter |
-| Residual 10 public `*-stats` | **Removed from public registry** — only via `stats:get` / `engine:metrics` |
-| Catalog size | Still ≤420 (`stats:count`) |
+| Metric | After batch 1 | After batch 2 |
+|--------|-------------:|-------------:|
+| Public `add()` **total** | 587 | **571** |
+| Public `add()` **core** (ex domain) | ~500 | **484** |
+| Domain verticals | ~87 | **87** |
+| Public `*-stats` | 0 | **0** |
+| Interim hard ceiling (total) | 600 | **590** |
+| Core target | 420 | 420 (**gap ~64**) |
 
-**Naming note**: issue text asked for `query:primitive-surface-stats`.  
-#1448 freeze forbids new public `*-stats` names → canonical form is **`(engine:surface)`**.
+Domain prefixes (excluded from core budget):  
+`eda:` `seva:` `verify:` `tui:` `terminal:` `git-` `tcp-` `auto-evolve-` `channel:` `m4-` `strategy:` `synthesize:`
 
-## Demotion batch (post-#1450) — facade dashboards + siblings
+## Batch 2 demotions (source → `register_stats_impl`)
 
-| Change | Effect |
-|--------|--------|
-| Expand `is_legacy_stats_name` | **All** `*-stats` + `query:*` health/readiness/slo/score/fidelity dashboards → `register_stats_impl` (not public `add()`) |
-| Hard-remove `query:siblings` | Tier-1 complete for this name; use `std/compat` or compose `children`/`parent` |
-| Interim hard ceiling | `700` → **`620`** in `check_primitive_surface.py` (ratchet; still soft-note above 420) |
-| Tests | `tests/test_issue_1449_demotion_batch.cpp`, `#1462` AC7, suite updates |
+- `dirty:reasons` / `dirty:ppa-reasons` / `dirty:counts` / `dirty:summary`
+- `render-prim-latency-samples` / `render-frame-time-samples` / `render-hotpath-depth` / `query:render-frame-time-histogram`
+- `query:arena-fragmentation-snapshot` / `query:render-ffi-available` / `query:seva-audit-log`
+- `query:epoch-delta-since-last-query` / `query:incremental-effectiveness` / `query:tag-arity-count`
+- `atomic-batch:stats` / `closure:stats`
 
-Access path for demoted dashboards:
+Access: `(stats:get "dirty:summary")`, `(stats:get "atomic-batch:stats")`, etc.  
+`std/agent` decision metrics updated to use `stats:get` for atomic-batch.
+
+## Access path
 
 ```scheme
 (stats:get "query:edsl-readiness")
+(stats:get "dirty:summary")
+(stats:get "atomic-batch:stats")
 (engine:metrics "query:edsl-readiness")
-;; NOT (query:edsl-readiness) as a public primitive
 ```
-
-## Snapshot
-
-| Metric | After #1450 Phase 2 | After this batch |
-|--------|--------------------:|-----------------:|
-| Public `add()` | ~609–610 | **587** (dashboards + siblings + residual `*-stats`) |
-| Public `add()` `*-stats` | **0** | **0** |
-| Stats catalog | ~385–400 | +dashboards via facade |
-| Interim ceiling | 700 | **600** |
-| Target | 420 | 420 (**remaining gap ~167**) |
-
-Exact counts: run `python3 scripts/check_primitive_surface.py --strict`.
 
 ## Next under this epic
 
-1. More Tier-1/2 query demotions (find-by-name already stdlib-only; expand compose helpers).  
-2. Convenience domain packs: `git-*` / `tcp-*` / `auto-evolve-*` / optional `eda:` s0 gating.  
-3. Hard removal of grandfathered blocked-prefix names that are true stdlib duplicates (careful: `string-*` / `hash-*` stay — language core).  
-4. Final public ≤420 validation + close epic #1449.  
+1. More core demotion (compile convenience, mutation-lightweight*, check-* audits).  
+2. Optional: gate domain packs harder on s0; keep full for EDA/TUI demos.  
+3. Close epic when **core public ≤ 420**.
+
+Run: `python3 scripts/check_primitive_surface.py --strict`
 
 ---
 
-*Updated with demotion batch for dashboards + `query:siblings` (#1449 progress).*
+*Batch 2: dirty/render/stats leftovers + core-vs-domain budget reporting.*

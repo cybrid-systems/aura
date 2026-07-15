@@ -198,7 +198,7 @@ bool test_field_consistency() {
     };
     bool all_match = true;
     for (auto* k : kShared) {
-        auto legacy = hash_int(cs, "(closure:stats)", k);
+        auto legacy = hash_int(cs, "(stats:get \"closure:stats\")", k);
         auto unified = hash_int(cs, "(engine:metrics \"query:closure-stats\")", k);
         if (legacy != unified) {
             std::println("    [mismatch on field {}: legacy={} unified={}]", k, legacy, unified);

@@ -611,16 +611,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // then updates last_queried_epoch_ to the current
     // value. 0 on the first call (or when no evaluator
     // is active).
-    add("query:epoch-delta-since-last-query", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        const std::uint64_t cur = ev->get_defuse_version();
-        const std::uint64_t last = ev->get_last_queried_epoch();
-        ev->record_epoch_query();
-        return make_int(static_cast<std::int64_t>(cur - last));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:epoch-delta-since-last-query", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t cur = ev->get_defuse_version();
+            const std::uint64_t last = ev->get_last_queried_epoch();
+            ev->record_epoch_query();
+            return make_int(static_cast<std::int64_t>(cur - last));
+        });
 
     // Issue #457: query:stable-ref-stats. Returns
     // observability counters for the generation_ /
@@ -7416,23 +7417,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // pre-built index. Bumps the hits or misses counter
     // accordingly. P0: 0 on miss (the follow-up falls
     // back to a linear scan on miss).
-    add("query:tag-arity-count", [](std::span<const EvalValue> a) -> EvalValue {
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
-            return make_int(0);
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_int(0);
-        // Issue #1371: ensure index is fresh (delta if append-only,
-        // full rebuild if empty/dirty-with-mutate).
-        ws->ensure_tag_arity_index();
-        const auto tag = static_cast<std::uint32_t>(as_int(a[0]));
-        const auto ar = static_cast<std::uint16_t>(as_int(a[1]));
-        const auto nodes = ws->find_by_tag_arity(tag, ar, ar);
-        return make_int(static_cast<std::int64_t>(nodes.size()));
-    });
+    ObservabilityPrims::register_stats_impl(
+        "query:tag-arity-count", [](std::span<const EvalValue> a) -> EvalValue {
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+                return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_int(0);
+            // Issue #1371: ensure index is fresh (delta if append-only,
+            // full rebuild if empty/dirty-with-mutate).
+            ws->ensure_tag_arity_index();
+            const auto tag = static_cast<std::uint32_t>(as_int(a[0]));
+            const auto ar = static_cast<std::uint16_t>(as_int(a[1]));
+            const auto nodes = ws->find_by_tag_arity(tag, ar, ar);
+            return make_int(static_cast<std::int64_t>(nodes.size()));
+        });
 
     // Issue #469: query:verification-loop-stats. Returns
     // observability counters for the closed-loop

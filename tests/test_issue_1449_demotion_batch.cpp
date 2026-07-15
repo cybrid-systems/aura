@@ -86,13 +86,25 @@ int main() {
         // Sample known former residual names
         static constexpr const char* kStats[] = {
             "gc-stats",          "arena:adaptive-stats", "ast:generation-stats",
-            "concurrency:stats", "string-pool:stats",
+            "concurrency:stats", "string-pool:stats",    "atomic-batch:stats",
+            "closure:stats",     "dirty:summary",
         };
         for (const char* name : kStats) {
             if (prims.slot_for_name(name) < prims.slot_count())
                 ++stats_public;
         }
-        CHECK(stats_public == 0, std::format("sampled *-stats not public (got {})", stats_public));
+        CHECK(stats_public == 0,
+              std::format("sampled *-stats/dash not public (got {})", stats_public));
+    }
+
+    // ── AC3b: dirty:* facade ──
+    {
+        CompilerService cs;
+        auto& prims = cs.evaluator().primitives();
+        CHECK(prims.slot_for_name("dirty:summary") >= prims.slot_count(),
+              "dirty:summary not public");
+        auto d = cs.eval("(stats:get \"dirty:summary\")");
+        CHECK(d.has_value(), "stats:get dirty:summary callable");
     }
 
     // ── AC4: compat still provides siblings ──

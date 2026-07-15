@@ -283,79 +283,81 @@ void ObservabilityPrims::register_eval_p98(PrimRegistrar add, Evaluator& ev) {
     // Note: the (query:arena-auto-stats) name is already taken by
     // #464 (group-level guard/skip counts), so we use a distinct
     // name that signals "point-in-time snapshot" vs. "cumulative".
-    add("query:arena-fragmentation-snapshot", [&ev](const auto&) -> EvalValue {
-        std::uint64_t auto_triggers = 0;
-        std::uint64_t yield_deferred = 0;
-        std::uint64_t defrag_saved = 0;
-        std::size_t total_cap = 0;
-        std::size_t total_used = 0;
-        if (ev.arena_) {
-            const auto s = ev.arena_->stats();
-            auto_triggers += s.auto_alloc_trigger_count;
-            yield_deferred += s.compaction_yield_checks;
-            defrag_saved += s.defrag_savings_alloc;
-            total_cap += s.capacity;
-            total_used += s.used;
-        }
-        if (ev.arena_group_) {
-            const auto ag = ev.arena_group_->auto_compact_policy_stats();
-            auto_triggers += ag.auto_triggers;
-            yield_deferred += ag.yield_checks_hit;
-            defrag_saved += ag.defrag_savings;
-            const auto gs = ev.arena_group_->total_stats();
-            total_cap += gs.capacity;
-            total_used += gs.used;
-        }
-        const double frag = total_cap == 0 ? 0.0
-                                           : static_cast<double>(total_cap - total_used) /
-                                                 static_cast<double>(total_cap);
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-fragmentation-snapshot", [&ev](const auto&) -> EvalValue {
+            std::uint64_t auto_triggers = 0;
+            std::uint64_t yield_deferred = 0;
+            std::uint64_t defrag_saved = 0;
+            std::size_t total_cap = 0;
+            std::size_t total_used = 0;
+            if (ev.arena_) {
+                const auto s = ev.arena_->stats();
+                auto_triggers += s.auto_alloc_trigger_count;
+                yield_deferred += s.compaction_yield_checks;
+                defrag_saved += s.defrag_savings_alloc;
+                total_cap += s.capacity;
+                total_used += s.used;
+            }
+            if (ev.arena_group_) {
+                const auto ag = ev.arena_group_->auto_compact_policy_stats();
+                auto_triggers += ag.auto_triggers;
+                yield_deferred += ag.yield_checks_hit;
+                defrag_saved += ag.defrag_savings;
+                const auto gs = ev.arena_group_->total_stats();
+                total_cap += gs.capacity;
+                total_used += gs.used;
+            }
+            const double frag = total_cap == 0 ? 0.0
+                                               : static_cast<double>(total_cap - total_used) /
+                                                     static_cast<double>(total_cap);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
                     }
                 }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"auto-compact-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
-            {"fragmentation-ratio", make_float(frag)},
-            {"yield-deferred", make_int(static_cast<std::int64_t>(yield_deferred))},
-            {"defrag-saved-bytes", make_int(static_cast<std::int64_t>(defrag_saved))},
-        };
-        return build_hash(kv);
-    });
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"auto-compact-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
+                {"fragmentation-ratio", make_float(frag)},
+                {"yield-deferred", make_int(static_cast<std::int64_t>(yield_deferred))},
+                {"defrag-saved-bytes", make_int(static_cast<std::int64_t>(defrag_saved))},
+            };
+            return build_hash(kv);
+        });
 }
 
 // Issue #909 part 99 (orig lines 11182-11288)
@@ -563,7 +565,7 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
     // (atomic-batch:stats) — Issue #192: observability for
     // mutate:atomic-batch. Hash with batch-count, ops-total,
     // rollback-count, ops-per-batch (avg).
-    add("atomic-batch:stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("atomic-batch:stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // Issue #394 / #258: capacity 32 (was 8). This primitive
             // returns 5 keys; cap-8 + FNV-1a probing occasionally
@@ -646,7 +648,7 @@ void ObservabilityPrims::register_eval_p102(PrimRegistrar add, Evaluator& ev) {
     // stale-returns) + bridge-fraction (helper for
     // dashboards: how much of the dispatch goes to the
     // bridge path, which is the slowest).
-    add("closure:stats", [&ev](const auto&) -> EvalValue {
+    ObservabilityPrims::register_stats_impl("closure:stats", [&ev](const auto&) -> EvalValue {
         // Re-use the build_hash from atomic-batch:stats
         // (defined in the lambda above). It's the same code
         // pattern, so we re-bind to keep the closure:stats

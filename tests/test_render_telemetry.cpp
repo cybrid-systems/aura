@@ -77,18 +77,18 @@ int main() {
 
     // Outside render hot path: latency samples should NOT increase for +
     {
-        const auto s0 = ival(cs, "(render-prim-latency-samples)");
+        const auto s0 = ival(cs, "(stats:get \"render-prim-latency-samples\")");
         for (int i = 0; i < 50; ++i)
             (void)cs.eval("(+ 1 2)");
-        const auto s1 = ival(cs, "(render-prim-latency-samples)");
+        const auto s1 = ival(cs, "(stats:get \"render-prim-latency-samples\")");
         CHECK(s1 == s0, "no latency samples outside render hot path");
     }
 
     // Inside render hot path: hot prims (terminal-set-cell / make-terminal-buffer) record
     {
-        const auto s0 = ival(cs, "(render-prim-latency-samples)");
+        const auto s0 = ival(cs, "(stats:get \"render-prim-latency-samples\")");
         (void)cs.eval("(render-hotpath-enter)");
-        CHECK(ival(cs, "(render-hotpath-depth)") >= 1, "hotpath depth active");
+        CHECK(ival(cs, "(stats:get \"render-hotpath-depth\")") >= 1, "hotpath depth active");
         // (+ ) may lower to IR Add (no PrimFn); force PrimFn via terminal + list ops.
         auto id = cs.eval("(make-terminal-buffer 4 2)");
         CHECK(id && is_int(*id), "make-terminal-buffer");
@@ -100,7 +100,7 @@ int main() {
         for (int i = 0; i < 50; ++i)
             (void)cs.eval("(not #f)");
         (void)cs.eval("(render-hotpath-exit)");
-        const auto s1 = ival(cs, "(render-prim-latency-samples)");
+        const auto s1 = ival(cs, "(stats:get \"render-prim-latency-samples\")");
         CHECK(s1 > s0, "latency samples after hot-path prims");
         CHECK(s1 >= s0 + 50, "at least 50 latency samples");
         auto stats = cs.eval("(engine:metrics \"query:render-prim-call-stats\")");
@@ -113,11 +113,11 @@ int main() {
 
     // Frame time histogram updates on arena-render-frame-reset
     {
-        const auto f0 = ival(cs, "(render-frame-time-samples)");
+        const auto f0 = ival(cs, "(stats:get \"render-frame-time-samples\")");
         (void)cs.eval("(arena-render-frame-reset)"); // first mark (no sample yet)
         (void)cs.eval("(+ 1 1)");
         (void)cs.eval("(arena-render-frame-reset)"); // second → one frame sample
-        const auto f1 = ival(cs, "(render-frame-time-samples)");
+        const auto f1 = ival(cs, "(stats:get \"render-frame-time-samples\")");
         CHECK(f1 >= f0 + 1, "frame time samples after two resets");
         auto h = cs.eval("(query:render-frame-time-histogram)");
         CHECK(h && is_string(*h), "histogram string");
@@ -131,17 +131,17 @@ int main() {
 
     // Multiple frames
     {
-        const auto f0 = ival(cs, "(render-frame-time-samples)");
+        const auto f0 = ival(cs, "(stats:get \"render-frame-time-samples\")");
         for (int i = 0; i < 5; ++i)
             (void)cs.eval("(arena-render-frame-reset)");
-        const auto f1 = ival(cs, "(render-frame-time-samples)");
+        const auto f1 = ival(cs, "(stats:get \"render-frame-time-samples\")");
         CHECK(f1 >= f0 + 4, "multiple frame samples");
     }
 
     // Probes non-negative
     {
-        CHECK(ival(cs, "(render-prim-latency-samples)") >= 0, "samples >= 0");
-        CHECK(ival(cs, "(render-frame-time-samples)") >= 0, "frames >= 0");
+        CHECK(ival(cs, "(stats:get \"render-prim-latency-samples\")") >= 0, "samples >= 0");
+        CHECK(ival(cs, "(stats:get \"render-frame-time-samples\")") >= 0, "frames >= 0");
     }
 
     if (::aura::test::g_failed)

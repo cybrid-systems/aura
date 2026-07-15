@@ -6,7 +6,7 @@
 // apply_closure fast path + integrated epoch/stale checks.
 //
 // Background: #252 shipped the OBSERVABILITY foundation
-// (5 new counters in CompilerMetrics + (closure:stats)
+// (5 new counters in CompilerMetrics + (stats:get "closure:stats")
 // Aura primitive) for the apply_closure dual-path. The
 // full scope-limited close of #252 explicitly deferred
 // the actual fast-path refactor to a follow-up session
@@ -21,7 +21,7 @@
 //      cs.snapshot() on 4 representative workloads
 //      (map/filter/foldl over 100-element list, recursive
 //      lambda chain, FFI call, IR-produced closure).
-//   2. Aura primitive consistency check: (closure:stats)
+//   2. Aura primitive consistency check: (stats:get "closure:stats")
 //      returns the same numbers as cs.snapshot() (avoids
 //      drift between the two APIs).
 //   3. Mutation stress sanity (10 cycles) — verifies
@@ -248,7 +248,7 @@ bool test_mutation_stress_sanity() {
     return true;
 }
 
-// AC6: Aura primitive (closure:stats) returns a hash with
+// AC6: Aura primitive (stats:get "closure:stats") returns a hash with
 // the same conceptual numbers as cs.snapshot(). Guards
 // against drift between the two APIs. We allow a small
 // delta (<= 5) because the Aura primitive's own eval path
@@ -258,7 +258,8 @@ bool test_mutation_stress_sanity() {
 // catch LARGE drift (a factor of 2 or more), not to
 // require bit-for-bit identity at the same instant.
 bool test_aura_primitive_consistency() {
-    std::println("\n--- AC6: (closure:stats) primitive matches cs.snapshot() within 5 ---");
+    std::println(
+        "\n--- AC6: (stats:get \"closure:stats\") primitive matches cs.snapshot() within 5 ---");
     aura::compiler::CompilerService cs;
     auto r = cs.eval_ir("((lambda (x) (* x x)) 7)");
     if (!r) {
@@ -269,7 +270,7 @@ bool test_aura_primitive_consistency() {
     // Read snapshot
     auto snap = cs.snapshot();
     // Read Aura primitive
-    auto rp = cs.eval("(hash-ref (closure:stats) \"calls-total\")");
+    auto rp = cs.eval("(hash-ref (stats:get " closure : stats ") \"calls-total\")");
     if (!rp || !aura::compiler::types::is_int(*rp)) {
         std::println("  FAIL: hash-ref calls-total failed");
         ++g_failed;
@@ -280,8 +281,8 @@ bool test_aura_primitive_consistency() {
                                                         : (snap.closure_calls_total - aura_calls);
     std::println("       [drift] snap={} aura={} diff={}", snap.closure_calls_total, aura_calls,
                  diff);
-    CHECK(diff <= 5,
-          "(closure:stats) and cs.snapshot() agree within 5 (drift from primitive's own overhead)");
+    CHECK(diff <= 5, "(stats:get \"closure:stats\") and cs.snapshot() agree within 5 (drift from "
+                     "primitive's own overhead)");
     CHECK_GE(aura_calls, snap.closure_calls_total,
              "aura value >= snapshot (the primitive may include more recent calls)");
     return true;
