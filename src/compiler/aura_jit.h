@@ -203,6 +203,15 @@ public:
         std::atomic<std::uint64_t> unhandled_fail_fast_total{0};
         // Issue #1288: GuardShape paths that also probe linear_ownership_state.
         std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};
+        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
+        // total of AuraJIT::capture_fn_epoch + is_fn_epoch_stale
+        // calls (one per JIT compile + one per JIT Apply prologue
+        // check). Pairs with compiler_closure_epoch_mismatch_hits
+        // (IR side, observability_metrics.h) so dashboards can
+        // verify both reader paths see the same epoch.
+        std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
+        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
+        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
@@ -213,6 +222,14 @@ public:
     // should prefer the const overload + the free-form update
     // methods (compile_count.fetch_add(1, ...), etc.).
     Metrics& mutable_metrics() noexcept { return metrics_; }
+
+    // Issue #1477: test-only accessor for the jit_epoch_stale_check_total
+    // counter. Tests use this to verify capture_fn_epoch +
+    // is_fn_epoch_stale bump the counter without exposing the
+    // full Metrics struct.
+    [[nodiscard]] std::uint64_t test_jit_epoch_stale_check_total() const noexcept {
+        return metrics_.jit_epoch_stale_check_total.load(std::memory_order_relaxed);
+    }
 
     // Hot-swap: replace an already-compiled function with a new version.
     // Removes the old module from the JIT dylib and compiles + links the new one.
@@ -231,10 +248,49 @@ public:
     // in compile_fns_ and the next exec returns the old body.
     void invalidate_prefix(const char* prefix);
 
-private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-    mutable Metrics metrics_;
+    // Issue #1477: JIT-side dual-epoch fence counterpart to #1475
+    // (read-side is_bridge_stale + is_env_frame_stale in evaluator.ixx)
+    // + #1476 (write-side atomic_bump_epochs_and_stamp_bridge in
+    // service.ixx). Captures the current bridge_epoch at compile
+    // time (or on demand from service.ixx::atomic_bump_epochs_and_stamp_bridge
+    // when the function is re-registered); callers (e.g. JIT Apply
+    // prologue) then check is_fn_epoch_stale(name, current_bridge_epoch)
+    // and deopt to the interpreter on mismatch.
+    //
+    // Returns false when name was never captured (pass-through, the
+    // function wasn't compiled via this path or was registered
+    // before the fence was added).
+    void capture_fn_epoch(const char* name, uint64_t bridge_epoch);
+    [[nodiscard]] bool is_fn_epoch_stale(const char* name, uint64_t current_bridge_epoch) const;
+
+    // Issue #1477: JIT-side dual-epoch fence counterpart to #1475
+    // (read-side is_bridge_stale + is_env_frame_stale in evaluator.ixx)
+    // + #1476 (write-side atomic_bump_epochs_and_stamp_bridge in
+    // service.ixx). Captures the current bridge_epoch at compile
+    // time (or on demand from service.ixx::atomic_bump_epochs_and_stamp_bridge
+    // when the function is re-registered); callers (e.g. JIT Apply
+    // prologue) then check is_fn_epoch_stale(name, current_bridge_epoch)
+    // and deopt to the interpreter on mismatch.
+    //
+    // Returns false when name was never captured (pass-through, the
+    // function wasn't compiled via this path or was registered
+    // before the fence was added).
+
+    // Issue #1477: JIT-side counterpart of #1475 (read-side dual
+    // check) + #1476 (write-side atomic bump). The captured
+    // bridge_epoch is captured at compile time; callers (e.g.
+    // service.ixx::atomic_bump_epochs_and_stamp_bridge on the
+    // write side, or the JIT Apply prologue on the read side)
+    // check `is_fn_epoch_stale(name, current_bridge_epoch)` and
+    // deopt to the interpreter when it returns true. Returns
+    // false when `name` was never captured (pass-through — fn
+    // wasn't compiled via this path).
+
+}
+
+private : struct Impl;
+std::unique_ptr<Impl> impl_;
+mutable Metrics metrics_;
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.
