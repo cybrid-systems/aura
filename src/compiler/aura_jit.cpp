@@ -313,6 +313,9 @@ struct LLVMBuilder {
     // Issue #1534: GuardShape dual-epoch fence — runtime call to
     // aura_jit_guard_shape_epoch_check(fn_name) before narrow_evidence.
     llvm::Function* fn_guard_shape_epoch_check = nullptr;
+    // Issue #1535: Linear* dual-epoch fence — is_fn_epoch_stale +
+    // is_env_frame_stale before Move/Borrow/Drop mutation.
+    llvm::Function* fn_linear_epoch_safety_check = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
@@ -409,6 +412,11 @@ struct LLVMBuilder {
         fn_guard_shape_epoch_check = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, {ptr_i8}, false), llvm::Function::ExternalLinkage,
             "aura_jit_guard_shape_epoch_check", mod);
+
+        // Issue #1535: i32 aura_jit_linear_epoch_safety_check(i8* name, i8 state, i32 opcode)
+        fn_linear_epoch_safety_check = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, {ptr_i8, i8_ty, i32_ty}, false),
+            llvm::Function::ExternalLinkage, "aura_jit_linear_epoch_safety_check", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -560,16 +568,67 @@ struct LLVMBuilder {
                 irb->CreateCall(fn_deopt_inc);
             return false;
         }
-        // Issue #740: linear-owned instructions consult JIT safety hook.
+        // Issue #740 + #1535: linear-owned instructions consult the dual-epoch
+        // safety hook (is_fn_epoch_stale + is_env_frame_stale + post-invalidate
+        // metrics). Return value is ignored here — Linear* ops that need
+        // deopt-on-stale use begin_linear_epoch_fence instead.
         auto linear_safety_probe = [&]() {
             if (inst.linear_ownership_state == 0)
                 return;
             if (inst.narrow_evidence != 0)
                 aura::compiler::jit_typed_mutation::record_linear_state_optimized();
+            const char* probe_fn = (fn.name && fn.name[0]) ? fn.name : "";
+            auto* name_gv = irb->CreateGlobalString(probe_fn, "lin_probe_fn");
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
             irb->CreateCall(
-                llvm::FunctionCallee(fn_linear_jit_safety),
-                {llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
-                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
+                llvm::FunctionCallee(fn_linear_epoch_safety_check),
+                llvm::ArrayRef<llvm::Value*>{
+                    name_ptr,
+                    llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
+        };
+        // Issue #1535: dual-epoch fence for Linear* ops (Move/Borrow/Drop).
+        // Emits runtime call to aura_jit_linear_epoch_safety_check; on stale
+        // deopts (aura_deopt_inc) and skips the mutation body. Leaves the
+        // IR builder at bb_ok; caller emits body then calls end_fence.
+        struct LinearEpochFence {
+            llvm::BasicBlock* bb_ok = nullptr;
+            llvm::BasicBlock* bb_merge = nullptr;
+        };
+        auto begin_linear_epoch_fence = [&]() -> LinearEpochFence {
+            auto* entry_bb = irb->GetInsertBlock();
+            auto* parent_func = entry_bb->getParent();
+            auto* bb_stale = llvm::BasicBlock::Create(ctx, "linear_epoch_stale", parent_func);
+            auto* bb_ok = llvm::BasicBlock::Create(ctx, "linear_epoch_ok", parent_func);
+            auto* bb_merge = llvm::BasicBlock::Create(ctx, "linear_epoch_merge", parent_func);
+            const char* fn_name = (fn.name && fn.name[0]) ? fn.name : "";
+            auto* name_gv = irb->CreateGlobalString(fn_name, "lin_fn_name");
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+            irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
+            auto* stale_i = irb->CreateCall(
+                llvm::FunctionCallee(fn_linear_epoch_safety_check),
+                llvm::ArrayRef<llvm::Value*>{
+                    name_ptr,
+                    llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
+            auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
+            irb->CreateCondBr(is_stale, bb_stale, bb_ok);
+            // Stale: deopt to interpreter — skip mutation (prevents
+            // use-after-move / UAF / double-free on post-mutate linear values).
+            irb->SetInsertPoint(bb_stale);
+            if (fn_deopt_inc)
+                irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
+            irb->CreateBr(bb_merge);
+            irb->SetInsertPoint(bb_ok);
+            return LinearEpochFence{bb_ok, bb_merge};
+        };
+        auto end_linear_epoch_fence = [&](const LinearEpochFence& fb) {
+            irb->CreateBr(fb.bb_merge);
+            irb->SetInsertPoint(fb.bb_merge);
         };
         switch (inst.opcode) {
             case OpNop:
@@ -1106,12 +1165,19 @@ struct LLVMBuilder {
             case OpBorrowOp:
             case OpMutBorrowOp:
             case OpRefCountOp: {
-                linear_safety_probe();
+                // Issue #1535: dual-epoch fence before borrow / wrap
+                // (prevents UAF on post-mutate linear values). The
+                // epoch check also runs #740 post-invalidate metrics
+                // when linear_ownership_state != 0.
+                auto fb = begin_linear_epoch_fence();
                 store(inst.ops[0], load(inst.ops[1]));
+                end_linear_epoch_fence(fb);
                 return true;
             }
             case OpMoveOp: {
-                linear_safety_probe();
+                // Issue #1535: check epoch before zeroing source
+                // (prevents use-after-move after mid-op mutate).
+                auto fb = begin_linear_epoch_fence();
                 // Issue #106: source invalidation. After a
                 // MoveOp the source slot is zeroed so a later
                 // DropOp on the source is a no-op (the runtime's
@@ -1120,10 +1186,13 @@ struct LLVMBuilder {
                 auto val = load(inst.ops[1]);
                 store(inst.ops[0], val);
                 store(inst.ops[1], c64(0)); // source invalidated
+                end_linear_epoch_fence(fb);
                 return true;
             }
             case OpDropOp: {
-                linear_safety_probe();
+                // Issue #1535: check epoch before drop (prevents
+                // double-free of stale/invalidated linear values).
+                auto fb = begin_linear_epoch_fence();
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(llvm::FunctionCallee(fn_drop_pair),
                                 llvm::ArrayRef<llvm::Value*>{val});
@@ -1131,6 +1200,7 @@ struct LLVMBuilder {
                                 llvm::ArrayRef<llvm::Value*>{val});
                 irb->CreateCall(llvm::FunctionCallee(fn_drop_closure),
                                 llvm::ArrayRef<llvm::Value*>{val});
+                end_linear_epoch_fence(fb);
                 return true;
             }
 
@@ -2089,9 +2159,11 @@ uint64_t aura_exception_fiber_count();
 void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
-// Issue #157 Phase 1c / #1534: deopt counter + GuardShape epoch fence.
+// Issue #157 Phase 1c / #1534 / #1535: deopt counter + dual-epoch fences.
 void aura_deopt_inc();
 int aura_jit_guard_shape_epoch_check(const char* name);
+int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
+                                       std::uint32_t opcode);
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
@@ -2461,8 +2533,9 @@ struct AuraJIT::Impl {
         reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
         reg("aura_jit_linear_post_invalidate_safety",
             (void*)aura_jit_linear_post_invalidate_safety);
-        // Issue #1534: GuardShape dual-epoch fence + deopt counter for stale path.
+        // Issue #1534 / #1535: dual-epoch fences + deopt counter for stale path.
         reg("aura_jit_guard_shape_epoch_check", (void*)aura_jit_guard_shape_epoch_check);
+        reg("aura_jit_linear_epoch_safety_check", (void*)aura_jit_linear_epoch_safety_check);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         reg("aura_get_defuse_version", (void*)aura_get_defuse_version);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);

@@ -150,6 +150,14 @@ extern "C" __attribute__((weak)) int aura_jit_is_deopt_pending(const char* /*nam
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) int
+aura_jit_linear_epoch_safety_check(const char* /*fn_name*/, std::uint8_t /*linear_state*/,
+                                   std::uint32_t /*opcode*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
+extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {
     return 0;
 }
