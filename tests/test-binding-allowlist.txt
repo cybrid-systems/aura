@@ -48,3 +48,16 @@ src/compiler/evaluator_primitives_obs_jit_12.cpp
 # test_issue_1476 + test_resource_quota. If link fails: verification
 # deferred to follow-up #1538 batch.
 tests/test_env_symid_primary_path.cpp
+# Issue #1483: per-fiber mutation_stack_depth metrics (C2) +
+# query:per-fiber-mutation-stack-stats primitive (C3) + adaptive GC
+# safepoint threshold with exponential backoff (C4 default heuristic
+# (a)) + query:gc-safepoint-adaptive-stats primitive (C4). Test file
+# (tests/test_per_fiber_mutation_safepoint.cpp) is registered in
+# CMakeLists.txt but the link may hit the system 5-min build timeout
+# (per #1478 + #1480 + #1481 + #1482 precedent + invariant #29).
+# 7 ACs covering: bump_per_fiber_mutation_stack_depth_max + _current_max
+# monotonic-CAS, accessor correctness, request_gc_safepoint() immediate
+# path resets threshold, bump_safepoint_adaptive_threshold() doubles
+# (CAS-capped at 1024), should_adapt_safepoint_threshold() pressure
+# signal, request_gc_safepoint() force-defer when pressure > threshold.
+# If link fails: verification deferred to follow-up #1538 batch.
