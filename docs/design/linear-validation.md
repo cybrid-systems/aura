@@ -9,7 +9,7 @@ Post-mutation linear ownership safety is a **dual-half pipeline**:
 | Half | API | Layer | What it checks |
 |------|-----|-------|----------------|
 | Type-checker | `post_mutation_invariant_check` / `PostMutationInvariantVisitor` | AST + `OwnershipEnv` | Dirty-subtree Linear bindings: use-after-move, double-borrow, leaked-linear, occurrence narrowing |
-| Runtime | `Evaluator::linear_post_mutate_enforce` / `linear_post_mutate_enforce_all` | EnvFrame | Captured linear values on live env frames (MVP counter; full cell scan → #1543) |
+| Runtime | `Evaluator::linear_post_mutate_enforce` / `linear_post_mutate_enforce_all` | EnvFrame | Captured linear values on live env frames (Moved scan via SoA; #1539) |
 
 Issue **#1538** unifies them so every successful `typed_mutate` / `typed_mutate_atomic` runs **both** halves and surfaces combined diagnostics on `MutationResult` and mutation-log JSON.
 
@@ -76,6 +76,13 @@ bindings_linear_ownership_state_[i]   // 0=untracked … 4=Moved (mirrors ir.ixx
 
 `materialize_call_env` also calls `linear_post_mutate_enforce` on entry (#1542) so TCO / non-`apply_closure` materialize sites share the same contract as `closure_needs_safe_fallback`. On Moved → empty-Env fallback (`materialize_fallback_total`).
 
-## Future (#1543+)
+## GC root audit (#1543)
+
+See **`docs/design/linear-gc-roots.md`**: registration consistency across
+typed_mutate / invalidate / compact_env_frames / JIT hot-swap / fiber steal /
+GC safepoint, plus `query:linear-gc-root-audit-log` and
+`linear_gc_root_audit_checks_total`.
+
+## Future
 
 Borrow/MutBorrow stamping at runtime, and richer per-cell state transitions beyond Moved detection.

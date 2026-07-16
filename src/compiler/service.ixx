@@ -8808,6 +8808,8 @@ private:
         metrics_.linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
         evaluator_.sync_linear_roots_and_bridge_epoch();
+        // Issue #1543: invalidate_function path audit.
+        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
     }
 
     // Issue #1385: CountingMR — wraps new_delete_resource and
@@ -9784,6 +9786,8 @@ public:
             metrics_.linear_post_mutate_pipeline_unsafe_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         }
+        // Issue #1543: typed_mutate path audit (after enforce sweep).
+        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditTypedMutate);
     }
 
     // Issue #1522: notify AuraJIT fn_trackers_ (name + name#*).
@@ -9797,6 +9801,8 @@ public:
             metrics_.jit_closure_safe_fallbacks.fetch_add(marked, std::memory_order_relaxed);
             metrics_.jit_closure_safe_fallbacks_total.fetch_add(marked, std::memory_order_relaxed);
         }
+        // Issue #1543: JIT hot-swap / batch-deopt path audit.
+        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditJitHotSwap);
     }
 
     // Issue #1536: bulk walk_active_closures after epoch bump / invalidate.

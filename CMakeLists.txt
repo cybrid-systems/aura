@@ -5081,6 +5081,9 @@ aura_issue_test_link_llvm_jit(test_issue_1540)
 # Issue #1542: wire linear_post_mutate_enforce into materialize_call_env entry.
 aura_add_issue_test(test_issue_1542)
 aura_issue_test_link_llvm_jit(test_issue_1542)
+# Issue #1543: GC root registration consistency audit + docs + query log.
+aura_add_issue_test(test_issue_1543)
+aura_issue_test_link_llvm_jit(test_issue_1543)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
