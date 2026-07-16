@@ -731,6 +731,81 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #1470: query:ai-closedloop-readiness-stats — consolidated
+    // 5-counter health score for AI editing loops. Aggregates wraps +
+    // invalidations + batch_commits + hygiene_skips + dirty_prunes into
+    // a single hash with a recommendation int for AI decision-making.
+    // Complements #457 / #527 / #738 (stable-ref family) by exposing
+    // the cross-cutting readiness view those leave scattered. Replaces
+    // the need to call 5 separate stats primitives in the AI Agent loop.
+    // Recommendation priority (most severe first):
+    //   0 = healthy (all counters below thresholds)
+    //   1 = wraps detected (generation wraparound in stable_ref gen counter)
+    //   2 = high invalidation rate (>= 10 stable_ref_invalidations)
+    //   3 = high hygiene-skip rate (>= 100 macro_hygiene_skipped)
+    //   4 = high dirty-prune rate (>= 50 mark_dirty_boundary_prunes)
+    ObservabilityPrims::register_stats_impl(
+        "query:ai-closedloop-readiness-stats",
+        [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            std::uint64_t wraps = 0;
+            std::uint64_t invalidations = 0;
+            std::uint64_t batch_commits = 0;
+            std::uint64_t dirty_prunes = 0;
+            if (auto* ws = ev.workspace_flat()) {
+                wraps = ws->generation_wrap_count();
+                invalidations = ws->stable_ref_invalidations();
+                batch_commits = ws->atomic_batch_commits();
+                dirty_prunes = ws->mark_dirty_boundary_prune_count();
+            }
+            const std::uint64_t hygiene_skips = ir_inline_hygiene_skipped(&ev);
+            std::int64_t rec_int = 0;
+            if (wraps > 0)
+                rec_int = 1;
+            else if (invalidations >= 10)
+                rec_int = 2;
+            else if (hygiene_skips >= 100)
+                rec_int = 3;
+            else if (dirty_prunes >= 50)
+                rec_int = 4;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_int(rec_int);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("wraps", static_cast<std::int64_t>(wraps));
+            insert_kv("invalidations", static_cast<std::int64_t>(invalidations));
+            insert_kv("batch-commits", static_cast<std::int64_t>(batch_commits));
+            insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene_skips));
+            insert_kv("dirty-prunes", static_cast<std::int64_t>(dirty_prunes));
+            insert_kv("recommendation", rec_int);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #738: query:stable-ref-boundary-stats-hash — cross-COW /
     // sub-workspace pinning + boundary validity observability for
     // concurrent AI orchestration. Complements #527

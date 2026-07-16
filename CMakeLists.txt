@@ -5615,6 +5615,11 @@ aura_issue_test_link_llvm_jit(test_issue_631)
 # #622 existing primitives + counters.
 aura_add_issue_test(test_issue_632)
 aura_issue_test_link_llvm_jit(test_issue_632)
+# Issue #1470: query:ai-closedloop-readiness-stats — consolidated
+# 5-counter AI closed-loop readiness hash (wraps + invalidations +
+# batch_commits + hygiene_skips + dirty_prunes + recommendation).
+aura_add_issue_test(test_issue_1470)
+aura_issue_test_link_llvm_jit(test_issue_1470)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics
