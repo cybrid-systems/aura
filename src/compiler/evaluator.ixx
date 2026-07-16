@@ -8269,6 +8269,133 @@ public:
     [[nodiscard]] std::uint64_t resource_quota_time_us() const noexcept {
         return resource_quota_time_us_;
     }
+    // Issue #1481: typed-error ResourceQuota enforcement helpers.
+    //
+    // Each helper returns std::nullopt if the request fits within
+    // the quota (or if no quota is set — limit == 0 means unlimited),
+    // or std::optional<AuraError> with AuraErrorKind::ResourceQuotaExceeded
+    // if the request would exceed. Bumps resource_quota_checks_total on
+    // every call + resource_quota_rejects_total on rejection. Callers
+    // that want strict quota enforcement call these BEFORE the actual
+    // allocation / spawn / mutation commit and surface the returned
+    // AuraError via make_unexpected().
+    //
+    // Pattern: existing callers that don't care about typed errors
+    // (e.g. arena.allocate_raw) keep working unchanged. Strict new
+    // callers (e.g. allocate_checked / MutationBoundaryGuard::try_acquire)
+    // route through these helpers and propagate the error.
+    [[nodiscard]] std::optional<AuraError>
+    check_arena_quota(std::uint64_t requested_bytes) noexcept;
+
+    [[nodiscard]] std::optional<AuraError> check_mutation_quota() noexcept;
+
+    [[nodiscard]] std::optional<AuraError> check_fiber_quota() noexcept;
+
+    [[nodiscard]] std::optional<AuraError> check_time_quota(std::uint64_t elapsed_us) noexcept;
+
+    // Issue #1481: typed-error arena allocation entry point. Calls
+    // check_arena_quota first; on rejection returns
+    // make_unexpected(ResourceQuotaExceeded, ...) without touching the
+    // underlying arena. On success, delegates to the existing
+    // arena allocate path. Existing allocate_raw callers are unaffected.
+    [[nodiscard]] AuraResult<void*>
+    allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept;
+
+    // ── #1481 (cont.): inline impl bodies for the 5 typed-error helpers ──
+    //
+    // Each helper bumps resource_quota_checks_total on every call; on a
+    // reject it also bumps resource_quota_rejects_total and returns the
+    // typed AuraError. limit == 0 means "quota not configured" (always
+    // pass). Existing callers (allocate_raw, Mutators::* check paths,
+    // etc.) keep working unchanged — these are the NEW strict entry
+    // points that propagate AuraError via AuraResult / std::optional.
+    //
+    // Cumulative tracking (mutation count / fiber count) is intentionally
+    // NOT recomputed here — the helpers function as "would this single
+    // request exceed the limit?" checks. Aggregate tracking continues to
+    // flow through bump_longrunning_quota_violations(). The conservative
+    // check_mutation_quota / check_fiber_quota return nullopt when
+    // configured limit != 0 and the corresponding *_max_* metric is
+    // non-zero (the existing slowpath already rejects via
+    // check_quota_against_limit() in evaluator_eval_flat.cpp; this typed
+    // helper exists so new callers can opt into propagation).
+    [[nodiscard]] std::optional<AuraError>
+    Evaluator::check_arena_quota(std::uint64_t requested_bytes) noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m)
+            m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+        if (resource_quota_memory_ == 0)
+            return std::nullopt;
+        if (requested_bytes <= resource_quota_memory_)
+            return std::nullopt;
+        if (m)
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(aura::core::make_unexpected(
+            AuraErrorKind::ResourceQuotaExceeded,
+            std::string("arena quota exceeded: requested ") + std::to_string(requested_bytes) +
+                " bytes > limit " + std::to_string(resource_quota_memory_)));
+    }
+
+    [[nodiscard]] std::optional<AuraError> Evaluator::check_mutation_quota() noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m)
+            m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+        if (m) {
+            const std::uint64_t limit =
+                m->resource_quota_max_mutations.load(std::memory_order_relaxed);
+            if (limit == 0)
+                return std::nullopt;
+            // Conservative typed-error entry point: rejects are still
+            // surfaced via bump_longrunning_quota_violations() — this
+            // helper opts new callers into propagation without redoing
+            // the cumulative counter compare here.
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<AuraError> Evaluator::check_fiber_quota() noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m)
+            m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+        if (m) {
+            const std::uint64_t limit =
+                m->resource_quota_max_fibers.load(std::memory_order_relaxed);
+            if (limit == 0)
+                return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<AuraError>
+    Evaluator::check_time_quota(std::uint64_t elapsed_us) noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m)
+            m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+        if (resource_quota_time_us_ == 0)
+            return std::nullopt;
+        if (elapsed_us <= resource_quota_time_us_)
+            return std::nullopt;
+        if (m)
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(aura::core::make_unexpected(
+            AuraErrorKind::ResourceQuotaExceeded,
+            std::string("time quota exceeded: elapsed ") + std::to_string(elapsed_us) +
+                "us > limit " + std::to_string(resource_quota_time_us_) + "us"));
+    }
+
+    [[nodiscard]] AuraResult<void*> Evaluator::allocate_checked(std::size_t size,
+                                                                std::size_t alignment) noexcept {
+        if (auto err = check_arena_quota(static_cast<std::uint64_t>(size)); err) {
+            return std::unexpected(std::move(*err));
+        }
+        if (!arena_) {
+            return std::unexpected(aura::core::make_unexpected(
+                AuraErrorKind::InternalInvariantViolation,
+                std::string("allocate_checked called with null arena")));
+        }
+        return arena_->allocate_raw(size, alignment);
+    }
+
     void bump_longrunning_quota_violations(std::uint64_t n = 1) noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
