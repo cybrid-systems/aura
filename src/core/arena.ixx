@@ -38,6 +38,21 @@ import std;
 
 namespace aura::ast {
 
+// Issue #1518: MutationBoundary soft-gate for auto live_compact.
+// Optional probe (0 when unset / evaluator not linked). Wired from
+// evaluator_fiber_mutation via set_arena_mutation_boundary_depth_fn.
+using ArenaMutationBoundaryDepthFn = std::size_t (*)() noexcept;
+export inline std::atomic<ArenaMutationBoundaryDepthFn> g_arena_mutation_boundary_depth_fn{nullptr};
+
+export inline void set_arena_mutation_boundary_depth_fn(ArenaMutationBoundaryDepthFn fn) noexcept {
+    g_arena_mutation_boundary_depth_fn.store(fn, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::size_t arena_mutation_boundary_depth() noexcept {
+    auto* fn = g_arena_mutation_boundary_depth_fn.load(std::memory_order_relaxed);
+    return fn ? fn() : 0;
+}
+
 namespace arena_no_safepoint_detail {
     export inline std::atomic<bool>& no_safepoint_warned_flag() noexcept {
         static std::atomic<bool> flag{false};
@@ -105,22 +120,28 @@ export struct ArenaStats {
     std::size_t frag_reduced_bp = 0;
     std::size_t shape_inval_on_compact = 0;
     std::size_t defrag_savings_alloc = 0;
-    // Issue #1467 Phase 1: live-object-moving defrag observability
-    // (foundation-only — both stay 0 until mark+copy+remap land in
-    // #1467 follow-ups). The (arena:live-defrag-stats) primitive
-    // will read these once the full path ships.
+    // Issue #1467 Phase 1 + #1518: live-object-moving defrag observability.
     std::size_t live_defrag_attempted_count = 0;
     std::size_t live_objects_marked_total = 0;
+    // Issue #1518: live relocate / compact coordination metrics.
+    std::size_t live_relocate_count = 0;         // freelist slots + mark-phase relocates
+    std::size_t compact_deopt_triggered = 0;     // Shape/JIT deopt fired post-compact
+    std::size_t compact_deopt_throttled = 0;     // deopt storm throttle skips
+    std::size_t frag_post_compact_bp = 0;        // last post-compact frag ratio (basis points)
+    std::size_t compact_soft_gated_boundary = 0; // skipped due to MutationBoundary
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
                            "{} compactions (last saved {}B, total {}B) | "
                            "{} defrags (last saved {}B) | "
-                           "{} live-defrags ({} marked)",
+                           "{} live-defrags ({} marked, {} relocates) | "
+                           "deopt {}/{} throttled | frag_post {}bp",
                            used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
                            allocation_count, wasted, compaction_count, last_compaction_saved,
                            total_compaction_saved, defrag_attempted_count, last_defrag_saved,
-                           live_defrag_attempted_count, live_objects_marked_total);
+                           live_defrag_attempted_count, live_objects_marked_total,
+                           live_relocate_count, compact_deopt_triggered, compact_deopt_throttled,
+                           frag_post_compact_bp);
     }
 
     // Fragmentation ratio: (capacity - used) / capacity.
@@ -147,6 +168,13 @@ export struct ArenaStats {
         // Issue #1467 Phase 1: live-defrag counters (same sum discipline).
         live_defrag_attempted_count += other.live_defrag_attempted_count;
         live_objects_marked_total += other.live_objects_marked_total;
+        // Issue #1518: live-relocate / deopt coordination merge.
+        live_relocate_count += other.live_relocate_count;
+        compact_deopt_triggered += other.compact_deopt_triggered;
+        compact_deopt_throttled += other.compact_deopt_throttled;
+        compact_soft_gated_boundary += other.compact_soft_gated_boundary;
+        if (other.frag_post_compact_bp > 0)
+            frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)
             last_defrag_saved = other.last_defrag_saved;
         auto_alloc_trigger_count += other.auto_alloc_trigger_count;
@@ -196,26 +224,77 @@ public:
     // or if the tier is exhausted (caller should fallback).
     // Issue #1242: also clamp against absolute buffer_.data()+size so a
     // stale tier.end after shrink/rebind cannot yield an out-of-buffer pointer.
+    // Issue #1518: prefer freelist recycle (live-relocate protocol) before bump.
     void* try_allocate(std::size_t size) pre(size > 0) pre(size <= kMaxSmallSize) {
         const auto* buf_end = buffer_.data() + buffer_.size();
-        for (auto& c : classes_) {
-            if (size <= c.obj_sz) {
-                // Hard cap: bump must stay within both tier.end and buffer.
-                std::byte* hard_end = c.end < buf_end ? c.end : const_cast<std::byte*>(buf_end);
-                void* ptr = c.bump;
-                auto* next = c.bump + c.obj_sz;
-                if (next <= hard_end && next >= c.start) {
-                    c.bump = next;
-                    allocated_from_small_ += c.obj_sz;
-                    aura::core::cpp26::record_hotpath_invariant_hit();
-                    return ptr;
-                }
-                // This tier is exhausted — signal overflow (no bump advance).
+        for (std::size_t ti = 0; ti < kNumTiers; ++ti) {
+            auto& c = classes_[ti];
+            if (size > c.obj_sz)
+                continue;
+            // Issue #1518: freelist hit = lazy live-relocate into a freed slot.
+            if (free_heads_[ti] != nullptr) {
+                void* ptr = free_heads_[ti];
+                free_heads_[ti] = *static_cast<void**>(ptr);
+                if (free_count_ > 0)
+                    --free_count_;
+                allocated_from_small_ += c.obj_sz;
+                ++recycle_hits_;
                 aura::core::cpp26::record_hotpath_invariant_hit();
-                return nullptr;
+                return ptr;
             }
+            // Hard cap: bump must stay within both tier.end and buffer.
+            std::byte* hard_end = c.end < buf_end ? c.end : const_cast<std::byte*>(buf_end);
+            void* ptr = c.bump;
+            auto* next = c.bump + c.obj_sz;
+            if (next <= hard_end && next >= c.start) {
+                c.bump = next;
+                allocated_from_small_ += c.obj_sz;
+                aura::core::cpp26::record_hotpath_invariant_hit();
+                return ptr;
+            }
+            // This tier is exhausted — signal overflow (no bump advance).
+            aura::core::cpp26::record_hotpath_invariant_hit();
+            return nullptr;
         }
         return nullptr; // too large for any tier
+    }
+
+    // Issue #1518: return a destroyed small object to the freelist so
+    // subsequent try_allocate can reuse the slot (live-relocate protocol
+    // without moving still-live pointers). Safe: only called after dtor.
+    // Returns true if the pointer was owned by this pool and recycled.
+    bool recycle(void* p, std::size_t size) noexcept {
+        if (!p || size == 0 || size > kMaxSmallSize)
+            return false;
+        auto* bp = static_cast<std::byte*>(p);
+        if (buffer_.empty() || bp < buffer_.data() || bp >= buffer_.data() + buffer_.size())
+            return false;
+        for (std::size_t ti = 0; ti < kNumTiers; ++ti) {
+            auto& c = classes_[ti];
+            if (size > c.obj_sz)
+                continue;
+            if (bp < c.start || bp >= c.end)
+                continue;
+            // Slot alignment: offset from start must be multiple of obj_sz.
+            const auto off = static_cast<std::size_t>(bp - c.start);
+            if (off % c.obj_sz != 0)
+                return false;
+            *static_cast<void**>(p) = free_heads_[ti];
+            free_heads_[ti] = p;
+            ++free_count_;
+            if (allocated_from_small_ >= c.obj_sz)
+                allocated_from_small_ -= c.obj_sz;
+            ++recycle_puts_;
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool owns(const void* p) const noexcept {
+        if (!p || buffer_.empty())
+            return false;
+        auto* bp = static_cast<const std::byte*>(p);
+        return bp >= buffer_.data() && bp < buffer_.data() + buffer_.size();
     }
 
     // Reset all tier bump pointers (but keep buffer allocated)
@@ -224,6 +303,7 @@ public:
             c.bump = c.start;
         }
         allocated_from_small_ = 0;
+        clear_freelist_();
     }
 
     // Issue #974 / #1242: re-bind tier start/end after buffer reallocation
@@ -233,6 +313,9 @@ public:
     void rebind_tiers() noexcept {
         if (buffer_.empty())
             return;
+        // Issue #1518: freelist pointers are absolute; clear if buffer base
+        // may have moved (vector reallocation). Same buffer_ keeps freelist.
+        const auto* old_base = classes_[0].start;
         const auto buf_bytes = buffer_.size();
         for (std::size_t i = 0; i < kNumTiers; ++i) {
             const auto tier_off = i * kPerTierSize;
@@ -250,6 +333,8 @@ public:
             classes_[i].bump = start + used;
             classes_[i].obj_sz = kTierSizes[i];
         }
+        if (old_base != buffer_.data())
+            clear_freelist_();
     }
 
     // Issue #1242: after shrink, zero bumps so subsequent allocs re-evaluate
@@ -270,6 +355,11 @@ public:
         return static_cast<double>(allocated_from_small_) / static_cast<double>(kSmallPoolSize);
     }
 
+    // Issue #1518: freelist / recycle observability for live-relocate.
+    [[nodiscard]] std::size_t free_slot_count() const noexcept { return free_count_; }
+    [[nodiscard]] std::size_t recycle_hits() const noexcept { return recycle_hits_; }
+    [[nodiscard]] std::size_t recycle_puts() const noexcept { return recycle_puts_; }
+
 private:
     struct Tier {
         std::byte* start = nullptr;
@@ -278,9 +368,20 @@ private:
         std::size_t obj_sz = 0;
     };
 
+    void clear_freelist_() noexcept {
+        for (std::size_t i = 0; i < kNumTiers; ++i)
+            free_heads_[i] = nullptr;
+        free_count_ = 0;
+    }
+
     std::vector<std::byte> buffer_;
     Tier classes_[kNumTiers];
     std::size_t allocated_from_small_ = 0;
+    // Issue #1518: per-tier freelist (singly linked via first void* of free block).
+    void* free_heads_[kNumTiers] = {nullptr, nullptr, nullptr};
+    std::size_t free_count_ = 0;
+    std::size_t recycle_hits_ = 0;
+    std::size_t recycle_puts_ = 0;
 };
 
 // ── ASTArena — tiered pmr bump allocator ─────────────────────────
@@ -434,18 +535,23 @@ public:
     template <typename T>
         requires std::is_nothrow_destructible_v<T>
     void destroy(T* ptr) {
+        // Issue #1519: nullptr is a documented no-op (safe for Guard cleanup).
         if (!ptr)
             return;
+        aura::core::cpp26::record_hotpath_invariant_hit();
         for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {
             if (it->ptr == ptr) {
                 ptr->~T();
                 dtors_.erase(it);
+                // Issue #1518: recycle small-pool slots for freelist relocate.
+                (void)small_pool_.recycle(ptr, sizeof(T));
                 return;
             }
         }
         // Not tracked (e.g. allocated by an upstream helper, or
         // ownership already moved). Best-effort dtor call.
         ptr->~T();
+        (void)small_pool_.recycle(ptr, sizeof(T));
     }
 
     // Release all allocated memory in one shot. Destructors run in
@@ -522,7 +628,10 @@ public:
     // memory; we replace buffer_ with a fresh one and remap).
     //
     // Returns the number of bytes reclaimed.
+    // Issue #1519: post(r == 0 || buffer shrank) via contract_assert at end
+    // (strict post on size_t return is vacuous; assert encodes the invariant).
     [[nodiscard]] std::size_t compact() noexcept {
+        aura::core::cpp26::record_hotpath_invariant_hit();
         // Issue #1466 contracts were too strict for production
         // compact (post(r <= buffer_.size()) used post-shrink size;
         // post(compaction_count > 0) failed on no-op). Removed.
@@ -567,6 +676,8 @@ public:
         }
         std::size_t after = buffer_.size();
         std::size_t saved = (before > after) ? (before - after) : 0;
+        // Issue #1519: compact never grows the buffer.
+        contract_assert(after <= before);
         if (saved > 0) {
             stats_.compaction_count++;
             stats_.last_compaction_saved = saved;
@@ -598,17 +709,20 @@ public:
     [[nodiscard]] std::size_t defrag() noexcept {
         // Public entry point: caller wants the flag cleared
         // regardless of whether defrag actually reclaims bytes.
-        return defrag_impl(true);
+        return defrag_impl(true, /*invoke_hook=*/true);
     }
 
     [[nodiscard]] std::size_t defrag_no_clear_request() noexcept {
         // Internal entry point: used by maybe_auto_compact_on_alloc
         // so a transient no-op defrag doesn't lose the user's
         // pending request flag.
-        return defrag_impl(false);
+        return defrag_impl(false, /*invoke_hook=*/true);
     }
 
-    [[nodiscard]] std::size_t defrag_impl(bool clear_request_flag) noexcept {
+    // invoke_hook=false: live_compact runs its own single deopt-coord hook.
+    [[nodiscard]] std::size_t defrag_impl(bool clear_request_flag,
+                                          bool invoke_hook = true) noexcept {
+        aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
         // Issue #604: same fiber-context coordination as compact().
         if (aura::gc_hooks::fiber_active()) {
             stats_.compaction_yield_checks++;
@@ -665,7 +779,8 @@ public:
                 defrag_requested_.store(false, std::memory_order_release);
             }
             stats_.last_defrag_saved = saved;
-            invoke_compact_hook_();
+            if (invoke_hook)
+                invoke_compact_hook_();
         }
         // Note: NOT touching stats_.compaction_count /
         // last_compaction_saved. This is intentionally a separate
@@ -673,26 +788,88 @@ public:
         return saved;
     }
 
-    // Issue #1467 Phase 1: live-object-moving defrag foundation.
-    // Skeleton: conservative trim + count allocated small-pool
-    // bytes as a mark proxy. Full copy/remap is a follow-up.
-    [[nodiscard]] std::size_t live_defrag() noexcept {
-        defrag_impl(false);
-        // Mark proxy: small-pool allocated bytes (not object count
-        // until pool exposes per-tier live counts publicly).
-        const std::size_t marked = small_pool_.allocated();
+    // Issue #1467 Phase 1 + #1518: live-object compact with mark +
+    // freelist relocate protocol + Shape/JIT deopt coordination.
+    //
+    // Phase model:
+    //   1. Mark: count live tracked objects (dtors_) + small-pool live bytes
+    //   2. Relocate: freelist holes are reuse-slots (lazy relocate on next
+    //      alloc); count free slots as relocate-ready. Full pointer remapping
+    //      of still-live objects remains deferred (external raw pointers).
+    //   3. Compact: conservative buffer trim (defrag_impl)
+    //   4. Coordinate: compact hook + deopt throttle (no deopt storm)
+    //
+    // Returns number of live objects marked (dtors_ size).
+    [[nodiscard]] std::size_t live_defrag() noexcept { return live_compact(/*force=*/true); }
+
+    // Issue #1518: live_compact — same as live_defrag; force=false soft-gates
+    // on render hotpath / MutationBoundary (auto path).
+    [[nodiscard]] std::size_t live_compact(bool force = true) noexcept {
+        aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
+        // Soft-gate auto path during render / active mutation boundary so
+        // fiber yield / Guard pins stay coherent (explicit Agent calls use force).
+        if (!force) {
+            if (aura::core::arena_policy::in_render_hotpath()) {
+                aura::core::arena_policy::record_compact_soft_gated_render();
+                return 0;
+            }
+            if (arena_mutation_boundary_depth() > 0) {
+                stats_.compact_soft_gated_boundary++;
+                aura::core::arena_policy::record_compact_soft_gated_boundary();
+                return 0;
+            }
+        }
+
+        // ── Mark ──
+        // Tracked create<T> objects + small-pool slot proxy (try_allocate path
+        // without dtor tracking — min tier size 16B lower-bounds slot count).
+        const std::size_t marked_objs = dtors_.size();
+        const std::size_t marked_bytes = small_pool_.allocated();
+        const std::size_t pool_slot_proxy = marked_bytes / SmallObjectPool::kTierSizes[0];
+        const std::size_t total_marked = marked_objs + pool_slot_proxy;
         stats_.live_defrag_attempted_count++;
-        stats_.live_objects_marked_total += marked;
-        invoke_compact_hook_();
-        return marked;
+        stats_.live_objects_marked_total += total_marked;
+
+        // ── Relocate (freelist protocol) ──
+        // Free slots are already "relocated out"; recycle hits are real reuses.
+        const std::size_t holes = small_pool_.free_slot_count();
+        const std::size_t reuses = small_pool_.recycle_hits();
+        stats_.live_relocate_count += holes + reuses;
+        aura::core::arena_policy::record_live_relocate(holes + reuses);
+
+        // ── Compact tail (no hook — we invoke once below) ──
+        const auto frag_before = stats().fragmentation_ratio();
+        (void)defrag_impl(/*clear_request_flag=*/false, /*invoke_hook=*/false);
+        small_pool_.rebind_tiers();
+
+        const auto frag_after = stats().fragmentation_ratio();
+        stats_.frag_post_compact_bp = static_cast<std::size_t>(frag_after * 10000.0);
+        aura::core::arena_policy::record_frag_post_compact(frag_after);
+        if (frag_before > frag_after) {
+            stats_.frag_reduced_bp +=
+                static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
+        }
+
+        // ── Shape/JIT deopt coordination (throttled in service hook) ──
+        invoke_compact_hook_with_deopt_();
+        return total_marked;
     }
 
-    // Issue #1467: live-defrag counters (from ArenaStats).
+    // Issue #1467 / #1518: live-defrag counters (from ArenaStats).
     [[nodiscard]] std::uint64_t live_defrag_attempted_count_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.live_defrag_attempted_count);
     }
     [[nodiscard]] std::uint64_t live_objects_marked_total_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.live_objects_marked_total);
+    }
+    [[nodiscard]] std::uint64_t live_relocate_count_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_relocate_count);
+    }
+    [[nodiscard]] std::uint64_t compact_deopt_triggered_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.compact_deopt_triggered);
+    }
+    [[nodiscard]] std::uint64_t frag_post_compact_bp_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.frag_post_compact_bp);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
@@ -718,6 +895,15 @@ public:
 
     // Number of live tracked objects (for tests / diagnostics)
     [[nodiscard]] std::size_t live_count() const noexcept { return dtors_.size(); }
+
+    // Issue #1518 / test seam: raw allocate without dtor tracking
+    // (SmallObjectPool path when size <= 64). Used by live-compact
+    // stress tests and legacy #1467 harness.
+    [[nodiscard]] void* try_allocate(std::size_t size) noexcept {
+        if (size == 0)
+            return nullptr;
+        return allocate_raw(size, alignof(std::max_align_t));
+    }
 
 private:
     // Type-erased destructor pair. The thunk is bound at the create<T>
@@ -772,8 +958,10 @@ private:
         // to buffer_.data() — that triggered the UAF.)
     }
 
+    // Issue #1519: post(ptr != nullptr) — pmr allocate throws on OOM
+    // rather than returning null; small-pool path returns non-null on hit.
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
-        pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
+        pre(alignment > 0 && (alignment & (alignment - 1)) == 0) post(r : r != nullptr) {
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
@@ -795,6 +983,7 @@ private:
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
                 aura::core::cpp26::record_hotpath_invariant_hit();
+                contract_assert(ptr != nullptr);
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }
@@ -807,6 +996,7 @@ private:
 
         // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
+        contract_assert(ptr != nullptr); // Issue #1519
         stats_.used += size;
         maybe_auto_compact_on_alloc();
         return ptr;
@@ -858,12 +1048,19 @@ private:
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
         if (want_defrag) {
-            // Issue #300 AC5 follow-up: use defrag_no_clear_request
-            // so a transient no-op defrag (saved == 0) doesn't
-            // lose the user's pending request flag. Only
-            // successful (saved > 0) auto-defrags clear the flag.
-            // Explicit `(arena:defrag)` calls still always clear.
-            saved = defrag_no_clear_request();
+            // Issue #1518: prefer live_compact (mark + freelist relocate
+            // + deopt coord) when freelist holes or tracked live objs exist;
+            // fall back to defrag_no_clear_request otherwise.
+            if (small_pool_.free_slot_count() > 0 || live_count() > 0) {
+                const auto marked = live_compact(/*force=*/false);
+                if (marked > 0 || small_pool_.free_slot_count() == 0)
+                    saved = 1; // non-zero so auto-trigger accounting continues
+            } else {
+                // Issue #300 AC5 follow-up: use defrag_no_clear_request
+                // so a transient no-op defrag (saved == 0) doesn't
+                // lose the user's pending request flag.
+                saved = defrag_no_clear_request();
+            }
             if (saved > 0)
                 stats_.defrag_savings_alloc += saved;
         } else {
@@ -886,6 +1083,22 @@ private:
         on_compact_hook_();
         stats_.shape_inval_on_compact++;
         aura::core::arena_policy::record_shape_inval_on_compact();
+    }
+
+    // Issue #1518: compact hook path for live_compact. Shape/JIT deopt
+    // storm throttle lives in the service on_compact_hook (where
+    // ShapeProfiler is); here we always run pin restamp + shape_inval
+    // counter, then mirror process-wide deopt totals into ArenaStats.
+    void invoke_compact_hook_with_deopt_() {
+        invoke_compact_hook_();
+        // Mirror policy totals (updated by CompilerService hook).
+        const auto trig =
+            aura::core::arena_policy::compact_deopt_triggered_total.load(std::memory_order_relaxed);
+        const auto thr =
+            aura::core::arena_policy::compact_deopt_throttled_total.load(std::memory_order_relaxed);
+        // Store absolute totals so format/merge stay useful.
+        stats_.compact_deopt_triggered = static_cast<std::size_t>(trig);
+        stats_.compact_deopt_throttled = static_cast<std::size_t>(thr);
     }
 
     std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()

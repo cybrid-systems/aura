@@ -99,8 +99,7 @@ bool test_match_narrowing_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:match-narrowing-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define mns (engine:metrics \"compile:match-narrowing-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define mns (engine:metrics \"compile:match-narrowing-stats\"))");
     for (const char* key : {"narrowed-total", "total", "ratio-bp"}) {
         std::string check = std::string("(hash-ref mns \"") + key + "\")";
         auto rv = cs.eval(check);

@@ -2,8 +2,13 @@
 // Bundle driver for profile: jit_contract
 
 #include <cstdio>
+#include <cstdlib>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "test_harness.hpp"
+
+extern "C" void aura_reset_runtime();
 
 extern int aura_issue_144_run();
 extern int aura_issue_252_run();
@@ -39,14 +44,35 @@ int main() {
         std::println("\n════ Bundle member: {} ════", members[i].name);
         ::aura::test::g_passed = 0;
         ::aura::test::g_failed = 0;
-        const int rc = members[i].run();
-        if (rc != 0) {
-            std::println(std::cerr, "bundle member {} failed (rc={})", members[i].name, rc);
+        const pid_t pid = ::fork();
+        if (pid < 0) {
+            std::println(std::cerr, "fork failed for {}", members[i].name);
+            ++failed;
+            continue;
         }
-        if (rc == 0) {
+        if (pid == 0) {
+            aura_reset_runtime();
+            const int rc = members[i].run();
+            std::fflush(nullptr);
+            ::_exit(rc == 0 ? 0 : 1);
+        }
+        int status = 0;
+        if (::waitpid(pid, &status, 0) < 0) {
+            std::println(std::cerr, "waitpid failed for {}", members[i].name);
+            ++failed;
+            continue;
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
             ++passed;
         } else {
             ++failed;
+            if (WIFSIGNALED(status)) {
+                std::println(std::cerr, "bundle member {} crashed signal={}", members[i].name,
+                             WTERMSIG(status));
+            } else {
+                std::println(std::cerr, "bundle member {} failed (rc={})", members[i].name,
+                             WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+            }
         }
     }
 

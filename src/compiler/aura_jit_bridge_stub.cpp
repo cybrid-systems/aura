@@ -101,7 +101,50 @@ extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_state_map_size(void) {
     return 0;
 }
+static std::atomic<std::uint64_t> g_aot_table_epoch_stub{1};
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_func_table_epoch(void) {
+    return g_aot_table_epoch_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {
+    g_aot_table_epoch_stub.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) bool
+aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
+                          std::uint64_t captured_defuse_or_env_version) {
+    const auto cur_b = g_aot_table_epoch_stub.load(std::memory_order_relaxed);
+    const auto cur_d = g_aot_defuse_version_stub;
+    const bool bridge_ok = (captured_bridge_epoch == 0) || (captured_bridge_epoch == cur_b);
+    const bool defuse_ok =
+        (captured_defuse_or_env_version == 0) || (captured_defuse_or_env_version == cur_d);
+    return bridge_ok && defuse_ok;
+}
+extern "C" __attribute__((weak)) void aura_jit_closure_record_dual_check(void) {}
+extern "C" __attribute__((weak)) void aura_jit_closure_record_stale_deopt(void) {}
+extern "C" __attribute__((weak)) void aura_jit_closure_record_safe_fallback(void) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_dual_check_total(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_stale_deopt_total(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_safe_fallbacks(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_set_jit_batch_deopt_target(void* /*jit*/) {}
+extern "C" __attribute__((weak)) std::size_t aura_jit_batch_deopt_for(const char* /*name*/,
+                                                                      std::uint64_t /*epoch*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_batch_deopt_for_total(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_batch_deopt_entries_marked(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_deopt_pending_count(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_jit_is_deopt_pending(const char* /*name*/) {
     return 0;
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {

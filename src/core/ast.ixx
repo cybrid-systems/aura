@@ -25,6 +25,8 @@ module;
 #include <utility>
 #include <vector>
 #include "core/persistent_child_vector.hh"
+#include "core/cpp26_contract_stats.h"
+#include <contracts>
 #include <shared_mutex>
 
 export module aura.core.ast;
@@ -668,9 +670,19 @@ export template <typename Id, typename C, typename Visitor>
     requires aura::core::ASTContainer<C, Id> && std::invocable<Visitor&, Id>
 constexpr std::size_t walk_children(C& ast, Id root, Visitor&& vis) {
     std::size_t count = 0;
-    for (auto child : ast.children(root)) {
-        vis(static_cast<Id>(child));
-        ++count;
+    // Issue #1520: prefer children_columnar / children_safe when available
+    // so hot walks pin PCV storage and bump columnar metrics.
+    if constexpr (requires { ast.children_columnar(root); }) {
+        auto safe = ast.children_columnar(root);
+        for (auto child : safe) {
+            vis(static_cast<Id>(child));
+            ++count;
+        }
+    } else {
+        for (auto child : ast.children(root)) {
+            vis(static_cast<Id>(child));
+            ++count;
+        }
     }
     return count;
 }
@@ -1495,6 +1507,11 @@ public:
     // gauge how often their code crosses mutation boundaries
     // with cached views.
     mutable std::atomic<std::uint64_t> children_safe_view_count_{0};
+    // Issue #1520: columnar children + region dense lookup metrics.
+    mutable std::atomic<std::uint64_t> children_column_soa_hits_{0};
+    mutable std::atomic<std::uint64_t> pcv_pin_count_{0};
+    mutable std::atomic<std::uint64_t> region_dense_hits_{0};
+    mutable std::atomic<std::uint64_t> region_map_lookups_{0};
     // Issue #678: parent_safe_view(NodeId) counter — mirrors
     // parent_of_call_count_ for generation-tagged parent access.
     mutable std::atomic<std::uint64_t> parent_safe_view_count_{0};
@@ -2204,6 +2221,11 @@ public:
     // IRFunction::region accordingly.
     std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
     std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
+    // Issue #1520: dense SoA side-tables for region lookups (index =
+    // SymId/NodeId, 0 = unset, else region+1). Cap keeps memory bounded.
+    static constexpr std::size_t kRegionDenseCap = 65536;
+    std::pmr::vector<std::uint8_t> region_by_sym_dense_;
+    std::pmr::vector<std::uint8_t> region_by_lambda_dense_;
     // Issue #255: explicit custom move constructor. The
     // 4 std::atomic observability members (added for #255)
     // make the implicit move ctor deleted by some compiler
@@ -2264,6 +2286,11 @@ public:
         , generation_wrap_count_(other.generation_wrap_count_.load())
         , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        , children_safe_view_count_(other.children_safe_view_count_.load())
+        , children_column_soa_hits_(other.children_column_soa_hits_.load())
+        , pcv_pin_count_(other.pcv_pin_count_.load())
+        , region_dense_hits_(other.region_dense_hits_.load())
+        , region_map_lookups_(other.region_map_lookups_.load())
         , children_call_count_(other.children_call_count_.load())
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
@@ -2292,6 +2319,8 @@ public:
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
+        , region_by_sym_dense_(std::move(other.region_by_sym_dense_))
+        , region_by_lambda_dense_(std::move(other.region_by_lambda_dense_))
         , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
         , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
@@ -2358,6 +2387,12 @@ public:
             match_info_ = std::move(other.match_info_);
             region_by_sym_ = std::move(other.region_by_sym_);
             region_by_lambda_id_ = std::move(other.region_by_lambda_id_);
+            region_by_sym_dense_ = std::move(other.region_by_sym_dense_);
+            region_by_lambda_dense_ = std::move(other.region_by_lambda_dense_);
+            children_column_soa_hits_.store(other.children_column_soa_hits_.load());
+            pcv_pin_count_.store(other.pcv_pin_count_.load());
+            region_dense_hits_.store(other.region_dense_hits_.load());
+            region_map_lookups_.store(other.region_map_lookups_.load());
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
@@ -2416,6 +2451,13 @@ public:
         , generation_wrap_count_(other.generation_wrap_count_.load())
         , node_gen_stale_access_count_(other.node_gen_stale_access_count_.load())
         , atomic_batch_commits_(other.atomic_batch_commits_.load())
+        // Declaration order: children_safe_view_count_ / #1520 metrics
+        // precede children_call_count_ and verify_loop_cycles_total_.
+        , children_safe_view_count_(other.children_safe_view_count_.load())
+        , children_column_soa_hits_(other.children_column_soa_hits_.load())
+        , pcv_pin_count_(other.pcv_pin_count_.load())
+        , region_dense_hits_(other.region_dense_hits_.load())
+        , region_map_lookups_(other.region_map_lookups_.load())
         , children_call_count_(other.children_call_count_.load())
         , parent_of_call_count_(other.parent_of_call_count_.load())
         , mark_dirty_upward_call_count_(other.mark_dirty_upward_call_count_.load())
@@ -2442,6 +2484,8 @@ public:
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
+        , region_by_sym_dense_(other.region_by_sym_dense_)
+        , region_by_lambda_dense_(other.region_by_lambda_dense_)
         , root(other.root)
         , bump_generation_suppressed_(other.bump_generation_suppressed_)
         , atomic_batch_bumps_saved_(other.atomic_batch_bumps_saved_) {}
@@ -2505,6 +2549,12 @@ public:
             match_info_ = other.match_info_;
             region_by_sym_ = other.region_by_sym_;
             region_by_lambda_id_ = other.region_by_lambda_id_;
+            region_by_sym_dense_ = other.region_by_sym_dense_;
+            region_by_lambda_dense_ = other.region_by_lambda_dense_;
+            children_column_soa_hits_.store(other.children_column_soa_hits_.load());
+            pcv_pin_count_.store(other.pcv_pin_count_.load());
+            region_dense_hits_.store(other.region_dense_hits_.load());
+            region_map_lookups_.store(other.region_map_lookups_.load());
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
@@ -2739,7 +2789,17 @@ public:
     // get_function_region_for_sym(sym) and
     // get_function_region_for_lambda(node_id) — both return
     // std::optional<std::uint8_t>; nullopt means no annotation.
-    void set_function_region(SymId name, std::uint8_t region) { region_by_sym_[name] = region; }
+    void set_function_region(SymId name, std::uint8_t region) {
+        region_by_sym_[name] = region;
+        // Issue #1520: dense SoA side-table for hot SymId lookups.
+        // Encoding: 0 = unset, region+1 stored (region is 0..254).
+        if (static_cast<std::size_t>(name) < kRegionDenseCap) {
+            if (region_by_sym_dense_.size() <= static_cast<std::size_t>(name))
+                region_by_sym_dense_.resize(static_cast<std::size_t>(name) + 1, 0);
+            region_by_sym_dense_[static_cast<std::size_t>(name)] =
+                static_cast<std::uint8_t>(region + 1);
+        }
+    }
     // Overload tag: pass a 0 literal to disambiguate. We
     // use a sentinel parameter (an unused int) so the two
     // overloads don't collide on the same uint32_t underlying
@@ -2747,8 +2807,24 @@ public:
     // set_function_region_lambda explicitly.
     void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
         region_by_lambda_id_[lambda_id] = region;
+        // Issue #1520: dense side-table for hot lambda NodeId lookups.
+        if (static_cast<std::size_t>(lambda_id) < kRegionDenseCap) {
+            if (region_by_lambda_dense_.size() <= static_cast<std::size_t>(lambda_id))
+                region_by_lambda_dense_.resize(static_cast<std::size_t>(lambda_id) + 1, 0);
+            region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)] =
+                static_cast<std::uint8_t>(region + 1);
+        }
     }
     [[nodiscard]] std::optional<std::uint8_t> get_function_region_for_sym(SymId name) const {
+        // Issue #1520: prefer dense columnar path (no hash).
+        if (static_cast<std::size_t>(name) < region_by_sym_dense_.size()) {
+            const auto enc = region_by_sym_dense_[static_cast<std::size_t>(name)];
+            if (enc != 0) {
+                region_dense_hits_.fetch_add(1, std::memory_order_relaxed);
+                return static_cast<std::uint8_t>(enc - 1);
+            }
+        }
+        region_map_lookups_.fetch_add(1, std::memory_order_relaxed);
         auto it = region_by_sym_.find(name);
         if (it == region_by_sym_.end())
             return std::nullopt;
@@ -2756,6 +2832,14 @@ public:
     }
     [[nodiscard]] std::optional<std::uint8_t>
     get_function_region_for_lambda(NodeId lambda_id) const {
+        if (static_cast<std::size_t>(lambda_id) < region_by_lambda_dense_.size()) {
+            const auto enc = region_by_lambda_dense_[static_cast<std::size_t>(lambda_id)];
+            if (enc != 0) {
+                region_dense_hits_.fetch_add(1, std::memory_order_relaxed);
+                return static_cast<std::uint8_t>(enc - 1);
+            }
+        }
+        region_map_lookups_.fetch_add(1, std::memory_order_relaxed);
         auto it = region_by_lambda_id_.find(lambda_id);
         if (it == region_by_lambda_id_.end())
             return std::nullopt;
@@ -3332,6 +3416,8 @@ public:
     // Issue #370/#678: lifetime-pinned children accessor.
     [[nodiscard]] SafePCVSpan<NodeId> children_safe_view(NodeId id) const {
         children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
+        pcv_pin_count_.fetch_add(1, std::memory_order_relaxed);
+        children_column_soa_hits_.fetch_add(1, std::memory_order_relaxed);
         if (id >= children_.size())
             return {};
         auto keep = share_storage(children_[id]);
@@ -3341,6 +3427,32 @@ public:
 
     [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
         return children_safe_view(id);
+    }
+
+    // Issue #1520: preferred columnar children accessor (alias of
+    // children_safe with explicit SoA-path metrics). Hot paths
+    // (query:pattern, mark_dirty_upward children walk, walk_children)
+    // should use this instead of raw children() spans.
+    [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
+        return children_safe_view(id);
+    }
+
+    // Issue #1520: zero-overhead columnar children metrics (for Agents).
+    [[nodiscard]] std::uint64_t children_column_soa_hits() const noexcept {
+        return children_column_soa_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t pcv_pin_count() const noexcept {
+        return pcv_pin_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t region_dense_hits() const noexcept {
+        return region_dense_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t region_map_lookups() const noexcept {
+        return region_map_lookups_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t map_indirection_miss_total() const noexcept {
+        // "Miss" = still paid unordered_map cost (dense miss → map).
+        return region_map_lookups_.load(std::memory_order_relaxed);
     }
 
     // Mutable overload (for code paths that need to write through
@@ -4610,6 +4722,9 @@ public:
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
         dirty_[id] |= reasons;
+        // Issue #1519: post — requested reason bits are set after stamp.
+        contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);
+        aura::core::cpp26::record_hotpath_invariant_hit();
         clear_cached_value(id); // invalidate result cache
         // Issue #1455: kOccurrenceDirty implies the occurrence-
         // stale column — keep the two signals in lockstep so
@@ -5985,6 +6100,14 @@ public:
     // The ref's gen is compared to the FlatAST's current gen; if
     // they differ, the ref is stale (a structural mutation
     // happened in between).
+    // Issue #1500: full provenance is_valid — gen + wrap_epoch (as before)
+    // plus cow_epoch match unless boundary_pinned. subtree_gen remains
+    // the relaxed is_valid_subtree() path.
+    //
+    // Note: brace-init refs default cow_epoch_at_capture=0, which
+    // matches a never-COW'd workspace (epoch 0). After a COW advance
+    // they become invalid unless pin_for_cow() was called — prefer
+    // make_ref / make_safe_ref for full provenance capture.
     [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept
         post(r : r == (ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
                        node_gen_[ref.id] == ref.gen && ref.gen == generation_ &&
@@ -5993,7 +6116,9 @@ public:
                        // the ref's captured gen by accident. Check
                        // wrap_epoch explicitly (uint32_t, wraps
                        // every ~2.6e14 mutates).
-                       ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed))) {
+                       ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed) &&
+                       // Issue #1500: COW epoch must match unless pinned.
+                       (ref.boundary_pinned || ref.cow_epoch_at_capture == workspace_cow_epoch_))) {
         // Issue #255: bump the check counter (lifetime total).
         is_valid_check_count_.fetch_add(1, std::memory_order_relaxed);
         bool ok = ref.id != NULL_NODE && ref.id < tag_.size() && ref.id < node_gen_.size() &&
@@ -6001,6 +6126,11 @@ public:
                   ref.gen == generation_ && // gen must also match current
                   // Issue #368: catch second-wrap false positives.
                   ref.wrap_epoch == wrap_epoch_.load(std::memory_order_relaxed);
+        // Issue #1500: enforce cow_epoch unless pin_for_cow() allows
+        // the ref to survive a lazy clone boundary.
+        if (ok && !ref.boundary_pinned && ref.cow_epoch_at_capture != workspace_cow_epoch_) {
+            ok = false;
+        }
         if (!ok) {
             // Stale ref — bump the invalidations counter.
             // The whole point of StableNodeRef is to detect
@@ -7030,13 +7160,16 @@ public:
     // and is_valid(ref) returns false. This is the recommended
     // way to use NodeIds in EDSL / query / mutate code that
     // may span multiple mutating calls.
+    // Issue #1500: return full provenance via make_ref (wrap_epoch /
+    // cow_epoch / mutation_id / subtree_gen), not brace-init {id, gen}
+    // which left wrap_epoch/cow_epoch at 0 and skipped #368/#738 checks.
     [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
         if (id >= parent_.size())
             return StableNodeRef{};
         auto pid = parent_[id];
         if (pid == NULL_NODE)
             return StableNodeRef{};
-        return StableNodeRef{pid, generation_};
+        return make_ref(pid);
     }
 
     // Issue #678: generation-tagged parent accessor for query
@@ -7048,6 +7181,7 @@ public:
         return parent_stable(id);
     }
 
+    // Issue #1500: full-provenance StableNodeRef per child (make_ref).
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
         std::vector<StableNodeRef> out;
         if (id >= children_.size())
@@ -7058,7 +7192,7 @@ public:
             auto cid = pcv[i];
             if (cid == NULL_NODE)
                 continue;
-            out.push_back(StableNodeRef{cid, generation_});
+            out.push_back(make_ref(cid));
         }
         return out;
     }
@@ -7084,6 +7218,7 @@ public:
     // Out-of-range ids are silently a no-op (no callback
     // invocation, same as the allocating version's empty
     // vector).
+    // Issue #1500: deliver full-provenance StableNodeRef to callback.
     template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
         if (id >= children_.size())
             return;
@@ -7092,7 +7227,7 @@ public:
             auto cid = pcv[i];
             if (cid == NULL_NODE)
                 continue;
-            fn(StableNodeRef{cid, generation_});
+            fn(make_ref(cid));
         }
     }
 

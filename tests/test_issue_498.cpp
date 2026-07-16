@@ -58,7 +58,7 @@ int aura_issue_498_run() {
     // AC1: query:primitive-metadata fields
     {
         std::println("\n--- AC1: query:primitive-metadata ---");
-        auto stats = cs.eval("(query:primitive-metadata)");
+        auto stats = cs.eval("(engine:metrics \"query:primitive-metadata\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:primitive-metadata returns hash");
         CHECK(snap_stat(cs, "registry-slots") > 0, "registry-slots > 0");
@@ -100,7 +100,7 @@ int aura_issue_498_run() {
         auto desc = cs.eval("(primitive:describe \"eda:update-constraint\")");
         CHECK(desc && aura::compiler::types::is_pair(*desc),
               "primitive:describe eda:update-constraint");
-        auto list = cs.eval("(query:primitive-list-with-meta)");
+        auto list = cs.eval("(engine:metrics \"query:primitive-list-with-meta\")");
         CHECK(list && aura::compiler::types::is_pair(*list), "primitive-list-with-meta regression");
         CHECK(snap_stat(cs, "describe-calls") >= 1, "describe-calls bumped");
     }

@@ -16,8 +16,11 @@
 
 #include <cstdint>
 
-extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
-                                               std::int32_t argc) {
+// Issue #1527: weak so aura_test_objects / service.ixx strong definition
+// wins when both are linked; provides a fallback for minimal JIT-only
+// test binaries that do not compile service.ixx.
+extern "C" __attribute__((weak)) std::int64_t
+aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args, std::int32_t argc) {
     (void)prim_id;
     (void)args;
     (void)argc;

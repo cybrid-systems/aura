@@ -152,7 +152,7 @@ static void run_ac9_no_bump_on_success(aura::compiler::CompilerService& cs) {
 static void run_ac10_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC10: regression — adjacent observability primitives reachable ---");
     auto apply_stats = cs.eval("(engine:metrics \"query:primitives-apply-stats\")");
-    auto meta_catalog = cs.eval("(query:primitives-meta-catalog)");
+    auto meta_catalog = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
     auto apply_schema =
         cs.eval("(hash-ref (engine:metrics \"query:primitives-apply-stats\") 'schema)");
     CHECK(apply_stats && aura::compiler::types::is_hash(*apply_stats),

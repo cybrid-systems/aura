@@ -291,6 +291,9 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
             best = sid;
         }
     }
+    // Issue #1519: dominant count cannot exceed history size.
+    contract_assert(best_count <= history.size());
+    aura::core::cpp26::record_hotpath_invariant_hit();
     return best;
 }
 
@@ -330,7 +333,11 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     });
 
     const auto hist_size = history.size();
-    double ratio = static_cast<double>(dominant_count) / hist_size;
+    // Issue #1519: post invariant — dominant_count <= history.size().
+    contract_assert(dominant_count >= 0);
+    contract_assert(static_cast<std::uint32_t>(dominant_count) <= hist_size);
+    double ratio = static_cast<double>(dominant_count) / static_cast<double>(hist_size);
+    contract_assert(ratio >= 0.0 && ratio <= 1.0);
     if (ratio >= stability_ratio_ && profile.is_stable && profile.stable_shape == dominant) {
         return true;
     }
@@ -343,6 +350,7 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
         profile.stable_shape = dominant;
         profile.last_metric_time = now;
         contract_assert(ratio >= 0.0 && ratio <= 1.0);
+        aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
         return true;
     }
 
@@ -424,6 +432,87 @@ void ShapeProfiler::invalidate_all() noexcept {
     mutation_induced_invalidations_.fetch_add(keys.size(), std::memory_order_relaxed);
     for (FnKey fn : keys)
         (void)invalidate(fn);
+}
+
+// Issue #1521: Arena compact soft coordination.
+// Value-tag shapes (int/float/bool/string/ref-kind) do not depend on
+// arena addresses; full invalidate_all would clear history and feed
+// the deopt-storm ring, thrashing JIT under multi-round AI self-modify
+// + GC. Instead: version bump + compact-scoped deopt hook, keep stable.
+std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
+    arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
+    shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
+
+    const auto keys = tracked_fns();
+    if (keys.empty()) {
+        // Still count a compact event so metrics / agents see activity.
+        deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+
+    const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+    std::uint32_t touched = 0;
+    std::uint32_t preserved = 0;
+    std::uint32_t hooks = 0;
+
+    for (FnKey fn : keys) {
+        auto it = profiles_.find(fn);
+        if (it == profiles_.end())
+            continue;
+        auto& profile = it->second;
+        const bool was_stable = profile.is_stable;
+        // Soft version bump (JIT guards / shape_map notice) without
+        // clearing history or flipping is_stable.
+        profile.version++;
+        if (epoch > profile.version)
+            profile.version = epoch;
+        shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+        ++touched;
+
+        if (was_stable) {
+            ++preserved;
+            shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
+            arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Fire deopt hook with ArenaCompact scope — JIT may refresh
+        // entries, but deopt-storm ring is intentionally skipped.
+        fire_shape_deopt_hook(fn, profile.version, kShapeDirtyScopeArenaCompact);
+        deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+        arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
+        ++hooks;
+
+        if (dirty_hook_) {
+            shape_jit_pass::record_dirty_from_shape();
+            dirty_hook_(fn, kShapeDirtyScopeArenaCompact);
+        }
+
+        // Explicitly do NOT call update_deopt_storm_state_(fn).
+        deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    (void)hooks;
+    return touched;
+}
+
+// Issue #1521: boundary / fiber-steal exit — re-read stability and
+// soft-clear storm flag when it was never justified by mutation churn
+// after pure compact pressure (defensive; compact never sets the ring).
+double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) noexcept {
+    boundary_fiber_sync_calls_.fetch_add(1, std::memory_order_relaxed);
+    shape_boundary_post_compact_checks.fetch_add(1, std::memory_order_relaxed);
+    shape_fiber_steal_sync_total.fetch_add(1, std::memory_order_relaxed);
+    record_shape_fiber_refresh();
+
+    if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
+        // If the deopt ring is empty/sparse relative to threshold, clear
+        // storm so compact+mutate loops do not leave agents stuck in
+        // generic mode after pressure eases.
+        if (deopt_ring_count_ < deopt_storm_threshold_) {
+            deopt_storm_active_.store(false, std::memory_order_release);
+        }
+    }
+    return shape_stable_ratio();
 }
 
 // Issue #1468: deopt-storm detection helper. Called from

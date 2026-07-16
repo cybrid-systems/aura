@@ -133,6 +133,33 @@ bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 
+// Issue #1508: JIT closure dual-freshness (bridge_epoch + env/defuse).
+// Returns true when both domains match current host epochs.
+// captured_bridge==0 or captured_defuse==0 means "unset / legacy" for
+// that domain (treated as fresh for that side only).
+bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
+                               std::uint64_t captured_defuse_or_env_version);
+// Bump dual-check / stale-deopt / safe-fallback metrics (nullable aot_metrics).
+void aura_jit_closure_record_dual_check(void);
+void aura_jit_closure_record_stale_deopt(void);
+void aura_jit_closure_record_safe_fallback(void);
+std::uint64_t aura_jit_closure_dual_check_total(void);
+std::uint64_t aura_jit_closure_stale_deopt_total(void);
+std::uint64_t aura_jit_closure_safe_fallbacks(void);
+// Force-bump table epoch (test / hot-swap seam).
+void aura_aot_bump_func_table_epoch(void);
+
+// Issue #1522: register AuraJIT* so bridge can notify fn_trackers_ batch_deopt
+// without a C++ module import. Host (CompilerService ctor) calls set;
+// nullptr clears. batch_deopt_for matches name + name#* keys.
+void aura_set_jit_batch_deopt_target(void* aura_jit_ptr);
+// Returns number of fn_trackers_ entries newly marked deopt_pending.
+std::size_t aura_jit_batch_deopt_for(const char* name, std::uint64_t current_epoch);
+std::uint64_t aura_jit_batch_deopt_for_total(void);
+std::uint64_t aura_jit_batch_deopt_entries_marked(void);
+std::uint64_t aura_jit_deopt_pending_count(void);
+int aura_jit_is_deopt_pending(const char* name);
+
 // Issue #739: acquire fence before GuardShape / epoch-sensitive JIT paths.
 void aura_jit_epoch_acquire_fence(void);
 

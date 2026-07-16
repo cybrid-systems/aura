@@ -5,6 +5,8 @@
 ;   - Re-lower scope is bounded (cascade_scope when mutating shared = 9,
 ;     when mutating f0..f7 = 1)
 ;   - dep_graph_ edges + per-block dirty bitmask cooperate
+;
+; Observability counters are facade-only after #1450 — use (stats:get …).
 
 (set-code "
 (define (shared x) (+ x 1))
@@ -19,8 +21,8 @@
 ")
 (eval-current)
 
-(display "baseline-cache-size: ") (display (compile:cache-size)) (newline)
-(display "baseline-dirty-count: ") (display (compile:dirty-count)) (newline)
+(display "baseline-cache-size: ") (display (stats:get "compile:cache-size")) (newline)
+(display "baseline-dirty-count: ") (display (stats:get "compile:dirty-count")) (newline)
 
 ;; All helpers as let-bindings (not set-code defines) so the
 ;; lambda body's `mutate:rebind` lookup path works correctly.
@@ -45,9 +47,9 @@
               (run-all (+ i 1) mismatches)))))
 
   ;; Phase 3: warmup re-eval (no mutation) - should preserve dirty=0
-  (let ((pre-dirty (compile:dirty-count)))
+  (let ((pre-dirty (stats:get "compile:dirty-count")))
     (eval-current)
-    (let ((post-dirty (compile:dirty-count)))
+    (let ((post-dirty (stats:get "compile:dirty-count")))
       (display "warmup-no-mut-preserves-dirty: ")
       (display (if (= pre-dirty post-dirty) #t #f))
       (newline)))
@@ -58,15 +60,15 @@
   (newline)
 
   ;; Phase 5: verify final cache state
-  (display "final-cache-size: ") (display (compile:cache-size)) (newline)
-  (display "final-dirty-count: ") (display (compile:dirty-count)) (newline)
-  (display "dep-edges: ") (display (compile:dep-edges)) (newline)
+  (display "final-cache-size: ") (display (stats:get "compile:cache-size")) (newline)
+  (display "final-dirty-count: ") (display (stats:get "compile:dirty-count")) (newline)
+  (display "dep-edges: ") (display (stats:get "compile:dep-edges")) (newline)
 
   ;; Phase 6: hit-rate proxy — (eval-current) without mutation
   ;; should not increase dirty-count.
-  (let ((pre-dirty (compile:dirty-count)))
+  (let ((pre-dirty (stats:get "compile:dirty-count")))
     (eval-current)
-    (let ((post-dirty (compile:dirty-count)))
+    (let ((post-dirty (stats:get "compile:dirty-count")))
       (display "no-mut-preserves-dirty: ")
       (display (if (= pre-dirty post-dirty) #t #f))
       (newline)))

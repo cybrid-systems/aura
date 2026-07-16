@@ -156,7 +156,7 @@ int aura_issue_620_run() {
     {
         std::println("\n--- AC4: stable_ref_provenance_query_total counter ---");
         auto counter_val = [&] {
-            auto h = cs.eval("(query:primitives-meta-catalog)");
+            auto h = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
             // introspection-hits includes the 3 #617 counters + this
             // one's incrementer; reading via the legacy stats path
             // instead (query:primitives-stats aggregates were out of

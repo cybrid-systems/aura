@@ -2,20 +2,20 @@
 
 # Primitives (generated)
 
-**501** registrations scanned from `src/**/*.cpp` (18 marked **deprecated** — Issue #1438).
+**511** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 93 primitives (19%)
-- **core**: 360 primitives (72%)
-- **internal-observable**: 40 primitives (8%)
+- **mutation-safety**: 96 primitives (19%)
+- **core**: 364 primitives (71%)
+- **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
 
 Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md). Override per-primitive classifications via `docs/primitive_categories.yaml`.
 
-## Query: (40)
+## Query: (43)
 
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -47,6 +47,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:parent` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -54,7 +55,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:render-ffi-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:stable-ref-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
@@ -130,12 +133,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (21)
+## Compile: (24)
 
+- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
@@ -149,6 +154,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
@@ -442,7 +448,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 - `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
 
-## Arena: (11)
+## Arena: (13)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -451,9 +457,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:compact-with-policy` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:live-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:should-auto-compact?` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:shrink-to-fit` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Channel: (5)
@@ -467,6 +475,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 ## Closure: (1)
 
 - `closure:free!` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+
+## Dirty: (2)
+
+- `dirty:ppa-reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Eda: (13)
 
@@ -653,7 +666,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (93)
+### Mutation safety (must remain primitive) (96)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -683,10 +696,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
+- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile_06.cpp`
@@ -700,6 +715,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile_06.cpp`
+- `compile:per-symbol-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile_03.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile_02.cpp`
 - `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile_06.cpp`
@@ -749,7 +765,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (360)
+### Core builtins (must remain primitive) (364)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -773,9 +789,11 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `arena:compact-with-policy` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:live-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:should-auto-compact?` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:shrink-to-fit` — `src/compiler/evaluator_primitives_memory.cpp`
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -832,6 +850,8 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `deserialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `directory-list` — `src/compiler/evaluator_primitives_file.cpp`
+- `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile_04.cpp`
@@ -1112,7 +1132,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (40)
+### Internal observable (stats/counters) (43)
 
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:build-index` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1144,6 +1164,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:parent` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1151,7 +1172,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:render-ffi-count` — `src/compiler/ffi_primitives_impl.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:stable-ref-provenance` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:templates` — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
@@ -1168,8 +1191,9 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **18** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **19** names:
 
+- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`

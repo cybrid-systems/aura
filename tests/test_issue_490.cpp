@@ -80,7 +80,7 @@ int aura_issue_490_run() {
               std::format("eager_cow_rebuilds grew ({} -> {})", cow_before, cow_after));
         CHECK(cs.evaluator().tag_arity_index_size() > 0,
               "Evaluator tag_arity_index ready before query:pattern");
-        auto policy = cs.eval("(query:pattern-index-policy)");
+        auto policy = cs.eval("(engine:metrics \"query:pattern-index-policy\")");
         CHECK(policy && aura::compiler::types::is_string(*policy),
               "query:pattern-index-policy returns string");
     }

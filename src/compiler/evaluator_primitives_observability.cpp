@@ -221,6 +221,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",
+    // Issue #1518 — live compact + relocate + deopt coordination
+    "query:arena-live-compact-stats",
     // Remaining open issues Phase 1 batch
     "query:pass-shape-epoch-stats",
     "query:edsl-hotpath-real-stats",
@@ -474,6 +476,10 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitive-perf-stats",
     // Issue #452 — AOT hot-update + region filtering
     "query:aot-stats",
+    // Issue #1516 — per-function AOT + EH coverage production stats
+    "compile:aot-stats",
+    // Issue #1517 — SoAView concept enforcement + EDSL migration
+    "query:soa-view-enforcement-stats",
     // Issue #462 — ShapeAwareFoldingPass
     "query:shape-folding-stats",
     // Issue #463 — SoA Phase 2 adoption
@@ -566,6 +572,10 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitives-governance-stats",
     // Issue #568 — FlatAST children_ columnar SoA migration completion
     "query:soa-children-columnar-migration-stats",
+    // Issue #1520 — children_ SoA + region dense lookup stats
+    "query:children-column-stats",
+    // Issue #1521 — ShapeProfiler + Arena compact synergy
+    "query:shape-arena-compact-stats",
     // Issue #569 — Arena auto-compact + defrag + fiber safepoint completion
     "query:arena-auto-compact-defrag-stats",
     // Issue #572 — Pass Pipeline DirtyAware + fold short-circuit completion
@@ -1240,8 +1250,22 @@ namespace {
 } // namespace
 
 bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
-    // Issue #1439 / #1449 / #1450: ALL *-stats are facade-only (register_stats_impl).
-    // Public add() surface must not grow observability dashboards.
+    // Multi-arg observability APIs that require node-id / name args must
+    // stay public — (stats:get)/(engine:metrics) cannot forward those args.
+    static constexpr std::string_view kMultiArgPublic[] = {
+        "compile:per-symbol-dirty-stats",
+        "compile:func-block-dirty-count",
+        "compile:block-dirty-count",
+        "dirty:reasons",     // (dirty:reasons node-id)
+        "dirty:ppa-reasons", // (dirty:ppa-reasons node-id)
+    };
+    for (auto m : kMultiArgPublic) {
+        if (name == m)
+            return false;
+    }
+
+    // Issue #1439 / #1449 / #1450: zero-arity *-stats are facade-only
+    // (register_stats_impl). Public add() surface must not grow dashboards.
     if (name.ends_with("-stats") || name.ends_with("-stats-hash"))
         return true;
     if (name.find("-stats-") != std::string_view::npos)
@@ -1253,14 +1277,15 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
     if (name.starts_with("query:")) {
         const auto rest = name.substr(6);
         // Explicit high-traffic dashboard names (not covered by suffix rules).
+        // Zero-arity dashboards only. Multi-arg discovery APIs
+        // (primitives-meta, primitives-by-category, …) stay public
+        // because (stats:get)/(engine:metrics) cannot pass name args.
         static constexpr std::string_view kExplicit[] = {
             "orchestration-metrics",
             "primitive-fastpath-per-prim",
             "primitive-metadata",
             "primitive-list-with-meta",
-            "primitives-meta",
             "primitives-meta-catalog",
-            "primitives-by-category",
             "narrowings-at-mutation",
             "cxx26-invariants",
             "cxx26-hotpath-invariants",

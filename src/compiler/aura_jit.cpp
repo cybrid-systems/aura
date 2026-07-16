@@ -1115,9 +1115,12 @@ struct LLVMBuilder {
             // deopt to the IR executor. For now, we ship the
             // basic correctness path.
             case OpIsError: {
-                // Issue #1285: exception opcode fully lowered (not default).
-                if (metrics)
+                // Issue #1285 / #1516: exception opcode fully lowered.
+                // bit0 of exception_opcode_mask = IsError.
+                if (metrics) {
                     metrics->exception_opcode_lowered.fetch_add(1, std::memory_order_relaxed);
+                    metrics->exception_opcode_mask.fetch_or(1ull << 0, std::memory_order_relaxed);
+                }
                 // ops[0] = result_slot, ops[1] = value_slot
                 auto val = load(inst.ops[1]);
                 // Tag check: (val & 0x1F) == 0x11 (RefError encoded)
@@ -1130,9 +1133,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpTryBegin: {
-                // Issue #1285: TryBegin covered — push EH frame (not TODO).
-                if (metrics)
+                // Issue #1285 / #1516: TryBegin covered — push EH frame.
+                // bit1 of exception_opcode_mask = TryBegin.
+                if (metrics) {
                     metrics->exception_opcode_lowered.fetch_add(1, std::memory_order_relaxed);
+                    metrics->exception_opcode_mask.fetch_or(1ull << 1, std::memory_order_relaxed);
+                }
                 // ops[0] = handler_block, ops[1] = result_slot, ops[2] = payload_slot
                 auto handler_block = inst.ops[0];
                 auto payload_slot = inst.ops[2];
@@ -1142,9 +1148,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpTryEnd: {
-                // Issue #1285: TryEnd covered — pop EH frame.
-                if (metrics)
+                // Issue #1285 / #1516: TryEnd covered — pop EH frame.
+                // bit2 of exception_opcode_mask = TryEnd.
+                if (metrics) {
                     metrics->exception_opcode_lowered.fetch_add(1, std::memory_order_relaxed);
+                    metrics->exception_opcode_mask.fetch_or(1ull << 2, std::memory_order_relaxed);
+                }
                 // ops[0] = result_slot (mostly a no-op for the
                 // JIT — the try body's result was already in a
                 // separate slot; the IR executor's TryEnd is also
@@ -1153,9 +1162,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpRaise: {
-                // Issue #1285: Raise covered — store cause + unwind path.
-                if (metrics)
+                // Issue #1285 / #1516: Raise covered — store cause + unwind.
+                // bit3 of exception_opcode_mask = Raise.
+                if (metrics) {
                     metrics->exception_opcode_lowered.fetch_add(1, std::memory_order_relaxed);
+                    metrics->exception_opcode_mask.fetch_or(1ull << 3, std::memory_order_relaxed);
+                }
                 // ops[0] = result_slot, ops[1] = cause_slot
                 auto cause = load(inst.ops[1]);
                 // 1. Read the top frame's payload_slot, store cause
@@ -1789,10 +1801,16 @@ struct LLVMBuilder {
                 // Observability retained: unhandled_opcode_count,
                 // per-function fn_unhandled, fallback_count, and
                 // aura_notify_jit_unhandled_opcode for deopt/invalidate.
+                // Issue #1512: also stamp opcode_unhandled_mask + optional
+                // consistency_violations under strict_consistency_mode.
                 if (metrics) {
                     metrics->unhandled_opcode_count.fetch_add(1, std::memory_order_relaxed);
                     metrics->fallback_count.fetch_add(1, std::memory_order_relaxed);
                     metrics->unhandled_fail_fast_total.fetch_add(1, std::memory_order_relaxed);
+                    if (inst.opcode < 64) {
+                        metrics->opcode_unhandled_mask.fetch_or(1ull << inst.opcode,
+                                                                std::memory_order_relaxed);
+                    }
                 }
                 // Issue #193: also bump the per-function counter
                 // so spec_jit_controller can apply deopt per-function
@@ -2258,9 +2276,19 @@ struct AuraJIT::Impl {
     // invalidates the entry (under the global lock).
     std::shared_mutex fn_compile_mtx_;
     std::unordered_map<std::string, ScalarFn> compile_fns_{};
+    // Issue #1522: tracker entry carries compile epoch + soft deopt flag.
+    // deopt_pending: bridge epoch bumped for this name; refuse cache hits
+    // until next recompile clears the flag.
+    struct FnTrackerEntry {
+        llvm::orc::ResourceTrackerSP tracker;
+        std::uint64_t compile_epoch = 0;
+        bool deopt_pending = false;
+    };
+
     // Per-function resource trackers for hot-swap (remove old module, add new one)
     llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name,
-                                                       Metrics* metrics = nullptr) {
+                                                       Metrics* metrics = nullptr,
+                                                       std::uint64_t compile_epoch = 0) {
         // Remove old tracker/module for this name before creating a new one.
         // This fixes duplicate symbol errors when the same function name
         // is compiled from different eval() calls (e.g., inlined lambdas).
@@ -2269,8 +2297,10 @@ struct AuraJIT::Impl {
             // Remove old module from JITDylib before adding the new one.
             // This is the "hot-swap" path: a function with the same name
             // (e.g., re-compiled inlined lambda) replaces the old version.
-            if (auto err = it->second->remove())
-                llvm::consumeError(std::move(err));
+            if (it->second.tracker) {
+                if (auto err = it->second.tracker->remove())
+                    llvm::consumeError(std::move(err));
+            }
             if (metrics)
                 metrics->hot_swap_count.fetch_add(1, std::memory_order_relaxed);
             // Invalidate the cache entry for this function name.
@@ -2278,7 +2308,11 @@ struct AuraJIT::Impl {
             compile_fns_.erase(name);
         }
         auto rt = main_dylib->createResourceTracker();
-        fn_trackers_[name] = rt;
+        FnTrackerEntry entry;
+        entry.tracker = rt;
+        entry.compile_epoch = compile_epoch;
+        entry.deopt_pending = false;
+        fn_trackers_[name] = std::move(entry);
         return rt;
     }
     // Issue #193: per-function unhandled-opcode counter map.
@@ -2289,13 +2323,9 @@ struct AuraJIT::Impl {
     // is consulted by spec_jit_controller's deopt signal (which
     // becomes per-function instead of conservative-global).
     std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_unhandled_counts_{};
-    // Issue #1477: per-fn captured bridge_epoch (set when fn is
-    // compiled or when service.ixx::atomic_bump_epochs_and_stamp_bridge
-    // re-stamps the fn on the write side). Lets callers (JIT Apply
-    // prologue + service.ixx dual-check) detect stale compiled code via
-    // AuraJIT::is_fn_epoch_stale(name, current_bridge_epoch) without
-    // re-running LLVM. Parallel to fn_unhandled_counts_ pattern — atomic
-    // per-entry, compile_mtx_ guards the map mutation.
+    // Issue #1477: per-fn captured bridge_epoch (set at compile or via
+    // capture_fn_epoch from service atomic_bump). Parallel to
+    // fn_unhandled_counts_ — atomic per-entry; compile_mtx_ guards map.
     std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_captured_epochs_{};
     // Tracks the most recent function being compiled (set by
     // compile() before calling lower()).
@@ -2318,28 +2348,8 @@ struct AuraJIT::Impl {
             return 0;
         return it->second.load(std::memory_order_relaxed);
     }
-    // Issue #1477: dual-epoch fence helpers. The capture path is
-    // called from service.ixx::atomic_bump_epochs_and_stamp_bridge on
-    // the write side (or once at compile time if the JIT knows the
-    // current bridge_epoch); the is_epoch_stale path is called from
-    // the JIT Apply prologue on the read side (#1475 counterpart).
-    // Lock pattern matches fn_unhandled_counts_ writes/reads
-    // (compile_mtx_ guards the map mutation). Release ordering on
-    // store pairs with acquire ordering in is_fn_epoch_stale so
-    // readers see consistent epoch values after the lock release.
-    //
-    // Returns false when name was never captured (pass-through, fn
-    // wasn't compiled via this path or was registered before the
-    // fence was added).
-    //
-    // Note: AuraJIT::capture_fn_epoch + AuraJIT::is_fn_epoch_stale
-    // (public wrappers, file-level below) implement this logic
-    // directly against impl_->fn_captured_epochs_ + AuraJIT::metrics_
-    // — there are no Impl::capture_fn_epoch / Impl::is_fn_epoch_stale
-    // methods here (a #1477 leftover was removed during #1480 chore
-    // since the Impl-level copy could not reach the enclosing
-    // AuraJIT::metrics_ and would have been dead code anyway).
-    std::unordered_map<std::string, llvm::orc::ResourceTrackerSP> fn_trackers_;
+    // Issue #1522: trackers carry compile epoch + soft deopt flag.
+    std::unordered_map<std::string, FnTrackerEntry> fn_trackers_;
 
     // Issue #170 Phase 1: most recently compiled LLVM module.
     // Held as a unique_ptr so we can release it when a new
@@ -2349,6 +2359,12 @@ struct AuraJIT::Impl {
     // access to the LLVM IR / native code that the JIT just
     // generated.
     std::unique_ptr<llvm::Module> last_module_;
+    // Issue #1516: per-function AOT module snapshots (keyed by
+    // function name). Survives subsequent compile() of other
+    // functions so multi-function static-link AOT is selective.
+    std::unordered_map<std::string, std::unique_ptr<llvm::Module>> fn_aot_modules_;
+    // Issue #1516: IR func_id → function name (set by register_fn_func).
+    std::unordered_map<std::uint32_t, std::string> fn_id_to_name_;
 
     bool init() {
         if (initialized)
@@ -2482,13 +2498,22 @@ struct AuraJIT::Impl {
             std::shared_lock<std::shared_mutex> shared(fn_compile_mtx_);
             auto it = compile_fns_.find(std::string(fn.name));
             if (it != compile_fns_.end()) {
-                // Cache hit — return the previously compiled fn_ptr
-                // without re-running the LLVM pipeline.
-                if (metrics) {
-                    metrics->compile_count.fetch_add(1, std::memory_order_relaxed);
-                    metrics->cached_function_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1522: refuse cache hit when batch_deopt marked pending.
+                auto tit = fn_trackers_.find(std::string(fn.name));
+                if (tit != fn_trackers_.end() && tit->second.deopt_pending) {
+                    if (metrics)
+                        metrics->deopt_pending_invoke_fallbacks.fetch_add(
+                            1, std::memory_order_relaxed);
+                    // Fall through to full recompile (hot-swap clears pending).
+                } else {
+                    // Cache hit — return the previously compiled fn_ptr
+                    // without re-running the LLVM pipeline.
+                    if (metrics) {
+                        metrics->compile_count.fetch_add(1, std::memory_order_relaxed);
+                        metrics->cached_function_count.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    return it->second;
                 }
-                return it->second;
             }
         }
 
@@ -2617,20 +2642,24 @@ struct AuraJIT::Impl {
             return nullptr;
         }
 
-        // Issue #170 Phase 1: snapshot the verified + optimized
-        // module for the AOT entry points. We clone here (cheap
-        // for typical Aura functions; the clone lives in
-        // last_module_ until the next compile() replaces it).
-        // The clone is necessary because the original `mod` is
+        // Issue #170 Phase 1 + #1516: snapshot the verified + optimized
+        // module for AOT entry points. One clone for last_module_
+        // (most-recent AOT) and one for the per-function map so
+        // multi-function static-link can select by name/func_id.
+        // Clones are necessary because the original `mod` is
         // moved into the ThreadSafeModule below and handed off
-        // to the JIT; we can't keep both the JIT's reference and
-        // a public visible one without cloning.
+        // to the JIT.
         {
             auto cloned = llvm::CloneModule(*mod);
             if (cloned) {
                 // Replace last_module_ in a thread-safe way (compile_mtx_
                 // already held; last_module_ is only touched here)
                 last_module_ = std::move(cloned);
+                if (fn.name && fn.name[0]) {
+                    auto per_fn = llvm::CloneModule(*last_module_);
+                    if (per_fn)
+                        fn_aot_modules_[std::string(fn.name)] = std::move(per_fn);
+                }
             }
         }
 
@@ -2678,9 +2707,20 @@ struct AuraJIT::Impl {
         return fn_ptr;
     }
 
-    void* get_function_ptr(const char* name) {
-        if (!init())
+    void* get_function_ptr(const char* name, Metrics* metrics = nullptr) {
+        if (!init() || !name)
             return nullptr;
+        // Issue #1522: refuse native lookup when deopt_pending (stale after
+        // bridge epoch bump). Caller falls back to interpreter / recompile.
+        {
+            std::lock_guard<std::mutex> lock(compile_mtx_);
+            auto it = fn_trackers_.find(name);
+            if (it != fn_trackers_.end() && it->second.deopt_pending) {
+                if (metrics)
+                    metrics->deopt_pending_invoke_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                return nullptr;
+            }
+        }
         auto sym = jit->lookup(name);
         if (!sym)
             return nullptr;
@@ -2706,6 +2746,11 @@ struct AuraJIT::Impl {
             aura_register_fn_named(name, func_id, fn_ptr, static_cast<int32_t>(local_count),
                                    static_cast<int32_t>(arg_count),
                                    static_cast<int32_t>(env_count));
+            // Issue #1516: map IR func_id → name for per-function AOT.
+            if (func_id >= 0) {
+                std::lock_guard<std::mutex> lock(compile_mtx_);
+                fn_id_to_name_[static_cast<std::uint32_t>(func_id)] = name;
+            }
         } else {
             aura_register_fn(func_id, fn_ptr, static_cast<int32_t>(local_count),
                              static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
@@ -2727,14 +2772,60 @@ ScalarFn AuraJIT::compile(const FlatFunction& fn) {
     // (not a reference) so it can be null in tests that construct
     // an Impl directly.
     auto result = impl_->compile(fn, &metrics_);
+    // Issue #1512: on full lower success, stamp every opcode in the
+    // FlatFunction into opcode_covered_mask (coverage observability).
+    // On fail-fast unhandled, optional strict mode bumps consistency
+    // violations (JIT cannot match IRInterpreter for that opcode).
+    if (result) {
+        for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+            const auto& fb = fn.blocks[bi];
+            if (!fb.instructions)
+                continue;
+            for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                const auto op = fb.instructions[ii].opcode;
+                if (op < 64) {
+                    metrics_.opcode_covered_mask.fetch_or(1ull << op, std::memory_order_relaxed);
+                }
+            }
+        }
+    } else if (strict_consistency_mode_) {
+        metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #170 Phase 1: snapshot the most recent compiled module
     // for AOT access via compile_to_llvm_ir / compile_to_object_file.
     // The impl's compile() now keeps a copy of the optimized module
     // in impl_->last_module_ for the AOT entry points to consume.
     return result;
 }
+
+// Issue #1512: side-by-side JIT ↔ IRInterpreter compare result.
+void AuraJIT::record_consistency_result(bool match) noexcept {
+    metrics_.consistency_compare_total.fetch_add(1, std::memory_order_relaxed);
+    if (match) {
+        metrics_.consistency_match_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+std::uint64_t AuraJIT::opcode_coverage_count() const noexcept {
+    const auto mask = metrics_.opcode_covered_mask.load(std::memory_order_relaxed);
+    // popcount of lower kTrackedOpcodeCount bits
+    std::uint64_t n = 0;
+    for (std::uint32_t i = 0; i < kTrackedOpcodeCount; ++i) {
+        if (mask & (1ull << i))
+            ++n;
+    }
+    return n;
+}
+
+std::uint64_t AuraJIT::opcode_coverage_pct() const noexcept {
+    if (kTrackedOpcodeCount == 0)
+        return 0;
+    return (opcode_coverage_count() * 100ull) / static_cast<std::uint64_t>(kTrackedOpcodeCount);
+}
 void* AuraJIT::get_function_ptr(const char* name) {
-    return impl_->get_function_ptr(name);
+    return impl_->get_function_ptr(name, &metrics_);
 }
 
 // Issue #170 Phase 1: AOT entry points. The compile() function
@@ -2758,17 +2849,12 @@ std::string AuraJIT::compile_to_llvm_ir() {
     return buf;
 }
 
-bool AuraJIT::compile_to_object_file(const std::string& path) {
-    // Issue #1308 (P0): same lock as compile_to_llvm_ir.
-    if (!impl_)
+// Issue #1516: shared object-file emit path for last_module_ and
+// per-function AOT snapshots. Caller holds compile_mtx_ and supplies
+// a live Module*.
+static bool emit_llvm_module_to_object(llvm::Module* mod, const std::string& path) {
+    if (!mod)
         return false;
-    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
-    if (!impl_->last_module_) {
-        return false;
-    }
-    // Reuse the existing AOT pipeline (same TargetMachine setup
-    // as the test helper around line 1540). Lazy-init the native
-    // target once per process.
     static std::once_flag aot_target_init;
     std::call_once(aot_target_init, []() {
         llvm::InitializeNativeTarget();
@@ -2788,7 +2874,7 @@ bool AuraJIT::compile_to_object_file(const std::string& path) {
     if (!tm)
         return false;
 
-    impl_->last_module_->setDataLayout(tm->createDataLayout());
+    mod->setDataLayout(tm->createDataLayout());
 
     std::error_code ec;
     llvm::raw_fd_ostream dest(path, ec, llvm::sys::fs::OF_None);
@@ -2799,9 +2885,109 @@ bool AuraJIT::compile_to_object_file(const std::string& path) {
     if (tm->addPassesToEmitFile(cgpm, dest, nullptr, llvm::CodeGenFileType::ObjectFile)) {
         return false;
     }
-    cgpm.run(*impl_->last_module_);
+    cgpm.run(*mod);
     dest.flush();
     return true;
+}
+
+bool AuraJIT::compile_to_object_file(const std::string& path) {
+    // Issue #1308 (P0): same lock as compile_to_llvm_ir.
+    if (!impl_)
+        return false;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    if (!impl_->last_module_) {
+        return false;
+    }
+    const bool ok = emit_llvm_module_to_object(impl_->last_module_.get(), path);
+    if (ok)
+        metrics_.aot_last_module_object_total.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+std::string AuraJIT::compile_function_to_llvm_ir_by_name(const char* name) {
+    if (!impl_ || !name || !name[0]) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    auto it = impl_->fn_aot_modules_.find(name);
+    if (it == impl_->fn_aot_modules_.end() || !it->second) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+    std::string buf;
+    llvm::raw_string_ostream os(buf);
+    it->second->print(os, /*AAW=*/nullptr);
+    os.flush();
+    metrics_.aot_per_function_ir_total.fetch_add(1, std::memory_order_relaxed);
+    return buf;
+}
+
+bool AuraJIT::compile_function_to_object_by_name(const char* name, const std::string& path) {
+    if (!impl_ || !name || !name[0]) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    auto it = impl_->fn_aot_modules_.find(name);
+    if (it == impl_->fn_aot_modules_.end() || !it->second) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const bool ok = emit_llvm_module_to_object(it->second.get(), path);
+    if (ok)
+        metrics_.aot_per_function_object_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
+
+std::string AuraJIT::compile_function_to_llvm_ir(std::uint32_t func_id) {
+    if (!impl_) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+    std::string name;
+    {
+        std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+        auto it = impl_->fn_id_to_name_.find(func_id);
+        if (it != impl_->fn_id_to_name_.end())
+            name = it->second;
+    }
+    if (name.empty()) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+    return compile_function_to_llvm_ir_by_name(name.c_str());
+}
+
+bool AuraJIT::compile_function_to_object(std::uint32_t func_id, const std::string& path) {
+    if (!impl_) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    std::string name;
+    {
+        std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+        auto it = impl_->fn_id_to_name_.find(func_id);
+        if (it != impl_->fn_id_to_name_.end())
+            name = it->second;
+    }
+    if (name.empty()) {
+        metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return compile_function_to_object_by_name(name.c_str(), path);
+}
+
+std::uint64_t AuraJIT::exception_opcode_coverage_count() const noexcept {
+    const auto mask = metrics_.exception_opcode_mask.load(std::memory_order_relaxed);
+    std::uint64_t n = 0;
+    for (std::uint32_t i = 0; i < kExceptionOpcodeCount; ++i) {
+        if (mask & (1ull << i))
+            ++n;
+    }
+    return n;
 }
 
 // ── Metrics::format (Issue #114) ────────────────────────────
@@ -2832,6 +3018,19 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
     const auto intrinsic = intrinsic_count.load(std::memory_order_relaxed);
     const auto fallback = fallback_count.load(std::memory_order_relaxed);
     const auto consistency = consistency_violations.load(std::memory_order_relaxed);
+    // Issue #1512: coverage + compare totals for Agent telemetry.
+    const auto covered_mask = opcode_covered_mask.load(std::memory_order_relaxed);
+    std::uint64_t covered_n = 0;
+    for (std::uint32_t i = 0; i < AuraJIT::kTrackedOpcodeCount; ++i) {
+        if (covered_mask & (1ull << i))
+            ++covered_n;
+    }
+    const auto cov_pct =
+        AuraJIT::kTrackedOpcodeCount > 0
+            ? (covered_n * 100ull) / static_cast<std::uint64_t>(AuraJIT::kTrackedOpcodeCount)
+            : 0ull;
+    const auto cmp_total = consistency_compare_total.load(std::memory_order_relaxed);
+    const auto cmp_match = consistency_match_total.load(std::memory_order_relaxed);
     // Live prim-call counters from aura_jit_runtime.cpp
     // (read via the global accessors). The total is in nanoseconds;
     // average per call is computed inline.
@@ -2844,13 +3043,16 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
                   "prim_calls=%llu prim_avg_ns=%llu "
                   "verify_fail=%llu add_mod_fail=%llu "
                   "unhandled_opcode=%llu intrinsics=%llu "
-                  "fallback_count=%llu consistency_violations=%llu",
+                  "fallback_count=%llu consistency_violations=%llu "
+                  "opcode_coverage_pct=%llu consistency_compares=%llu "
+                  "consistency_matches=%llu",
                   (unsigned long long)cc, (unsigned long long)avg_us, (unsigned long long)hs,
                   (unsigned long long)cfns, (unsigned long long)inl, (unsigned long long)slow,
                   (unsigned long long)pc, (unsigned long long)pavg, (unsigned long long)vfail,
                   (unsigned long long)mfail, (unsigned long long)unhandled,
                   (unsigned long long)intrinsic, (unsigned long long)fallback,
-                  (unsigned long long)consistency);
+                  (unsigned long long)consistency, (unsigned long long)cov_pct,
+                  (unsigned long long)cmp_total, (unsigned long long)cmp_match);
     return buf;
 }
 
@@ -2886,6 +3088,8 @@ void AuraJIT::invalidate(const char* name) {
     // fn_trackers_ / fn_unhandled_counts_. Previously erases ran
     // unlocked while compile() inserts under compile_mtx_ → UB.
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    // Issue #1516: drop per-function AOT snapshot on invalidate.
+    impl_->fn_aot_modules_.erase(n);
     // Drop the per-function resource tracker (removes the
     // module from the JITDylib) AND the per-function compile
     // cache entry. This matches what get_or_create_tracker()
@@ -2894,8 +3098,10 @@ void AuraJIT::invalidate(const char* name) {
     // through the compile path.
     auto it = impl_->fn_trackers_.find(n);
     if (it != impl_->fn_trackers_.end()) {
-        if (auto err = it->second->remove())
-            llvm::consumeError(std::move(err));
+        if (it->second.tracker) {
+            if (auto err = it->second.tracker->remove())
+                llvm::consumeError(std::move(err));
+        }
         impl_->fn_trackers_.erase(it);
     }
     // Issue #993: also drop unhandled-opcode counters so hot-swap
@@ -2903,6 +3109,43 @@ void AuraJIT::invalidate(const char* name) {
     impl_->fn_unhandled_counts_.erase(n);
     std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
     impl_->compile_fns_.erase(n);
+}
+
+// Issue #1514: partial recompile — evict native code for a define
+// so the next exec recompiles only that function. Records dirty
+// block ids for Agent observability (block-level re-emit follow-up).
+bool AuraJIT::partial_recompile(const char* name, const std::uint32_t* dirty_block_ids,
+                                std::size_t n_dirty_blocks) noexcept {
+    metrics_.partial_recompile_requests.fetch_add(1, std::memory_order_relaxed);
+    metrics_.partial_recompile_dirty_blocks_total.fetch_add(n_dirty_blocks,
+                                                            std::memory_order_relaxed);
+    if (!name || !name[0])
+        return false;
+    // Count whether anything was cached before eviction.
+    // Do NOT hold compile_mtx_ across invalidate() — it re-locks.
+    bool had = false;
+    if (impl_) {
+        std::string n(name);
+        std::string p_hash = n + "#";
+        std::shared_lock<std::shared_mutex> rlock(impl_->fn_compile_mtx_);
+        if (impl_->compile_fns_.count(n) > 0)
+            had = true;
+        else {
+            for (const auto& kv : impl_->compile_fns_) {
+                if (kv.first.rfind(p_hash, 0) == 0) {
+                    had = true;
+                    break;
+                }
+            }
+        }
+    }
+    // Evict bare name + name#* (same as redefine path).
+    invalidate(name);
+    invalidate_prefix(name);
+    if (had)
+        metrics_.partial_recompile_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+    (void)dirty_block_ids; // reserved for block-level re-emit
+    return had;
 }
 
 // Issue #660 follow-up: invalidate_prefix — walk both
@@ -2921,8 +3164,10 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     for (auto it = impl_->fn_trackers_.begin(); it != impl_->fn_trackers_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0) {
-            if (auto err = it->second->remove())
-                llvm::consumeError(std::move(err));
+            if (it->second.tracker) {
+                if (auto err = it->second.tracker->remove())
+                    llvm::consumeError(std::move(err));
+            }
             it = impl_->fn_trackers_.erase(it);
         } else {
             ++it;
@@ -2932,6 +3177,13 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     for (auto it = impl_->fn_unhandled_counts_.begin(); it != impl_->fn_unhandled_counts_.end();) {
         if (it->first == p || it->first.rfind(p_hash, 0) == 0)
             it = impl_->fn_unhandled_counts_.erase(it);
+        else
+            ++it;
+    }
+    // Issue #1516: drop matching per-function AOT snapshots.
+    for (auto it = impl_->fn_aot_modules_.begin(); it != impl_->fn_aot_modules_.end();) {
+        if (it->first == p || it->first.rfind(p_hash, 0) == 0)
+            it = impl_->fn_aot_modules_.erase(it);
         else
             ++it;
     }
@@ -2945,22 +3197,9 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     }
 }
 
-// Issue #1477: JIT-side dual-epoch fence counterpart to #1475
-// (read-side is_bridge_stale + is_env_frame_stale) and #1476
-// (write-side atomic_bump_epochs_and_stamp_bridge). Captured at
-// compile time; callers (service.ixx::atomic_bump_epochs_and_stamp_bridge
-// on the write side, or the JIT Apply prologue on the read side)
-// query is_fn_epoch_stale(name, current_bridge_epoch) and deopt to
-// interpreter on mismatch.
-//
-// Lock pattern matches fn_unhandled_counts_ (compile_mtx_ guards the
-// map mutation). Release ordering on store pairs with acquire ordering
-// in is_fn_epoch_stale so readers see consistent values after the
-// lock release.
-//
-// Returns false when name was never captured (fn wasn't compiled via
-// this path) — pass-through behavior so legacy / pre-#1477 JIT'd
-// closures don't get penalized.
+// Issue #1477: JIT-side dual-epoch fence.
+// Issue #1522: soft batch deopt — mark fn_trackers_ deopt_pending + drop
+// compile_fns_ so next invoke / compile refuses stale native code.
 void AuraJIT::capture_fn_epoch(const char* name, std::uint64_t current_bridge_epoch) {
     if (!impl_ || !name)
         return;
@@ -2975,8 +3214,62 @@ bool AuraJIT::is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_e
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     auto it = impl_->fn_captured_epochs_.find(name);
     if (it == impl_->fn_captured_epochs_.end())
-        return false;
+        return false; // never captured → pass-through
     return it->second.load(std::memory_order_acquire) != current_bridge_epoch;
+}
+
+std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epoch) noexcept {
+    metrics_.batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
+    if (!impl_ || !name || !name[0])
+        return 0;
+    std::string n(name);
+    std::string n_hash = n + "#";
+    std::size_t marked = 0;
+    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    for (auto& [key, entry] : impl_->fn_trackers_) {
+        if (key != n && key.rfind(n_hash, 0) != 0)
+            continue;
+        if (!entry.deopt_pending) {
+            entry.deopt_pending = true;
+            entry.compile_epoch = current_epoch;
+            ++marked;
+            metrics_.batch_deopt_entries_marked.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    {
+        std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
+        for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end();) {
+            if (it->first == n || it->first.rfind(n_hash, 0) == 0)
+                it = impl_->compile_fns_.erase(it);
+            else
+                ++it;
+        }
+    }
+    return marked;
+}
+
+std::size_t AuraJIT::batch_deopt_prefix(const char* prefix, std::uint64_t current_epoch) noexcept {
+    return batch_deopt_for(prefix, current_epoch);
+}
+
+bool AuraJIT::is_deopt_pending(const char* name) const noexcept {
+    if (!impl_ || !name)
+        return false;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    auto it = impl_->fn_trackers_.find(name);
+    return it != impl_->fn_trackers_.end() && it->second.deopt_pending;
+}
+
+std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
+    if (!impl_)
+        return 0;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    std::uint64_t n = 0;
+    for (const auto& [_, e] : impl_->fn_trackers_) {
+        if (e.deopt_pending)
+            ++n;
+    }
+    return n;
 }
 
 // ── Public AOT API ──────────────────────────────────────────────
@@ -3034,12 +3327,78 @@ std::string AuraJIT::compile_to_llvm_ir() {
 bool AuraJIT::compile_to_object_file(const std::string&) {
     return false;
 }
+std::string AuraJIT::compile_function_to_llvm_ir(std::uint32_t) {
+    metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+    return {};
+}
+bool AuraJIT::compile_function_to_object(std::uint32_t, const std::string&) {
+    metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+std::string AuraJIT::compile_function_to_llvm_ir_by_name(const char*) {
+    metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+    return {};
+}
+bool AuraJIT::compile_function_to_object_by_name(const char*, const std::string&) {
+    metrics_.aot_per_function_miss_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+std::uint64_t AuraJIT::exception_opcode_coverage_count() const noexcept {
+    const auto mask = metrics_.exception_opcode_mask.load(std::memory_order_relaxed);
+    std::uint64_t n = 0;
+    for (std::uint32_t i = 0; i < kExceptionOpcodeCount; ++i) {
+        if (mask & (1ull << i))
+            ++n;
+    }
+    return n;
+}
 void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*) {}
 void AuraJIT::invalidate(const char*) {}
 void AuraJIT::invalidate_prefix(const char*) {}
+bool AuraJIT::partial_recompile(const char* name, const std::uint32_t* dirty_block_ids,
+                                std::size_t n_dirty_blocks) noexcept {
+    metrics_.partial_recompile_requests.fetch_add(1, std::memory_order_relaxed);
+    metrics_.partial_recompile_dirty_blocks_total.fetch_add(n_dirty_blocks,
+                                                            std::memory_order_relaxed);
+    (void)name;
+    (void)dirty_block_ids;
+    return false;
+}
+std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epoch) noexcept {
+    metrics_.batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
+    (void)name;
+    (void)current_epoch;
+    return 0;
+}
+std::size_t AuraJIT::batch_deopt_prefix(const char* prefix, std::uint64_t current_epoch) noexcept {
+    return batch_deopt_for(prefix, current_epoch);
+}
+bool AuraJIT::is_deopt_pending(const char*) const noexcept {
+    return false;
+}
+std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
+    return 0;
+}
+void AuraJIT::capture_fn_epoch(const char*, std::uint64_t) {}
+bool AuraJIT::is_fn_epoch_stale(const char*, std::uint64_t) const {
+    return false;
+}
 std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char*) const {
+    return 0;
+}
+void AuraJIT::record_consistency_result(bool match) noexcept {
+    metrics_.consistency_compare_total.fetch_add(1, std::memory_order_relaxed);
+    if (match)
+        metrics_.consistency_match_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+}
+std::uint64_t AuraJIT::opcode_coverage_count() const noexcept {
+    return 0;
+}
+std::uint64_t AuraJIT::opcode_coverage_pct() const noexcept {
     return 0;
 }
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {

@@ -254,7 +254,7 @@
   (let ((sid (ast:snapshot "f")))
     (check (>= sid 0))
     ;; List snapshots should include our snapshot
-    (check (pair? (ast:list-snapshots)))))
+    (check (pair? (stats:get "ast:list-snapshots")))))
 
 (test-suite "snapshot:restore"
   (set-code "(define (f x) (+ x 1))")
@@ -291,7 +291,7 @@
   (ast:snapshot "v1")
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   (ast:snapshot "v2")
-  (check (pair? (ast:list-snapshots))))
+  (check (pair? (stats:get "ast:list-snapshots"))))
 
 (test-suite "snapshot:diff-empty-after-restore"
   (set-code "(define (f x) (+ x 1))")
@@ -338,7 +338,7 @@
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   (ast:snapshot "b")
   ;; List should contain at least 2 snapshots
-  (let ((lst (ast:list-snapshots)))
+  (let ((lst (stats:get "ast:list-snapshots")))
     (check (>= (length lst) 2)))))
 
 

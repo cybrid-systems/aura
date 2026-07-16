@@ -64,6 +64,7 @@
 #define AURA_CORE_PERSISTENT_CHILD_VECTOR_HH
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <initializer_list>
 #include <iterator>
@@ -443,6 +444,11 @@ private:
 // ─────────────────────────────────────────────────────────────
 template <typename T> class SafePCVSpan {
 public:
+    using value_type = T;
+    using size_type = typename PersistentChildVector<T>::size_type;
+    using iterator = const T*;
+    using const_iterator = const T*;
+
     SafePCVSpan() noexcept = default;
     SafePCVSpan(std::span<const T> sp,
                 std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep)
@@ -450,14 +456,17 @@ public:
         , keep_(std::move(keep)) {}
 
     [[nodiscard]] std::span<const T> span() const noexcept { return span_; }
-    [[nodiscard]] typename PersistentChildVector<T>::size_type size() const noexcept {
-        return span_.size();
-    }
+    [[nodiscard]] size_type size() const noexcept { return span_.size(); }
     [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
+    // Issue #1520: SoAColumnar-compatible data() for pure columnar hot paths.
     [[nodiscard]] const T* data() const noexcept { return span_.data(); }
-    [[nodiscard]] const T& operator[](typename PersistentChildVector<T>::size_type i) const {
-        return span_[i];
-    }
+    [[nodiscard]] const T& operator[](size_type i) const { return span_[i]; }
+
+    // Issue #1520: range-for over pinned children without materializing.
+    [[nodiscard]] const_iterator begin() const noexcept { return span_.data(); }
+    [[nodiscard]] const_iterator end() const noexcept { return span_.data() + span_.size(); }
+    [[nodiscard]] const_iterator cbegin() const noexcept { return begin(); }
+    [[nodiscard]] const_iterator cend() const noexcept { return end(); }
 
     // Refcount of the kept storage. Mostly for tests; useful
     // diagnostic for AI agents to verify their hold doesn't
@@ -468,6 +477,20 @@ private:
     std::span<const T> span_;
     std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep_;
 };
+
+// Issue #1520: compile-time SoAColumnar shape check for SafePCVSpan
+// (size/empty/data — same requirements as aura::core::SoAColumnar).
+namespace detail {
+    template <typename C> constexpr bool safe_pcv_soa_shape() {
+        return requires(const C& c) {
+            { c.size() } -> std::convertible_to<std::size_t>;
+            { c.empty() } -> std::convertible_to<bool>;
+            { c.data() };
+        };
+    }
+} // namespace detail
+static_assert(detail::safe_pcv_soa_shape<SafePCVSpan<std::uint32_t>>(),
+              "Issue #1520: SafePCVSpan must expose size/empty/data for SoAColumnar");
 
 } // namespace aura::ast
 

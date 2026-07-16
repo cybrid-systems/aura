@@ -61,6 +61,12 @@ inline std::atomic<std::uint64_t> render_jit_deopt_throttled_total{0};
 // Live defrag attempts mirrored for cross-module query without ASTArena lock.
 inline std::atomic<std::uint64_t> defrag_attempted_total{0};
 inline std::atomic<std::uint64_t> defrag_saved_bytes_total{0};
+// Issue #1518: live relocate + compact deopt coordination (process-wide).
+inline std::atomic<std::uint64_t> live_relocate_total{0};
+inline std::atomic<std::uint64_t> compact_deopt_triggered_total{0};
+inline std::atomic<std::uint64_t> compact_deopt_throttled_total{0};
+inline std::atomic<std::uint64_t> frag_post_compact_bp{0};
+inline std::atomic<std::uint64_t> compact_soft_gated_boundary_total{0};
 
 inline void enter_render_hotpath() noexcept {
     ++g_render_hotpath_depth;
@@ -100,6 +106,39 @@ inline void record_defrag_attempt(std::size_t saved_bytes = 0) noexcept {
     defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
     if (saved_bytes > 0)
         defrag_saved_bytes_total.fetch_add(saved_bytes, std::memory_order_relaxed);
+}
+
+// Issue #1518 helpers.
+inline void record_live_relocate(std::uint64_t n = 1) noexcept {
+    live_relocate_total.fetch_add(n, std::memory_order_relaxed);
+}
+inline void record_compact_deopt_triggered() noexcept {
+    compact_deopt_triggered_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_compact_deopt_throttled() noexcept {
+    compact_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_frag_post_compact(double frag_ratio) noexcept {
+    frag_post_compact_bp.store(static_cast<std::uint64_t>(frag_ratio * 10000.0),
+                               std::memory_order_relaxed);
+}
+inline void record_compact_soft_gated_boundary() noexcept {
+    compact_soft_gated_boundary_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1521: ShapeProfiler soft invalidate on compact (process-wide mirror).
+inline std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
+inline std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};
+inline std::atomic<std::uint64_t> shape_stability_post_compact_preserved_total{0};
+
+inline void record_shape_inval_on_compact_triggered() noexcept {
+    shape_inval_on_compact_triggered_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_deopt_from_arena_compact(std::uint64_t n = 1) noexcept {
+    deopt_from_arena_compact_total.fetch_add(n, std::memory_order_relaxed);
+}
+inline void record_shape_stability_post_compact_preserved(std::uint64_t n = 1) noexcept {
+    shape_stability_post_compact_preserved_total.fetch_add(n, std::memory_order_relaxed);
 }
 
 } // namespace aura::core::arena_policy

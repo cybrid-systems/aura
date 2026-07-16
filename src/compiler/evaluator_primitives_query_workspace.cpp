@@ -1269,93 +1269,92 @@ void register_workspace_query_primitives(
     // Note: this is the *observability* side of #248. The
     // enforcement side (using the schema to reject mutations
     // that would break macro type invariants) is deferred.
-    ObservabilityPrims::register_stats_impl(
-        "query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || a.size() > 2 || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
-                                      "(query:schema-of-marker marker-name limit-int)");
-            if (!ws.workspace_flat)
-                return mev("no-workspace", "no workspace AST loaded");
-            if (!ws.type_registry)
-                return mev("no-registry", "no type registry available");
+    // Multi-arg (marker-name [limit]) — public; cannot pass args via stats:get.
+    add("query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || a.size() > 2 || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
+                                  "(query:schema-of-marker marker-name limit-int)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        if (!ws.type_registry)
+            return mev("no-registry", "no type registry available");
 
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ws.string_heap.size())
-                return mev("bad-arg", "marker name string index out of range");
-            auto marker_name = ws.string_heap[idx];
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ws.string_heap.size())
+            return mev("bad-arg", "marker name string index out of range");
+        auto marker_name = ws.string_heap[idx];
 
-            // Map name → SyntaxMarker enum
-            aura::ast::SyntaxMarker target;
-            if (marker_name == "User") {
-                target = aura::ast::SyntaxMarker::User;
-            } else if (marker_name == "MacroIntroduced") {
-                target = aura::ast::SyntaxMarker::MacroIntroduced;
-            } else if (marker_name == "BoolLiteral") {
-                target = aura::ast::SyntaxMarker::BoolLiteral;
-            } else {
-                return mev("unknown-marker",
-                           std::string("unknown marker name: \"") + marker_name +
-                               "\" (expected User / MacroIntroduced / BoolLiteral)");
+        // Map name → SyntaxMarker enum
+        aura::ast::SyntaxMarker target;
+        if (marker_name == "User") {
+            target = aura::ast::SyntaxMarker::User;
+        } else if (marker_name == "MacroIntroduced") {
+            target = aura::ast::SyntaxMarker::MacroIntroduced;
+        } else if (marker_name == "BoolLiteral") {
+            target = aura::ast::SyntaxMarker::BoolLiteral;
+        } else {
+            return mev("unknown-marker", std::string("unknown marker name: \"") + marker_name +
+                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
+        }
+
+        std::int64_t limit = -1;
+        if (a.size() == 2) {
+            if (!is_int(a[1]))
+                return mev("bad-arg", "limit must be an integer");
+            limit = as_int(a[1]);
+            if (limit < 0)
+                return mev("bad-arg", "limit must be non-negative");
+        }
+
+        auto& flat = *ws.workspace_flat;
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(ws.type_registry);
+        EvalValue result = make_void();
+        std::int64_t emitted = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (limit >= 0 && emitted >= limit)
+                break;
+            if (flat.marker(id) != target)
+                continue;
+            // Issue #248: only include nodes with a non-zero
+            // type_id_ (i.e., the type checker has inferred a
+            // type for them). Nodes with type_id_ == 0 haven't
+            // been typed yet — they're "schema-less" in the
+            // sense that we don't know their expected type.
+            const auto type_id_value = flat.type_id(id);
+            if (type_id_value == 0)
+                continue;
+            // Convert uint32_t to TypeId. The FlatAST stores
+            // just the index; TypeId requires (index, generation).
+            // The type checker uses generation=1 as a default
+            // (see type_checker_impl.cpp:1505: TypeId{index, 1}).
+            std::string type_name;
+            try {
+                auto tname = treg.name_of(aura::core::TypeId{type_id_value, 1});
+                type_name = std::string(tname);
+            } catch (...) {
+                // [SILENCE-PRIM-#615] type_name fallback for unknown
+                // / unregistered TypeId — display-only path; caller
+                // handles empty via the "<unnamed>" branch below.
+                type_name = "<unknown>";
             }
-
-            std::int64_t limit = -1;
-            if (a.size() == 2) {
-                if (!is_int(a[1]))
-                    return mev("bad-arg", "limit must be an integer");
-                limit = as_int(a[1]);
-                if (limit < 0)
-                    return mev("bad-arg", "limit must be non-negative");
-            }
-
-            auto& flat = *ws.workspace_flat;
-            auto& treg = *static_cast<aura::core::TypeRegistry*>(ws.type_registry);
-            EvalValue result = make_void();
-            std::int64_t emitted = 0;
-            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                if (limit >= 0 && emitted >= limit)
-                    break;
-                if (flat.marker(id) != target)
-                    continue;
-                // Issue #248: only include nodes with a non-zero
-                // type_id_ (i.e., the type checker has inferred a
-                // type for them). Nodes with type_id_ == 0 haven't
-                // been typed yet — they're "schema-less" in the
-                // sense that we don't know their expected type.
-                const auto type_id_value = flat.type_id(id);
-                if (type_id_value == 0)
-                    continue;
-                // Convert uint32_t to TypeId. The FlatAST stores
-                // just the index; TypeId requires (index, generation).
-                // The type checker uses generation=1 as a default
-                // (see type_checker_impl.cpp:1505: TypeId{index, 1}).
-                std::string type_name;
-                try {
-                    auto tname = treg.name_of(aura::core::TypeId{type_id_value, 1});
-                    type_name = std::string(tname);
-                } catch (...) {
-                    // [SILENCE-PRIM-#615] type_name fallback for unknown
-                    // / unregistered TypeId — display-only path; caller
-                    // handles empty via the "<unnamed>" branch below.
-                    type_name = "<unknown>";
-                }
-                if (type_name.empty())
-                    type_name = "<unnamed>";
-                // Build the pair: (NodeId . type-name)
-                auto name_idx = ws.string_heap.size();
-                ws.string_heap.push_back(type_name);
-                auto name_ev = make_string(name_idx);
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), name_ev});
-                auto pair_ev = make_pair(pid);
-                // Prepend to result
-                auto list_pid = ws.pairs.size();
-                ws.pairs.push_back({pair_ev, result});
-                result = make_pair(list_pid);
-                ++emitted;
-            }
-            return result;
-        });
+            if (type_name.empty())
+                type_name = "<unnamed>";
+            // Build the pair: (NodeId . type-name)
+            auto name_idx = ws.string_heap.size();
+            ws.string_heap.push_back(type_name);
+            auto name_ev = make_string(name_idx);
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), name_ev});
+            auto pair_ev = make_pair(pid);
+            // Prepend to result
+            auto list_pid = ws.pairs.size();
+            ws.pairs.push_back({pair_ev, result});
+            result = make_pair(list_pid);
+            ++emitted;
+        }
+        return result;
+    });
 
     // ═══════════════════════════════════════════════════════════════
     // P8: Query/Transform EDSL 扩展 — pattern matching

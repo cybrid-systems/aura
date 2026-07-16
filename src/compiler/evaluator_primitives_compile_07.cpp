@@ -793,6 +793,73 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 63 (orig 5319-5319)
 void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
+    // Issue #1516: (compile:aot-stats) — per-function AOT + EH coverage
+    // production surface. Complements (query:aot-stats) which covers
+    // hot-update reload (#452). Fields:
+    //   - per-function-ir-emits / per-function-object-emits / misses
+    //   - last-module-object-emits
+    //   - exception-opcode-lowered / exception-opcodes-covered
+    //   - exception-opcode-mask / interpreter-exception-ops
+    //   - schema=1516
+    ObservabilityPrims::register_stats_impl("compile:aot-stats", [&ev](const auto&) -> EvalValue {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        const auto load = [m](const std::atomic<std::uint64_t>& a) -> std::int64_t {
+            return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"per-function-ir-emits", make_int(m ? load(m->aot_per_function_ir_total) : 0)},
+            {"per-function-object-emits", make_int(m ? load(m->aot_per_function_object_total) : 0)},
+            {"per-function-misses", make_int(m ? load(m->aot_per_function_miss_total) : 0)},
+            {"last-module-object-emits", make_int(m ? load(m->aot_last_module_object_total) : 0)},
+            {"exception-opcode-lowered", make_int(m ? load(m->jit_exception_opcode_lowered) : 0)},
+            {"exception-opcodes-covered", make_int(m ? load(m->jit_exception_opcodes_covered) : 0)},
+            {"exception-opcode-mask", make_int(m ? load(m->jit_exception_opcode_mask) : 0)},
+            {"interpreter-exception-ops",
+             make_int(m ? load(m->interpreter_exception_ops_total) : 0)},
+            {"schema", make_int(1516)},
+        };
+        return build_hash(kv);
+    });
+
     // Issue #1385: (compiler:metrics) primitive — expose env_frames_
     // and arena observability metrics as a JSON string. Refreshes
     // the 4 lazy-snapshot counters in CompilerMetrics

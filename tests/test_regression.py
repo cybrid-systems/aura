@@ -498,7 +498,7 @@ def test_jit():
     # ── Mutation type soundness (#25): basic mutation + typecheck ──
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (typecheck-status))',
+        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -510,7 +510,7 @@ def test_jit():
 
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (typecheck-status))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -522,7 +522,7 @@ def test_jit():
 
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:set-body "f" "(* x 2)") (typecheck-status))',
+        input='(begin (define (f x) (+ x 1)) (mutate:set-body "f" "(* x 2)") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -539,7 +539,7 @@ def test_mutation_sequences():
     # ── Rebind chain: a→b→c, rebind a, typecheck all ───────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (define (c x) (b x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (typecheck-status))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (define (c x) (b x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -552,7 +552,7 @@ def test_mutation_sequences():
     # ── Rebind → set-body chain ────────────────────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (mutate:set-body "f" "(- x 1)") (typecheck-status))',
+        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (mutate:set-body "f" "(- x 1)") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -565,7 +565,7 @@ def test_mutation_sequences():
     # ── Rollback verification ──────────────────────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (define mid (mutation-count)) (rollback (- mid 1)) (typecheck-status))',
+        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (define mid (mutation-count)) (rollback (- mid 1)) (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -578,7 +578,7 @@ def test_mutation_sequences():
     # ── DefUseIndex incremental: query:def-use works after rebind ──
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query:def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query:def-use "f") (typecheck-status))',
+        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query:def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query:def-use "f") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -591,7 +591,7 @@ def test_mutation_sequences():
     # ── DefUseIndex: chain query works after rebind ─────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate:rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (typecheck-status))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate:rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,

@@ -225,8 +225,8 @@ bool test_ac4_new_stats_key() {
     }
     // Hash-ref on each expected key.
     auto check_key = [&](const char* key, const char* desc) {
-        auto r = cs.try_run(std::string("(hash-ref (stats:get " atomic - batch : stats ") \"") +
-                            key + "\")");
+        auto r = cs.try_run(std::string("(hash-ref (stats:get \"atomic-batch:stats\") \"") + key +
+                            "\")");
         if (!r.ok || !aura::compiler::types::is_int(r.v)) {
             ++g_failed;
             std::println("  FAIL: key {} ({}) missing or not int", key, desc);

@@ -97,8 +97,7 @@ bool test_narrowing_blame_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:narrowing-blame-stats\") returns 1-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define nbs (engine:metrics \"compile:narrowing-blame-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define nbs (engine:metrics \"compile:narrowing-blame-stats\"))");
     auto r = cs.eval("(hash-ref nbs \"provenance-total\")");
     CHECK(r && aura::compiler::types::is_int(*r), "hash-ref nbs \"provenance-total\" returns int");
     return true;

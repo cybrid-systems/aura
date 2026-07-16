@@ -27,6 +27,8 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_soa.ixx
+    # Issue #1241 / #1517: SoAView helpers (before pass_manager which imports it).
+    src/compiler/soa_view.ixx
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx

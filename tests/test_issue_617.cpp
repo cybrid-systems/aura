@@ -10,7 +10,7 @@
 // impl paths, SoA-compatible value handling, Pass/AnalysisPass
 // integration, auto-validate via reflect post-registration) remains
 // a separate follow-up. The DEFINE_PRIMITIVE_META macro / PrimMeta
-// struct / (query:primitive-metadata) / (query:primitive-list-with-
+// struct / (engine:metrics \"query:primitive-metadata\") / (query:primitive-list-with-
 // meta) / (primitive:generate-skeleton) / (query:primitives-
 // extension-stats) from #480/#697/#709 already exist and are the
 // foundation this PR builds on.
@@ -70,7 +70,7 @@ int aura_issue_617_run() {
     // AC1: (query:primitives-by-category "general") returns a non-
     // empty list of (name . meta-pair) entries.
     //
-    // Note on names: (query:primitive-list-with-meta) from #480 has
+    // Note on names: (engine:metrics \"query:primitive-list-with-meta\") from #480 has
     // a pre-existing display bug where the car of each list entry
     // appears as "" (the underlying name_for_slot returns the right
     // data; the empty-string display is a separate issue). My new
@@ -110,7 +110,8 @@ int aura_issue_617_run() {
                           len && aura::compiler::types::is_int(*len)
                               ? aura::compiler::types::as_int(*len)
                               : -1));
-        const auto cat_eda = hash_int(cs, "(query:primitives-meta-catalog)", "by-category-eda");
+        const auto cat_eda =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "by-category-eda");
         CHECK(aura::compiler::types::as_int(*len) == cat_eda,
               std::format("eda category length matches catalog count ({} == {})",
                           aura::compiler::types::as_int(*len), cat_eda));
@@ -154,7 +155,7 @@ int aura_issue_617_run() {
               "(query:schema-of-primitive) on unknown name returns #f");
     }
 
-    // AC5: (query:primitives-meta-catalog) returns a 7-field hash;
+    // AC5: (engine:metrics \"query:primitives-meta-catalog\") returns a 7-field hash;
     // schema-documented > 0; by-category-eda > 0 (from #499/#616);
     // introspection-hits increments on every call (we just made
     // several calls in AC1-AC4).
@@ -164,21 +165,26 @@ int aura_issue_617_run() {
     // by-category-verification, by-category-general,
     // introspection-hits. Total == eda + sva + verification + general.
     {
-        std::println("\n--- AC5: (query:primitives-meta-catalog) ---");
-        auto h = cs.eval("(query:primitives-meta-catalog)");
+        std::println("\n--- AC5: (engine:metrics \"query:primitives-meta-catalog\") ---");
+        auto h = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
         CHECK(h && aura::compiler::types::is_hash(*h),
-              "(query:primitives-meta-catalog) returns a hash");
-        const auto total = hash_int(cs, "(query:primitives-meta-catalog)", "total-registered");
+              "(engine:metrics \"query:primitives-meta-catalog\") returns a hash");
+        const auto total =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "total-registered");
         const auto schema_doc =
-            hash_int(cs, "(query:primitives-meta-catalog)", "schema-documented");
-        const auto doc_only = hash_int(cs, "(query:primitives-meta-catalog)", "doc-only");
-        const auto cat_eda = hash_int(cs, "(query:primitives-meta-catalog)", "by-category-eda");
-        const auto cat_sva = hash_int(cs, "(query:primitives-meta-catalog)", "by-category-sva");
-        const auto cat_verif =
-            hash_int(cs, "(query:primitives-meta-catalog)", "by-category-verification");
-        const auto cat_gen = hash_int(cs, "(query:primitives-meta-catalog)", "by-category-general");
-        const auto introspect_hits =
-            hash_int(cs, "(query:primitives-meta-catalog)", "introspection-hits");
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "schema-documented");
+        const auto doc_only =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "doc-only");
+        const auto cat_eda =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "by-category-eda");
+        const auto cat_sva =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "by-category-sva");
+        const auto cat_verif = hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")",
+                                        "by-category-verification");
+        const auto cat_gen = hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")",
+                                      "by-category-general");
+        const auto introspect_hits = hash_int(
+            cs, "(engine:metrics \"query:primitives-meta-catalog\")", "introspection-hits");
         CHECK(total > 0, std::format("total-registered > 0 (got {})", total));
         CHECK(schema_doc > 0, std::format("schema-documented > 0 (got {})", schema_doc));
         CHECK(cat_eda > 0, std::format("by-category-eda > 0 (got {})", cat_eda));
@@ -196,7 +202,7 @@ int aura_issue_617_run() {
     // the introspection-hits counter increments correctly under
     // concurrency (atomicity regression coverage).
     //
-    // Note: each call to (query:primitives-meta-catalog) bumps the
+    // Note: each call to (engine:metrics \"query:primitives-meta-catalog\") bumps the
     // counter itself. So `before` includes 1 call (this one),
     // 8 worker calls, and `after` includes 1 more call = +10 total.
     {
@@ -204,11 +210,12 @@ int aura_issue_617_run() {
         std::mutex eval_mtx;
         std::atomic<int> ok_count{0};
         constexpr int k_iters = 4;
-        const auto before = hash_int(cs, "(query:primitives-meta-catalog)", "introspection-hits");
+        const auto before = hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")",
+                                     "introspection-hits");
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:primitives-meta-catalog)");
+                auto r = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
                 if (r && aura::compiler::types::is_hash(*r))
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -217,7 +224,8 @@ int aura_issue_617_run() {
         std::thread t2(worker);
         t1.join();
         t2.join();
-        const auto after = hash_int(cs, "(query:primitives-meta-catalog)", "introspection-hits");
+        const auto after = hash_int(cs, "(engine:metrics \"query:primitives-meta-catalog\")",
+                                    "introspection-hits");
         CHECK(ok_count.load() == k_iters * 2,
               std::format("concurrent: {} / {} calls returned hash", ok_count.load(), k_iters * 2));
         CHECK(after == before + k_iters * 2 + 1,

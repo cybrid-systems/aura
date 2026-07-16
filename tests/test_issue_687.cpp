@@ -120,7 +120,7 @@ static void run_ac6_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: regression — single-int primitives still reachable ---");
     auto stats = cs.eval("(engine:metrics \"compile:dead-coercion-stats\")");
     auto elapsed = cs.eval("(stats:get \"compile:dead-coercion-elapsed\")");
-    auto kept = cs.eval("(compile:dead-coercion-kept-for-debug)");
+    auto kept = cs.eval("(stats:get \"compile:dead-coercion-kept-for-debug\")");
     CHECK(stats && aura::compiler::types::is_int(*stats),
           "compile:dead-coercion-stats (#433) regression [int]");
     CHECK(elapsed && aura::compiler::types::is_int(*elapsed),

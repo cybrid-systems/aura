@@ -107,12 +107,16 @@ bool test_flat_ast_delegates_to_pure_rollback() {
         static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId),
         static_cast<std::uint64_t>(old_sym), static_cast<std::uint64_t>(sym_b), true);
     flat.sym_id(id) = sym_b;
+    // #1441: rollback bumps gen then restamps live nodes — raw NodeId
+    // stays valid; StableNodeRef captured pre-rollback goes stale.
+    auto ref_before = flat.make_ref(id);
     auto result = flat.try_rollback_record(flat.all_mutations().back());
     CHECK(result.has_value(), "try_rollback_record succeeds");
     CHECK(flat.sym_id(id) == old_sym, "sym_id restored via expected rollback");
     CHECK(flat.all_mutations().back().status == aura::ast::MutationStatus::RolledBack,
           "record marked rolled back");
-    CHECK(!flat.is_valid(id), "NodeId stale after rollback generation bump");
+    CHECK(flat.is_valid(id), "NodeId restamped after rollback generation bump");
+    CHECK(!flat.is_valid(ref_before), "StableNodeRef stale after rollback generation bump");
     CHECK(mid >= 1, "mutation id assigned");
     return true;
 }

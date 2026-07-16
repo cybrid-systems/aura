@@ -414,4 +414,16 @@ concept ShapeDispatchable = requires(S s, Value v, Id id) {
     { s.is_specialized(id) } -> std::convertible_to<bool>;
 };
 
+// ── ChildColumnar (Issue #1520) ────────────────────────────────
+//
+// A children-list view that is SoAColumnar-compatible AND range-
+// for iterable without pointer-chasing into hash maps. SafePCVSpan
+// and flat NodeId spans both satisfy this; preferred for
+// query:pattern / walk_children / mark_dirty_upward hot paths.
+export template <typename C>
+concept ChildColumnar = SoAColumnar<C> && requires(const C& c) {
+    { c.begin() };
+    { c.end() };
+};
+
 } // namespace aura::core

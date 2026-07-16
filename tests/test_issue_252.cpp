@@ -174,8 +174,8 @@ bool test_bridge_calls_stay_zero() {
 bool test_closure_stats_primitive() {
     std::println("\n--- AC5: closure:stats returns a hash with the 5 counters ---");
     aura::compiler::CompilerService cs;
-    auto r1 =
-        cs.eval(std::string("(set-code \"") + "(define h (stats:get " closure : stats "))" + "\")");
+    auto r1 = cs.eval(std::string("(set-code \"") + "(define h (stats:get \\\"closure:stats\\\"))" +
+                      "\")");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;

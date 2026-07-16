@@ -58,8 +58,38 @@ public:
     // Unlike reset(), preserves profiles and bumps version per fn.
     void invalidate_all() noexcept;
 
+    // Issue #1521: Arena compact / defrag coordination.
+    // Soft path for multi-round AI mutation under GC pressure:
+    //   - Bumps version on every tracked profile (JIT guards notice)
+    //   - Fires deopt hook with kShapeDirtyScopeArenaCompact
+    //   - Preserves is_stable + history (value-tag shapes are address-
+    //     independent; full invalidate_all would thrash deopt storms)
+    //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
+    // Returns number of profiles touched.
+    std::uint32_t on_arena_compact() noexcept;
+
+    // Issue #1521: MutationBoundary / fiber-steal exit check.
+    // After compact during an active boundary, re-assert stability ratio
+    // and optionally soft-clear deopt_storm when only compact pressure
+    // was observed (no mutation-induced churn). Returns shape_stable_ratio.
+    double on_boundary_or_fiber_sync(bool clear_compact_only_storm = true) noexcept;
+
     // ── Metrics ────────────────────────────────────────────────
     ShapeFnMetrics metrics(FnKey fn) const;
+
+    // Issue #1521: per-instance compact coordination counters.
+    [[nodiscard]] std::uint64_t arena_compact_calls() const noexcept {
+        return arena_compact_calls_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t arena_compact_stable_preserved() const noexcept {
+        return arena_compact_stable_preserved_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t arena_compact_deopt_hooks() const noexcept {
+        return arena_compact_deopt_hooks_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t boundary_fiber_sync_calls() const noexcept {
+        return boundary_fiber_sync_calls_.load(std::memory_order_relaxed);
+    }
 
     // ── Reset all state ───────────────────────────────────────
     void reset();
@@ -249,6 +279,14 @@ private:
     std::atomic<std::uint64_t> history_hit_count_{0};
     std::atomic<std::uint64_t> history_miss_count_{0};
     std::atomic<bool> deopt_storm_active_{false};
+    // Issue #1521: arena compact soft-path counters (per profiler).
+    std::atomic<std::uint64_t> arena_compact_calls_{0};
+    std::atomic<std::uint64_t> arena_compact_stable_preserved_{0};
+    std::atomic<std::uint64_t> arena_compact_deopt_hooks_{0};
+    std::atomic<std::uint64_t> boundary_fiber_sync_calls_{0};
+    // True if last deopt-storm activation was driven only by compact
+    // (should never happen — compact skips the ring; kept for API symmetry).
+    std::atomic<bool> last_storm_from_compact_{false};
     // Issue #1468: configurable knobs (now driven by Preset).
     std::uint32_t min_samples_for_stable_ = 100;
     std::uint32_t deopt_storm_window_ = 256;
@@ -263,6 +301,8 @@ using ShapeDeoptHook = void (*)(FnKey fn, std::uint64_t version, std::uint32_t d
 
 inline constexpr std::uint32_t kShapeDirtyScopeStabilityLoss = 1;
 inline constexpr std::uint32_t kShapeDirtyScopeInvalidate = 2;
+// Issue #1521: Arena compact version bump / selective deopt (not mutation churn).
+inline constexpr std::uint32_t kShapeDirtyScopeArenaCompact = 3;
 
 void set_shape_deopt_hook(ShapeDeoptHook hook) noexcept;
 [[nodiscard]] ShapeDeoptHook shape_deopt_hook() noexcept;

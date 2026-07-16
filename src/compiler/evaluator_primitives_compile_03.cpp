@@ -153,40 +153,40 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
     // an EDSL agent can measure "did the previous mutation
     // actually re-lower anything?" by reading this primitive
     // before and after a mutation cycle.
-    ObservabilityPrims::register_stats_impl(
-        "compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
-            if (a.empty() || !is_string(a[0]))
-                return make_int(0);
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ev.string_heap_.size())
-                return make_int(0);
-            if (!ev.get_dirty_block_count_fn_)
-                return make_int(0);
-            return make_int(static_cast<std::int64_t>(
-                ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
-        });
+    // Multi-arg query API (not a zero-arg stats hash) — must
+    // stay on public add(); stats:get cannot pass func/name args.
+    add("compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_int(0);
+        if (!ev.get_dirty_block_count_fn_)
+            return make_int(0);
+        return make_int(
+            static_cast<std::int64_t>(ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
+    });
 
     // (compile:func-block-dirty-count name func-idx) —
     // Issue #196: dirty block count for a specific function
     // in the named define's IR cache entry. Returns 0 if
     // no hook, the entry doesn't exist, or func-idx is
     // out of range.
-    ObservabilityPrims::register_stats_impl(
-        "compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
-            if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
-                return make_int(0);
-            }
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ev.string_heap_.size())
-                return make_int(0);
-            auto fidx = as_int(a[1]);
-            if (fidx < 0)
-                return make_int(0);
-            if (!ev.get_func_dirty_block_count_fn_)
-                return make_int(0);
-            return make_int(static_cast<std::int64_t>(ev.get_func_dirty_block_count_fn_(
-                ev.string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
-        });
+    add("compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
+            return make_int(0);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_int(0);
+        auto fidx = as_int(a[1]);
+        if (fidx < 0)
+            return make_int(0);
+        if (!ev.get_func_dirty_block_count_fn_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.get_func_dirty_block_count_fn_(
+            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(fidx))));
+    });
 }
 
 // Issue #909 compile part 26 (orig 2000-2072)

@@ -42,10 +42,10 @@
 (while (lambda () (< n 2000))
   (lambda ()
     (set! n (+ n 1))
-    (gc-arena-info)))
+    (stats:get "gc-arena-info")))
 (check= 2000 n)
-(check= (+ 1 (gc-module-count))  ; no modules were gc'd
-       (hash-ref (vector-ref (gc-arena-info) 0) "total-arenas"))
+(check= (+ 1 (stats:get "gc-module-count"))  ; no modules were gc'd
+       (hash-ref (vector-ref (stats:get "gc-arena-info") 0) "total-arenas"))
 
 ; ── 3. set-memory-policy returns the previous policy ──
 ;; Set a custom policy, then call set-memory-policy again with another
@@ -84,18 +84,18 @@
                           "cooldown-evals" 1000))
 ;; Force a sample by doing eval_flat (which increments sample_counter_).
 ;; After 10 evals the sampling hook runs.
-(define pre-count (gc-module-count))
+(define pre-count (stats:get "gc-module-count"))
 (define i 0)
 (while (lambda () (< i 50))
   (lambda ()
     (set! i (+ i 1))
-    (gc-arena-info)))             ; each call increments sample_counter_
+    (stats:get "gc-arena-info")))             ; each call increments sample_counter_
 ;; After ~5 samples (50 evals / 10 sample-every = 5), auto-gc should
 ;; have fired at least once (modulo cooldown).
 ;; We can't directly observe stderr from here, but the test program
 ;; exits 0 means we didn't crash. The behavioral assertion is:
 ;; the policy is still set, and the arena list shape is reasonable.
-(define post-count (gc-module-count))
+(define post-count (stats:get "gc-module-count"))
 (check= #t (>= pre-count post-count))  ; count can't increase
 
 ; ── 6. Cooldown: another sample inside cooldown window must NOT
@@ -106,7 +106,7 @@
 (while (lambda () (< j 50))
   (lambda ()
     (set! j (+ j 1))
-    (gc-arena-info)))
+    (stats:get "gc-arena-info")))
 (define p2 (get-memory-policy))
 (check= 0 (hash-ref p2 "critical-pct"))
 (check= #t (hash-ref p2 "auto-gc"))

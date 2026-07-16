@@ -121,8 +121,7 @@ bool test_occurrence_typing_stats_primitive() {
     std::println(
         "\n--- AC4: (engine:metrics \"compile:occurrence-typing-stats\") returns 4-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define ots (engine:metrics \"compile:occurrence-typing-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define ots (engine:metrics \"compile:occurrence-typing-stats\"))");
     for (const char* key :
          {"applied-total", "skipped-total", "reanalyzed-total", "applied-ratio-bp"}) {
         std::string check = std::string("(hash-ref ots \"") + key + "\")";

@@ -16,7 +16,7 @@
 //   - (engine:metrics \"query:arena-auto-compact-defrag-stats\") (#569) — defrag
 //     breakdown primitive
 //   - (engine:metrics \"query:arena-compaction-stats\") — base compaction summary
-//   - (query:arena-fragmentation-snapshot) — snapshot primitive
+//   - (engine:metrics \"query:arena-fragmentation-snapshot\") — snapshot primitive
 //
 // What the issue body AC4 specifies by **exact name + fields** —
 // `query:arena-auto-compaction-stats` (note: `-compaction` with

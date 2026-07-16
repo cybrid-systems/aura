@@ -221,8 +221,7 @@ bool test_per_symbol_reinfer_stats_has_new_keys() {
     std::println("\n--- AC6: (engine:metrics \"compile:per-symbol-reinfer-stats\") has 4 new "
                  "per-DefUseIndex keys ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))");
     for (const char* key :
          {"per-defuse-index-used-total", "per-defuse-index-visited-total",
           "per-defuse-index-walk-fallback-total", "per-defuse-index-visited-avg-bp"}) {

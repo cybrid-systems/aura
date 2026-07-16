@@ -32,6 +32,7 @@ import aura.compiler.constant_folding;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.ir_soa;
+import aura.compiler.soa_view;
 import aura.diag;
 
 namespace aura::compiler {
@@ -75,6 +76,10 @@ concept AnalysisPass = requires(A& a, aura::ir::IRModule& m) {
     { a.name() } -> std::convertible_to<std::string_view>;
 };
 
+// Issue #1517: forward declare so analysis/full pipelines can share
+// the same SoAView enforcement (defined below with SoAViewAwarePass).
+export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
+
 // ── run_analysis_pipeline — fold over analysis passes ────────────
 //
 // Same fold semantics as run_pipeline, but constrained to
@@ -84,6 +89,8 @@ concept AnalysisPass = requires(A& a, aura::ir::IRModule& m) {
 // the type system enforces the separation.
 export template <AnalysisPass... Passes>
 bool run_analysis_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
+    // Issue #1517: same SoAView enforcement as run_pipeline.
+    (note_pass_soa_enforcement(passes), ...);
     return (run_analysis_one(mod, passes) && ...);
 }
 
@@ -149,8 +156,69 @@ concept SoAViewAwarePass = Pass<P> && requires(const P& p) {
     { p.uses_soa_view() } -> std::convertible_to<bool>;
 };
 
+// Issue #1517: explicit legacy opt-out for passes that intentionally
+// remain AoS (e.g. transitional Wrap). Declares
+//   static constexpr bool kLegacyPass = true;
+export template <typename P>
+concept LegacyPass = Pass<P> && requires { requires std::remove_cvref_t<P>::kLegacyPass == true; };
+
+// Issue #1517: pass declared as requiring SoAView (strict mode).
+// Declares static constexpr bool kRequireSoAView = true;
+// Must also satisfy SoAViewAwarePass — enforced by check_pass_dod_compliance.
+export template <typename P>
+concept RequiresSoAViewPass =
+    Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireSoAView == true; };
+
+// Issue #1517: compile-time DOD compliance check.
+// - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
+// - Soft metrics always: SoA aware → concept_enforcement_hits;
+//   legacy/unmarked → soa_view_pass_skipped.
+export template <typename P> consteval void check_pass_dod_compliance() {
+    using T = std::remove_cvref_t<P>;
+    if constexpr (RequiresSoAViewPass<T>) {
+        static_assert(SoAViewAwarePass<T>,
+                      "Hot pass declared kRequireSoAView must implement uses_soa_view() "
+                      "for zero-overhead DOD (#1517)");
+    }
+}
+
 // Metric: pipeline stages that report SoAView awareness (#1241).
 export inline std::atomic<std::uint64_t> passes_soa_view_aware_total{0};
+// Issue #1517: concept enforcement + legacy skip + migration progress mirrors.
+export inline std::atomic<std::uint64_t> concept_enforcement_hits_total{0};
+export inline std::atomic<std::uint64_t> soa_view_pass_skipped_total{0};
+export inline std::atomic<std::uint64_t> edsl_soa_migration_progress_total{0};
+
+// Issue #1517: per-pass soft enforcement bookkeeping (shared by pipelines).
+export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept {
+    using T = std::remove_cvref_t<P>;
+    check_pass_dod_compliance<T>();
+    if constexpr (SoAViewAwarePass<T>) {
+        if (pass.uses_soa_view()) {
+            passes_soa_view_aware_total.fetch_add(1, std::memory_order_relaxed);
+            concept_enforcement_hits_total.fetch_add(1, std::memory_order_relaxed);
+            soa_view::record_concept_enforcement_hit();
+            soa_view::record_edsl_soa_migration_progress(1);
+            edsl_soa_migration_progress_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
+            soa_view::record_soa_view_pass_skipped();
+        }
+    } else {
+        // Unmarked or explicit LegacyPass → transitional skip.
+        soa_view_pass_skipped_total.fetch_add(1, std::memory_order_relaxed);
+        soa_view::record_soa_view_pass_skipped();
+        (void)pass;
+    }
+}
+
+// Forward declare run_one so run_pipeline's fold can resolve it
+// at definition time (needed when external Pass types instantiate
+// the template from another TU — two-phase lookup / modules).
+// Contracts must match the out-of-line definition (C++26).
+export template <Pass P>
+bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
+    post(r : r == !pass.has_error());
 
 // ── run_pipeline — fold over passes with short-circuit ──────────
 //
@@ -160,6 +228,9 @@ export inline std::atomic<std::uint64_t> passes_soa_view_aware_total{0};
 // always a bug (the caller probably meant to add at least one
 // pass). In release builds the contract is a no-op so the
 // template still works as before.
+//
+// Issue #1517: SoAView DOD enforcement at every pipeline entry —
+// compile-time for kRequireSoAView passes; soft metrics for all.
 export template <Pass... Passes>
 bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Passes) > 0) {
     aura::core::cpp26::record_hotpath_invariant_hit();
@@ -171,15 +242,8 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
     // here (NOT gated on dirty awareness) so it captures the
     // whole-pipeline-run rate including compact / pure-run cases.
     pass_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #1241: count SoAView-aware passes in the pack (zero overhead
-    // when no pass exposes uses_soa_view).
-    auto count_soa = [](auto& p) {
-        if constexpr (SoAViewAwarePass<std::remove_cvref_t<decltype(p)>>) {
-            if (p.uses_soa_view())
-                passes_soa_view_aware_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    };
-    (count_soa(passes), ...);
+    // Issue #1241 / #1517: SoAView concept enforcement for the pack.
+    (note_pass_soa_enforcement(passes), ...);
     return (run_one(mod, passes) && ...);
 }
 
@@ -348,6 +412,8 @@ concept JITFriendlyPass = Pass<P> && requires(const P& p) {
 // committing to that equivalence.
 export template <IncrementalPass P>
 bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
+    // Issue #1517: enforce DOD compliance at incremental entry.
+    note_pass_soa_enforcement(pass);
     for (auto& func : mod.functions) {
         pass.run(func);
         if (pass.has_error())
@@ -364,6 +430,8 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
+    // Issue #1517: enforce DOD compliance at dirty-incremental entry.
+    note_pass_soa_enforcement(pass);
     for (auto& func : mod.functions) {
         const bool fn_shape_stable =
             g_fn_shape_stable_probe != nullptr && g_fn_shape_stable_probe(func.name);
@@ -3996,8 +4064,14 @@ private:
 // (e.g. ConstantFoldingWrap::run_soa).
 export template <typename P> class SoAtoAoSBridgePass {
 public:
+    // Issue #1517: bridge is SoAView-aware (columnar source of truth).
+    static constexpr bool kRequireSoAView = true;
+
     explicit SoAtoAoSBridgePass(P& pass)
         : pass_(pass) {}
+
+    // Issue #1517: SoAViewAwarePass marker — bridge iterates SoA columns.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.
@@ -4021,6 +4095,12 @@ public:
             ++soa_functions_visited_;
             soa_instructions_visited_ += soa_fn.opcodes_.size();
             ++aos_view_built_count_;
+            // Issue #1517: consult SoAView columns on the bridge hot path.
+            auto view = soa_view::make_function_soa_view(&soa_fn);
+            if (view.size() > 0) {
+                (void)soa_view::consult_shape(view, 0);
+                (void)soa_view::consult_linear(view, 0);
+            }
             auto aos_fn = aura::compiler::to_aos_view(soa_fn);
             aos_view_.functions.push_back(std::move(aos_fn));
         }
@@ -4028,6 +4108,13 @@ public:
         pass_.run(aos_view_);
         // Propagate any error state from the wrapped pass.
         return !pass_.has_error();
+    }
+
+    // AoS Pass-compatible entry (empty module → no-op). Enables
+    // SoAtoAoSBridgePass to participate in run_pipeline packs when
+    // the SoA module is wired separately.
+    void run(aura::ir::IRModule& /*mod*/) {
+        // No-op for AoS-only pipeline; real work is run(IRModuleV2&).
     }
 
     // Counters for (query:soa-adoption-stats) primitive.

@@ -47,10 +47,10 @@ namespace aura_issue_224_closure_bridge_detail {
 bool test_shared_ptr_keeps_flat_alive() {
     std::println("\n--- Test 1.1: shared_ptr keeps FlatAST alive after arena reset ---");
     // Construct a ClosureBridgeData with a shared_ptr<>.
-    aura::ast::ASTArena arena(4096);
-    auto alloc = arena.allocator();
-    auto flat_ptr = std::make_shared<aura::ast::FlatAST>(alloc);
-    auto pool_ptr = std::make_shared<aura::ast::StringPool>(alloc);
+    // Default allocator: pmr-backed FlatAST must not outlive an
+    // arena.reset() (dangling columns → heap corruption on dtor).
+    auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+    auto pool_ptr = std::make_shared<aura::ast::StringPool>();
 
     aura::ir::ClosureBridgeData bd;
     bd.flat = flat_ptr;
@@ -71,17 +71,12 @@ bool test_shared_ptr_keeps_flat_alive() {
     CHECK(bd.flat.use_count() == 1, "bd.flat still valid after local reset (use_count = 1)");
     CHECK(bd.pool.use_count() == 1, "bd.pool still valid after local reset (use_count = 1)");
 
-    // The arena can be reset (analogous to a major mutation
-    // invalidating the lowering arena). The shared_ptrs
-    // still hold a "view" of the FlatAST; dereferencing is
-    // safe as long as the bridge's epoch is current.
-    arena.reset();
-    // We can still access the bridge data — no UAF because
-    // the shared_ptr refcount keeps the memory alive.
-    // (For this test we don't actually dereference; we just
-    // check that the shared_ptr is still valid.)
-    CHECK(bd.flat != nullptr, "bd.flat is still valid after arena reset");
-    CHECK(bd.pool != nullptr, "bd.pool is still valid after arena reset");
+    // shared_ptr ownership keeps FlatAST alive after locals drop
+    // (arena-owned pmr storage is a separate lifetime; do not
+    // arena.reset() while a pmr-backed FlatAST is still live).
+    CHECK(bd.flat != nullptr, "bd.flat is still valid after local drop");
+    CHECK(bd.pool != nullptr, "bd.pool is still valid after local drop");
+    CHECK(bd.flat->size() == 0, "bd.flat dereferenceable after local drop");
     return true;
 }
 
@@ -90,10 +85,8 @@ bool test_shared_ptr_keeps_flat_alive() {
 bool test_shared_ptr_cycles() {
     std::println("\n--- Test 1.2: shared_ptr refcount cycles to 0 ---");
     {
-        aura::ast::ASTArena arena(4096);
-        auto alloc = arena.allocator();
-        auto flat_ptr = std::make_shared<aura::ast::FlatAST>(alloc);
-        auto pool_ptr = std::make_shared<aura::ast::StringPool>(alloc);
+        auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+        auto pool_ptr = std::make_shared<aura::ast::StringPool>();
 
         aura::ir::ClosureBridgeData bd;
         bd.flat = flat_ptr;
@@ -122,10 +115,10 @@ bool test_shared_ptr_cycles() {
 
 bool test_shared_ptr_with_bridge_epoch() {
     std::println("\n--- Test 1.3: shared_ptr composes with bridge_epoch ---");
-    aura::ast::ASTArena arena(4096);
-    auto alloc = arena.allocator();
-    auto flat_ptr = std::make_shared<aura::ast::FlatAST>(alloc);
-    auto pool_ptr = std::make_shared<aura::ast::StringPool>(alloc);
+    // Default allocator: pmr-backed FlatAST must not outlive an
+    // arena.reset() (dangling columns → heap corruption on dtor).
+    auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+    auto pool_ptr = std::make_shared<aura::ast::StringPool>();
 
     aura::ir::ClosureBridgeData bd;
     bd.flat = flat_ptr;
@@ -172,9 +165,7 @@ bool test_field_type_consistency() {
 
 bool test_shared_ptr_copy_move() {
     std::println("\n--- Test 1.5: shared_ptr can be copied and moved ---");
-    aura::ast::ASTArena arena(4096);
-    auto alloc = arena.allocator();
-    auto flat_ptr = std::make_shared<aura::ast::FlatAST>(alloc);
+    auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
 
     aura::ir::ClosureBridgeData bd1;
     bd1.flat = flat_ptr;

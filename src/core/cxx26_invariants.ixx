@@ -125,6 +125,11 @@ namespace concept_self_check {
     // satisfies the requirements.
     static_assert(check_soa_columnar<std::vector<int>>(),
                   "Issue #431: std::vector<int> must satisfy SoAColumnar");
+    // Issue #1519: dirty bitmask column type used by FlatAST / IR SoA.
+    static_assert(check_soa_columnar<std::vector<std::uint8_t>>(),
+                  "Issue #1519: dirty column (vector<uint8_t>) must be SoAColumnar");
+    static_assert(check_soa_columnar<std::vector<std::uint32_t>>(),
+                  "Issue #1519: shape_ids_ column (vector<uint32_t>) must be SoAColumnar");
 } // namespace concept_self_check
 
 // ── Issue #742: IR SoA + Pass pipeline consteval invariants ───
@@ -228,9 +233,57 @@ static_assert(kFixnumTagLow2 != kRefTagLow2 && kFixnumTagLow2 != kStringV2TagLow
                   kRefTagLow2 != kSpecialTagLow2 && kStringV2TagLow2 != kSpecialTagLow2,
               "Issue #1466: 4 low-2-bit tag classes must be pairwise distinct");
 
+// ── Issue #1519: SIMD / cache-line / dirty / freelist / shape range ──
+//
+// These deepen the consteval surface for Arena allocate contracts,
+// dirty propagation bitmasks, and ShapeProfiler inline IDs so AI
+// multi-round mutation cannot silently drift layout constants.
+
+// Cache line + SIMD alignment (hot SoA column packing).
+inline constexpr std::size_t kCacheLineBytes = 64;
+inline constexpr std::size_t kSimdAlignBytes = 16;
+static_assert(kCacheLineBytes == 64, "Issue #1519: cache line must stay 64B for SoA packing");
+static_assert(kSimdAlignBytes == 16, "Issue #1519: SIMD align must stay 16B");
+static_assert((kCacheLineBytes % kSimdAlignBytes) == 0,
+              "Issue #1519: cache line must be a multiple of SIMD align");
+static_assert((kExpectedTierSizes[0] % kSimdAlignBytes) == 0,
+              "Issue #1519: tier 0 size must be SIMD-aligned");
+static_assert((kExpectedTierSizes[2] % kSimdAlignBytes) == 0,
+              "Issue #1519: tier 2 size must be SIMD-aligned");
+
+// Freelist relocate protocol: min free block must hold a next-pointer.
+inline constexpr std::size_t kFreelistNextPtrBytes = sizeof(void*);
+static_assert(kExpectedTierSizes[0] >= kFreelistNextPtrBytes,
+              "Issue #1519: SmallObjectPool freelist needs tier0 >= sizeof(void*)");
+static_assert(kExpectedTierSizes[0] >= 16,
+              "Issue #1519: min tier must remain 16 for freelist + payload");
+
+// Dirty bitmask constants (structural low 8 + higher feature bits).
+inline constexpr std::uint8_t kDirtyGeneralBit = 0x01;
+inline constexpr std::uint8_t kDirtyOccurrenceBit = 0x80; // high bit of structural byte
+static_assert((kDirtyGeneralBit & kDirtyReasonStructuralMask) != 0,
+              "Issue #1519: general dirty bit must live in structural mask");
+static_assert((kDirtyOccurrenceBit & kDirtyReasonStructuralMask) != 0,
+              "Issue #1519: occurrence dirty bit must live in structural mask");
+static_assert(kDirtyGeneralBit != kDirtyOccurrenceBit,
+              "Issue #1519: general vs occurrence dirty bits must be distinct");
+
+// ShapeID practical upper bound for inline shapes (profiler table).
+inline constexpr std::uint64_t kShapeInlineMaxId = 64;
+static_assert(kShapeInlineIntId < kShapeInlineMaxId,
+              "Issue #1519: inline Int ShapeID must be below max table");
+static_assert(kShapeInlinePairId < kShapeInlineMaxId,
+              "Issue #1519: inline Pair ShapeID must be below max table");
+static_assert(kShapeInlineMaxId <= 255, "Issue #1519: ShapeID table must fit in uint8 fast path");
+
+// Per-tier size total must equal SmallObjectPool layout (3MB / 3).
+inline constexpr std::size_t kSmallPoolTotalBytes = 3 * 1024 * 1024;
+inline constexpr std::size_t kPerTierExpected = kSmallPoolTotalBytes / kExpectedTierCount;
+static_assert(kPerTierExpected == 1024 * 1024,
+              "Issue #1519: per-tier region must stay 1MB (3MB pool / 3 tiers)");
+
 // Exported count for (query:cpp26-contracts-stats) consteval_checks field.
-// Bumped #1321 (+4), #1466 Phase 1 (+17: EvalValueTag enum x9 + ShapeID x4 +
-// IR SoA breakdown x3 + tagged bit layout x1). Total consteval surface.
-inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 53;
+// Bumped #1321 (+4), #1466 Phase 1 (+17), #1519 (+12 SIMD/cache/dirty/freelist/shape).
+inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 65;
 
 } // namespace aura::core

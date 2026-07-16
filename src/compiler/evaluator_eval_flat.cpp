@@ -148,6 +148,10 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
             m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             record_epoch_stale_steal_caught(m);
+            // Issue #1509: concurrent steal/mutate race surface.
+            m->closure_race_caught_count_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1525: multi-fiber mutate↔eval race counter.
+            m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     if (cl.env_id != NULL_ENV_ID) {
@@ -178,9 +182,69 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
             }
         }
     }
-    if (stale)
+    if (stale) {
         ev.bump_compiler_root_stale_closure_detected();
+        // Issue #1509: every apply_closure that observes a stale closure.
+        if (m)
+            m->closure_stale_apply_count_total.fetch_add(1, std::memory_order_relaxed);
+    }
     return stale;
+}
+
+// Issue #1511: dual-check gate for every closure_bridge_ dispatch.
+// Covers (1) local-map stale recovery and (2) local-miss IR bridge.
+// When provenance is available (local Closure copy), enforces the same
+// bridge_epoch + EnvFrame version_ contract as the tree-walker path.
+// On stale: re-stamp EnvFrame version_ (so materialize won't walk a
+// poisoned frame), bump metrics, then still invoke the bridge as the
+// recovery path (IR re-dispatch / re-parse) — never eval dangling
+// flat*/pool* via the stale local Closure.
+static std::optional<EvalValue>
+invoke_closure_bridge_checked(Evaluator& ev, Evaluator::ClosureBridgeFn& bridge, ClosureId cid,
+                              std::span<const EvalValue> args, CompilerMetrics* metrics,
+                              const Closure* provenance) {
+    if (!bridge)
+        return std::nullopt;
+    if (metrics)
+        metrics->closure_bridge_calls.fetch_add(1, std::memory_order_relaxed);
+
+    bool stale = false;
+    if (provenance) {
+        // Dual check — same contract as closure_needs_safe_fallback, but
+        // counters are bridge-entry specific (#1511).
+        if (Evaluator::is_bridge_stale(provenance->bridge_epoch, ev.current_bridge_epoch()))
+            stale = true;
+        if (provenance->env_id != NULL_ENV_ID) {
+            if (ev.is_env_frame_invalid(provenance->env_id) ||
+                ev.is_env_frame_stale(provenance->env_id))
+                stale = true;
+        }
+    }
+
+    if (stale) {
+        if (metrics) {
+            metrics->closure_bridge_fallback_stale_total.fetch_add(1, std::memory_order_relaxed);
+            metrics->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+        }
+        // EnvFrame re-stamp under the dual-check contract so a subsequent
+        // materialize on a recovered path does not walk a pre-mutation frame.
+        if (provenance && provenance->env_id != NULL_ENV_ID &&
+            ev.is_valid_env_id(provenance->env_id)) {
+            ev.refresh_stale_frame_in_walk(provenance->env_id, "closure_bridge");
+        }
+    }
+
+    auto result = bridge(cid, args);
+
+    if (stale && metrics) {
+        // Safe recovery completed (bridge returned a value or nullopt —
+        // either way we did not eval the stale local Closure body).
+        // Only the #1511 bridge-specific counters here — the local-map
+        // path already bumps compiler_closure_safe_fallbacks before
+        // entering this helper (avoid double-count).
+        metrics->closure_bridge_safe_fallbacks_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return result;
 }
 
 // apply_closure — looks up closures_, foreign functions, or IR bridge
@@ -297,12 +361,18 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
         if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {
-            if (metrics)
+            if (metrics) {
                 metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
-            if (closure_bridge_) {
-                if (auto bridged = closure_bridge_(cid, args))
-                    return bridged;
+                // Issue #1509: safe fallback apply (bridge re-path or refuse).
+                metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                // Issue #1525: multi-fiber safe fallback tally.
+                metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
+            if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                             metrics, &cl_copy))
+                return bridged;
             if (metrics)
                 metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
             bump_compiler_root_dangling_prevented();
@@ -360,12 +430,22 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             1, std::memory_order_relaxed);
                         metrics->closure_bridge_epoch_safety_enforced.fetch_add(
                             1, std::memory_order_relaxed);
+                        metrics->closure_stale_apply_count_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->closure_race_caught_count_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->multifiber_mutate_races_detected_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->multifiber_safe_fallback_total.fetch_add(
+                            1, std::memory_order_relaxed);
                         record_epoch_stale_steal_caught(metrics);
                     }
-                    if (closure_bridge_) {
-                        if (auto bridged = closure_bridge_(cid, args))
-                            return bridged;
-                    }
+                    // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
+                    if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid,
+                                                                     args, metrics, &cl_copy))
+                        return bridged;
                     if (metrics)
                         metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
                     return std::nullopt;
@@ -380,13 +460,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         return std::nullopt;
     }
 
-    // Try IR bridge
+    // Try IR bridge (local-map miss). Issue #1511: still go through
+    // dual-check helper (provenance=null → no local epoch to check;
+    // bridge_calls metric still bumped; IR path has its own checks).
     if (closure_bridge_) {
-        if (compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-            m->closure_bridge_calls.fetch_add(1, std::memory_order_relaxed);
-        }
-        return closure_bridge_(cid, args);
+        CompilerMetrics* metrics =
+            compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
+        return invoke_closure_bridge_checked(*this, closure_bridge_, cid, args, metrics,
+                                             /*provenance=*/nullptr);
     }
 
     return std::nullopt;

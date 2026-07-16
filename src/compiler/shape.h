@@ -74,6 +74,18 @@ inline std::atomic<std::uint64_t> history_jitter_reduction_count{0};
 inline std::atomic<std::uint64_t> shape_dirty_hook_fire_count{0};
 // Issue #686: inline_shape_of Ref-path dispatch observability.
 inline std::atomic<std::uint64_t> inline_shape_ref_dispatch_count{0};
+// Issue #1521: Arena compact ↔ ShapeProfiler synergy metrics.
+// shape_inval_on_compact_triggered: on_arena_compact() invocations.
+// deopt_from_arena_compact_total: deopt hooks fired with ArenaCompact scope.
+// shape_stability_post_compact_preserved: stable profiles kept stable across compact.
+// deopt_storm_compact_suppressed: compact events that skipped storm ring feed.
+inline std::atomic<std::uint64_t> shape_inval_on_compact_triggered{0};
+inline std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};
+inline std::atomic<std::uint64_t> shape_stability_post_compact_preserved{0};
+inline std::atomic<std::uint64_t> deopt_storm_compact_suppressed{0};
+// Fiber/boundary auto-maintenance after compact (MutationBoundary / steal).
+inline std::atomic<std::uint64_t> shape_boundary_post_compact_checks{0};
+inline std::atomic<std::uint64_t> shape_fiber_steal_sync_total{0};
 // Issue #507: consteval EvalValueTag → base ShapeID dispatch table
 // (complements value_tags.h low-2-bit table; Ref/Special refined
 // at runtime in inline_shape_of).

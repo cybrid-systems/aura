@@ -92,17 +92,12 @@ struct CompilerMetrics {
     // of the bundle. Bumped when per-function re-lower is
     // actually performed (replaces the full re-lower path).
     std::atomic<std::uint64_t> relower_per_function_called_count{0};
-    // Issue #1474: per-block re-lower observability. # of
-    // blocks actually replaced across all relower_define_function
-    // calls. With per-block selective copy, this should grow by
-    // dirty_block_count() per call (not total_blocks); an AI
-    // agent can read it via snapshot() /
-    // (query:incremental-relower-stats) to verify the per-block
-    // win is real. Pairs with ir_soa_block_dirty_hits_total +
-    // ir_soa_relower_blocks_saved_total — the derived
-    // dirty_block_ratio_bp is hits / (hits + saved) * 10000
-    // (basis points; 0..10000).
+    // Issue #1474: per-block re-lower observability.
     std::atomic<std::uint64_t> incremental_relower_blocks_total{0};
+    // Issue #1514: clean functions skipped by per-function re-lower.
+    std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
+    // Issue #1514: JIT partial_recompile requests from relower path.
+    std::atomic<std::uint64_t> jit_partial_recompile_requests_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per
     // invalidate_function entry (post-mutex-acquire, so the count
     // reflects only completed traversals). Pairs with jit_cache_evictions
@@ -193,6 +188,84 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_inval_bridge_epoch_total{0};
     std::atomic<std::uint64_t> compiler_closure_epoch_mismatch_hits{0};
     std::atomic<std::uint64_t> compiler_closure_safe_fallbacks{0};
+    // Issue #1508: JIT aura_closure_call dual check (bridge_epoch +
+    // env_frame/defuse) + interpreter-deopt fallback counters.
+    //   - jit_closure_dual_check_total: every is_jit_closure_fresh probe
+    //   - jit_closure_stale_deopt_total: stale → refuse/deopt path
+    //   - jit_closure_safe_fallbacks: safe non-UAF fallbacks after stale
+    std::atomic<std::uint64_t> jit_closure_dual_check_total{0};
+    std::atomic<std::uint64_t> jit_closure_stale_deopt_total{0};
+    std::atomic<std::uint64_t> jit_closure_safe_fallbacks{0};
+    // Issue #1522: fn_trackers_ batch_deopt notify (aliases AC names *_total).
+    // jit_closure_safe_fallbacks_total mirrors jit_closure_safe_fallbacks
+    // (kept as distinct field for Agent queries that use the AC name).
+    std::atomic<std::uint64_t> jit_closure_safe_fallbacks_total{0};
+    std::atomic<std::uint64_t> jit_fn_trackers_batch_deopt_total{0};
+    std::atomic<std::uint64_t> jit_fn_trackers_entries_marked_total{0};
+    // Issue #1523: lock-order audit (#1388 canonical:
+    // mutate → workspace → env_frames → dep_graph).
+    //   - lock_inversion_detected_total: acquire while a higher level held
+    //   - mutate_mtx_contended_total: try_lock failed on mutate_mtx_
+    std::atomic<std::uint64_t> lock_inversion_detected_total{0};
+    std::atomic<std::uint64_t> mutate_mtx_contended_total{0};
+    // Issue #1477: JIT-side dual-epoch fence (mirrors AuraJIT::Metrics).
+    // Lifetime total of capture_fn_epoch calls for dashboard pairing
+    // with compiler_closure_epoch_mismatch_hits (IR side).
+    std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
+    // Issue #1509: multi-fiber mutate→call-stale apply stress metrics.
+    //   - closure_stale_apply_count_total: apply_closure saw stale
+    //     bridge_epoch and/or EnvFrame (pre-dispatch)
+    //   - closure_safe_fallback_apply_count_total: took safe fallback
+    //     (bridge re-apply or nullopt) instead of dangling eval
+    //   - closure_race_caught_count_total: concurrent steal/mutate
+    //     race caught by epoch fence / stale-on-steal path
+    std::atomic<std::uint64_t> closure_stale_apply_count_total{0};
+    std::atomic<std::uint64_t> closure_safe_fallback_apply_count_total{0};
+    std::atomic<std::uint64_t> closure_race_caught_count_total{0};
+    // Issue #1525: multi-fiber concurrent mutate + eval old closure stress.
+    // Counterpart to #1509 (read-side) — focuses on mutate_mtx_ serialization
+    // visibility + dual-epoch races under parallel workers.
+    //   - multifiber_mutate_races_detected_total: stale/epoch race observed
+    //     while concurrent mutate/steal is active (apply or fiber-steal probe)
+    //   - multifiber_safe_fallback_total: safe fallback taken under that race
+    //     (bridge re-path / refuse / interpreter fallback — never UAF)
+    std::atomic<std::uint64_t> multifiber_mutate_races_detected_total{0};
+    std::atomic<std::uint64_t> multifiber_safe_fallback_total{0};
+    // Issue #1510 / #1526: compact_env_frames ↔ materialize_call_env +
+    // hot-swap dual-epoch cooperation.
+    //   - envframe_compact_rewrites_total: Closure::env_id (+ parent_id)
+    //     rewrites under compact_env_frames_lock_
+    //   - envframe_compact_epoch_bumps_total: defuse+bridge (+AOT table)
+    //     epoch bumps paired with each compact (atomic post-rewrite)
+    //   - envframe_compact_bridge_restamps_total: Closure / IRClosure
+    //     bridge_epoch restamped to post-compact epoch (Issue #1526)
+    //   - materialize_fallback_total: materialize_call_env returned
+    //     empty/fallback Env (NULL/OOB/INVALID/post-compact stale)
+    std::atomic<std::uint64_t> envframe_compact_rewrites_total{0};
+    std::atomic<std::uint64_t> envframe_compact_epoch_bumps_total{0};
+    std::atomic<std::uint64_t> envframe_compact_bridge_restamps_total{0};
+    std::atomic<std::uint64_t> materialize_fallback_total{0};
+    // Issue #1511: dual check on closure_bridge_ callback entry
+    // (local-miss + local-stale recovery paths).
+    //   - closure_bridge_fallback_stale_total: bridge entry saw
+    //     stale bridge_epoch and/or EnvFrame version_
+    //   - closure_bridge_safe_fallbacks_total: took safe recovery
+    //     (re-stamp / bridge re-dispatch / refuse) instead of UAF
+    std::atomic<std::uint64_t> closure_bridge_fallback_stale_total{0};
+    std::atomic<std::uint64_t> closure_bridge_safe_fallbacks_total{0};
+    // Issue #1512: JIT opcode coverage + IRInterpreter consistency.
+    // Mirrored from AuraJIT::Metrics for Agent query surfaces.
+    std::atomic<std::uint64_t> jit_opcode_covered_mask{0};
+    std::atomic<std::uint64_t> jit_opcode_unhandled_mask{0};
+    std::atomic<std::uint64_t> jit_consistency_compare_total{0};
+    std::atomic<std::uint64_t> jit_consistency_match_total{0};
+    std::atomic<std::uint64_t> jit_consistency_violations_total{0};
+    // Issue #1513: IRClosure dual-check + invalidate expire.
+    //   - ir_closure_env_version_stale_total: apply saw env_version/id stale
+    //   - ir_closure_invalidate_expired_total: live IRClosures expired on
+    //     invalidate_function (flat/pool cleared, left epoch stale)
+    std::atomic<std::uint64_t> ir_closure_env_version_stale_total{0};
+    std::atomic<std::uint64_t> ir_closure_invalidate_expired_total{0};
     // Issue #739: atomic epoch visibility under fiber steal.
     //   - epoch_stale_steal_caught: stale bridge_epoch detected
     //     after acquire fence in apply_closure / IR paths
@@ -1824,6 +1897,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_auto_compact_trigger_total{0};
     std::atomic<std::uint64_t> arena_live_move_yield_total{0};
     std::atomic<std::uint64_t> arena_guard_request_defrag_total{0};
+    // Issue #1518: live relocate + compact deopt coordination.
+    std::atomic<std::uint64_t> arena_live_relocate_total{0};
+    std::atomic<std::uint64_t> arena_compact_deopt_triggered_total{0};
+    std::atomic<std::uint64_t> arena_compact_deopt_throttled_total{0};
+    std::atomic<std::uint64_t> arena_frag_post_compact_bp{0};
+    std::atomic<std::uint64_t> arena_compact_soft_gated_boundary_total{0};
+    // Issue #1521: ShapeProfiler versioning + Arena compact synergy.
+    std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
+    std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};
+    std::atomic<std::uint64_t> shape_stability_post_compact_preserved_total{0};
+    std::atomic<std::uint64_t> deopt_storm_compact_suppressed_total{0};
     // Issue #643: DEFINE_PRIMITIVE macro/template + AI-native
     // primitives-meta introspection counters (P0 Stdlib-Impl-P1
     // foundation — implements #633 AC3+AC4).
@@ -5787,7 +5871,19 @@ struct CompilerMetrics {
 
     // ── Issues #1241–#1245: SoAView / arena / hygiene concurrent Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1241_1245_active{1};
-    std::atomic<std::uint64_t> soa_view_concept_enforced{1};      // #1241
+    std::atomic<std::uint64_t> soa_view_concept_enforced{1}; // #1241
+    // Issue #1517: SoAView pipeline enforcement + EDSL migration progress
+    // (mirrors pass_manager / soa_view atomics for Agent query surfaces).
+    std::atomic<std::uint64_t> concept_enforcement_hits_total{0};    // #1517
+    std::atomic<std::uint64_t> soa_view_pass_skipped_total{0};       // #1517
+    std::atomic<std::uint64_t> edsl_soa_migration_progress_total{0}; // #1517
+    std::atomic<std::uint64_t> soa_view_hits_total{0};               // #1517 mirror
+    std::atomic<std::uint64_t> soa_view_misses_total{0};             // #1517 mirror
+    // Issue #1520: children_ columnar + region dense lookup surface.
+    std::atomic<std::uint64_t> children_column_soa_hits_total{0}; // #1520
+    std::atomic<std::uint64_t> pcv_pin_count_total{0};            // #1520
+    std::atomic<std::uint64_t> region_dense_hits_total{0};        // #1520
+    std::atomic<std::uint64_t> map_indirection_miss_total{0};     // #1520 (region map fallback)
     std::atomic<std::uint64_t> arena_shrink_tier_hardened{1};     // #1242
     std::atomic<std::uint64_t> soa_view_eval_helpers{1};          // #1243
     std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};  // #1244
@@ -5884,7 +5980,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261
     std::atomic<std::uint64_t> dep_graph_nested_lambda_full_dirty{0}; // #1261
-    std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0};        // #1261
+    // Issue #1514 / #1505: nested-lambda dependents marked body-only
+    // (irs[1]) instead of full-entry dirty.
+    std::atomic<std::uint64_t> dep_graph_nested_lambda_targeted_dirty_total{0};
+    std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0}; // #1261
     // Issue #1376: dep_graph_ record_dependency lock observability
     std::atomic<std::uint64_t> dep_graph_record_total{0};       // every record_dependency call
     std::atomic<std::uint64_t> dep_graph_record_dedup_total{0}; // skipped as already present
@@ -5903,7 +6002,10 @@ struct CompilerMetrics {
     // (typed_mutate isn't a hot-swap) and from
     // ir_soa_cache_reset_epoch_bumps (typed_mutate doesn't
     // reset the arena; the bump is pure cache invalidation).
-    std::atomic<std::uint64_t> typed_mutate_epoch_bumps{0};      // #1407
+    std::atomic<std::uint64_t> typed_mutate_epoch_bumps{0}; // #1407
+    // Issue #1524: dual-epoch invalidations from typed_mutate /
+    // typed_mutate_atomic via atomic_bump_epochs_and_stamp_bridge.
+    std::atomic<std::uint64_t> typed_mutate_atomic_invalidations_total{0};
     std::atomic<std::uint64_t> query_and_replace_parse_abort{0}; // #1265
 
     // ── Issues #1266–#1270: inline/set-body/panic/SoA/steal Phase 1 ──
@@ -5954,6 +6056,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> tree_walker_fallback_reduction{1};      // #1284
     std::atomic<std::uint64_t> jit_exception_opcodes_covered{1};       // #1285
     std::atomic<std::uint64_t> jit_exception_opcode_lowered{0};        // #1285
+    // Issue #1516: per-function AOT + interpreter EH production surface
+    // (mirrors AuraJIT::Metrics aot_per_function_* / exception_opcode_mask
+    // + IRInterpreter TryBegin/End/Raise/IsError hits).
+    std::atomic<std::uint64_t> aot_per_function_ir_total{0};       // #1516
+    std::atomic<std::uint64_t> aot_per_function_object_total{0};   // #1516
+    std::atomic<std::uint64_t> aot_per_function_miss_total{0};     // #1516
+    std::atomic<std::uint64_t> aot_last_module_object_total{0};    // #1516
+    std::atomic<std::uint64_t> interpreter_exception_ops_total{0}; // #1516
+    std::atomic<std::uint64_t> jit_exception_opcode_mask{0};       // #1516
 
     // ── Issues #1286–#1290: invalidate/block-dirty, closure epoch, GuardShape, JIT fail-fast,
     // ownership Lambda ──

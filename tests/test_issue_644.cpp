@@ -113,8 +113,9 @@ int aura_issue_644_run() {
         auto s_358 = cs.eval("(engine:metrics \"query:aot-hot-reload-stats\")");
         CHECK(s_358.has_value(),
               "(engine:metrics \"query:aot-hot-reload-stats\") reachable (#358/#452 back-compat)");
-        auto s_643 = cs.eval("(query:primitives-meta)");
-        CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
+        auto s_643 = cs.eval("(engine:metrics \"query:primitives-meta\")");
+        CHECK(s_643.has_value(),
+              "(engine:metrics \"query:primitives-meta\") reachable (#643 back-compat)");
         auto s_642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
         CHECK(
             s_642.has_value(),

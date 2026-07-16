@@ -101,7 +101,7 @@ int main() {
     // AC3: introspection + describe Agent workflow
     {
         std::println("\n--- AC3: meta-catalog + primitive:describe ---");
-        (void)cs.eval("(query:primitives-meta-catalog)");
+        (void)cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
         (void)cs.eval("(primitive:describe \"eda:update-constraint\")");
         const auto intro_after = hash_int(cs, "introspection-hits");
         const auto describe_after = hash_int(cs, "describe-calls");
@@ -120,9 +120,9 @@ int main() {
     // AC4: related AI-native primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto metadata = cs.eval("(query:primitive-metadata)");
+        auto metadata = cs.eval("(engine:metrics \"query:primitive-metadata\")");
         auto meta_stats = cs.eval("(engine:metrics \"query:primitive-meta-stats\")");
-        auto catalog = cs.eval("(query:primitives-meta-catalog)");
+        auto catalog = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
         auto extension = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
         CHECK(metadata && aura::compiler::types::is_hash(*metadata),
               "query:primitive-metadata hash regression (#498)");

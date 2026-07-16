@@ -998,7 +998,7 @@
   },
   {
     "name": "issue_187_arena_estimate",
-    "code": "(arena:estimate)",
+    "code": "(stats:get \"arena:estimate\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
@@ -1016,7 +1016,7 @@
   },
   {
     "name": "issue_189_concurrency_version_snapshot",
-    "code": "(concurrency:version-snapshot)",
+    "code": "(stats:get \"concurrency:version-snapshot\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
@@ -1052,49 +1052,49 @@
   },
   {
     "name": "issue_195_jit_exception_depth",
-    "code": "(jit:exception-depth)",
+    "code": "(stats:get \"jit:exception-depth\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_195_jit_exception_fibers",
-    "code": "(jit:exception-fibers)",
+    "code": "(stats:get \"jit:exception-fibers\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_compile_cache_size",
-    "code": "(compile:cache-size)",
+    "code": "(stats:get \"compile:cache-size\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_compile_dirty_count",
-    "code": "(compile:dirty-count)",
+    "code": "(stats:get \"compile:dirty-count\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_compile_epoch",
-    "code": "(compile:epoch)",
+    "code": "(stats:get \"compile:epoch\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_compile_dep_edges",
-    "code": "(compile:dep-edges)",
+    "code": "(stats:get \"compile:dep-edges\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_compile_cache_size_99999",
-    "code": "(compile:cache-size 99999)",
+    "code": "(stats:get \"compile:cache-size\")",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_196_ast_generation",
-    "code": "(ast:generation)",
+    "code": "(stats:get \"ast:generation\")",
     "pipeline": "eval",
     "expected": ">=0"
   },

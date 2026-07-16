@@ -3,7 +3,7 @@
 ;; Regression tests for Issue #69 (memory pressure observability).
 ;;
 ;; After per-module arena work, the next layer is structured telemetry:
-;;   - (gc-arena-info): vector of hashes, one per arena + a summary entry
+;;   - (stats:get "gc-arena-info"): vector of hashes, one per arena + a summary entry
 ;;   - (memory-pressure): hash with level / used-pct / top-arena / suggestions
 ;;
 ;; These primitives are the foundation for set-memory-policy (P1) and
@@ -16,8 +16,8 @@
 
 (require "std/test" all:)
 
-; ── 1. (gc-arena-info) returns a vector (not a string) ──
-(define info (gc-arena-info))
+; ── 1. (stats:get "gc-arena-info") returns a vector (not a string) ──
+(define info (stats:get "gc-arena-info"))
 (check= #t (vector? info))
 ;; At least the summary entry is present, even on cold start.
 (check= #t (>= (vector-length info) 1))
@@ -65,14 +65,14 @@
 (check= "low" level-val)
 (check= #t (< (hash-ref p "used-pct") 60))
 
-; ── 7. (gc-arena-info) summary.total-arenas == (gc-module-count) + 1 ──
-;; (gc-module-count) returns the number of per-module instances (not the
-;; main arena). (gc-arena-info) summary reports the total number of
+; ── 7. (stats:get "gc-arena-info") summary.total-arenas == (stats:get "gc-module-count") + 1 ──
+;; (stats:get "gc-module-count") returns the number of per-module instances (not the
+;; main arena). (stats:get "gc-arena-info") summary reports the total number of
 ;; per-arena entries (including main), so total-arenas = count + 1.
-(check= (+ 1 (gc-module-count)) (hash-ref summary "total-arenas"))
+(check= (+ 1 (stats:get "gc-module-count")) (hash-ref summary "total-arenas"))
 
-; ── 8. Calling (gc-arena-info) twice gives consistent summary shape ──
-(define info2 (gc-arena-info))
+; ── 8. Calling (stats:get "gc-arena-info") twice gives consistent summary shape ──
+(define info2 (stats:get "gc-arena-info"))
 (check= (vector-length info) (vector-length info2))
 (check= (hash-ref (vector-ref info2 0) "total-arenas")
        (hash-ref summary "total-arenas"))
@@ -82,7 +82,7 @@
 (require "std/json")
 (require "std/list")
 (require "std/algorithm")
-(define info3 (gc-arena-info))
+(define info3 (stats:get "gc-arena-info"))
 (check= #t (> (vector-length info3) 1))
 ;; Some entry in info3 (after the summary) should be one of the stdlib
 ;; modules we just loaded.
@@ -101,7 +101,7 @@
 ;; the per-arena entry (or at least keep the same shape, since reset_module
 ;; resets the arena to empty but the name key remains in ArenaGroup).
 (check= #t (gc-module "json.aura"))
-(define info4 (gc-arena-info))
+(define info4 (stats:get "gc-arena-info"))
 (check= #t (has-name? info4 "json.aura"))   ; name still in arena_group_
 
 ; ── 11. Pct calculation: 0% < 60% boundary correctness ──
@@ -142,11 +142,11 @@
 (define p4 (memory-pressure))
 (check= "algorithm.aura" (hash-ref p4 "top-arena"))
 
-; ── 15. (gc-arena-info) is read-only: state is unchanged after the call ──
+; ── 15. (stats:get "gc-arena-info") is read-only: state is unchanged after the call ──
 ;; Take a snapshot, call gc-arena-info twice, verify the snapshots are
 ;; structurally equivalent (same set of arena names, same capacities).
-(define info5 (gc-arena-info))
-(define info6 (gc-arena-info))
+(define info5 (stats:get "gc-arena-info"))
+(define info6 (stats:get "gc-arena-info"))
 (check= (vector-length info5) (vector-length info6))
 ;; All per-arena used/capacity values should be non-negative floats.
 (let loop ((i 1))

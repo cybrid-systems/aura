@@ -456,6 +456,132 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(saved);
     });
 
+    // Issue #1518: (arena:live-compact) — mark + freelist relocate + deopt-coord.
+    // Explicit Agent call always runs (force=true). Returns live objects marked.
+    add("arena:live-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+        if (!ev.arena_)
+            return make_int(0);
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->arena_compact_soft_gated_boundary_total.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        const auto marked = static_cast<std::int64_t>(ev.arena_->live_compact(/*force=*/true));
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->arena_live_relocate_total.store(
+                aura::core::arena_policy::live_relocate_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->arena_compact_deopt_triggered_total.store(
+                aura::core::arena_policy::compact_deopt_triggered_total.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->arena_compact_deopt_throttled_total.store(
+                aura::core::arena_policy::compact_deopt_throttled_total.load(
+                    std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->arena_frag_post_compact_bp.store(
+                aura::core::arena_policy::frag_post_compact_bp.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        return make_int(marked);
+    });
+
+    // Issue #1518: (query:arena-live-compact-stats) — production surface.
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            // Refresh from process-wide policy + arena if present.
+            if (m) {
+                m->arena_live_relocate_total.store(
+                    aura::core::arena_policy::live_relocate_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->arena_compact_deopt_triggered_total.store(
+                    aura::core::arena_policy::compact_deopt_triggered_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->arena_compact_deopt_throttled_total.store(
+                    aura::core::arena_policy::compact_deopt_throttled_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->arena_frag_post_compact_bp.store(
+                    aura::core::arena_policy::frag_post_compact_bp.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->arena_compact_soft_gated_boundary_total.store(
+                    aura::core::arena_policy::compact_soft_gated_boundary_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::int64_t live_attempted = 0;
+            std::int64_t live_marked = 0;
+            std::int64_t live_reloc = 0;
+            if (ev.arena_) {
+                live_attempted =
+                    static_cast<std::int64_t>(ev.arena_->live_defrag_attempted_count_relaxed());
+                live_marked =
+                    static_cast<std::int64_t>(ev.arena_->live_objects_marked_total_relaxed());
+                live_reloc = static_cast<std::int64_t>(ev.arena_->live_relocate_count_relaxed());
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"live-defrag-attempted", make_int(live_attempted)},
+                {"live-objects-marked", make_int(live_marked)},
+                {"live-relocate-count",
+                 make_int(m ? load(m->arena_live_relocate_total) : live_reloc)},
+                {"compact-deopt-triggered",
+                 make_int(m ? load(m->arena_compact_deopt_triggered_total) : 0)},
+                {"compact-deopt-throttled",
+                 make_int(m ? load(m->arena_compact_deopt_throttled_total) : 0)},
+                {"frag-post-compact-bp", make_int(m ? load(m->arena_frag_post_compact_bp) : 0)},
+                {"soft-gated-boundary",
+                 make_int(m ? load(m->arena_compact_soft_gated_boundary_total) : 0)},
+                {"schema", make_int(1518)},
+            };
+            return build_hash(kv);
+        });
+
     // ── Issue #1315 Phase 1: render-frame arena lifecycle ──
     // (arena-render-frame-reset) — quick per-frame boundary for TUI loops.
     // Phase 1: temp_arena_ reset when safe + metrics; full time-boxed compact
@@ -811,16 +937,15 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // threshold. Used by the memory_pressure sampling
     // loop to decide whether to compact before the
     // critical threshold.
-    ObservabilityPrims::register_stats_impl(
-        "arena:should-auto-compact?", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-            if (a.empty() || !is_string(a[0]) || !ev.arena_group_)
-                return make_bool(false);
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ev.string_heap_.size())
-                return make_bool(false);
-            const auto& name = ev.string_heap_[idx];
-            return make_bool(ev.arena_group_->should_auto_compact(name));
-        });
+    add("arena:should-auto-compact?", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !ev.arena_group_)
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& name = ev.string_heap_[idx];
+        return make_bool(ev.arena_group_->should_auto_compact(name));
+    });
     // (arena:adaptive-stats) — Issue #335: returns the
     // adaptive-compact counters as a 2-tuple
     // (trigger-count . skip-count). Stats-only.
@@ -1040,27 +1165,26 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     //   0x01 = general (re-infer), 0x02 = constraint, 0x04 = occurrence,
     //   0x08 = ownership, 0x10 = coercion, 0x20 = struct, 0x40 = defuse,
     //   0x80 = ppa-hint. Returns 0 for clean nodes or out-of-range ids.
-    ObservabilityPrims::register_stats_impl(
-        "dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0]))
-                return make_int(0);
-            if (!ev.workspace_flat_)
-                return make_int(0);
-            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
-        });
+    // Multi-arg (node-id) — public add(); not zero-arity stats.
+    add("dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
+    });
     // (dirty:ppa-reasons node-id) — Issue #277: return the per-node
     // PPA dirty bitmask from the orthogonal ppa_dirty_ column.
     //   0x01 = timing, 0x02 = power, 0x04 = area, 0x08 = backend-hint.
-    ObservabilityPrims::register_stats_impl(
-        "dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0]))
-                return make_int(0);
-            if (!ev.workspace_flat_)
-                return make_int(0);
-            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
-        });
+    add("dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_int(0);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
+    });
     // (dirty:counts) — Issue #188/#262/#277: aggregate per-reason dirty counts
     // across the workspace. Returns hash with integer fields:
     //   general, constraint, occurrence, ownership, coercion,

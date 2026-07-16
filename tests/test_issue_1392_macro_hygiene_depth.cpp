@@ -47,7 +47,10 @@ namespace aura_issue_1392_detail {
 bool test_ac1_primitive_returns_nonneg() {
     std::println("\n--- AC1: (compile:macro-origin-provenance-errors) ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(compile:macro-origin-provenance-errors)");
+    // Facade-only via register_stats_impl — use stats:get / engine:metrics.
+    auto r = cs.eval("(stats:get \"compile:macro-origin-provenance-errors\")");
+    if (!r)
+        r = cs.eval("(engine:metrics \"compile:macro-origin-provenance-errors\")");
     CHECK(r.has_value(), "AC1: primitive returns a value");
     if (r && aura::compiler::types::is_int(*r)) {
         auto v = aura::compiler::types::as_int(*r);

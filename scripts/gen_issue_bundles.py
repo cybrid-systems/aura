@@ -262,8 +262,15 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
         f"// Bundle driver for profile: {profile}",
         "",
         "#include <cstdio>",
+        "#include <cstdlib>",
+        "#include <sys/wait.h>",
+        "#include <unistd.h>",
         "",
         '#include "test_harness.hpp"',
+        "",
+        # Isolate process-global JIT/runtime state (g_hash_tables, pools)
+        # between members so one CS teardown cannot corrupt the next.
+        'extern "C" void aura_reset_runtime();',
         "",
     ]
 
@@ -297,22 +304,41 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
             "",
             "    for (int i = 0; i < n_members; ++i) {",
             '        std::println("\\n════ Bundle member: {} ════", members[i].name);',
-            # Issue #289 follow-up: reset the global g_passed / g_failed
-            # counters before each member's run() so one member's failure
-            # doesn't cascade into "failed > 0" for every subsequent
-            # member. (Pre-#289 bug: a single real fail in member N
-            # would surface as `failed = n_members - N` in the bundle
-            # summary, hiding the actual cause.)
+            # Issue #289: reset counters. Fork so a SIGABRT/heap crash in one
+            # member cannot take down the whole bundle process (CI rc=-6).
+            # aura_reset_runtime clears g_hash_tables / JIT pools in the child.
             "        ::aura::test::g_passed = 0;",
             "        ::aura::test::g_failed = 0;",
-            "        const int rc = members[i].run();",
-            "        if (rc != 0) {",
-            '            std::println(std::cerr, "bundle member {} failed (rc={})", members[i].name, rc);',
+            "        const pid_t pid = ::fork();",
+            "        if (pid < 0) {",
+            '            std::println(std::cerr, "fork failed for {}", members[i].name);',
+            "            ++failed;",
+            "            continue;",
             "        }",
-            "        if (rc == 0) {",
+            "        if (pid == 0) {",
+            "            aura_reset_runtime();",
+            "            const int rc = members[i].run();",
+            "            std::fflush(nullptr);",
+            "            ::_exit(rc == 0 ? 0 : 1);",
+            "        }",
+            "        int status = 0;",
+            "        if (::waitpid(pid, &status, 0) < 0) {",
+            '            std::println(std::cerr, "waitpid failed for {}", members[i].name);',
+            "            ++failed;",
+            "            continue;",
+            "        }",
+            "        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {",
             "            ++passed;",
             "        } else {",
             "            ++failed;",
+            "            if (WIFSIGNALED(status)) {",
+            '                std::println(std::cerr, "bundle member {} crashed signal={}",',
+            "                             members[i].name, WTERMSIG(status));",
+            "            } else {",
+            '                std::println(std::cerr, "bundle member {} failed (rc={})",',
+            "                             members[i].name,",
+            "                             WIFEXITED(status) ? WEXITSTATUS(status) : -1);",
+            "            }",
             "        }",
             "    }",
             "",

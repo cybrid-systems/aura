@@ -65,15 +65,37 @@ namespace aura::test {
 inline int g_passed = 0;
 inline int g_failed = 0;
 
-// Issue #1439: build an Aura expression that evaluates a primitive or
-// legacy stats name. query:/compile:*-stats are not public prims — route
-// through (engine:metrics "…"). Structural query:* etc. stay bare.
+// Issue #1439 / #1449: build an Aura expression that evaluates a primitive or
+// facade-only stats name. Mirrors ObservabilityPrims::is_legacy_stats_name —
+// demoted dashboards route through (engine:metrics "…") / (stats:get "…").
+// Multi-arg structural query:* stay bare.
 inline std::string aura_call_expr(std::string_view name) {
-    const bool stats_ns = name.starts_with("query:") || name.starts_with("compile:");
-    const bool stats_suffix = name.ends_with("-stats") || name.ends_with("-stats-hash") ||
-                              name.find("-stats-") != std::string_view::npos;
-    if (stats_ns && stats_suffix)
+    if (name.ends_with("-stats") || name.ends_with("-stats-hash") ||
+        name.find("-stats-") != std::string_view::npos)
         return std::format("(engine:metrics \"{}\")", name);
+    if (name.starts_with("query:")) {
+        const auto rest = name.substr(6);
+        // Keep in sync with is_legacy_stats_name demotion suffixes / names.
+        if (rest.ends_with("-health") || rest.ends_with("-readiness") || rest.ends_with("-slo") ||
+            rest.ends_with("-score") || rest.ends_with("-fidelity") ||
+            rest.ends_with("-invariants") || rest.ends_with("-win") ||
+            rest.ends_with("-contracts") || rest.ends_with("-stability") ||
+            rest.ends_with("-snapshot") || rest.ends_with("-histogram") ||
+            rest.ends_with("-effectiveness") || rest.ends_with("-available") ||
+            rest.ends_with("-audit-log") || rest == "primitives-meta-catalog" ||
+            rest == "primitive-metadata" || rest == "primitive-list-with-meta" ||
+            rest == "primitives-meta" || rest == "primitives-by-category" ||
+            rest == "orchestration-metrics" || rest == "edsl-readiness" ||
+            rest == "production-health" || rest == "serve-health" ||
+            rest == "code-as-data-production-health" || rest == "runtime-production-health" ||
+            rest == "eda-production-readiness")
+            return std::format("(engine:metrics \"{}\")", name);
+    }
+    if (name.starts_with("dirty:") ||
+        (name.starts_with("render-") &&
+         (name.ends_with("-samples") || name == "render-hotpath-depth" ||
+          name.ends_with("-histogram"))))
+        return std::format("(stats:get \"{}\")", name);
     return std::format("({})", name);
 }
 

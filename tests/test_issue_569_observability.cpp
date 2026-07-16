@@ -107,7 +107,7 @@ int main() {
         auto production = cs.eval("(engine:metrics \"query:arena-production-compaction-stats\")");
         auto auto_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
         auto auto_stats = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
-        auto frag_snap = cs.eval("(query:arena-fragmentation-snapshot)");
+        auto frag_snap = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
         CHECK(production && aura::compiler::types::is_hash(*production),
               "query:arena-production-compaction-stats hash regression (#534)");
         CHECK(auto_compact && aura::compiler::types::is_hash(*auto_compact),

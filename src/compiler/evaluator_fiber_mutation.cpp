@@ -329,6 +329,40 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 }
 
 
+// Issue #1500: batch refresh_if_stale over atomic-batch + COW-boundary
+// pinned StableNodeRefs. Restamps full provenance (gen/wrap/cow/
+// mutation_id/subtree_gen) while preserving fiber_id, workspace_id,
+// and boundary_pinned. Called from fiber steal, Guard dtor, and
+// re_pin_cow_children_from_snapshot.
+std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
+    auto* ws = workspace_flat();
+    if (!ws)
+        return 0;
+    std::size_t refreshed = 0;
+    for (auto& ref : atomic_batch_pinned_refs_) {
+        if (ref.refresh_if_stale(*ws))
+            ++refreshed;
+    }
+    {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        for (auto& ref : cow_boundary_pinned_refs_) {
+            const bool was_pinned = ref.boundary_pinned;
+            if (ref.refresh_if_stale(*ws)) {
+                // refresh_if_stale preserves boundary_pinned; re-assert
+                // so COW survival semantics stay intact after restamp.
+                if (was_pinned)
+                    ref.boundary_pinned = true;
+                ++refreshed;
+            }
+        }
+    }
+    if (refreshed > 0) {
+        bump_stable_ref_steal_auto_refresh(refreshed);
+        bump_stable_ref_cross_cow_refresh(refreshed);
+    }
+    return refreshed;
+}
+
 // Issue #1446: re_pin_cow_children_from_snapshot — walk the
 // outermost MutationBoundaryGuard's pinned StableNodeRef / COW
 // children and re-pin them after a steal or GC compact event.
@@ -336,32 +370,25 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 // arena compact hook (AC2). Bumps cow_repin_on_steal metric on
 // success; bumps checkpoint_lost_on_compact if the checkpoint is
 // missing (memory-safety event — should be 0 in steady state).
+// Issue #1500: actually batch-restamp pinned refs (no longer a
+// metrics-only stub).
 bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
     int* slot = mutation_boundary_depth_slot(this);
     if (!slot || *slot == 0) {
-        // No active Guard — nothing to re-pin (telemetry-only path).
+        // No active Guard — still restamp any lingering pins (steal
+        // / compact can leave refs without a live Guard).
+        (void)restamp_pinned_stable_refs();
         return true;
     }
     auto* m = static_cast<aura::compiler::CompilerMetrics*>(compiler_metrics());
-    if (!m) {
-        // No metrics — silently succeed (test binaries without metrics).
-        return true;
-    }
-    // Walk FlatAST children + StableNodeRef provenance fields and
-    // call pin_for_cow() on each live ref. This is the conservative
-    // path — invalidates stale pin flags and re-records boundary_pinned.
+    // Walk pinned StableNodeRef registries and refresh full provenance.
     auto* ws = workspace_flat();
     if (!ws) {
-        m->checkpoint_lost_on_compact.fetch_add(1, std::memory_order_relaxed);
+        if (m)
+            m->checkpoint_lost_on_compact.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    // Increment success counter (the actual walk is cheap O(N) over
-    // pinned refs — full enumeration deferred to follow-up stress test).
-    // Issue #1473: walk cow_boundary_pinned_refs_ and call
-    // validate_or_refresh on each. Previously this only bumped the
-    // counter; the actual validation was deferred pending a stress
-    // test. #1473 ships both the validation walk + the 1000+ iter
-    // stress test (tests/test_issue_1473.cpp) to back it.
+    // Issue #1473: walk cow_boundary_pinned_refs_ and validate_or_refresh.
     std::size_t validated = 0;
     {
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
@@ -370,10 +397,11 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
                 ++validated;
         }
     }
-    m->cow_repin_on_steal.fetch_add(1, std::memory_order_relaxed);
-    m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
-    m->panic_transfer_nested_success.fetch_add(1, std::memory_order_relaxed);
-    (void)ws;
+    if (m) {
+        m->cow_repin_on_steal.fetch_add(1, std::memory_order_relaxed);
+        m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
+        m->panic_transfer_nested_success.fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
 }
 
@@ -894,6 +922,18 @@ bool Evaluator::pending_panic_checkpoint() const noexcept {
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
+
+// Issue #1518: wire arena auto live_compact soft-gate to mutation boundary.
+// Static init once: first call from any TU that links fiber mutation.
+namespace {
+    struct ArenaBoundaryDepthWire {
+        ArenaBoundaryDepthWire() {
+            aura::ast::set_arena_mutation_boundary_depth_fn(
+                +[]() noexcept -> std::size_t { return Evaluator::mutation_boundary_depth(); });
+        }
+    };
+    const ArenaBoundaryDepthWire g_arena_boundary_depth_wire{};
+} // namespace
 
 // Issue #588: depth from a fiber's opaque mutation_stack_storage_.
 extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutation_stack_storage) {

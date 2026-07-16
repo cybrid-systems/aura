@@ -26,6 +26,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
+import aura.compiler.soa_view;
 
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
@@ -773,10 +774,126 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
+            // Issue #1517: pull live pipeline enforcement counters.
+            std::uint64_t enforce = 0;
+            std::uint64_t skipped = 0;
+            std::uint64_t migrate = 0;
+            std::uint64_t view_hits = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                // Mirror live pass_manager / soa_view atomics into CompilerMetrics.
+                m->concept_enforcement_hits_total.store(
+                    aura::compiler::concept_enforcement_hits_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->soa_view_pass_skipped_total.store(
+                    aura::compiler::soa_view_pass_skipped_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->edsl_soa_migration_progress_total.store(
+                    aura::compiler::edsl_soa_migration_progress_total.load(
+                        std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->soa_view_hits_total.store(
+                    aura::compiler::soa_view::g_soa_view_hits.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->soa_view_misses_total.store(
+                    aura::compiler::soa_view::g_soa_view_misses.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->pipeline_soa_view_aware_total.store(
+                    aura::compiler::passes_soa_view_aware_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                enforce = m->concept_enforcement_hits_total.load(std::memory_order_relaxed);
+                skipped = m->soa_view_pass_skipped_total.load(std::memory_order_relaxed);
+                migrate = m->edsl_soa_migration_progress_total.load(std::memory_order_relaxed);
+                view_hits = m->soa_view_hits_total.load(std::memory_order_relaxed);
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"soa-functions-visited", make_int(static_cast<std::int64_t>(funcs))},
                 {"soa-instructions-visited", make_int(static_cast<std::int64_t>(instrs))},
                 {"aos-view-built-count", make_int(static_cast<std::int64_t>(views))},
+                // Issue #1517 fields (non-duplicative extension of #463).
+                {"concept-enforcement-hits", make_int(static_cast<std::int64_t>(enforce))},
+                {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
+                {"edsl-soa-migration-progress", make_int(static_cast<std::int64_t>(migrate))},
+                {"soa-view-hits", make_int(static_cast<std::int64_t>(view_hits))},
+                {"schema", make_int(1517)},
+            };
+            return build_hash(kv);
+        });
+
+    // Issue #1517: dedicated enforcement surface for Agents.
+    ObservabilityPrims::register_stats_impl(
+        "query:soa-view-enforcement-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            // Refresh from live atomics.
+            const auto enforce =
+                aura::compiler::concept_enforcement_hits_total.load(std::memory_order_relaxed);
+            const auto skipped =
+                aura::compiler::soa_view_pass_skipped_total.load(std::memory_order_relaxed);
+            const auto migrate =
+                aura::compiler::edsl_soa_migration_progress_total.load(std::memory_order_relaxed);
+            const auto hits =
+                aura::compiler::soa_view::g_soa_view_hits.load(std::memory_order_relaxed);
+            const auto misses =
+                aura::compiler::soa_view::g_soa_view_misses.load(std::memory_order_relaxed);
+            const auto aware =
+                aura::compiler::passes_soa_view_aware_total.load(std::memory_order_relaxed);
+            if (m) {
+                m->concept_enforcement_hits_total.store(enforce, std::memory_order_relaxed);
+                m->soa_view_pass_skipped_total.store(skipped, std::memory_order_relaxed);
+                m->edsl_soa_migration_progress_total.store(migrate, std::memory_order_relaxed);
+                m->soa_view_hits_total.store(hits, std::memory_order_relaxed);
+                m->soa_view_misses_total.store(misses, std::memory_order_relaxed);
+                m->pipeline_soa_view_aware_total.store(aware, std::memory_order_relaxed);
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"concept-enforcement-hits", make_int(static_cast<std::int64_t>(enforce))},
+                {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
+                {"edsl-soa-migration-progress", make_int(static_cast<std::int64_t>(migrate))},
+                {"soa-view-hits", make_int(static_cast<std::int64_t>(hits))},
+                {"soa-view-misses", make_int(static_cast<std::int64_t>(misses))},
+                {"passes-soa-view-aware", make_int(static_cast<std::int64_t>(aware))},
+                {"concept-enforced", make_int(1)},
+                {"schema", make_int(1517)},
             };
             return build_hash(kv);
         });

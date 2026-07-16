@@ -113,8 +113,7 @@ bool test_typed_mutate_bumps_per_binding_gen() {
 bool test_type_cache_stats_primitive_works() {
     std::println("\n--- AC4: (engine:metrics \"compile:type-cache-stats\") still works ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define h (engine:metrics \"compile:type-cache-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define h (engine:metrics \"compile:type-cache-stats\"))");
     for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
                             "gen-saved-total", "gen-saved-ratio-bp"}) {
         std::string check = std::string("(hash-ref h \"") + key + "\")";

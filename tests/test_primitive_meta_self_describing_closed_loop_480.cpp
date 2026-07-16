@@ -57,7 +57,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: query:primitive-list-with-meta ---");
     const auto list0 = cs.evaluator().get_primitive_list_meta_count();
-    auto lst = cs.eval("(query:primitive-list-with-meta)");
+    auto lst = cs.eval("(engine:metrics \"query:primitive-list-with-meta\")");
     const auto list1 = cs.evaluator().get_primitive_list_meta_count();
     CHECK(lst && is_pair(*lst), "primitive-list-with-meta returns non-empty list");
     CHECK(list1 > list0, "list-with-meta bumps list_meta_count");
@@ -65,7 +65,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: meta stats bumped by describe/list ---");
     const auto stats4a = meta_stats(cs);
     (void)cs.eval("(primitive:describe \"not\")");
-    (void)cs.eval("(query:primitive-list-with-meta)");
+    (void)cs.eval("(engine:metrics \"query:primitive-list-with-meta\")");
     const auto stats4b = meta_stats(cs);
     std::println("  meta-stats: {} -> {}", stats4a, stats4b);
     CHECK(stats4b > stats4a, "describe+list bumps primitive-meta-stats");

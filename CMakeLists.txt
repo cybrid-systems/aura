@@ -537,10 +537,19 @@ target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect)
 # (same pattern as aura_test_objects for non-JIT sources).
 # -fno-rtti is required by LLVM headers; applied once on this target.
 if(LLVM_FOUND)
+    # Issue #1527: self-contained JIT test archive —
+    #   aura_jit.cpp needs aura_jit_prim_dispatch (weak stub) and
+    #   handle_contract_violation (contract_handler) so minimal
+    #   unit tests (e.g. test_issue_1477) link without service.ixx.
+    # Do NOT add aura_jit_bridge_stub.cpp here — real bridge is already
+    # in the archive (duplicate symbols).
     add_library(aura_jit_test_objects STATIC
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/aura_jit_bridge.cpp
+        src/compiler/aura_jit_prim_dispatch_stub.cpp
+        src/core/contract_handler.cpp
+        src/core/contract_stub.cpp
     )
     set_property(TARGET aura_jit_test_objects PROPERTY CXX_MODULE_STD ON)
     target_include_directories(aura_jit_test_objects PUBLIC
@@ -551,6 +560,12 @@ if(LLVM_FOUND)
     target_compile_definitions(aura_jit_test_objects PUBLIC AURA_HAVE_LLVM=1)
     target_compile_features(aura_jit_test_objects PUBLIC cxx_std_26)
     aura_test_compile_options(aura_jit_test_objects)
+    # Issue #1527: C++26 contracts for aura_jit.cpp pre/post + handlers.
+    target_compile_options(aura_jit_test_objects PRIVATE -fcontracts)
+    set_source_files_properties(
+        src/core/contract_handler.cpp
+        src/core/contract_stub.cpp
+        PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
     # -fno-rtti only on LLVM-facing TUs. Do NOT put it on the whole
     # target: aura_jit_bridge.cpp does `import std`, and GCC 16 module
     # BMIs encode the dialect (C++26/contracts vs C++26/no-rtti/contracts).
@@ -558,7 +573,7 @@ if(LLVM_FOUND)
     set_source_files_properties(
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
-        PROPERTIES COMPILE_FLAGS "-fno-rtti")
+        PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
     target_link_libraries(aura_jit_test_objects PUBLIC ${llvm_libs} ${CMAKE_DL_LIBS})
 endif()
 
@@ -4946,6 +4961,79 @@ aura_add_issue_test(test_issue_1471)
 # Issue #1461: Agent Decision Metrics contract liveness + inject/react
 aura_add_issue_test(test_issue_1461)
 aura_issue_test_link_llvm_jit(test_issue_1461)
+# Issue #1500: Full StableNodeRef provenance (cow_epoch/wrap_epoch/
+# fiber_id/workspace_id) auto-refresh + is_valid enforcement +
+# Guard dtor / steal batch restamp of pinned refs.
+aura_add_issue_test(test_issue_1500)
+aura_issue_test_link_llvm_jit(test_issue_1500)
+# Issue #1508: JIT aura_closure_call dual check (bridge_epoch +
+# defuse/env_frame) + interpreter-deopt fallback (no UAF on stale).
+aura_add_issue_test(test_issue_1508)
+aura_issue_test_link_llvm_jit(test_issue_1508)
+# Issue #1509: multi-fiber concurrent mutate→call-stale closure
+# stress + ASan/TSan-oriented safe-fallback validation.
+aura_add_issue_test(test_issue_1509)
+aura_issue_test_link_llvm_jit(test_issue_1509)
+# Issue #1510: materialize_call_env + compact_env_frames cooperation —
+# atomic env_id rewrite + defuse/bridge epoch bump under interlock.
+aura_add_issue_test(test_issue_1510)
+aura_issue_test_link_llvm_jit(test_issue_1510)
+# Issue #1511: dual check on closure_bridge_ callback entry
+# (bridge_epoch + EnvFrame version_) + EnvFrame re-stamp + metrics.
+aura_add_issue_test(test_issue_1511)
+aura_issue_test_link_llvm_jit(test_issue_1511)
+# Issue #1512: JIT opcode coverage tracking + IRInterpreter
+# consistency compare API (strict mode + fuzz harness).
+aura_add_issue_test(test_issue_1512)
+aura_issue_test_link_llvm_jit(test_issue_1512)
+# Issue #1513: invalidate → live IRClosure/EnvFrame safety closed
+# loop (bridge_epoch + env_version dual-check + expire on invalidate).
+aura_add_issue_test(test_issue_1513)
+aura_issue_test_link_llvm_jit(test_issue_1513)
+# Issue #1514: re-lower granularity (nested-lambda targeted cascade)
+# + JIT partial_recompile sync.
+aura_add_issue_test(test_issue_1514)
+aura_issue_test_link_llvm_jit(test_issue_1514)
+# Issue #1515: linear ownership runtime checks + GC root coordination
+# (linear_ownership_state state machine + sync_linear_roots_and_bridge_epoch).
+aura_add_issue_test(test_issue_1515)
+aura_issue_test_link_llvm_jit(test_issue_1515)
+# Issue #1516: exception EH coverage + per-function AOT productionization.
+aura_add_issue_test(test_issue_1516)
+aura_issue_test_link_llvm_jit(test_issue_1516)
+# Issue #1517: SoAView concept enforcement + EDSL hot-path migration.
+aura_add_issue_test(test_issue_1517)
+aura_issue_test_link_llvm_jit(test_issue_1517)
+# Issue #1518: arena live compact + freelist relocate + Shape/JIT deopt coord.
+aura_add_issue_test(test_issue_1518)
+# Pure arena unit test — no LLVM JIT required.
+# Issue #1519: deepen C++26 Contracts + consteval on Arena/Value/Shape/dirty.
+aura_add_issue_test(test_issue_1519)
+aura_issue_test_link_llvm_jit(test_issue_1519)
+# Issue #1520: children_ columnar SoA + region dense lookup (EDSL hot path).
+aura_add_issue_test(test_issue_1520)
+aura_issue_test_link_llvm_jit(test_issue_1520)
+# Issue #1521: ShapeProfiler versioning + Arena compact synergy + deopt hooks.
+aura_add_issue_test(test_issue_1521)
+aura_issue_test_link_llvm_jit(test_issue_1521)
+# Issue #1522: JIT fn_trackers_ batch_deopt notify on bridge epoch bump.
+aura_add_issue_test(test_issue_1522)
+aura_issue_test_link_llvm_jit(test_issue_1522)
+# Issue #1523: lock-order audit for invalidate paths + metrics.
+aura_add_issue_test(test_issue_1523)
+aura_issue_test_link_llvm_jit(test_issue_1523)
+# Issue #1524: typed_mutate dual-epoch via atomic_bump_epochs_and_stamp_bridge.
+aura_add_issue_test(test_issue_1524)
+aura_issue_test_link_llvm_jit(test_issue_1524)
+# Issue #1525: multi-fiber concurrent mutate + stale eval + JIT dual-check stress.
+aura_add_issue_test(test_issue_1525)
+aura_issue_test_link_llvm_jit(test_issue_1525)
+# Issue #1526: compact_env_frames dual-epoch + bridge restamp cooperation.
+aura_add_issue_test(test_issue_1526)
+aura_issue_test_link_llvm_jit(test_issue_1526)
+# Issue #1527: fix aura_jit_test_objects link; re-enable #1477 dual-epoch fence test.
+aura_add_issue_test(test_issue_1477)
+aura_issue_test_link_llvm_jit(test_issue_1477)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

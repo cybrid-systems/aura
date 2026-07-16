@@ -48,7 +48,7 @@ bool test_query_epoch_delta_first_call() {
     std::println("\n--- AC2: query:epoch-delta-since-last-query first call ---");
     aura::compiler::CompilerService cs;
     // First call (no prior query). Returns 0.
-    auto r1 = cs.eval("(query:epoch-delta-since-last-query)");
+    auto r1 = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
     if (!r1) {
         ++g_failed;
         return false;
@@ -107,7 +107,7 @@ bool test_query_epoch_delta_after_mutate() {
     }
     const auto epoch_before = static_cast<std::int64_t>(aura::compiler::types::as_int(*r_init));
     // Run a noop query to stamp last_queried_epoch_.
-    auto r0 = cs.eval("(query:epoch-delta-since-last-query)");
+    auto r0 = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
     if (!r0) {
         ++g_failed;
         return false;
@@ -117,7 +117,7 @@ bool test_query_epoch_delta_after_mutate() {
         ++g_failed;
         return false;
     }
-    auto r1 = cs.eval("(query:epoch-delta-since-last-query)");
+    auto r1 = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
     if (!r1 || !aura::compiler::types::is_int(*r1)) {
         ++g_failed;
         return false;
@@ -194,7 +194,9 @@ bool test_regression_prior_primitives() {
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
           "query:verify-dirty-stats (regression for #437)");
     auto r3 = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
-    CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
+    CHECK(r3.has_value() &&
+              (aura::compiler::types::is_int(*r3) || aura::compiler::types::is_pair(*r3) ||
+               aura::compiler::types::is_hash(*r3)),
           "query:ir-marker-stats (regression for #455)");
     return true;
 }

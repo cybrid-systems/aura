@@ -88,9 +88,14 @@ bool test_mutation_and_rollback_contracts() {
         static_cast<std::uint64_t>(old_sym), static_cast<std::uint64_t>(sym_b), true);
     CHECK(mid >= 1, "mutation id assigned");
     flat.sym_id(id) = sym_b;
+    // Capture StableNodeRef before rollback: #1441 restamps live
+    // node_gen_ after bump, so raw NodeIds stay valid; refs with the
+    // pre-rollback gen still go stale.
+    auto ref_before = flat.make_ref(id);
     CHECK(flat.rollback(mid), "rollback succeeds for recorded mutation");
     CHECK(flat.sym_id(id) == old_sym, "sym_id restored after rollback");
-    CHECK(!flat.is_valid(id), "NodeId stale after rollback generation bump");
+    CHECK(flat.is_valid(id), "NodeId restamped after rollback generation bump");
+    CHECK(!flat.is_valid(ref_before), "StableNodeRef stale after rollback generation bump");
     return true;
 }
 

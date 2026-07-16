@@ -14,6 +14,7 @@ module;
 // here in the module preamble (avoids the import-only
 // restriction on .h).
 #include "observability_metrics.h"
+#include "lock_order_audit.h"
 #include "primitives_meta.h"
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
@@ -1190,6 +1191,33 @@ public:
     using BridgeEpochFn = std::uint64_t (*)(void*);
     [[nodiscard]] std::uint64_t current_bridge_epoch() const noexcept;
     void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept { bridge_epoch_fn_ = fn; }
+    // Issue #1510: compact_env_frames must bump bridge_epoch so all
+    // live closures observe is_bridge_stale after env_id rewrite.
+    // Wired by CompilerService to bump_bridge_epoch() (same domain as
+    // mutation_epoch_). No-op when unbound (tests without service).
+    using BridgeEpochBumpFn = void (*)(void*);
+    void install_bridge_epoch_bump_fn(BridgeEpochBumpFn fn) noexcept { bridge_epoch_bump_fn_ = fn; }
+    // Issue #1510: optional IR / external remapper for compact remap
+    // table (runtime_closures_ IRClosure::env_id when #1507 lands).
+    // Called under compact_env_frames_lock_ after Closure rewrite
+    // (before dual-epoch bump).
+    using CompactEnvRemapFn = void (*)(void* ctx, const std::int64_t* remap, std::size_t n);
+    void install_compact_env_remap_fn(CompactEnvRemapFn fn, void* ctx) noexcept {
+        compact_env_remap_fn_ = fn;
+        compact_env_remap_ctx_ = ctx;
+    }
+    // Issue #1526: after dual-epoch bump, restamp IRClosure::bridge_epoch
+    // to post-compact epoch. Returns number of restamps.
+    using CompactEnvRestampFn = std::size_t (*)(void* ctx, std::uint64_t new_bridge_epoch);
+    void install_compact_env_restamp_fn(CompactEnvRestampFn fn) noexcept {
+        compact_env_restamp_fn_ = fn;
+    }
+    // Issue #1526: public accessor for compact bridge restamp metric.
+    [[nodiscard]] std::uint64_t get_envframe_compact_bridge_restamps() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->envframe_compact_bridge_restamps_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     // Issue #682: compiler GC root flush hook (service.ixx
     // implements flush_compiler_gc_roots). Called from
     // flush_gc_roots at safepoint after runtime heap roots.
@@ -1881,6 +1909,10 @@ public:
     // Issue #740: re-snapshot compiler-managed GC roots after
     // invalidate when linear metadata may have changed in JIT L2.
     void resync_linear_jit_gc_roots_after_invalidate() noexcept;
+    // Issue #1515: GC safepoint / invalidate unified entry —
+    // resync linear JIT GC roots under live bridge_epoch then
+    // probe EnvFrame.version_ × linear_ownership_state.
+    void sync_linear_roots_and_bridge_epoch() noexcept;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's
@@ -2011,26 +2043,29 @@ public:
     // env_generation_ + envframe_truncate counters.
     // Returns number of frames dropped.
     std::size_t truncate_env_frames_to_checkpoint();
-    // Issue #1386: compact env_frames_ arena — reclaim stale
-    // frames (version_ < current defuse_version_) that are not
-    // referenced by any live Closure. Builds a remap table,
-    // rewrites Closure::env_id for all closures in closures_,
-    // and bumps defuse_version_ post-compact (forces
-    // closure_bridge_ fallback for any in-flight stale
-    // bridge_epoch snapshots).
+    // Issue #1386 / #1510 / #1526: compact env_frames_ arena — reclaim
+    // stale frames (version_ < current defuse_version_) that are not
+    // referenced by any live Closure. Builds a remap table, rewrites
+    // Closure::env_id + EnvFrame::parent_id, optionally remaps IR
+    // runtime_closures_ via install_compact_env_remap_fn, then under
+    // compact_env_frames_lock_ atomically:
+    //   1. bump defuse_version_ + bridge_epoch (+ AOT table via service)
+    //   2. restamp survivor Closure::bridge_epoch (and IR via restamp hook)
+    // so remapped env_id stays dual-check consistent with the new epoch
+    // (no "fresh JIT epoch + dangling env_id" race).
     //
     // Returns the number of frames reclaimed (0 if nothing was
-    // stale). Locking: holds env_frames_mtx_ unique_lock for
-    // the entire compact window; briefly takes closures_mtx_
+    // stale). Locking: compact_env_frames_lock_ first, then
+    // env_frames_mtx_ unique; briefly takes closures_mtx_
     // (shared then unique) to read references + rewrite env_id.
     //
-    // Concurrency contract: caller must serialize at the
-    // workspace level — concurrent apply_closure is NOT safe
+    // Concurrency contract: caller should serialize at the
+    // workspace level — concurrent apply_closure is NOT fully safe
     // during a compact because Closure::env_id may be
     // temporarily inconsistent (the unique_lock on closures_mtx_
-    // blocks new apply_closure calls but does NOT block in-flight
-    // ones that already hold a Closure reference). Documented in
-    // issue #1386 body.
+    // blocks new apply_closure lookups but does NOT block in-flight
+    // ones that already hold a Closure copy). Documented in
+    // issue #1386 / #1510.
     //
     // Replaces the legacy truncate_env_frames_to_checkpoint
     // for non-rollback reclamation: compact_env_frames is for
@@ -2669,6 +2704,12 @@ private:
     // set_compiler_service() so Evaluator can query the epoch
     // without a circular include of service.ixx.
     BridgeEpochFn bridge_epoch_fn_ = nullptr;
+    // Issue #1510: service-side bridge_epoch bump after compact.
+    BridgeEpochBumpFn bridge_epoch_bump_fn_ = nullptr;
+    // Issue #1510: optional external (IR) env_id remap under compact lock.
+    CompactEnvRemapFn compact_env_remap_fn_ = nullptr;
+    CompactEnvRestampFn compact_env_restamp_fn_ = nullptr;
+    void* compact_env_remap_ctx_ = nullptr;
     CompilerGcRootsFlushFn compiler_gc_roots_fn_ = nullptr;
     // Function pointer callbacks (set by CompilerService to avoid circular deps)
     std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
@@ -4154,9 +4195,10 @@ public:
             bump_orchestration_llm_gc_safepoint_adapted();
             return 1;
         }
-        // Issue #683: probe linear ownership before sweep when
-        // safepoint is not deferred by MutationBoundary.
-        probe_linear_ownership_at_gc_safepoint();
+        // Issue #1515: at immediate safepoint, sync linear roots +
+        // bridge_epoch then probe EnvFrame ownership (supersedes
+        // probe-only #683 path — still probes inside sync).
+        sync_linear_roots_and_bridge_epoch();
         return 0;
     }
     // Issue #439: wait_for_safepoint(timeout_ms) — the
@@ -4179,12 +4221,21 @@ public:
     // transfer is trivially a no-op at the data level).
     // The follow-up wires the call from Fiber::resume()
     // before g_fiber_setter_ runs.
+    // Issue #1500: also batch-restamp atomic-batch + COW-boundary
+    // pinned StableNodeRefs so long-held refs survive steal.
     void transfer_mutation_stack_to_current_fiber() noexcept {
         sync_per_fiber_mutation_stack(nullptr);
         bump_mutation_steal_attempt();
         // Issue #683: linear ownership enforcement on fiber steal.
         probe_linear_ownership_on_fiber_steal();
+        // Issue #1500: auto-refresh pinned StableNodeRefs on steal.
+        restamp_pinned_stable_refs();
     }
+
+    // Issue #1500: batch refresh_if_stale over atomic_batch_pinned_refs_
+    // and cow_boundary_pinned_refs_. Called from fiber steal / Guard
+    // dtor / re_pin_cow_children_from_snapshot. Returns # refreshed.
+    std::size_t restamp_pinned_stable_refs() noexcept;
     // Issue #391: validate a (id . gen) stable-ref pair
     // against the current workspace's generation. Returns
     // true if the ref is still valid (in-range + gen
@@ -9428,10 +9479,11 @@ public:
             return;
         atomic_batch_domain_.pinned_refs_total.fetch_add(atomic_batch_pinned_refs_.size(),
                                                          std::memory_order_relaxed);
-        const auto gen = workspace_flat_->generation();
+        // Issue #1500: full-provenance restamp (gen/wrap/cow/mutation_id),
+        // not gen-only — matches refresh_if_stale semantics.
         for (auto& ref : atomic_batch_pinned_refs_) {
             if (ref.id < workspace_flat_->size())
-                ref.gen = gen;
+                (void)ref.refresh_if_stale(*workspace_flat_);
         }
     }
     void rollback_atomic_batch_pinning() noexcept {
@@ -9882,6 +9934,9 @@ public:
             if (outermost) {
                 // Issue #1253: start hold-time clock for long-mutation policy.
                 enter_ts_ = std::chrono::steady_clock::now();
+                // Issue #1523: Workspace level in #1388 order (after Mutate).
+                aura::compiler::lock_order::on_acquire(
+                    aura::compiler::lock_order::Level::Workspace);
                 lock_.lock();
                 ev_->outermost_mutation_success_flag_ = flag_;
                 ev_->bind_yield_hook_evaluator();
@@ -10027,6 +10082,14 @@ public:
             if (outermost && !success)
                 ev_->bump_mutation_boundary_rollback();
             ev_->exit_mutation_boundary(success);
+            // Issue #1500: after restamp_all_node_generations inside
+            // exit_mutation_boundary, pinned StableNodeRefs still hold
+            // the pre-boundary gen — batch refresh them under the
+            // still-held outermost write lock so Agent long-held pins
+            // remain usable across the Guard boundary.
+            if (outermost) {
+                (void)ev_->restamp_pinned_stable_refs();
+            }
             // Issue #285: explicit flush at the boundary exit so any
             // pending mutation stack state is visible to other fibers
             // BEFORE we drop the write lock. The flush runs
@@ -10048,6 +10111,9 @@ public:
                 // ordering on this store).
                 ev_->mutation_boundary_held_.store(false, std::memory_order_release);
                 lock_.unlock();
+                // Issue #1523: pair Workspace acquire in ctor.
+                aura::compiler::lock_order::on_release(
+                    aura::compiler::lock_order::Level::Workspace);
                 ev_->outermost_mutation_success_flag_ = nullptr;
                 ev_->unbind_yield_hook_evaluator();
             }
@@ -10241,10 +10307,24 @@ public:
     // while still letting global C functions participate in locking.
     // Issue #917: prefer WorkspaceSharedLock / WorkspaceUniqueLock RAII below.
     // Raw hooks remain for JIT C ABI (aura_lock_workspace_*).
-    void lock_workspace_shared() { workspace_mtx_.lock_shared(); }
-    void unlock_workspace_shared() { workspace_mtx_.unlock_shared(); }
-    void lock_workspace_unique() { workspace_mtx_.lock(); }
-    void unlock_workspace_unique() { workspace_mtx_.unlock(); }
+    // Issue #1523: report Workspace level into lock_order TLS when
+    // JIT / C bridges take workspace locks (canonical #1388 order).
+    void lock_workspace_shared() {
+        aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+        workspace_mtx_.lock_shared();
+    }
+    void unlock_workspace_shared() {
+        workspace_mtx_.unlock_shared();
+        aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+    }
+    void lock_workspace_unique() {
+        aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+        workspace_mtx_.lock();
+    }
+    void unlock_workspace_unique() {
+        workspace_mtx_.unlock();
+        aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+    }
 
     // Issue #917 Phase 1: RAII workspace locks for C++ call sites.
     class WorkspaceSharedLock {

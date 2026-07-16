@@ -44,8 +44,8 @@ bool test_column_exists() {
     std::println("\n--- AC #1: macro_dirty_ column + accessor exist ---");
     aura::compiler::CompilerService cs;
     // A fresh primitive eval has no current_flat (no macros run).
-    // (compile:macro-dirty-count) should return 0 (not error).
-    auto count0 = run_int(cs, "(compile:macro-dirty-count)");
+    // (stats:get \"compile:macro-dirty-count\") should return 0 (not error).
+    auto count0 = run_int(cs, "(stats:get \"compile:macro-dirty-count\")");
     CHECK(count0 == 0, "fresh eval: macro-dirty-count = 0 (got " + std::to_string(count0) + ")");
     return true;
 }
@@ -65,11 +65,11 @@ bool test_macro_expansion_marks_subtree() {
     // SINGLE (begin ...). Each cs.eval creates a fresh flat
     // (current_flat_); macro_dirty_ markings live on the
     // flat where clone_macro_body ran. If we eval "(my-add)"
-    // then a separate "(compile:macro-dirty-count)", the
+    // then a separate "(stats:get \"compile:macro-dirty-count\")", the
     // count sees a different flat (with no markings). The
     // (begin ...) keeps both in the same eval so they share
     // the same current_flat_.
-    auto count = run_int(cs, "(begin (my-add 1 2) (compile:macro-dirty-count))");
+    auto count = run_int(cs, "(begin (my-add 1 2) (stats:get \"compile:macro-dirty-count\"))");
     std::println(std::cerr, "macro-dirty-count after expansion: {}", count);
     CHECK(count > 0, "macro expansion should mark at least the cloned root (got " +
                          std::to_string(count) + ")");
@@ -114,14 +114,14 @@ bool test_clear_macro_dirty() {
         return false;
     }
     // Expand + read count in one eval so they share the flat.
-    auto before = run_int(cs, "(begin (m) (compile:macro-dirty-count))");
+    auto before = run_int(cs, "(begin (m) (stats:get \"compile:macro-dirty-count\"))");
     std::println(std::cerr, "before clear: {}", before);
     CHECK(before > 0, "before clear: count > 0 (got " + std::to_string(before) + ")");
 
     // clear! in a fresh eval. count then in another fresh
     // eval (the new eval's flat starts at 0 dirty bits).
     cs.eval("(compile:clear-macro-dirty!)");
-    auto after = run_int(cs, "(compile:macro-dirty-count)");
+    auto after = run_int(cs, "(stats:get \"compile:macro-dirty-count\")");
     std::println(std::cerr, "after clear: {}", after);
     CHECK(after == 0, "after clear: count == 0 (got " + std::to_string(after) + ")");
     return true;
@@ -138,7 +138,7 @@ bool test_nested_macro_marks_all_levels() {
         return false;
     }
     // Combine inc2 expansion + count in one eval.
-    auto count = run_int(cs, "(begin (inc2 5) (compile:macro-dirty-count))");
+    auto count = run_int(cs, "(begin (inc2 5) (stats:get \"compile:macro-dirty-count\"))");
     std::println(std::cerr, "nested macro-dirty-count: {}", count);
     CHECK(count >= 2,
           "nested expansion marks at least 2 subtree roots (got " + std::to_string(count) + ")");
@@ -178,7 +178,7 @@ bool test_user_code_not_marked() {
     // No macro definition; just a plain expression. Eval should
     // produce a flat with no kMacroExpansion bits.
     run_int(cs, "(+ 1 2)");
-    auto count = run_int(cs, "(compile:macro-dirty-count)");
+    auto count = run_int(cs, "(stats:get \"compile:macro-dirty-count\")");
     std::println(std::cerr, "user-only macro-dirty-count: {}", count);
     CHECK(count == 0,
           "user-written code without macros: count == 0 (got " + std::to_string(count) + ")");
