@@ -222,6 +222,26 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> closure_stale_apply_count_total{0};
     std::atomic<std::uint64_t> closure_safe_fallback_apply_count_total{0};
     std::atomic<std::uint64_t> closure_race_caught_count_total{0};
+    // Issue #1485: AC3 — force bridge_epoch + defuse_version_ checks
+    // in apply_closure dual-path + JIT aura_closure_call (refine #1475).
+    // 2 new atomics for the new P0 safety surface:
+    //   - stale_closure_prevented: lifetime count of stale closures
+    //     detected at apply_closure entry (complements
+    //     closure_stale_apply_count_total which is bumped inside
+    //     closure_needs_safe_fallback; this one is bumped at the
+    //     apply_closure entry AFTER the helper returns true, as a
+    //     top-level "we caught a stale closure before dispatch"
+    //     signal — distinct from the per-check breakdowns the
+    //     helper bumps)
+    //   - closure_epoch_mismatch_fallback: lifetime count of
+    //     safe-fallback paths taken after a stale closure was
+    //     detected (complements closure_safe_fallback_apply_count_
+    //     total which counts ANY safe fallback; this one is
+    //     specific to the bridge_epoch / defuse_version_ mismatch
+    //     surface — distinct from linear_post_mutate_enforce
+    //     fallbacks which are counted separately)
+    std::atomic<std::uint64_t> stale_closure_prevented{0};
+    std::atomic<std::uint64_t> closure_epoch_mismatch_fallback{0};
     // Issue #1525: multi-fiber concurrent mutate + eval old closure stress.
     // Counterpart to #1509 (read-side) — focuses on mutate_mtx_ serialization
     // visibility + dual-epoch races under parallel workers.

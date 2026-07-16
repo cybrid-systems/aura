@@ -139,11 +139,16 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
+    // Issue #1485 C1: epoch_stale tracks bridge_epoch OR env_frame
+    // mismatch specifically (excludes linear-only stale) so the new
+    // closure_epoch_mismatch_fallback metric is correctly scoped.
+    bool epoch_stale = false;
     const auto cur_epoch = ev.current_bridge_epoch();
     // Issue #1365: always consult is_bridge_stale (strict: unstamped → stale
     // when tracking is active). Previously skipped bridge_epoch==0 entirely.
     if (ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
+        epoch_stale = true;
         if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
             m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -157,6 +162,7 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
     if (cl.env_id != NULL_ENV_ID) {
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
             stale = true;
+            epoch_stale = true;
             if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -187,6 +193,17 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         // Issue #1509: every apply_closure that observes a stale closure.
         if (m)
             m->closure_stale_apply_count_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1485 C1: top-level "we caught a stale closure before
+        // dispatch" signal. Distinct from closure_stale_apply_count_total
+        // (which counts every stale observation, including nested helper
+        // calls); this one is bumped at apply_closure entry AFTER the
+        // helper returns true, marking "this entry was stale".
+        ev.bump_stale_closure_prevented();
+        // Issue #1485 C1: lifetime count of safe-fallback paths taken
+        // after a bridge_epoch / defuse_version_ mismatch (epoch_stale
+        // excludes linear-only stale so linear fallbacks don't bleed in).
+        if (epoch_stale)
+            ev.bump_closure_epoch_mismatch_fallback();
     }
     return stale;
 }
@@ -442,6 +459,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             1, std::memory_order_relaxed);
                         record_epoch_stale_steal_caught(metrics);
                     }
+                    // Issue #1485 C1: this inline check is a race-window
+                    // safety net for the flat*/pool* dangling case (the
+                    // helper at L363 already passed; mutation raced in
+                    // before we got here). Bump the 2 new top-level
+                    // atomics so the metric surfaces epoch-only stale
+                    // catches that bypassed closure_needs_safe_fallback.
+                    bump_stale_closure_prevented();
+                    bump_closure_epoch_mismatch_fallback();
                     // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
                     if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid,
                                                                      args, metrics, &cl_copy))

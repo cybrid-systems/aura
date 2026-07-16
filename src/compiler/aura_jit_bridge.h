@@ -36,6 +36,17 @@ extern "C" {
 void aura_set_aot_defuse_version(std::uint64_t v);
 std::uint64_t aura_get_aot_defuse_version(void);
 
+// Issue #1485 C2-wire: current bridge_epoch tracker for the
+// aura_closure_call 2-check (refine #1475). Set by the C++ side
+// (service.ixx::bump_bridge_epoch) every time the workspace's
+// bridge_epoch advances; stamped into per-closure
+// AuraClosure::bridge_epoch at aura_alloc_closure time. Mismatch
+// at aura_closure_call → return 0 (caller falls back to
+// interpreter via aura_jit.cpp OpApply emit's deopt-to-interpreter
+// path).
+void aura_set_current_bridge_epoch(std::uint64_t v);
+std::uint64_t aura_get_current_bridge_epoch(void);
+
 // #287 — user-facing module version (hot-reload / multi-agent).
 void aura_set_module_version(std::uint64_t v);
 std::uint64_t aura_get_module_version(void);
