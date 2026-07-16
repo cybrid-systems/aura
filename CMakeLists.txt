@@ -5062,6 +5062,10 @@ aura_issue_test_link_llvm_jit(test_issue_1534)
 # on Move/Borrow/Drop + safety_probe; deopt on mid-op mutate).
 aura_add_issue_test(test_issue_1535)
 aura_issue_test_link_llvm_jit(test_issue_1535)
+# Issue #1536: walk_active_closures bulk epoch refresh + deopt-on-next-apply
+# after mark_define_dirty / invalidate_function.
+aura_add_issue_test(test_issue_1536)
+aura_issue_test_link_llvm_jit(test_issue_1536)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

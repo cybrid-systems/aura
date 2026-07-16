@@ -639,6 +639,34 @@ extern "C" int aura_jit_is_deopt_pending(const char* name) {
     return g_batch_deopt_jit->is_deopt_pending(name) ? 1 : 0;
 }
 
+// Issue #1536: bulk walk_active_closures C-API.
+extern "C" std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch) {
+    if (!g_batch_deopt_jit)
+        return 0;
+    const auto stale = g_batch_deopt_jit->walk_active_closures(current_bridge_epoch);
+    if (stale > 0 && aot_metrics()) {
+        // Pair bulk path with CompilerMetrics dual-reader counters.
+        aot_metrics()->jit_epoch_stale_check_total.fetch_add(stale, std::memory_order_relaxed);
+        aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+            stale, std::memory_order_relaxed);
+        aot_metrics()->jit_closure_stale_deopt_total.fetch_add(stale, std::memory_order_relaxed);
+        aot_metrics()->jit_closure_safe_fallbacks_total.fetch_add(stale, std::memory_order_relaxed);
+    }
+    return stale;
+}
+
+extern "C" std::uint64_t aura_jit_walk_active_closures_total(void) {
+    return g_batch_deopt_jit ? g_batch_deopt_jit->metrics().walk_active_closures_total.load(
+                                   std::memory_order_relaxed)
+                             : 0;
+}
+
+extern "C" std::uint64_t aura_jit_walk_active_closures_stale_found(void) {
+    return g_batch_deopt_jit ? g_batch_deopt_jit->metrics().walk_active_closures_stale_found.load(
+                                   std::memory_order_relaxed)
+                             : 0;
+}
+
 // Issue #1534: OpGuardShape dual-epoch fence (JIT Apply / GuardShape path).
 // Uses #1477 is_fn_epoch_stale + AOT table epoch (lockstep with bridge_epoch).
 extern "C" int aura_jit_guard_shape_epoch_check(const char* name) {
