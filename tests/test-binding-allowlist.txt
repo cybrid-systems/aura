@@ -18,3 +18,11 @@ src/compiler/evaluator_eval_flat.cpp
 tests/test_incremental_aot_closure_deps.cpp
 src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.h
+# Issue #1481: typed-error ResourceQuota enforcement helpers
+# (check_arena_quota / check_mutation_quota / check_fiber_quota /
+# check_time_quota / allocate_checked). Tests via import pattern
+# matching test_issue_1476 — links against aura.compiler.evaluator
+# module. Per #1478 / #1480 precedent, link may hit the system 5-min
+# build timeout (per invariant #29). Verification deferred to
+# follow-up #1538 batch.
+tests/test_resource_quota.cpp

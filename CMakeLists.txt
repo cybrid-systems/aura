@@ -5674,6 +5674,16 @@ aura_issue_test_link_llvm_jit(test_issue_633)
 # no LLVM JIT) so the test links fast even with the system 5-min
 # build timeout (per #1478 allowlist precedent).
 aura_add_issue_test(test_incremental_aot_closure_deps)
+# Issue #1481: typed-error ResourceQuota enforcement helpers
+# (check_arena_quota / check_mutation_quota / check_fiber_quota /
+# check_time_quota / allocate_checked + AuraErrorKind::ResourceQuotaExceeded
+# variant). 7 ACs verify the typed-error surface + counter wiring that
+# exists at HEAD (0bfeec38). Imports aura.compiler.evaluator (matching
+# test_issue_1476 pattern) so links against the evaluator module.
+# Per #1478 / #1480 precedent, this test is also added to test-binding-
+# allowlist.txt in case the link hits the system 5-min build timeout
+# (per invariant #29). Verification deferred to #1538 batch.
+aura_add_issue_test(test_resource_quota)
 # Issue #637: query:closure-bridge-safety-stats-hash — P0
 # memory-safety foundation — 1 new Aura primitive
 # (query:closure-bridge-safety-stats-hash) + 3 new atomics
