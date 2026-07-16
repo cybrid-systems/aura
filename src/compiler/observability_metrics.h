@@ -1546,6 +1546,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> per_fiber_ex_state_total{0};
     std::atomic<std::uint64_t> per_fiber_ex_state_hits_total{0};
     std::atomic<std::uint64_t> per_fiber_ex_state_savings_total{0};
+    // Issue #1483 C4: adaptive safepoint threshold (exponential
+    // backoff per default heuristic (a)). The threshold is
+    // consulted at request_gc_safepoint() to decide between
+    // immediate vs deferred safepoint — when the threshold is
+    // > 0 AND the current pressure signal (mutation_stack_depth
+    // via get_per_fiber_mutation_stack_depth_current_max) is
+    // high, the request is deferred even if mutation_boundary_depth
+    // == 0. The threshold doubles on each deferral (capped at
+    // 1024) and resets to 0 on successful immediate.
+    //   - safepoint_adaptive_threshold: current threshold value
+    //     (CAS-doubled on deferral, reset to 0 on immediate).
+    //   - safepoint_adaptive_defer_count: count of deferrals
+    //     triggered by the adaptive threshold (not the natural
+    //     mutation_boundary_depth > 0 path).
+    std::atomic<std::uint64_t> safepoint_adaptive_threshold{0};
+    std::atomic<std::uint64_t> safepoint_adaptive_defer_count{0};
     // Issue #1483 C2: per-fiber mutation_stack_depth metrics.
     //   - per_fiber_mutation_stack_depth_max: lifetime
     //     high-water mark across all observed fibers
