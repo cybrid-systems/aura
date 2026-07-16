@@ -5772,6 +5772,22 @@ aura_add_issue_test(test_incremental_aot_closure_deps)
 # allowlist.txt in case the link hits the system 5-min build timeout
 # (per invariant #29). Verification deferred to #1538 batch.
 aura_add_issue_test(test_resource_quota)
+# Issue #1482: Env::bind_symid PRIMARY storage + lazy bindings_with_names()
+# derive + alloc_env_frame_from_env drops legacy bindings_ mirror (SymId-
+# mirror only). 8 ACs covering the post-Commit 1/2/3 invariants: bind_symid
+# leaves bindings_ empty (Commit 1 eager-mirror drop), binding_index_ also
+# untouched (Commit 1 string-keyed shadow drop), bindings_symid_iter() ==
+# bindings_symid() canonical accessor, bindings_with_names() resolves via
+# pool_ when set + falls back to "@<symid:N>" when null, alloc_env_frame
+# _from_env frame.bindings_ stays empty (Commit 2 mirror drop),
+# envframe_desync_detected fires for (0, N) shape (Commit 3 doc), and
+# perf microbench at N=1000 × 10k reps (iter vs with_names ratio).
+# Imports aura.compiler.evaluator (matching test_issue_1476 pattern) so
+# links against evaluator module. Per #1478 / #1480 / #1481 precedent,
+# added to test-binding-allowlist.txt in case the link hits the system
+# 5-min build timeout (per invariant #29). Verification deferred to
+# #1538 batch.
+aura_add_issue_test(test_env_symid_primary_path)
 # Issue #637: query:closure-bridge-safety-stats-hash — P0
 # memory-safety foundation — 1 new Aura primitive
 # (query:closure-bridge-safety-stats-hash) + 3 new atomics
