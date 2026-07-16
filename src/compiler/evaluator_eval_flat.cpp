@@ -3278,6 +3278,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                         auto ci = cells_.size();
                         cells_.push_back(*vv);
+                        // Issue #1539: stamp Owned when init is Linear e.
+                        // State lives on Env.bindings_linear_ownership_state_ and is
+                        // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
+                        std::uint8_t lin_state = linear_rt::Untracked;
+                        if (val_id != aura::ast::NULL_NODE && val_id < f->size() &&
+                            f->get(val_id).tag == aura::ast::NodeTag::Linear) {
+                            lin_state = linear_rt::Owned;
+                        }
+                        me.set_pool(p);
+                        me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
+                        // Keep string-keyed view for legacy lookup paths.
                         me.bind(std::string(name), make_cell(ci));
                         if (body_id != aura::ast::NULL_NODE)
                             return eval_flat(*f, *p, body_id, eval_env);
@@ -3860,13 +3871,35 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                           body_id};
                     return EvalResult(make_void());
                 }
-                case aura::ast::NodeTag::Linear:
-                case aura::ast::NodeTag::Move:
+                case aura::ast::NodeTag::Linear: {
+                    // Issue #1539: Linear e evaluates the payload; binding
+                    // sites (Let) stamp Owned via bind_with_linear_state.
+                    if (v.children.empty())
+                        return EvalResult(make_void());
+                    return eval_flat(*f, *p, v.child(0), eval_env);
+                }
+                case aura::ast::NodeTag::Move: {
+                    // Issue #1539: after reading the value, mark the source
+                    // binding as Moved so linear_post_mutate_enforce can
+                    // intercept subsequent use-after-move.
+                    if (v.children.empty())
+                        return EvalResult(make_void());
+                    const auto inner = v.child(0);
+                    auto result = eval_flat(*f, *p, inner, eval_env);
+                    if (!result)
+                        return result;
+                    if (inner != aura::ast::NULL_NODE && inner < f->size() &&
+                        f->get(inner).tag == aura::ast::NodeTag::Variable) {
+                        (void)mark_linear_binding_moved(const_cast<Env&>(eval_env),
+                                                        f->get(inner).sym_id);
+                    }
+                    return result;
+                }
                 case aura::ast::NodeTag::Borrow:
                 case aura::ast::NodeTag::MutBorrow:
                 case aura::ast::NodeTag::Drop: {
-                    // M4 ownership operations at tree-walker level:
-                    // compile-time concepts — evaluate inner expression directly
+                    // Borrow/Drop: evaluate inner; Borrow may stamp Borrowed
+                    // in a follow-up. Drop leaves Moved stamping to Move.
                     if (v.children.empty())
                         return EvalResult(make_void());
                     return eval_flat(*f, *p, v.child(0), eval_env);

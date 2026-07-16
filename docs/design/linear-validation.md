@@ -55,6 +55,25 @@ Populated from a service-side `mutation_id → status` map written by the combin
 - `linear_post_mutate_pipeline_total` — combined pipeline runs (#1538)
 - `linear_post_mutate_pipeline_unsafe_total` — combined pipeline unsafe (#1538)
 
-## Future (#1543)
+## Runtime cell tagging (#1539)
 
-`linear_post_mutate_enforce` MVP always returns true. Real per-cell linear ownership scan on `EnvFrame.bindings_` will make `all_safe=false` actionable for use-after-move on captured cells at apply time.
+`EnvFrame` (and `Env`) carry a parallel SoA:
+
+```
+bindings_symid_[i]                    // SymId + EvalValue
+bindings_linear_ownership_state_[i]   // 0=untracked … 4=Moved (mirrors ir.ixx)
+```
+
+| API | Role |
+|-----|------|
+| `bind_symid_with_linear_state` / `bind_with_linear_state` | Stamp state at bind time |
+| `set_linear_ownership_state` | Update (e.g. Move → 4) |
+| `linear_post_mutate_enforce` | Returns **false** if any binding is Moved |
+| Let + `Linear e` | Stamps **Owned** (1) on bind |
+| `Move` of Variable | Stamps **Moved** (4) on Env + parent EnvFrame |
+
+`alloc_env_frame_from_env` / `materialize_call_env` copy the SoA so closure capture preserves tags.
+
+## Future (#1543+)
+
+Borrow/MutBorrow stamping at runtime, and richer per-cell state transitions beyond Moved detection.

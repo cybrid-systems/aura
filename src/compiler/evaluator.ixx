@@ -413,6 +413,11 @@ public:
     // string-compare lookup with integer-compare. Implemented
     // in evaluator_env.cpp.
     void bind_symid(aura::ast::SymId s, types::EvalValue v);
+    // Issue #1539: bind with linear ownership state (defaults via bind_symid = Untracked).
+    void bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state);
+    void bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state);
+    bool set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
+    bool set_linear_ownership_state_by_name(std::string_view n, std::uint8_t state);
     // Issue #145: Optional pool reference. When set, bind_symid
     // mirrors the binding into the string-keyed bindings_ so
     // legacy lookup(string) in the lambda body still finds the
@@ -501,6 +506,13 @@ public:
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>>& bindings_symid_mut() {
         return bindings_symid_;
     }
+    // Issue #1539: mutable linear ownership SoA (materialize_call_env copy).
+    std::vector<std::uint8_t>& bindings_linear_ownership_state_mut() {
+        return bindings_linear_ownership_state_;
+    }
+    [[nodiscard]] std::span<const std::uint8_t> bindings_linear_ownership_state() const noexcept {
+        return bindings_linear_ownership_state_;
+    }
 
 private:
     const Env* parent_ = nullptr;
@@ -532,6 +544,9 @@ private:
     // bindings_symid_ (integer compare). bind_symid writes to
     // both (and resolves SymId→string via pool_ to mirror).
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+    // Issue #1539: parallel linear ownership SoA (same length as
+    // bindings_symid_). Copied into EnvFrame by alloc_env_frame_from_env.
+    std::vector<std::uint8_t> bindings_linear_ownership_state_;
     // Issue #145 Phase 2.2: SoA walk infrastructure.
     // `owner_` is the Evaluator that owns the env_frames_ arena
     // used for parent-chain walk. `parent_id_` is the index of
@@ -606,6 +621,16 @@ export using ClosureId = std::uint64_t;
 // chain becomes index lookups instead of pointer chases —
 // cache-friendly and GC-safe (indices survive arena compaction
 // if we ever adopt a moving collector).
+// Issue #1539: runtime linear ownership state (mirrors IRInstruction
+// linear_ownership_state in ir.ixx). Parallel SoA on EnvFrame (+ Env).
+export namespace linear_rt {
+    constexpr std::uint8_t Untracked = 0;
+    constexpr std::uint8_t Owned = 1;
+    constexpr std::uint8_t Borrowed = 2;
+    constexpr std::uint8_t MutBorrowed = 3;
+    constexpr std::uint8_t Moved = 4;
+} // namespace linear_rt
+
 export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
@@ -651,15 +676,26 @@ export struct EnvFrame {
     // and order as bindings_. SymId fast path reads this;
     // bind_symid mirrors into both when pool_ is set.
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+    // Issue #1539: parallel SoA for linear ownership (same length/order
+    // as bindings_symid_). 0=untracked … 4=Moved. Walked by
+    // linear_post_mutate_enforce.
+    std::vector<std::uint8_t> bindings_linear_ownership_state_;
 
     // Bind by name. Resolves to SymId via pool_ if set, mirrors
     // to bindings_symid_ so legacy lookup_by_symid still finds
     // it. If pool_ is null, only the string array is written.
+    // Ownership state defaults to Untracked (0).
     void bind(const std::string& n, types::EvalValue v);
     // Bind by SymId (fast path). Mirrors to bindings_ when
     // pool_ is set, so legacy lookup(string) in the lambda body
-    // still finds the param.
+    // still finds the param. Ownership state defaults to Untracked.
     void bind_symid(aura::ast::SymId s, types::EvalValue v);
+    // Issue #1539: bind with explicit linear ownership state.
+    void bind_with_linear_state(const std::string& n, types::EvalValue v, std::uint8_t state);
+    void bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state);
+    // Mark most-recent binding of SymId / name as `state` (e.g. Moved).
+    bool set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
+    bool set_linear_ownership_state_by_name(const std::string& n, std::uint8_t state);
     // Local-only lookup (no parent walk). Phase 2.2 will add
     // walk-aware variants alongside `Evaluator::walk_env_frames`.
     std::optional<types::EvalValue> lookup_local(const std::string& n) const pre(!n.empty());
@@ -2017,6 +2053,10 @@ public:
     // contract). Extends the dual-epoch safety net to linear
     // ownership state on captured bindings.
     bool linear_post_mutate_enforce(EnvId env_id) const noexcept;
+    // Issue #1539: test/helper — mark most-recent binding as Moved on Env
+    // and its parent_id EnvFrame (if registered), for use-after-move tests.
+    bool mark_linear_binding_moved(Env& env, aura::ast::SymId s);
+    bool mark_linear_binding_moved_by_name(Env& env, std::string_view name);
     // Issue #1538: sweep all live env frames with linear_post_mutate_enforce.
     // Used by the combined post-mutation linear pipeline (with
     // post_mutation_invariant_check) so typed_mutate surfaces both
