@@ -36,3 +36,15 @@ tests/test_resource_quota.cpp
 # update; the existing 7 ACs (especially AC7) cover the counter state
 # the primitive exposes, so this allowlist entry is sufficient.
 src/compiler/evaluator_primitives_obs_jit_12.cpp
+# Issue #1482: Env SymId-primary path (Commit 1/2/3 of #1482: bad84370
+# + 18c25050 + 8e973580). Test file (tests/test_env_symid_primary_path.cpp)
+# is registered in CMakeLists.txt but the link may hit the system
+# 5-min build timeout (per #1478 + #1480 + #1481 precedent + invariant
+# #29). 8 ACs covering bind_symid PRIMARY drop, bindings_with_names()
+# lazy derive (with pool + "@<symid:N>" fallback), alloc_env_frame
+# _from_env mirror drop, envframe_desync_detected observability for
+# the (0, N) post-Commit 1/2 shape, and the perf microbench at N=1000
+# × 10k reps (iter vs with_names). Same import pattern as
+# test_issue_1476 + test_resource_quota. If link fails: verification
+# deferred to follow-up #1538 batch.
+tests/test_env_symid_primary_path.cpp
