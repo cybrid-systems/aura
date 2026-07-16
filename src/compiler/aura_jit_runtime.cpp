@@ -517,6 +517,29 @@ static std::vector<std::string> g_closure_names;
 // defuse_version ↔ aura_get_aot_defuse_version() (mutate / EnvFrame proxy)
 static std::vector<std::uint64_t> g_closure_bridge_epochs;
 static std::vector<std::uint64_t> g_closure_defuse_versions;
+
+// Issue #1485 C2: per-closure provenance accessors (extern "C") for
+// JIT emit-side freshness probe infrastructure. Reads under shared lock
+// so concurrent alloc/free (which resize these vectors under
+// g_closure_table_mtx unique_lock) don't race. Out-of-range closure_id
+// returns 0 — the same convention as the inline read at
+// aura_jit_runtime.cpp:888 in the aura_closure_call C wrapper.
+extern "C" std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    return cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+}
+
+extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    return cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+}
+
 // Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
 // g_closure_freed[i]==1 means slot i is free (must not call/capture).
 static std::vector<std::uint8_t> g_closure_freed;
