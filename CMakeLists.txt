@@ -5084,6 +5084,10 @@ aura_issue_test_link_llvm_jit(test_issue_1542)
 # Issue #1543: GC root registration consistency audit + docs + query log.
 aura_add_issue_test(test_issue_1543)
 aura_issue_test_link_llvm_jit(test_issue_1543)
+# Issue #1544: linear post-mutate stress (AI mutate + GC + fiber steal).
+aura_add_issue_test(test_issue_1544)
+aura_issue_test_link_llvm_jit(test_issue_1544)
+set_tests_properties(test_issue_1544_verification PROPERTIES TIMEOUT 60)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
