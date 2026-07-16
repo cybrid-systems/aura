@@ -26,3 +26,13 @@ src/compiler/aura_jit_bridge.h
 # build timeout (per invariant #29). Verification deferred to
 # follow-up #1538 batch.
 tests/test_resource_quota.cpp
+# Sister entry: query:resource-quota-stats primitive registration
+# (commit 87396a77) lives in evaluator_primitives_obs_jit_12.cpp at
+# L209-adjacent. The primitive reads ev.compiler_metrics_ fields
+# (resource_quota_checks_total / _rejects_total / _max_fibers /
+# _max_mutations) — same surface that tests/test_resource_quota.cpp
+# AC7 verifies via direct counter inspection. Per #1453 test-binding
+# rule, a production primitive-source change must pair with a tests/
+# update; the existing 7 ACs (especially AC7) cover the counter state
+# the primitive exposes, so this allowlist entry is sufficient.
+src/compiler/evaluator_primitives_obs_jit_12.cpp

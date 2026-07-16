@@ -191,6 +191,76 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1481: query:resource-quota-stats (sister to #869 above).
+    // Returns a 4-field hash: {checks_total, rejects_total, max_fibers,
+    // max_mutations} from the typed-error enforcement helpers shipped at
+    // ebc88e0d (ResourceQuotaExceeded enum variant) + 0bfeec38 (5 inline
+    // impl bodies in evaluator.ixx + counter wiring). Aggregate tracking
+    // migration (per-call mutation / fiber quota compare) is deferred to
+    // follow-up issues — for #1481 (scope-limited close), only the
+    // typed-error entry point + counter wiring exists, so the
+    // _checks_total / _rejects_total counters are observable while
+    // _max_fibers / _max_mutations reflect the currently-configured
+    // limits (defaults 256 / 100000 from observability_metrics.h:1568
+    // area).
+    ObservabilityPrims::register_stats_impl(
+        "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const std::int64_t checks_total =
+                m ? static_cast<std::int64_t>(
+                        m->resource_quota_checks_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t rejects_total =
+                m ? static_cast<std::int64_t>(
+                        m->resource_quota_rejects_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t max_fibers =
+                m ? static_cast<std::int64_t>(
+                        m->resource_quota_max_fibers.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t max_mutations =
+                m ? static_cast<std::int64_t>(
+                        m->resource_quota_max_mutations.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("checks_total", checks_total);
+            insert_kv("rejects_total", rejects_total);
+            insert_kv("max_fibers", max_fibers);
+            insert_kv("max_mutations", max_mutations);
+            insert_kv("schema", 1481);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 98 (orig lines 20621-20671)
