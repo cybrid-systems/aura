@@ -2011,6 +2011,13 @@ public:
     // for evaluating a closure body. Always uses env_frames_[cl.env_id]
     // (SoA walk, GC-safe; P0 legacy cl.env fallback completely removed).
     //
+    // Issue #1542: on entry, runs linear_post_mutate_enforce(cl.env_id)
+    // so every materialize site (apply_closure, TCO tail call,
+    // eval_data_as_code) enforces the same linear post-mutate contract
+    // as closure_needs_safe_fallback. On Moved → empty Env fallback
+    // (materialize_fallback_total); bumps linear_post_mutate_
+    // enforcements for counter parity with #1478.
+    //
     // P0: frames carry pure bindings + parent_id only. Support
     // pointers (cells_/pool_/primitives_) are wired by the
     // caller (apply_closure etc.) after materialization.
@@ -2031,27 +2038,27 @@ public:
     // (so subsequent reads see it as fresh) or re-capture the
     // closure against a fresh env.
     bool is_env_frame_stale(EnvId id) const;
-    // Issue #1478: linear post-mutate enforcement (passive MVP,
-    // parallel to is_env_frame_stale). Per-closure-call check that
-    // captured linear values have not been Moved/invalidated since
-    // the closure was constructed. Bumps linear_post_mutate_
-    // enforcements counter (Issue #1478 AC #4) on every call when
-    // env_id has a valid frame. Real per-cell linear ownership
-    // scan requires runtime linear cell tagging infrastructure
-    // (linear_ownership_state lookup table for cells in
-    // EnvFrame.bindings_) deferred to #1543.
+    // Issue #1478 / #1539 / #1542: linear post-mutate enforcement
+    // (real per-cell scan via bindings_linear_ownership_state_).
+    // Parallel to is_env_frame_stale. Per-frame check that captured
+    // linear values have not been Moved since the frame was stamped.
+    // Bumps linear_post_mutate_enforcements (#1478) on every call
+    // when env_id has a valid frame.
     //
-    // Returns true if safe (no Moved captures detected), false if
-    // any captured linear value is in Moved/invalid state (caller
-    // bumps linear_ownership_violation_prevented and falls back to
-    // safe path, matching the closure_bridge_epoch_safety_enforced
-    // pattern from #1475).
+    // Entry points (both must call — #1542 closes the gap):
+    //   1. apply_closure → closure_needs_safe_fallback
+    //      (evaluator_eval_flat.cpp) — refuse / bridge safe path
+    //   2. materialize_call_env (evaluator_env.cpp) — empty-Env
+    //      fallback for TCO / eval_data_as_code / any site that
+    //      materializes without going through apply_closure
     //
-    // Coordinated with #1475 epoch check (runs immediately after
-    // is_env_frame_stale in closure_needs_safe_fallback) and #1476
-    // atomic_bump_epochs_and_stamp_bridge (write-side of dual-epoch
-    // contract). Extends the dual-epoch safety net to linear
-    // ownership state on captured bindings.
+    // Returns true if safe (no Moved captures), false if any
+    // binding is Moved (bumps linear_ownership_violation_prevented;
+    // callers take their safe path).
+    //
+    // Coordinated with #1475 epoch check and #1476
+    // atomic_bump_epochs_and_stamp_bridge. JIT Apply path: #1540
+    // aura_jit_linear_post_mutate_enforce host callback.
     bool linear_post_mutate_enforce(EnvId env_id) const noexcept;
     // Issue #1539: test/helper — mark most-recent binding as Moved on Env
     // and its parent_id EnvFrame (if registered), for use-after-move tests.
