@@ -9453,6 +9453,15 @@ public:
         // (compiler_closure_epoch_mismatch_hits / is_bridge_stale
         // helper from #1475) to verify epoch progress vs catch-up.
         metrics_.bridge_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1485 C2-wire: keep AOT/C-runtime current_bridge_epoch
+        // in lockstep with mutation_epoch_ so lib/runtime.c's
+        // aura_closure_call 2-check (bridge_epoch mismatch + defuse_version_
+        // mismatch → return 0) sees the fresh value rather than the
+        // default 0. Without this wire, g_current_bridge_epoch stays at
+        // the static init value forever and the 2-check always passes
+        // vacuously. Acquire/release pairing with the fetch_add above
+        // mirrors the #1476 dual-epoch protocol.
+        aura_set_current_bridge_epoch(mutation_epoch_.load(std::memory_order_relaxed));
     }
 
     // Issue #1414: invalidate the solved_delta_cache_ and
