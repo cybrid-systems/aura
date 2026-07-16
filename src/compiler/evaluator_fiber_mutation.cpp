@@ -314,6 +314,12 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
     cp.defuse_version = defuse_version_snapshot();
     cp.boundary_depth = mutation_boundary_depth();
     cp.mutation_stack_depth = active_mutation_stack().size();
+    // Issue #1483 C2: wire per-fiber mutation_stack_depth metric
+    // (lifetime high-water mark CAS). The same call site is the
+    // canonical capture-from-stack site so the metric reflects
+    // what the fiber will see when it resumes. The bump helper
+    // is no-op when compiler_metrics_ is nullptr.
+    bump_per_fiber_mutation_stack_depth_max(cp.mutation_stack_depth);
     cp.thread_id = std::this_thread::get_id();
     cp.had_active_boundary = had_boundary || at_mutation_boundary_yield;
     auto& ystack = active_yield_checkpoint_stack();
@@ -448,6 +454,12 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
         cp.thread_id = std::this_thread::get_id();
         cp.boundary_depth = current_bdepth;
         cp.mutation_stack_depth = current_mdepth;
+        // Issue #1483 C2: wire per-fiber mutation_stack_depth metric
+        // at the restamp path (when the captured cp drifts from
+        // current state — thread_migrated, size_mismatch,
+        // depth_mismatch, or version_drift_pre). Restamp aligns
+        // the metric with the post-drift corrected depth.
+        bump_per_fiber_mutation_stack_depth_max(cp.mutation_stack_depth);
         cp.defuse_version = current_ver;
         fiber_stack_pool_detail::pool_stats().restamps.fetch_add(1, std::memory_order_relaxed);
         // Also restamp live fiber yield stack storage if present.
