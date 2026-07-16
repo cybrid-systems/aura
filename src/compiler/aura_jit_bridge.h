@@ -68,7 +68,22 @@ void* aura_get_aot_metrics(void);
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
 std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 
-// Issue #1369: per-function AOT version probe (hot-reload stale detection).
+// Issue #1485 C2: per-closure provenance accessors — emit-side freshness
+// probe infrastructure (refine #1475). The JIT runtime side
+// (aura_jit_runtime.cpp:880) already implements the dual-freshness probe
+// inside the C aura_closure_call wrapper (with
+// aura_jit_closure_record_stale_deopt + aura_deopt_inc + return 0 = deopt
+// to interpreter). These extern accessors expose the underlying per-closure
+// bridge_epoch / defuse_version vector reads so JIT emit-side LLVM IR can
+// do an explicit CreateCall probe before fn_closure_call (deferred to
+// follow-up — requires basic-block splitting, which is a non-trivial
+// LLVM pattern change). For now the C-side aura_closure_call wrapper
+// check is the authoritative JIT-side gate; LLVM IR emit-side probe
+// fires when wired up.
+std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id);
+std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id);
+
+
 // aura_aot_probe_fn_version — read version for original_name from a
 //   dlopened module (UINT64_MAX if unavailable).
 // aura_aot_fn_version_is_stale — true when binary version != expected.

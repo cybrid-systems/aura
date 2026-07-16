@@ -67,6 +67,20 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_current_bridge_epoch(voi
     return g_current_bridge_epoch_stub;
 }
 
+// Issue #1485 C2: per-closure provenance stubs. Production impl is in
+// aura_jit_runtime.cpp; test binaries that don't link it (light JIT
+// bundles) get the degenerate return-0 path. Weak so production impl
+// wins when both are linked.
+extern "C" __attribute__((weak)) std::uint64_t
+aura_get_closure_bridge_epoch(std::int64_t /*closure_id*/) {
+    return 0;
+}
+
+extern "C" __attribute__((weak)) std::uint64_t
+aura_get_closure_defuse_version(std::int64_t /*closure_id*/) {
+    return 0;
+}
+
 // ── Weak stubs for AOT region / module / eval isolation APIs ──
 // CompilerService (in aura_test_objects) references these; light
 // bundles don't link aura_jit_bridge.cpp. Weak so production bridge
