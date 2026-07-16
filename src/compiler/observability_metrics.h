@@ -1259,6 +1259,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_cross_cow_refresh_hits_total{0};
     std::atomic<std::uint64_t> stable_ref_fiber_workspace_mismatch_prevented_total{0};
     std::atomic<std::uint64_t> stable_ref_steal_auto_refresh_total{0};
+    // Issue #1473: pinned-ref validate_or_refresh sweeps driven by
+    // re_pin_cow_children_from_snapshot (steal/compact) +
+    // probe_linear_ownership_at_gc_safepoint (GC). Both walk
+    // cow_boundary_pinned_refs_ and call validate_or_refresh(*ws);
+    // these counters track per-hook validation work for stress-test
+    // regression detection (see tests/test_issue_1473.cpp).
+    std::atomic<std::uint64_t> stable_ref_validations_at_steal{0};
+    std::atomic<std::uint64_t> stable_ref_validations_at_gc_safepoint{0};
     // Issue #709: registry fast dispatch + capture discipline telemetry.
     std::atomic<std::uint64_t> primitive_fastpath_hits_total{0};
     std::atomic<std::uint64_t> primitive_capture_violations_total{0};

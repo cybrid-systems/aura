@@ -5620,6 +5620,11 @@ aura_issue_test_link_llvm_jit(test_issue_632)
 # batch_commits + hygiene_skips + dirty_prunes + recommendation).
 aura_add_issue_test(test_issue_1470)
 aura_issue_test_link_llvm_jit(test_issue_1470)
+# Issue #1473: Robust StableNodeRef auto-restamp across COW / fiber-steal /
+# GC — 1000+ iter stress test driving the 3 hook sites wired in
+# evaluator_fiber_mutation.cpp + evaluator_gc.cpp.
+aura_add_issue_test(test_issue_1473)
+aura_issue_test_link_llvm_jit(test_issue_1473)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics

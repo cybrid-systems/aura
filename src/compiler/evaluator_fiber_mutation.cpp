@@ -357,7 +357,21 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
     }
     // Increment success counter (the actual walk is cheap O(N) over
     // pinned refs — full enumeration deferred to follow-up stress test).
+    // Issue #1473: walk cow_boundary_pinned_refs_ and call
+    // validate_or_refresh on each. Previously this only bumped the
+    // counter; the actual validation was deferred pending a stress
+    // test. #1473 ships both the validation walk + the 1000+ iter
+    // stress test (tests/test_issue_1473.cpp) to back it.
+    std::size_t validated = 0;
+    {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        for (auto& pinned : cow_boundary_pinned_refs_) {
+            if (pinned.validate_or_refresh(*ws))
+                ++validated;
+        }
+    }
     m->cow_repin_on_steal.fetch_add(1, std::memory_order_relaxed);
+    m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
     m->panic_transfer_nested_success.fetch_add(1, std::memory_order_relaxed);
     (void)ws;
     return true;

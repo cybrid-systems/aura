@@ -244,6 +244,24 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         }
     }
     record_linear_gc_probe(*this, violation, nullptr);
+
+    // Issue #1473: also force validate_or_refresh on pinned StableNodeRefs
+    // at GC safepoint. The closure/probe above covers linear ownership,
+    // but pinned StableNodeRefs (boundary_pinned=true) need a separate
+    // refresh sweep — otherwise they can outlive their captured
+    // generation through a GC compact. Walk cow_boundary_pinned_refs_
+    // under the mutex and bump stable_ref_validations_at_gc_safepoint.
+    if (auto* ws = workspace_flat()) {
+        std::size_t validated = 0;
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        for (auto& pinned : cow_boundary_pinned_refs_) {
+            if (pinned.validate_or_refresh(*ws))
+                ++validated;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->stable_ref_validations_at_gc_safepoint.fetch_add(validated,
+                                                                std::memory_order_relaxed);
+    }
 }
 
 void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
@@ -283,6 +301,21 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     // Safe to call with compiler_metrics_ == nullptr (no-op).
     if (violation)
         bump_runtime_observability_steal_ownership_violation_correlated();
+
+    // Issue #1473: also force validate_or_refresh on pinned StableNodeRefs
+    // at fiber-steal time. Mirrors the GC-safepoint hook above — pinned
+    // refs (boundary_pinned=true) need a refresh sweep when the fiber
+    // migrates to a different worker thread.
+    if (auto* ws = workspace_flat()) {
+        std::size_t validated = 0;
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        for (auto& pinned : cow_boundary_pinned_refs_) {
+            if (pinned.validate_or_refresh(*ws))
+                ++validated;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
+    }
 }
 
 void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
