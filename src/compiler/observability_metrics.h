@@ -92,6 +92,17 @@ struct CompilerMetrics {
     // of the bundle. Bumped when per-function re-lower is
     // actually performed (replaces the full re-lower path).
     std::atomic<std::uint64_t> relower_per_function_called_count{0};
+    // Issue #1474: per-block re-lower observability. # of
+    // blocks actually replaced across all relower_define_function
+    // calls. With per-block selective copy, this should grow by
+    // dirty_block_count() per call (not total_blocks); an AI
+    // agent can read it via snapshot() /
+    // (query:incremental-relower-stats) to verify the per-block
+    // win is real. Pairs with ir_soa_block_dirty_hits_total +
+    // ir_soa_relower_blocks_saved_total — the derived
+    // dirty_block_ratio_bp is hits / (hits + saved) * 10000
+    // (basis points; 0..10000).
+    std::atomic<std::uint64_t> incremental_relower_blocks_total{0};
     // Issue #401: invalidate_function call counter. Bumped once per
     // invalidate_function entry (post-mutex-acquire, so the count
     // reflects only completed traversals). Pairs with jit_cache_evictions

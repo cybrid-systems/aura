@@ -100,6 +100,15 @@ struct CompilerSnapshot {
     std::uint64_t should_relower_total = 0;
     std::uint64_t affected_subtree_total = 0;
     std::uint64_t dirty_trigger_rate_bp = 0;
+    // Issue #1474: per-block re-lower observability. Mirrors
+    // CompilerMetrics::incremental_relower_blocks_total +
+    // derives dirty_block_ratio_bp from the existing
+    // ir_soa_block_dirty_hits_total / ir_soa_relower_blocks_saved_total
+    // pair (the ratio is hits / (hits + saved) * 10000; a
+    // ratio > 0 means the bitmask is firing on real mutations,
+    // a ratio == 0 means either no mutations or all clean).
+    std::uint64_t incremental_relower_blocks_total = 0;
+    std::uint64_t dirty_block_ratio_bp = 0;
     // Issue #387: Type Dependency Graph observability.
     // Mirrors CompilerMetrics::{type_dep_graph_lookups,
     // type_dep_graph_hits, type_dep_graph_size}.

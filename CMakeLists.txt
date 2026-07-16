@@ -5625,6 +5625,14 @@ aura_issue_test_link_llvm_jit(test_issue_1470)
 # evaluator_fiber_mutation.cpp + evaluator_gc.cpp.
 aura_add_issue_test(test_issue_1473)
 aura_issue_test_link_llvm_jit(test_issue_1473)
+# Issue #1474: Wire per-block dirty bitmask into actual re-lower
+# path. Per-block selective copy inside relower_define_function +
+# 1 new counter (incremental_relower_blocks_total) + 1 derived
+# snapshot field (dirty_block_ratio_bp). 1000-round stress test
+# verifies the per-block path fires 1 block per round (not the
+# full function).
+aura_add_issue_test(test_issue_1474)
+aura_issue_test_link_llvm_jit(test_issue_1474)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics
