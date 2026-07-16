@@ -8982,6 +8982,18 @@ public:
     // Issue #1446 AC2: arena compact hook entry — registered during
     // Evaluator ctor via set_on_compact_hook().
     void on_arena_compact_hook();
+    // Issue #1473: public test accessors for the 3 hook points wired by
+    // #1473 (validate_or_refresh sweeps for pinned StableNodeRefs). The
+    // production code paths (restore_post_yield_or_rollback,
+    // on_arena_compact_hook, fiber-steal safepoint, GC safepoint) all
+    // hit these functions through internal call sites; the test-only
+    // accessors below let tests/test_issue_1473.cpp drive a 1000+ iter
+    // stress loop without scheduling fibers.
+    [[nodiscard]] bool test_re_pin_cow_children_from_snapshot() {
+        return re_pin_cow_children_from_snapshot();
+    }
+    void test_probe_linear_at_gc_safepoint() noexcept { probe_linear_ownership_at_gc_safepoint(); }
+    void test_probe_linear_on_fiber_steal() noexcept { probe_linear_ownership_on_fiber_steal(); }
 
     [[nodiscard]] bool any_active_mutation_boundary() const noexcept;
     [[nodiscard]] std::uint64_t mutation_yield_count() const noexcept {
