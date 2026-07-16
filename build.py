@@ -183,7 +183,7 @@ def cmd_format():
 
 
 def cmd_lint():
-    """Ruff lint + format check for all Python files."""
+    """Ruff lint + format check + Issue #1484 test-includes linter."""
     fix = "--fix" in sys.argv[2:]
     print(f"{B}═══ Lint {'(fix)' if fix else '(check)'} ═══{N}")
     ruff = shutil.which("ruff")
@@ -208,6 +208,22 @@ def cmd_lint():
     r = run([ruff, "format", "--check", "."], cwd=ROOT)
     if r != 0:
         fail("ruff format check failed — run ./build.py lint --fix")
+        return r
+    # Issue #1484: test-includes linter (matches .githooks/pre-commit
+    # C2 wiring). Bare `#include "X.h"` patterns where the header
+    # lives under src/compiler/ or src/core/ but the include
+    # doesn't use the subdir prefix are rejected. Discovered during
+    # #1459 close-verify (9 broken files on main were fixed at
+    # commit 313c530d); this linter prevents future regressions.
+    # Uses the same sys.executable + ROOT.joinpath pattern as
+    # cmd_fixtures below.
+    script = ROOT / "scripts" / "check_test_includes.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("test includes linter failed — run python3 scripts/check_test_includes.py")
         return r
     ok("lint OK")
     return 0
