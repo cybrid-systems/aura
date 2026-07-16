@@ -1,5 +1,5 @@
 {
-  "count": 413,
+  "count": 419,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -13,6 +13,7 @@
     "ast:ref-valid?",
     "ast:ref-workspace-id",
     "closure:free-stats",
+    "compile:aot-stats",
     "compile:arena-stats",
     "compile:bidirectional-stats",
     "compile:compiler-cache-stats",
@@ -24,6 +25,7 @@
     "compile:mutation-impact-stats",
     "compile:mutator-dispatch-stats",
     "compile:per-defuse-index-stats",
+    "compile:per-symbol-dirty-stats",
     "compile:type-cache-stats",
     "compile:typecheck-stats",
     "cross-fiber safe steal",
@@ -57,6 +59,7 @@
     "query:arena-compaction-stats",
     "query:arena-compaction-stats-hash",
     "query:arena-concurrent-compact-stats",
+    "query:arena-live-compact-stats",
     "query:arena-live-defrag-full-v2-stats",
     "query:arena-live-defrag-stats",
     "query:arena-production-compaction-stats",
@@ -66,6 +69,7 @@
     "query:bugfix-941-967-stats",
     "query:bundle-codegen-decouple-stats",
     "query:by-marker",
+    "query:children-column-stats",
     "query:ci-reproducibility-stats",
     "query:closed-loop-convergence-stats",
     "query:closure-env-safety-stats",
@@ -316,6 +320,7 @@
     "query:seva-audit-log",
     "query:seva-longrunning-concurrent-slo",
     "query:seva-longrunning-harness-v2-stats",
+    "query:shape-arena-compact-stats",
     "query:shape-deopt-burst-stats",
     "query:shape-folding-stats",
     "query:shape-jit-pass-closedloop-stats",
@@ -330,6 +335,7 @@
     "query:soa-dirty-stats",
     "query:soa-hotpath-adoption-stats",
     "query:soa-production-columnar-stats",
+    "query:soa-view-enforcement-stats",
     "query:solve-delta-safety-stats",
     "query:source-marker-linear-consistency-stats",
     "query:span-lifetime-stats",
@@ -417,5 +423,5 @@
   ],
   "note": "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b / #1448). No new *-stats, string-*/json-*/math-*/vector-*/path-*/time-* (or : forms), or ast:ref-* without --update-baseline + PR justification. Prefer stdlib (lib/std/surface) and (engine:metrics). SlimSurface target public budget: 420.",
   "schema": 2,
-  "stats_count": 390
+  "stats_count": 396
 }
