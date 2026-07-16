@@ -2,12 +2,6 @@
 # One path per line (repo-relative). Prefer fixing tests over allowlisting.
 # Example:
 # src/compiler/evaluator_primitives_obs_jit_99.cpp
-# Issue #1478: linear_post_mutate_enforce helper (#1455 dual-epoch contract
-# read-side). Test file (tests/test_issue_1478.cpp) exists but isn't built —
-# system 5-min build timeout kills ninja (SIGTERM). Verification deferred to
-# follow-up #1538 when build can complete.
-src/compiler/evaluator.ixx
-src/compiler/evaluator_eval_flat.cpp
 # Issue #1480: incremental re-AOT pipeline (Phase 2) + closure capture
 # dep tracking. Test file (tests/test_incremental_aot_closure_deps.cpp)
 # is registered in CMakeLists.txt but the link may hit the system 5-min

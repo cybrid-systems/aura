@@ -5786,6 +5786,10 @@ aura_issue_test_link_llvm_jit(test_issue_1475)
 # typed_mutate migration deferred to follow-up issues.
 aura_add_issue_test(test_issue_1476)
 aura_issue_test_link_llvm_jit(test_issue_1476)
+# Issue #1478 / #1541: linear_post_mutate_enforce MVP + 2 counters
+# (9 ACs restored after scope-limited close deferred build).
+aura_add_issue_test(test_issue_1478)
+aura_issue_test_link_llvm_jit(test_issue_1478)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics
