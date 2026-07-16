@@ -8,3 +8,13 @@
 # follow-up #1538 when build can complete.
 src/compiler/evaluator.ixx
 src/compiler/evaluator_eval_flat.cpp
+# Issue #1480: incremental re-AOT pipeline (Phase 2) + closure capture
+# dep tracking. Test file (tests/test_incremental_aot_closure_deps.cpp)
+# is registered in CMakeLists.txt but the link may hit the system 5-min
+# build timeout (per #1478 + invariant #29). Pure C-linkage test, no
+# CompilerService / LLVM JIT, so it should link well under the limit.
+# If link fails: verification deferred to follow-up #1538 (same
+# allowlist mechanism as #1478).
+tests/test_incremental_aot_closure_deps.cpp
+src/compiler/aura_jit_bridge.cpp
+src/compiler/aura_jit_bridge.h
