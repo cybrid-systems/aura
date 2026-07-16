@@ -680,6 +680,11 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:scheduler-stealbudget-adaptive-stats",
     // Issue #652 / #707 — Per-fiber stack/checkpoint pool
     "query:per-fiber-stack-pool-stats",
+    // Issue #1483 — Per-fiber mutation stack depth observability
+    // (sister to per-fiber-stack-pool-stats above; reads the
+    // per_fiber_mutation_stack_depth_max + _current_max atomics
+    // wired at evaluator_fiber_mutation.cpp:316 + :454 sites).
+    "query:per-fiber-mutation-stack-stats",
     // Issue #708 — AOT hot-reload refcount + checkpoint version
     "query:aot-reload-stats",
     "query:aot-checkpoint-version-stats",
