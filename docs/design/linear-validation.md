@@ -74,6 +74,8 @@ bindings_linear_ownership_state_[i]   // 0=untracked … 4=Moved (mirrors ir.ixx
 
 `alloc_env_frame_from_env` / `materialize_call_env` copy the SoA so closure capture preserves tags.
 
+`materialize_call_env` also calls `linear_post_mutate_enforce` on entry (#1542) so TCO / non-`apply_closure` materialize sites share the same contract as `closure_needs_safe_fallback`. On Moved → empty-Env fallback (`materialize_fallback_total`).
+
 ## Future (#1543+)
 
 Borrow/MutBorrow stamping at runtime, and richer per-cell state transitions beyond Moved detection.

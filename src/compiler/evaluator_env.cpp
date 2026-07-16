@@ -639,6 +639,25 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return ne;
     }
+    // Issue #1542: linear post-mutate enforce at materialize entry
+    // (parity with apply_closure → closure_needs_safe_fallback).
+    // Covers TCO / eval_data_as_code sites that call materialize_call_env
+    // without going through the apply_closure dual check.
+    //
+    // Call BEFORE taking env_frames_mtx_: linear_post_mutate_enforce
+    // acquires its own shared lock, and std::shared_mutex is not
+    // recursive — nesting would deadlock. Same counter family as
+    // #1478 (`linear_post_mutate_enforcements`).
+    //
+    // On Moved capture: safe fallback to empty Env (globals still
+    // reachable) — matches INVALID_VERSION / OOB recovery shape so
+    // call sites never walk a frame with use-after-move tags.
+    if (!linear_post_mutate_enforce(cl.env_id)) {
+        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        return ne;
+    }
     // Issue #145 P0 follow-up: hold env_frames_mtx_ shared
     // lock for the duration of the frame read. The frame
     // reference must remain valid through .bindings(),
@@ -807,39 +826,25 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
     return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
-// Issue #1478: linear post-mutate enforcement (passive MVP).
-// Parallel to is_env_frame_stale — extends the pre-call safety
-// check at closure invocation to include linear value ownership
-// state on captured bindings.
+// Issue #1478 / #1539 / #1542: linear post-mutate enforcement.
+// Parallel to is_env_frame_stale — extends pre-call safety to
+// linear ownership state on captured bindings.
 //
-// MVP behavior:
-//   - Bumps linear_post_mutate_enforcements counter on every
-//     call (when env_id has a valid frame to validate).
-//   - Returns true (no Moved linear captures detected).
+// Behavior (#1539 real scan):
+//   - Bumps linear_post_mutate_enforcements on every call when
+//     env_id has a valid frame.
+//   - Walks bindings_linear_ownership_state_; returns false if
+//     any binding is Moved (use-after-move / post-mutate).
 //
-// Real per-cell linear scan requires runtime linear cell tagging
-// infrastructure (linear_ownership_state lookup table for cells
-// in EnvFrame.bindings_) deferred to #1543. The MVP plumbs the
-// enforcement point end-to-end and makes it observable via the
-// counter so production telemetry can track enforcement coverage
-// while the real scan is being built.
-//
-// When real linear scan ships (#1543), this function will:
-//   1. Walk env_frames_[env_id].bindings_ for cells tagged linear.
-//   2. Check each tagged cell's linear_ownership_state against
-//      current post-mutation state.
-//   3. Return false if any cell is Moved or invalid; bump
-//      linear_ownership_violation_prevented via the caller
-//      (closure_needs_safe_fallback).
+// Entry points:
+//   1. apply_closure → closure_needs_safe_fallback (#1478)
+//   2. materialize_call_env (#1542) — covers TCO / non-apply sites
+//   3. linear_post_mutate_enforce_all (#1538) + JIT probe (#1540)
 //
 // Coordination with dual-epoch contract:
 //   - Read-side: #1475 is_env_frame_stale + this helper.
 //   - Write-side: #1476 atomic_bump_epochs_and_stamp_bridge.
 //   - JIT-side: #1477 capture_fn_epoch + is_fn_epoch_stale.
-//
-// Counter bump pattern matches the closure_bridge_epoch_safety_
-// enforced family from #1475 — caller bumps linear_ownership_
-// violation_prevented on false return.
 bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
     if (env_id == NULL_ENV_ID || env_id >= env_frames_.size())
         return true; // no captures to validate, or invalid id (safety net)
