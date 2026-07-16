@@ -261,6 +261,66 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1483 C3: query:per-fiber-mutation-stack-stats — exposes
+    // the per_fiber_mutation_stack_depth_max + _current_max atomics
+    // added at C2 (observability_metrics.h:1550-1551 area + wire sites
+    // at evaluator_fiber_mutation.cpp:316 + :454). Returns a 3-field
+    // hash: {lifetime-max, current-max, schema=1483}.
+    //
+    // Closes EDSL-visibility gap — the C2 metrics exist on
+    // CompilerMetrics but no Aura primitive surfaces them, so
+    // orchestration queries + LLM-bottleneck monitors can't observe
+    // per-fiber mutation_stack_depth pressure without importing
+    // observability_metrics directly. The new primitive reads the
+    // metrics via the canonical Evaluator accessors
+    // (get_per_fiber_mutation_stack_depth_max + _current_max) so
+    // callers don't need to know about the CompilerMetrics layout.
+    //
+    // The lifetime-max + current-max pair distinguishes "all-time
+    // peak across this Evaluator lifetime" from "current live peak
+    // across active fibers" — useful for orchestrators tuning the
+    // adaptive safepoint threshold (C4 follow-up).
+    ObservabilityPrims::register_stats_impl(
+        "query:per-fiber-mutation-stack-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t lifetime_max =
+                static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max());
+            const std::int64_t current_max =
+                static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_current_max());
+            auto* ht = FlatHashTable::create(8) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("lifetime-max", lifetime_max);
+            insert_kv("current-max", current_max);
+            insert_kv("schema", 1483);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 98 (orig lines 20621-20671)
