@@ -110,6 +110,16 @@ struct CompilerMetrics {
     // (jit_cache_evictions - invalidate_function_calls) / invalidate_function_calls
     // tells you the average dependent fan-out per invalidation.
     std::atomic<std::uint64_t> invalidate_function_calls{0};
+    // Issue #1477: JIT-side dual-epoch fence observability. Pairs
+    // with compiler_closure_epoch_mismatch_hits (IR side) so
+    // dashboards can verify both reader paths see the same epoch.
+    //   - jit_epoch_stale_check_total: lifetime total of
+    //     AuraJIT::capture_fn_epoch + is_fn_epoch_stale calls
+    //     (one per JIT compile + one per JIT Apply prologue
+    //     check). Sustained high value vs. the captured-epoch
+    //     miss rate (jit_epoch_stale_hits / jit_epoch_stale_check_total)
+    //     indicates how often the JIT path sees a stale fn.
+    std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
     // Issue #1476: unified mark_define_dirty / invalidate_function atomic
     // protocol observability.
     //   - bridge_epoch_bumps_total: lifetime total of bump_bridge_epoch()
