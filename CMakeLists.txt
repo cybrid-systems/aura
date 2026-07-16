@@ -5666,6 +5666,14 @@ aura_issue_test_link_llvm_jit(test_issue_1476)
 # #625 / #709 existing primitives + counters.
 aura_add_issue_test(test_issue_633)
 aura_issue_test_link_llvm_jit(test_issue_633)
+# Issue #1480: incremental re-AOT pipeline (Phase 2) — verifies
+# aura_reemit_aot_for_dirty C-linkage surface (Phase 1 skeleton
+# fallback, Phase 2 region mask filter, last-call stats accessors,
+# 100-iter stress + atomic commit_func_table_swap cadence, closure
+# bridge refresh pair metric). 6 ACs, pure C-linkage (no CompilerService,
+# no LLVM JIT) so the test links fast even with the system 5-min
+# build timeout (per #1478 allowlist precedent).
+aura_add_issue_test(test_incremental_aot_closure_deps)
 # Issue #637: query:closure-bridge-safety-stats-hash — P0
 # memory-safety foundation — 1 new Aura primitive
 # (query:closure-bridge-safety-stats-hash) + 3 new atomics
