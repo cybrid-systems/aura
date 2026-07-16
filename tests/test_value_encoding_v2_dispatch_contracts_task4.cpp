@@ -12,7 +12,7 @@
 
 #include "test_harness.hpp"
 #include "value_tags.h"
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 #include "serve/fiber.h"
 #include "serve/scheduler.h"

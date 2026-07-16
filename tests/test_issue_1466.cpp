@@ -21,7 +21,7 @@
 //   AC7: hotpath_invariant_hits_total still exposed (no regression)
 
 #include "test_harness.hpp"
-#include "cpp26_contract_stats.h"
+#include "core/cpp26_contract_stats.h"
 
 import aura.core.cxx26_invariants;
 

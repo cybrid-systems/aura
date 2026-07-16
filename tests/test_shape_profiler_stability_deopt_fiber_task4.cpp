@@ -11,7 +11,7 @@
 //   - fuzz/stress under concurrent fibers
 
 #include "test_harness.hpp"
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 #include "serve/fiber.h"
 #include "serve/scheduler.h"

@@ -46,8 +46,8 @@
 // rationale). They MUST be included BEFORE the module imports
 // because they pollute global namespace with std template
 // specializations.
-#include "shape.h"
-#include "shape_profiler.h"
+#include "compiler/shape.h"
+#include "compiler/shape_profiler.h"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
