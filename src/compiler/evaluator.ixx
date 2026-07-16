@@ -1949,6 +1949,41 @@ public:
     // resync linear JIT GC roots under live bridge_epoch then
     // probe EnvFrame.version_ × linear_ownership_state.
     void sync_linear_roots_and_bridge_epoch() noexcept;
+    // Issue #1543: linear GC root registration consistency audit.
+    // Path ids match docs/design/linear-gc-roots.md §mutation paths.
+    static constexpr std::uint8_t kLinearGcRootAuditTypedMutate = 0;
+    static constexpr std::uint8_t kLinearGcRootAuditInvalidate = 1;
+    static constexpr std::uint8_t kLinearGcRootAuditCompact = 2;
+    static constexpr std::uint8_t kLinearGcRootAuditJitHotSwap = 3;
+    static constexpr std::uint8_t kLinearGcRootAuditFiberSteal = 4;
+    static constexpr std::uint8_t kLinearGcRootAuditGcSafepoint = 5;
+    static constexpr std::uint8_t kLinearGcRootAuditManual = 6;
+    static constexpr std::size_t kLinearGcRootAuditRingSize = 32;
+    struct LinearGcRootAuditEntry {
+        std::uint64_t seq = 0;
+        std::uint8_t path = 0;
+        std::uint8_t ok = 1; // 1 = invariants held
+        std::uint64_t registrations = 0;
+        std::uint64_t stale_hits = 0;
+        std::uint64_t violations_prevented = 0;
+        std::uint64_t env_version_resync = 0;
+        std::uint64_t live_roots = 0; // current collect_compiler_managed size
+    };
+    // Snapshot counters, check monotonicity + balance invariants, append
+    // audit-log entry, bump linear_gc_root_audit_checks_total. Returns ok.
+    bool run_linear_gc_root_audit(std::uint8_t path) noexcept;
+    [[nodiscard]] std::uint64_t linear_gc_root_audit_total() const noexcept {
+        return linear_gc_root_audit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t linear_gc_root_audit_seq() const noexcept {
+        return linear_gc_root_audit_seq_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] const LinearGcRootAuditEntry&
+    linear_gc_root_audit_entry_at(std::uint64_t seq) const noexcept {
+        return linear_gc_root_audit_ring_[seq % kLinearGcRootAuditRingSize];
+    }
+    [[nodiscard]] static std::string_view
+    linear_gc_root_audit_path_name(std::uint8_t path) noexcept;
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's
@@ -3503,6 +3538,15 @@ private:
     std::array<MutationAuditEntry, kMutationAuditRingSize> mutation_audit_ring_{};
     std::atomic<std::uint64_t> mutation_audit_seq_{0};
     std::atomic<std::uint64_t> mutation_audit_total_{0};
+    // Issue #1543: linear GC root audit ring (see run_linear_gc_root_audit).
+    std::array<LinearGcRootAuditEntry, kLinearGcRootAuditRingSize> linear_gc_root_audit_ring_{};
+    std::atomic<std::uint64_t> linear_gc_root_audit_seq_{0};
+    std::atomic<std::uint64_t> linear_gc_root_audit_total_{0};
+    // Last-seen counter snapshots for monotonicity checks across audits.
+    std::uint64_t linear_gc_root_audit_prev_reg_{0};
+    std::uint64_t linear_gc_root_audit_prev_stale_{0};
+    std::uint64_t linear_gc_root_audit_prev_viol_{0};
+    std::uint64_t linear_gc_root_audit_prev_resync_{0};
     std::atomic<std::uint64_t> capability_denial_count_{0};
     // Issue #1448: PrimMeta.deprecated dispatch-site hits (compat still runs).
     std::atomic<std::uint64_t> deprecated_prim_dispatch_total_{0};
@@ -4277,6 +4321,8 @@ public:
         // bridge_epoch then probe EnvFrame ownership (supersedes
         // probe-only #683 path — still probes inside sync).
         sync_linear_roots_and_bridge_epoch();
+        // Issue #1543: GC safepoint path audit after root re-register.
+        (void)run_linear_gc_root_audit(kLinearGcRootAuditGcSafepoint);
         return 0;
     }
     // Issue #439: wait_for_safepoint(timeout_ms) — the

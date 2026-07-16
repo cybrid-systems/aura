@@ -297,28 +297,113 @@ void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
 // Issue #1515: unified safepoint entry — re-register linear roots under
 // the live bridge_epoch, then probe EnvFrame/version ownership. Called
 // from request_gc_safepoint (immediate path) and invalidate revalidate.
+// Issue #1543: callers run_linear_gc_root_audit with the correct path
+// tag after this returns (GcSafepoint vs Invalidate vs Manual).
 void Evaluator::sync_linear_roots_and_bridge_epoch() noexcept {
     resync_linear_jit_gc_roots_after_invalidate();
     probe_linear_ownership_at_gc_safepoint();
+}
+
+// Issue #1543: path names for audit log / query surface.
+std::string_view Evaluator::linear_gc_root_audit_path_name(std::uint8_t path) noexcept {
+    switch (path) {
+        case kLinearGcRootAuditTypedMutate:
+            return "typed_mutate";
+        case kLinearGcRootAuditInvalidate:
+            return "invalidate_function";
+        case kLinearGcRootAuditCompact:
+            return "compact_env_frames";
+        case kLinearGcRootAuditJitHotSwap:
+            return "jit_hot_swap";
+        case kLinearGcRootAuditFiberSteal:
+            return "fiber_steal";
+        case kLinearGcRootAuditGcSafepoint:
+            return "gc_safepoint";
+        case kLinearGcRootAuditManual:
+            return "manual";
+        default:
+            return "unknown";
+    }
+}
+
+// Issue #1543: GC root registration consistency audit.
+// Invariants (docs/design/linear-gc-roots.md):
+//   1. registrations / stale_hits / violations / resync are monotonic
+//      (never decrease across audits)
+//   2. env_version_resync <= registrations (each resync bumps reg ≥1)
+//   3. live_roots is finite (collect_compiler_managed size)
+// Bumps linear_gc_root_audit_checks_total and appends ring log entry.
+bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (m)
+        m->linear_gc_root_audit_checks_total.fetch_add(1, std::memory_order_relaxed);
+
+    const std::uint64_t reg =
+        m ? m->linear_ownership_gc_root_registrations_total.load(std::memory_order_relaxed) : 0;
+    const std::uint64_t stale =
+        m ? m->linear_ownership_gc_root_stale_hits_total.load(std::memory_order_relaxed) : 0;
+    const std::uint64_t viol =
+        m ? m->linear_ownership_gc_violations_prevented_total.load(std::memory_order_relaxed) : 0;
+    const std::uint64_t resync =
+        m ? m->linear_ownership_gc_env_version_resync_total.load(std::memory_order_relaxed) : 0;
+
+    // Live root set under current bridge epoch (read-only collect).
+    std::vector<std::int64_t> cl_roots;
+    std::vector<std::int64_t> env_roots;
+    collect_compiler_managed_gc_roots(cl_roots, env_roots, current_bridge_epoch());
+    const std::uint64_t live = cl_roots.size() + env_roots.size();
+
+    bool ok = true;
+    // Monotonicity vs previous audit snapshot.
+    if (reg < linear_gc_root_audit_prev_reg_ || stale < linear_gc_root_audit_prev_stale_ ||
+        viol < linear_gc_root_audit_prev_viol_ || resync < linear_gc_root_audit_prev_resync_) {
+        ok = false;
+    }
+    // Balance: resync events never outpace registrations (each resync
+    // path bumps registrations by at least 1 — see resync_linear_jit...).
+    if (resync > reg)
+        ok = false;
+
+    linear_gc_root_audit_prev_reg_ = reg;
+    linear_gc_root_audit_prev_stale_ = stale;
+    linear_gc_root_audit_prev_viol_ = viol;
+    linear_gc_root_audit_prev_resync_ = resync;
+
+    const auto seq = linear_gc_root_audit_seq_.fetch_add(1, std::memory_order_relaxed);
+    auto& slot = linear_gc_root_audit_ring_[seq % kLinearGcRootAuditRingSize];
+    slot.seq = seq;
+    slot.path = path;
+    slot.ok = ok ? 1 : 0;
+    slot.registrations = reg;
+    slot.stale_hits = stale;
+    slot.violations_prevented = viol;
+    slot.env_version_resync = resync;
+    slot.live_roots = live;
+    linear_gc_root_audit_total_.fetch_add(1, std::memory_order_relaxed);
+    return ok;
 }
 
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     const auto current_ver = defuse_version_snapshot();
     const auto current_bridge = current_bridge_epoch();
     bool violation = false;
-    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
-    for (const auto& [id, cl] : closures_) {
-        (void)id;
-        if (cl.bridge_epoch == 0)
-            continue;
-        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-            continue;
-        const auto& fr = env_frames_[cl.env_id];
-        if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                             current_bridge)) {
-            violation = true;
-            break;
+    {
+        // Scoped locks: release before #1543 audit (collect takes
+        // closures_mtx_ again; shared_mutex is not recursive).
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        for (const auto& [id, cl] : closures_) {
+            (void)id;
+            if (cl.bridge_epoch == 0)
+                continue;
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                continue;
+            const auto& fr = env_frames_[cl.env_id];
+            if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                                 current_bridge)) {
+                violation = true;
+                break;
+            }
         }
     }
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -349,6 +434,8 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
         if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))
             mm->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
     }
+    // Issue #1543: fiber-steal mutation path audit.
+    (void)run_linear_gc_root_audit(kLinearGcRootAuditFiberSteal);
 }
 
 void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,

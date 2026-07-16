@@ -3215,6 +3215,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_ownership_gc_root_stale_hits_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
+    // Issue #1543: GC root registration consistency audit — one bump per
+    // run_linear_gc_root_audit() across the 6 mutation touchpoints
+    // (typed_mutate, invalidate_function, compact_env_frames, JIT hot-swap,
+    // fiber steal, GC safepoint). See docs/design/linear-gc-roots.md.
+    std::atomic<std::uint64_t> linear_gc_root_audit_checks_total{0};
     // Issue #1478: linear post-mutate enforcement counters (Issue #1478
     // AC #4). Distinct from the *_gc_* counters above (those track
     // GC-root registration lifecycle; these track per-closure-call

@@ -1267,7 +1267,17 @@ std::size_t Evaluator::compact_env_frames() {
                                                      std::memory_order_relaxed);
         m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
         m->envframe_compact_bridge_restamps_total.fetch_add(restamped, std::memory_order_relaxed);
+        // Issue #1543: restamped survivor closures are re-registered as
+        // GC roots under the post-compact bridge_epoch (env_id remapped).
+        if (restamped > 0) {
+            m->linear_ownership_gc_root_registrations_total.fetch_add(restamped,
+                                                                      std::memory_order_relaxed);
+        }
     }
+    // Drop env_frames exclusive lock before #1543 audit (audit collect
+    // only needs closures_mtx_; avoid holding exclusive while auditing).
+    env_lock.unlock();
+    (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
     return reclaimed;
 }
 
