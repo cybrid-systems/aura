@@ -157,6 +157,16 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_walk_active_closures_tot
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_walk_active_closures_stale_found(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_get_current_bridge_epoch(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int
+aura_jit_is_fn_epoch_stale(const char* /*name*/, std::uint64_t /*current_bridge_epoch*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::int64_t aura_jit_deopt_to_interpreter(const char* /*name*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }

@@ -317,6 +317,12 @@ struct LLVMBuilder {
     // Issue #1535: Linear* dual-epoch fence — is_fn_epoch_stale +
     // is_env_frame_stale before Move/Borrow/Drop mutation.
     llvm::Function* fn_linear_epoch_safety_check = nullptr;
+    // Issue #1537: Apply-prologue dual-epoch helpers.
+    llvm::Function* fn_get_current_bridge_epoch = nullptr;
+    llvm::Function* fn_is_fn_epoch_stale = nullptr;
+    llvm::Function* fn_deopt_to_interpreter = nullptr;
+    // When set, entry-block instructions lower into this BB (after prologue).
+    llvm::BasicBlock* entry_body_bb = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
@@ -418,6 +424,17 @@ struct LLVMBuilder {
         fn_linear_epoch_safety_check = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, {ptr_i8, i8_ty, i32_ty}, false),
             llvm::Function::ExternalLinkage, "aura_jit_linear_epoch_safety_check", mod);
+
+        // Issue #1537: Apply prologue dual-epoch helpers.
+        fn_get_current_bridge_epoch = llvm::Function::Create(
+            llvm::FunctionType::get(i64, false), llvm::Function::ExternalLinkage,
+            "aura_jit_get_current_bridge_epoch", mod);
+        fn_is_fn_epoch_stale = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, {ptr_i8, i64}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_is_fn_epoch_stale", mod);
+        fn_deopt_to_interpreter = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {ptr_i8}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_deopt_to_interpreter", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -2160,11 +2177,14 @@ uint64_t aura_exception_fiber_count();
 void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
-// Issue #157 Phase 1c / #1534 / #1535: deopt counter + dual-epoch fences.
+// Issue #157 Phase 1c / #1534 / #1535 / #1537: deopt + dual-epoch fences.
 void aura_deopt_inc();
 int aura_jit_guard_shape_epoch_check(const char* name);
 int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
                                        std::uint32_t opcode);
+std::uint64_t aura_jit_get_current_bridge_epoch(void);
+int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
+std::int64_t aura_jit_deopt_to_interpreter(const char* name);
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
@@ -2534,9 +2554,12 @@ struct AuraJIT::Impl {
         reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
         reg("aura_jit_linear_post_invalidate_safety",
             (void*)aura_jit_linear_post_invalidate_safety);
-        // Issue #1534 / #1535: dual-epoch fences + deopt counter for stale path.
+        // Issue #1534 / #1535 / #1537: dual-epoch fences + deopt counter.
         reg("aura_jit_guard_shape_epoch_check", (void*)aura_jit_guard_shape_epoch_check);
         reg("aura_jit_linear_epoch_safety_check", (void*)aura_jit_linear_epoch_safety_check);
+        reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
+        reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
+        reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         reg("aura_get_defuse_version", (void*)aura_get_defuse_version);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
@@ -2724,10 +2747,52 @@ struct AuraJIT::Impl {
             builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
         }
 
+        // Issue #1537: dual-epoch Apply prologue — every JIT'd fn entry
+        // checks is_fn_epoch_stale before body execution. Minimal IR:
+        //   %cur = call @aura_jit_get_current_bridge_epoch()
+        //   %stale = call @aura_jit_is_fn_epoch_stale(name, %cur)
+        //   br %stale, deopt, cont
+        //   deopt: ret call @aura_jit_deopt_to_interpreter(name)
+        //   cont:  <function body>
+        builder.entry_body_bb = nullptr;
+        if (fn.name && fn.name[0] && builder.fn_get_current_bridge_epoch &&
+            builder.fn_is_fn_epoch_stale && builder.fn_deopt_to_interpreter) {
+            auto* entry_bb = builder.block_map[fn.entry_block];
+            auto* parent = builder.func;
+            auto* bb_deopt = llvm::BasicBlock::Create(ctx, "epoch_prologue_deopt", parent);
+            auto* bb_cont = llvm::BasicBlock::Create(ctx, "epoch_prologue_cont", parent);
+            builder.irb->SetInsertPoint(entry_bb);
+            auto* name_gv = builder.irb->CreateGlobalString(fn.name, "prologue_fn_name");
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+            auto* cur_epoch = builder.irb->CreateCall(
+                llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
+            auto* stale_i =
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
+                                        llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+            auto* is_stale = builder.irb->CreateICmpNE(stale_i, zero32);
+            builder.irb->CreateCondBr(is_stale, bb_deopt, bb_cont);
+            // Deopt path: return interpreter-fallback sentinel.
+            builder.irb->SetInsertPoint(bb_deopt);
+            auto* deopt_ret =
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
+                                        llvm::ArrayRef<llvm::Value*>{name_ptr});
+            builder.irb->CreateRet(deopt_ret);
+            // Body continues in cont BB.
+            builder.entry_body_bb = bb_cont;
+            if (metrics)
+                metrics->prologue_emit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
         // Lower each block
         for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
             auto& fb = fn.blocks[bi];
-            builder.irb->SetInsertPoint(builder.block_map[fb.id]);
+            // Entry body lands in prologue cont BB when prologue was emitted.
+            if (fb.id == fn.entry_block && builder.entry_body_bb)
+                builder.irb->SetInsertPoint(builder.entry_body_bb);
+            else
+                builder.irb->SetInsertPoint(builder.block_map[fb.id]);
             for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
                 if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
                     delete builder.irb;

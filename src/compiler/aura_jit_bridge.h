@@ -166,6 +166,16 @@ std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
 std::uint64_t aura_jit_walk_active_closures_total(void);
 std::uint64_t aura_jit_walk_active_closures_stale_found(void);
 
+// Issue #1537: LLVM IR-level Apply prologue dual-epoch helpers.
+// Emitted at every JIT'd function entry (before body).
+//   get_current_bridge_epoch — AOT table epoch (lockstep with bridge)
+//   is_fn_epoch_stale — wraps AuraJIT::is_fn_epoch_stale; bumps
+//     jit_epoch_stale_check_total once per Apply (AC4)
+//   deopt_to_interpreter — stale path: record metrics + return sentinel 0
+std::uint64_t aura_jit_get_current_bridge_epoch(void);
+int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
+std::int64_t aura_jit_deopt_to_interpreter(const char* name);
+
 // Issue #1534: GuardShape dual-epoch fence — runtime helper called from
 // JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.
 // Returns 1 if the named fn is stale vs aura_aot_func_table_epoch()

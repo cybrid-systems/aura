@@ -5066,6 +5066,9 @@ aura_issue_test_link_llvm_jit(test_issue_1535)
 # after mark_define_dirty / invalidate_function.
 aura_add_issue_test(test_issue_1536)
 aura_issue_test_link_llvm_jit(test_issue_1536)
+# Issue #1537: LLVM IR-level dual-epoch check at every JIT Apply prologue.
+aura_add_issue_test(test_issue_1537)
+aura_issue_test_link_llvm_jit(test_issue_1537)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
