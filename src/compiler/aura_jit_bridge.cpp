@@ -818,6 +818,45 @@ extern "C" void aura_jit_clear_linear_env_context(void) {
     g_linear_frame_version.store(0, std::memory_order_release);
 }
 
+// Issue #1540: host callback for Evaluator::linear_post_mutate_enforce.
+namespace {
+aura_linear_post_mutate_enforce_fn_t g_linear_enforce_fn = nullptr;
+void* g_linear_enforce_user = nullptr;
+} // namespace
+
+extern "C" void aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t fn,
+                                                       void* user_data) {
+    g_linear_enforce_fn = fn;
+    g_linear_enforce_user = user_data;
+}
+
+extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id) {
+    std::uint32_t id = env_id;
+    if (id == kLinearEnvNull)
+        id = g_linear_env_id.load(std::memory_order_acquire);
+    if (!g_linear_enforce_fn || id == kLinearEnvNull)
+        return 0; // no callback / no context → pass-through (safe)
+    if (aot_metrics()) {
+        aot_metrics()->jit_linear_post_mutate_enforcements_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    // Callback: 1 = unsafe (deopt), 0 = safe.
+    const int unsafe = g_linear_enforce_fn(g_linear_enforce_user, id);
+    if (unsafe) {
+        if (aot_metrics()) {
+            aot_metrics()->jit_linear_post_mutate_violations_total.fetch_add(
+                1, std::memory_order_relaxed);
+            aot_metrics()->linear_ownership_violation_prevented.fetch_add(
+                1, std::memory_order_relaxed);
+            aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        aura_jit_closure_record_stale_deopt();
+        aura_jit_closure_record_safe_fallback();
+    }
+    return unsafe ? 1 : 0;
+}
+
 extern "C" int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
                                                   std::uint32_t opcode) {
     // Preserve #740 post-invalidate metrics when linear state is set.
@@ -852,10 +891,15 @@ extern "C" int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint
             stale = true;
     }
 
+    // Issue #1540: linear_post_mutate_enforce (tree-walker dual of #1478).
+    // Uses env context set via aura_jit_set_linear_env_context.
+    if (aura_jit_linear_post_mutate_enforce(kLinearEnvNull) != 0)
+        stale = true;
+
     if (!stale)
         return 0;
 
-    // Stale → runtime safety: deopt path metrics + live-closure prevented.
+    // Stale / linear violation → deopt path metrics + live-closure prevented.
     aura_jit_closure_record_stale_deopt();
     aura_jit_closure_record_safe_fallback();
     if (aot_metrics()) {

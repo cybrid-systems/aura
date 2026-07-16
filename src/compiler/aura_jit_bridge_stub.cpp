@@ -178,6 +178,12 @@ aura_jit_linear_epoch_safety_check(const char* /*fn_name*/, std::uint8_t /*linea
 extern "C" __attribute__((weak)) void
 aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
 extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}
+extern "C" __attribute__((weak)) void
+aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t /*fn*/,
+                                       void* /*user_data*/) {}
+extern "C" __attribute__((weak)) int aura_jit_linear_post_mutate_enforce(std::uint32_t /*env_id*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {
     return 0;
 }

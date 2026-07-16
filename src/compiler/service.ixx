@@ -622,6 +622,17 @@ public:
         aura_set_aot_metrics(&metrics_);
         // Issue #1522: register AuraJIT for bridge C-API batch_deopt_for.
         aura_set_jit_batch_deopt_target(&jit_);
+        // Issue #1540: wire Evaluator::linear_post_mutate_enforce into JIT
+        // linear_safety_probe / Apply prologue (returns 1 if UNSAFE).
+        aura_set_linear_post_mutate_enforce_fn(
+            [](void* user, std::uint32_t env_id) -> int {
+                if (!user)
+                    return 0;
+                auto* ev = static_cast<Evaluator*>(user);
+                // linear_post_mutate_enforce returns true if SAFE.
+                return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
+            },
+            &evaluator_);
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.
@@ -10444,6 +10455,15 @@ public:
         aura_set_aot_metrics(&metrics_);
         // Issue #1522: re-bind batch_deopt target (lazy JIT prims path).
         aura_set_jit_batch_deopt_target(&jit_);
+        // Issue #1540: re-bind linear_post_mutate_enforce for JIT probe.
+        aura_set_linear_post_mutate_enforce_fn(
+            [](void* user, std::uint32_t env_id) -> int {
+                if (!user)
+                    return 0;
+                auto* ev = static_cast<Evaluator*>(user);
+                return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
+            },
+            &evaluator_);
 
         // Issue #157 Phase 1: bind the lock hooks. Pattern matches
         // the g_prim_dispatcher pattern above — the runtime bridges
