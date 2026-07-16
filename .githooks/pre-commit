@@ -69,6 +69,13 @@ src_files=$(git diff --cached --name-only --diff-filter=ACMR \
     | grep -E '^src/' \
     || true)
 
+# Collect staged test files — triggers the test-includes linter
+# (Issue #1484) since bare `#include "X.h"` patterns only matter for
+# test files (production includes use the subdir prefixes by convention).
+test_files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '^tests/.*\.cpp$' \
+    || true)
+
 # ── C++ (clang-format) ─────────────────────────────────────────────
 if [ -n "$cpp_files" ]; then
     # Defensive: ensure clang-format is on PATH.
@@ -170,6 +177,29 @@ if [ -n "$src_files" ]; then
         exit 1
     fi
     echo "pre-commit: docs verify (--check) clean ✓"
+fi
+
+# ── Test includes linter (Issue #1484) ─────────────────────────────
+# Lints tests/*.cpp for bare `#include "X.h"` patterns where the header
+# lives under src/compiler/ or src/core/ but the include doesn't use the
+# subdir prefix. Runs as a final gate (parallel to the docs regen +
+# verify pattern above). Skip if no tests/ changes. Discovered during
+# #1459 close-verify (9 broken files on main were fixed at commit
+# 313c530d); this linter prevents future regressions.
+if [ -n "$test_files" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ pre-commit: python3 not found on PATH" >&2
+        exit 1
+    fi
+
+    echo "pre-commit: running test includes linter (tests/ has staged changes)..."
+    if ! python3 "$ROOT/scripts/check_test_includes.py" > /tmp/test_includes_check.log 2>&1; then
+        echo "❌ pre-commit: test includes linter failed. See /tmp/test_includes_check.log" >&2
+        cat /tmp/test_includes_check.log >&2
+        echo "   Hint: run python3 scripts/check_test_includes.py to see which include is broken." >&2
+        exit 1
+    fi
+    echo "pre-commit: test includes linter clean ✓"
 fi
 
 # If neither C++ nor Python staged, exit 0 (nothing to format).
