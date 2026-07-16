@@ -5788,6 +5788,23 @@ aura_add_issue_test(test_resource_quota)
 # 5-min build timeout (per invariant #29). Verification deferred to
 # #1538 batch.
 aura_add_issue_test(test_env_symid_primary_path)
+# Issue #1483: per-fiber mutation_stack_depth metrics (C2 atomics +
+# bump helpers + wire at evaluator_fiber_mutation.cpp:316+:454) +
+# query:per-fiber-mutation-stack-stats primitive (C3) + adaptive
+# GC safepoint threshold with exponential backoff (C4 default
+# heuristic (a)) + query:gc-safepoint-adaptive-stats primitive (C4).
+# 7 ACs covering: bump_per_fiber_mutation_stack_depth_max + _current_max
+# monotonic-CAS, accessor correctness, request_gc_safepoint() immediate
+# path resets threshold, bump_safepoint_adaptive_threshold() doubles
+# (CAS-capped at 1024), should_adapt_safepoint_threshold() pressure
+# signal, request_gc_safepoint() force-defer when pressure > threshold.
+# Imports aura.compiler.evaluator (matching test_issue_1476 +
+# test_resource_quota + test_env_symid_primary_path pattern) so
+# links against evaluator module. Per #1478 / #1480 / #1481 / #1482
+# precedent, added to test-binding-allowlist.txt in case the link
+# hits the system 5-min build timeout (per invariant #29).
+# Verification deferred to #1538 batch.
+aura_add_issue_test(test_per_fiber_mutation_safepoint)
 # Issue #637: query:closure-bridge-safety-stats-hash — P0
 # memory-safety foundation — 1 new Aura primitive
 # (query:closure-bridge-safety-stats-hash) + 3 new atomics
