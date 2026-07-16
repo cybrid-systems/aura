@@ -660,7 +660,7 @@ Evaluator* Evaluator::get_query_evaluator() noexcept {
 // g_scheduler_stats_evaluator (std::atomic) still point at
 // the dead stack — and the next
 // aura_evaluator_bump_mutation_steal_attempt() /
-// aura_evaluator_bump_mutation_steal_violation() /
+// Evaluator::bump_mutation_steal_violation_count() /
 // aura_evaluator_resume_fiber_migration() path dereferences
 // a use-after-return (verified by ASan:
 // stack-use-after-return in bump_mutation_steal_attempt at
@@ -668,6 +668,15 @@ Evaluator* Evaluator::get_query_evaluator() noexcept {
 // hang on t.join() — the worker's steal code called
 // bump_mutation_steal_attempt on a dead Evaluator and
 // crashed/hung inside the atomic fetch_add.
+//
+// Issue #1483 C1: dropped the stale aura_evaluator_bump_mutation_steal_violation()
+// reference — that C API never existed; only the C++
+// bump_mutation_steal_violation_count() method (no C wrapper)
+// is the canonical violation path. Verified via audit: the
+// extern "C" block at L959+ has no aura_evaluator_bump_mutation_steal_violation.
+// The bump_mutation_steal_attempt / bump_mutation_steal_violation_count /
+// aura_evaluator_resume_fiber_migration trio is the actual
+// use-after-return surface.
 //
 // Use CAS for the atomic so we don't clobber a freshly-stored
 // pointer from a different CompilerService that was constructed
