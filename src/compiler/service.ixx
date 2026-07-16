@@ -4765,12 +4765,49 @@ public:
         // (which reference the old func_id) keep working.
         const auto old_func_id = entry.irs[func_idx].id;
         new_func.id = old_func_id;
-        entry.irs[func_idx] = std::move(new_func);
-        // Clear the per-block dirty bits for this function
-        // (we just re-lowered it, so the new IR is correct).
-        for (auto& b : entry.block_dirty_per_func_[func_idx]) {
-            b = 0;
+        // Issue #1474: per-block selective copy. When the
+        // dirty bitmask has the same block count as the new
+        // (and old) function, only copy the dirty blocks from
+        // new_func into entry.irs[func_idx] — clean blocks
+        // keep their old IR. This is the per-block win: a
+        // typical mutate:set-body of a single line only marks
+        // the body block dirty, so we only re-place that one
+        // block in the cache (and only the body block's
+        // instructions get touched). When the block counts
+        // don't match (control-flow re-shape), fall back to
+        // the previous whole-function replace.
+        std::size_t blocks_replaced = 0;
+        if (func_idx < entry.block_dirty_per_func_.size()) {
+            auto& dirty_mask = entry.block_dirty_per_func_[func_idx];
+            if (dirty_mask.size() == new_func.blocks.size() &&
+                dirty_mask.size() == entry.irs[func_idx].blocks.size()) {
+                for (std::size_t bi = 0; bi < new_func.blocks.size(); ++bi) {
+                    if (dirty_mask[bi]) {
+                        entry.irs[func_idx].blocks[bi] = std::move(new_func.blocks[bi]);
+                        dirty_mask[bi] = 0;
+                        ++blocks_replaced;
+                    }
+                }
+            } else {
+                // Shape mismatch — fall back to full replace.
+                blocks_replaced = new_func.blocks.size();
+                entry.irs[func_idx] = std::move(new_func);
+                for (auto& b : dirty_mask)
+                    b = 0;
+            }
+        } else {
+            // No bitmask — fall back to full replace.
+            blocks_replaced = new_func.blocks.size();
+            entry.irs[func_idx] = std::move(new_func);
         }
+        // Issue #1474: bump per-block replaced counter so an
+        // AI agent can read snapshot() /
+        // (query:incremental-relower-stats) and verify the
+        // per-block win is real (incremental_relower_blocks_total
+        // should grow by dirty_block_count() per call, not by
+        // total_blocks()).
+        metrics_.incremental_relower_blocks_total.fetch_add(blocks_replaced,
+                                                            std::memory_order_relaxed);
         // Also clear the entry.dirty flag if this was the only
         // dirty function.
         if (entry.dirty_block_count() == 0) {
@@ -5909,6 +5946,22 @@ public:
             s.dirty_trigger_rate_bp = (s.should_relower_total * 10000u) / s.affected_subtree_total;
         } else {
             s.dirty_trigger_rate_bp = 0;
+        }
+        // Issue #1474: per-block re-lower observability.
+        // Mirror the new incremental_relower_blocks_total
+        // counter and derive dirty_block_ratio_bp from the
+        // existing ir_soa_block_dirty_hits_total /
+        // ir_soa_relower_blocks_saved_total pair.
+        s.incremental_relower_blocks_total =
+            metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
+        {
+            const std::uint64_t hits =
+                metrics_.ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed);
+            const std::uint64_t saved =
+                metrics_.ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed);
+            const std::uint64_t sum = hits + saved;
+            s.dirty_block_ratio_bp =
+                sum > 0 ? static_cast<std::uint64_t>((hits * 10000u) / sum) : 0ull;
         }
         // Issue #387: Type Dependency Graph observability.
         // Mirrors the 3 atomics; derives type_dep_graph_hit_rate_bp.
