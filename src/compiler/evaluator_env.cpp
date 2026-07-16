@@ -757,6 +757,33 @@ bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
     return true;
 }
 
+// Issue #1538: combined post-mutation linear pipeline — runtime half.
+// Snapshot frame ids under env_frames_mtx_, then call
+// linear_post_mutate_enforce per id (avoids nested shared_lock).
+// O(F) in number of live frames.
+Evaluator::LinearPostMutateSweepResult Evaluator::linear_post_mutate_enforce_all() const noexcept {
+    LinearPostMutateSweepResult out;
+    std::vector<EnvId> ids;
+    {
+        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        ids.reserve(env_frames_.size());
+        for (EnvId id = 0; id < env_frames_.size(); ++id) {
+            if (env_frames_[id].version_ == INVALID_VERSION)
+                continue;
+            ids.push_back(id);
+        }
+    }
+    for (EnvId id : ids) {
+        ++out.frames_checked;
+        if (!linear_post_mutate_enforce(id))
+            out.all_safe = false;
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_); m && out.frames_checked > 0) {
+        m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return out;
+}
+
 // Issue #355: refresh_stale_frame_in_walk — single source of
 // truth for the "saw a stale frame during a walk" pattern.
 //

@@ -2017,6 +2017,16 @@ public:
     // contract). Extends the dual-epoch safety net to linear
     // ownership state on captured bindings.
     bool linear_post_mutate_enforce(EnvId env_id) const noexcept;
+    // Issue #1538: sweep all live env frames with linear_post_mutate_enforce.
+    // Used by the combined post-mutation linear pipeline (with
+    // post_mutation_invariant_check) so typed_mutate surfaces both
+    // type-checker OwnershipEnv notes and runtime env-frame enforcement.
+    // Returns frames checked; all_safe is false if any frame fails.
+    struct LinearPostMutateSweepResult {
+        std::uint64_t frames_checked = 0;
+        bool all_safe = true;
+    };
+    [[nodiscard]] LinearPostMutateSweepResult linear_post_mutate_enforce_all() const noexcept;
     // Issue #356: is_env_frame_invalid — true if the frame's
     // version_ has been marked INVALID_VERSION by a post-rollback
     // invalidation pass. Distinct from is_env_frame_stale:

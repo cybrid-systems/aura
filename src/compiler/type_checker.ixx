@@ -1616,6 +1616,15 @@ public:
 // narrowing live in the dirty scope (so the caller can warn or block
 // under Strict mode).
 //
+// Issue #1538 (combined pipeline with #1478): this is the TYPE-CHECKER
+// half of post-mutation linear validation (OwnershipEnv::validate_ownership
+// on dirty Linear bindings). The RUNTIME half is
+// Evaluator::linear_post_mutate_enforce / linear_post_mutate_enforce_all.
+// Callers (CompilerService::typed_mutate) should run BOTH:
+//   1. post_mutation_invariant_check (or PostMutationInvariantVisitor)
+//   2. linear_post_mutate_enforce_all
+// See docs/design/linear-validation.md.
+//
 // `reg` is the persistent TypeRegistry from CompilerService; the
 // analyze_predicate_flat call inside needs it to look up refinement
 // types. notes_out is appended to (not cleared) so callers can chain
