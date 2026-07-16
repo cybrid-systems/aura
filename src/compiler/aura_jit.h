@@ -286,11 +286,11 @@ public:
     // false when `name` was never captured (pass-through — fn
     // wasn't compiled via this path).
 
-}
 
-private : struct Impl;
-std::unique_ptr<Impl> impl_;
-mutable Metrics metrics_;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    mutable Metrics metrics_;
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.

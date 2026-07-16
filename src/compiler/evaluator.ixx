@@ -1963,6 +1963,28 @@ public:
     // (so subsequent reads see it as fresh) or re-capture the
     // closure against a fresh env.
     bool is_env_frame_stale(EnvId id) const;
+    // Issue #1478: linear post-mutate enforcement (passive MVP,
+    // parallel to is_env_frame_stale). Per-closure-call check that
+    // captured linear values have not been Moved/invalidated since
+    // the closure was constructed. Bumps linear_post_mutate_
+    // enforcements counter (Issue #1478 AC #4) on every call when
+    // env_id has a valid frame. Real per-cell linear ownership
+    // scan requires runtime linear cell tagging infrastructure
+    // (linear_ownership_state lookup table for cells in
+    // EnvFrame.bindings_) deferred to #1543.
+    //
+    // Returns true if safe (no Moved captures detected), false if
+    // any captured linear value is in Moved/invalid state (caller
+    // bumps linear_ownership_violation_prevented and falls back to
+    // safe path, matching the closure_bridge_epoch_safety_enforced
+    // pattern from #1475).
+    //
+    // Coordinated with #1475 epoch check (runs immediately after
+    // is_env_frame_stale in closure_needs_safe_fallback) and #1476
+    // atomic_bump_epochs_and_stamp_bridge (write-side of dual-epoch
+    // contract). Extends the dual-epoch safety net to linear
+    // ownership state on captured bindings.
+    bool linear_post_mutate_enforce(EnvId env_id) const noexcept;
     // Issue #356: is_env_frame_invalid — true if the frame's
     // version_ has been marked INVALID_VERSION by a post-rollback
     // invalidation pass. Distinct from is_env_frame_stale:
@@ -9049,6 +9071,20 @@ public:
     }
     void test_probe_linear_at_gc_safepoint() noexcept { probe_linear_ownership_at_gc_safepoint(); }
     void test_probe_linear_on_fiber_steal() noexcept { probe_linear_ownership_on_fiber_steal(); }
+    // Issue #1478: public test accessors for the 2 new linear
+    // post-mutate enforcement counters. Tests drive the helper
+    // indirectly through closure_needs_safe_fallback (which calls
+    // linear_post_mutate_enforce from #1478 step 4) and read back
+    // via these accessors to verify the counter increments per
+    // closure invocation.
+    [[nodiscard]] std::uint64_t test_linear_post_mutate_enforce_count() const noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m ? m->linear_post_mutate_enforcements.load(std::memory_order_relaxed) : 0;
+    }
+    [[nodiscard]] std::uint64_t test_linear_ownership_violation_prevented_count() const noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m ? m->linear_ownership_violation_prevented.load(std::memory_order_relaxed) : 0;
+    }
 
     [[nodiscard]] bool any_active_mutation_boundary() const noexcept;
     [[nodiscard]] std::uint64_t mutation_yield_count() const noexcept {

@@ -158,6 +158,25 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        // Issue #1478: linear post-mutate enforcement (passive MVP).
+        // Parallel to the #1475 epoch check above. The helper bumps
+        // linear_post_mutate_enforcements; we bump linear_ownership_
+        // violation_prevented on violation (matching the closure_
+        // bridge_epoch_safety_enforced pattern).
+        //
+        // MVP: helper returns true unconditionally (real per-cell
+        // linear scan deferred to #1543, which needs runtime linear
+        // cell tagging infrastructure). The wiring point is in place
+        // and observable via the counter so production telemetry can
+        // track enforcement coverage while the real scan ships.
+        if (!ev.linear_post_mutate_enforce(cl.env_id)) {
+            stale = true;
+            if (m) {
+                m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+                m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     }
     if (stale)
         ev.bump_compiler_root_stale_closure_detected();
