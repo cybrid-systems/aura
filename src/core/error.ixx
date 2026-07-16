@@ -300,6 +300,8 @@ inline std::string_view AuraError::kind_name(AuraErrorKind k) noexcept {
             return "InternalNotImplemented";
         case AuraErrorKind::InternalContractFailure:
             return "InternalContractFailure";
+        case AuraErrorKind::ResourceQuotaExceeded:
+            return "ResourceQuotaExceeded";
         case AuraErrorKind::Sentinel_COUNT_:
             return "Sentinel_COUNT_";
     }

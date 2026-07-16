@@ -208,10 +208,6 @@ struct CompilerMetrics {
     //   - mutate_mtx_contended_total: try_lock failed on mutate_mtx_
     std::atomic<std::uint64_t> lock_inversion_detected_total{0};
     std::atomic<std::uint64_t> mutate_mtx_contended_total{0};
-    // Issue #1477: JIT-side dual-epoch fence (mirrors AuraJIT::Metrics).
-    // Lifetime total of capture_fn_epoch calls for dashboard pairing
-    // with compiler_closure_epoch_mismatch_hits (IR side).
-    std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
     // Issue #1509: multi-fiber mutate→call-stale apply stress metrics.
     //   - closure_stale_apply_count_total: apply_closure saw stale
     //     bridge_epoch and/or EnvFrame (pre-dispatch)
@@ -639,6 +635,15 @@ struct CompilerMetrics {
     //     where active_mutation_id was set (auditable blame chain)
     std::atomic<std::uint64_t> reverify_truncated_total{0};
     std::atomic<std::uint64_t> constraint_blame_chain_complete_total{0};
+    // Issue #1529: full blame-chain dump on cross-delta CONFLICT.
+    //   - constraint_blame_chain_length_total: sum of frames across dumps
+    //   - cross_delta_blame_incomplete_total: conflict with no mutation_id
+    //     or without a dumpable provenance frame
+    //   - constraint_blame_chain_rich_complete_total: dumps that include
+    //     mutation_id + predicate_cond_node + affected NodeId (AC triple)
+    std::atomic<std::uint64_t> constraint_blame_chain_length_total{0};
+    std::atomic<std::uint64_t> cross_delta_blame_incomplete_total{0};
+    std::atomic<std::uint64_t> constraint_blame_chain_rich_complete_total{0};
     // Issue #745: Occurrence-priority reverify in solve_delta.
     std::atomic<std::uint64_t> constraint_reverify_narrow_hits_total{0};
     std::atomic<std::uint64_t> constraint_reverify_timeout_prevented_total{0};
@@ -6289,6 +6294,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> infer_flat_partial_selective_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
+    // Issue #1528: O(delta) re-inference observability.
+    //   - incremental_reinfer_nodes_total: nodes re-inferred by
+    //     infer_flat_partial (sum of successful per-node re-checks)
+    //   - solve_delta_cache_hit_total: cs_cache / solved_delta cache
+    //     hits that skipped a constraint worklist scan
+    //   - solve_delta_worklist_pruned_total: dirty constraints excluded
+    //     from the local worklist because they do not reference
+    //     touched / occurrence-priority roots
+    //   - type_dep_graph_affected_expand_total: extra nodes pulled into
+    //     the affected set via type_dep_graph_ dependents
+    std::atomic<std::uint64_t> incremental_reinfer_nodes_total{0};
+    std::atomic<std::uint64_t> solve_delta_cache_hit_total{0};
+    std::atomic<std::uint64_t> solve_delta_worklist_pruned_total{0};
+    std::atomic<std::uint64_t> type_dep_graph_affected_expand_total{0};
     // #1338 Type → IR + DeadCoercionElimination parent-type stamp
     std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
     std::atomic<std::uint64_t> ir_parent_type_stamped_total{0};

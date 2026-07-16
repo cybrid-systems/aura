@@ -9410,6 +9410,9 @@ public:
         if (it != solved_delta_cache_.end() && it->second.vars_hash == vars_hash &&
             it->second.cache_epoch == epoch) {
             solve_delta_cache_hits_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1528: mirror into CompilerMetrics for unified
+            // O(delta) dashboards (alongside cs_cache hits).
+            metrics_.solve_delta_cache_hit_total.fetch_add(1, std::memory_order_relaxed);
             if (unresolved_out)
                 unresolved_out->clear();
             return it->second.result;

@@ -279,17 +279,84 @@ std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
 }
 
 void ConstraintSystem::record_cross_delta_blame_hit() {
-    if (!metrics_) {
-        return;
+    // Issue #1529: build a dumpable blame chain from stamped
+    // delta constraints + active occurrence context, then bump
+    // complete / incomplete / length metrics.
+    last_blame_chain_ = {};
+    last_blame_chain_.root_mutation_id = active_mutation_id_;
+
+    auto push_frame = [&](std::uint64_t mut, std::uint32_t pred, std::uint32_t node,
+                          std::uint32_t cidx, std::uint8_t kind) {
+        DeltaBlameFrame f;
+        f.source_mutation_id = mut;
+        f.predicate_cond_node = pred;
+        f.affected_node = node;
+        f.constraint_index = cidx;
+        f.kind = kind;
+        last_blame_chain_.frames.push_back(f);
+    };
+
+    // Prefer dirty constraints that already carry provenance.
+    for (std::size_t i = 0; i < constraints_.size(); ++i) {
+        const auto& c = constraints_[i];
+        const bool dirty = i < constraint_dirty_.size() && constraint_dirty_[i];
+        const bool has_prov =
+            c.source_mutation_id != 0 || c.predicate_cond_node != 0 || c.affected_node != 0;
+        if (!dirty && !has_prov)
+            continue;
+        if (!has_prov && active_mutation_id_ == 0)
+            continue;
+        push_frame(c.source_mutation_id != 0 ? c.source_mutation_id : active_mutation_id_,
+                   c.predicate_cond_node != 0 ? c.predicate_cond_node : active_predicate_cond_node_,
+                   c.affected_node != 0 ? c.affected_node : active_affected_node_,
+                   static_cast<std::uint32_t>(i), static_cast<std::uint8_t>(c.kind));
     }
+    // Explicit affected NodeId sequence (from infer_flat_partial).
+    for (auto nid : blame_affected_nodes_) {
+        push_frame(active_mutation_id_, active_predicate_cond_node_, nid, UINT32_MAX, 0);
+    }
+    // Fallback single frame so unit tests with only active_mutation_id
+    // still produce a dumpable chain.
+    if (last_blame_chain_.frames.empty() && active_mutation_id_ != 0) {
+        push_frame(active_mutation_id_, active_predicate_cond_node_, active_affected_node_,
+                   UINT32_MAX, 0);
+    }
+
+    bool has_mut = last_blame_chain_.root_mutation_id != 0;
+    bool has_pred = false;
+    bool has_node = false;
+    for (const auto& f : last_blame_chain_.frames) {
+        if (f.source_mutation_id != 0)
+            has_mut = true;
+        if (f.predicate_cond_node != 0)
+            has_pred = true;
+        if (f.affected_node != 0)
+            has_node = true;
+    }
+    // Rich AC: mutation_id + predicate + affected NodeId sequence.
+    last_blame_chain_.complete = has_mut && has_pred && has_node;
+
+    if (!metrics_)
+        return;
     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    const auto len = last_blame_chain_.frames.size();
+    m->constraint_blame_chain_length_total.fetch_add(len, std::memory_order_relaxed);
+    m->type_incremental_blame_chain_length_total.fetch_add(len, std::memory_order_relaxed);
+
     if (active_mutation_id_ == 0) {
         m->constraint_stale_blame_invalidation_total.fetch_add(1, std::memory_order_relaxed);
+        m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
         return;
     }
+    // Legacy complete: active mutation id set (preserves #745 / #690 ACs).
     m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
     m->type_incremental_cross_delta_blame_complete_total.fetch_add(1, std::memory_order_relaxed);
-    m->type_incremental_blame_chain_length_total.fetch_add(1, std::memory_order_relaxed);
+    if (last_blame_chain_.complete) {
+        m->constraint_blame_chain_rich_complete_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (!has_pred || !has_node) {
+        // Mutation-scoped but missing occurrence/affected triple.
+        m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
@@ -429,6 +496,15 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
 }
 
 void ConstraintSystem::add_delta(Constraint c) {
+    // Issue #1529: stamp active blame context when callers
+    // (unit tests / synthesize) did not set provenance fields.
+    if (c.source_mutation_id == 0)
+        c.source_mutation_id = active_mutation_id_;
+    if (c.predicate_cond_node == 0)
+        c.predicate_cond_node = active_predicate_cond_node_;
+    if (c.affected_node == 0)
+        c.affected_node = active_affected_node_;
+
     const auto lhs = c.lhs;
     const auto rhs = c.rhs;
     if (delta_record_mode_) {
@@ -945,47 +1021,102 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         return SolveResult::SOLVED;
 
     // Build the delta worklist from constraint_dirty_.
-    // Issue #409: this is the pre-#409 path. The
-    // post-#409 worklist is filtered by the var_to_
-    // constraints_ reverse map (only include
-    // constraints that reference a dirty var rep).
-    // We keep the old path as a fallback when the
-    // reverse map is empty (e.g. for callers that
-    // haven't gone through the fresh_var/unify
-    // path that populates it).
+    // Issue #409: reverse-map path collects dirty constraints
+    // referenced by at least one var rep.
+    // Issue #1528: when touched_roots_ / occurrence_priority_roots_
+    // are non-empty, further restrict the worklist to dirty
+    // constraints that reference those roots (true O(delta)
+    // local solve). Remaining dirty bits stay set for a later
+    // pass / full solve — they are counted as pruned.
     std::vector<std::size_t> worklist;
     worklist.reserve(dirty_count_);
-    if (var_to_constraints_.empty()) {
+    std::size_t pruned = 0;
+    std::vector<bool> seen;
+    seen.resize(std::max(constraints_.size(), constraint_dirty_.size()), false);
+
+    auto ensure_seen = [&](std::size_t idx) {
+        if (idx >= seen.size())
+            seen.resize(idx + 1, false);
+    };
+
+    auto push_dirty = [&](std::size_t idx) {
+        if (idx >= constraints_.size() || idx >= constraint_dirty_.size())
+            return;
+        ensure_seen(idx);
+        if (!constraint_dirty_[idx] || seen[idx])
+            return;
+        worklist.push_back(idx);
+        seen[idx] = true;
+    };
+
+    const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty();
+
+    if (have_local_roots && !var_to_constraints_.empty()) {
+        // Issue #1528: primary worklist = dirty constraints on
+        // occurrence-priority roots first, then touched roots.
+        auto collect_for_root = [&](std::uint32_t root) {
+            auto it = var_to_constraints_.find(root);
+            if (it == var_to_constraints_.end())
+                return;
+            for (auto idx : it->second)
+                push_dirty(idx);
+        };
+        for (auto root : occurrence_priority_roots_)
+            collect_for_root(root);
+        for (auto root : touched_roots_)
+            collect_for_root(root);
+        // Also accept dirty constraints that still reference a
+        // touched root after Union-Find normalize (covers reps
+        // that shifted during a prior unify).
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (!constraint_dirty_[i] || seen[i] || i >= constraints_.size())
+                continue;
+            if (constraint_references_touched(constraints_[i])) {
+                push_dirty(i);
+                continue;
+            }
+            // Occurrence-priority roots not in touched_roots_ yet.
+            bool occ = false;
+            auto check_occ = [&](TypeId id) {
+                if (!id.valid() || !reg_.is_var(id))
+                    return;
+                const auto rep = union_find_rep_index(id);
+                if (rep != UINT32_MAX && occurrence_priority_roots_.count(rep) > 0)
+                    occ = true;
+            };
+            check_occ(constraints_[i].lhs);
+            check_occ(constraints_[i].rhs);
+            if (occ)
+                push_dirty(i);
+            else
+                ++pruned; // dirty but not local to this delta
+        }
+    } else if (var_to_constraints_.empty()) {
         // Legacy path: process all dirty constraints.
         for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
-            if (constraint_dirty_[i]) {
-                worklist.push_back(i);
-            }
+            if (constraint_dirty_[i])
+                push_dirty(i);
         }
     } else {
-        // Issue #409: fine-grained path. Walk the
-        // reverse map and collect every constraint
-        // index that is currently dirty AND referenced
-        // by at least one var rep. We do not filter
-        // by which var is "dirty" (the dirty flag is
-        // on constraints, not vars) — instead, we
-        // collect all reverse-mapped dirty constraint
-        // indices. This is still a strict subset of
-        // the full worklist when the reverse map is
-        // populated (constraints that reference no
-        // var are skipped — those are int/float/
-        // string equalities that don't need re-solving
-        // unless they were added via add_delta).
-        std::vector<bool> seen(constraints_.size(), false);
+        // Issue #409: reverse-map all dirty (no local roots yet).
         for (const auto& [rep, indices] : var_to_constraints_) {
             (void)rep;
-            for (auto idx : indices) {
-                if (idx < constraint_dirty_.size() && constraint_dirty_[idx] && !seen[idx]) {
-                    worklist.push_back(idx);
-                    seen[idx] = true;
-                }
-            }
+            for (auto idx : indices)
+                push_dirty(idx);
         }
+        // Ground dirty constraints with no reverse-map entry.
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (constraint_dirty_[i] && !seen[i])
+                push_dirty(i);
+        }
+    }
+
+    // Issue #1528: process high-priority (occurrence / touched)
+    // constraints first so fixpoint converges on the local delta.
+    if (worklist.size() > 1) {
+        std::stable_sort(worklist.begin(), worklist.end(), [&](std::size_t a, std::size_t b) {
+            return constraint_reverify_priority(a) > constraint_reverify_priority(b);
+        });
     }
 
     // Process the delta worklist. Same pass-limit heuristic as
@@ -1002,6 +1133,9 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
         m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
+        if (pruned > 0) {
+            m->solve_delta_worklist_pruned_total.fetch_add(pruned, std::memory_order_relaxed);
+        }
         // Issue #1336: soft-cap is a metrics threshold only — never
         // truncate the worklist (incomplete delta solves break typed
         // mutate / nested-closure rebind under multi-define).
@@ -1039,6 +1173,8 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             // but the check is cheap).
             if (idx >= constraints_.size())
                 continue;
+            if (idx < seen.size())
+                seen[idx] = true; // #1528: track processed for partial clean
             auto& c = constraints_[idx];
             bool ok;
             if (c.kind == Constraint::EQUAL)
@@ -1073,16 +1209,24 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             // worklist. We walk the full dirty
             // vector (cheap) and pick up any new
             // dirty entries.
+            // Issue #1528: when local-root filtering is active,
+            // only restart-append constraints that reference
+            // touched / occurrence roots (keep O(delta)).
             for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
-                if (constraint_dirty_[i]) {
-                    bool already_in =
-                        std::find(worklist.begin(), worklist.end(), i) != worklist.end();
-                    bool was_in_initial =
-                        std::find(current.begin(), current.end(), i) != current.end();
-                    if (!already_in && !was_in_initial) {
-                        worklist.push_back(i);
-                    }
+                if (!constraint_dirty_[i])
+                    continue;
+                bool already_in = std::find(worklist.begin(), worklist.end(), i) != worklist.end();
+                bool was_in_initial = std::find(current.begin(), current.end(), i) != current.end();
+                if (already_in || was_in_initial)
+                    continue;
+                if (have_local_roots && i < constraints_.size() &&
+                    !constraint_references_touched(constraints_[i])) {
+                    // New dirty but non-local — leave for later.
+                    continue;
                 }
+                worklist.push_back(i);
+                if (i < seen.size())
+                    seen[i] = true;
             }
         }
     }
@@ -1100,10 +1244,22 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     }
     clear_touched_roots();
 
-    // Mark all currently-dirty constraints as clean (the
-    // delta is committed). New add_delta calls after this
-    // point will re-mark their indices dirty.
-    mark_clean();
+    // Mark dirty constraints clean. Issue #1528: when the local
+    // worklist pruned non-local dirty constraints, only clear
+    // the indices we actually processed (seen[]), so pruned
+    // dirty bits remain for a later full/local solve.
+    if (pruned > 0) {
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (constraint_dirty_[i] && i < seen.size() && seen[i]) {
+                constraint_dirty_[i] = false;
+                if (dirty_count_ > 0)
+                    --dirty_count_;
+            }
+        }
+    } else {
+        // Full delta commit — no remaining local prune.
+        mark_clean();
+    }
 
     if (!worklist.empty()) {
         if (unresolved_out) {
@@ -1186,6 +1342,11 @@ void ConstraintSystem::clear() {
     // Issue #466 / #745: reset touched-root + occurrence-priority tracking.
     touched_roots_.clear();
     occurrence_priority_roots_.clear();
+    // Issue #1529: reset blame provenance context (keep last dump
+    // readable until next conflict — only clear active stamps).
+    active_predicate_cond_node_ = 0;
+    active_affected_node_ = 0;
+    blame_affected_nodes_.clear();
     fresh_counter_ = 0;
     first_free_var_ = 0;
 } // ═══════════════════════════════════════════════════════════
@@ -2126,6 +2287,10 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
                                                   const std::vector<NodeId>& occurrence_targets,
                                                   std::uint64_t mutation_id) {
     std::unordered_set<NodeId> target_set(occurrence_targets.begin(), occurrence_targets.end());
+    // Issue #1529: seed blame context from first occurrence if-predicate
+    // so subsequent add_delta stamps carry predicate_cond_node.
+    std::uint32_t primary_pred = 0;
+    std::uint32_t primary_affected = 0;
     for (const auto& nr : flat.all_narrowings()) {
         if (nr.source_mutation_id != 0 && nr.source_mutation_id != mutation_id)
             continue;
@@ -2137,6 +2302,11 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
             if (tid.valid() && reg_.is_var(tid))
                 cs_.mark_touched_on_delta(tid, true);
         }
+        // Prefer NarrowingRecord's if_node as affected + cond as predicate.
+        if (primary_affected == 0 && nr.if_node != 0)
+            primary_affected = static_cast<std::uint32_t>(nr.if_node);
+        if (nr.if_node != 0)
+            cs_.push_blame_affected_node(static_cast<std::uint32_t>(nr.if_node));
     }
     for (auto if_id : occurrence_targets) {
         if (if_id == NULL_NODE || if_id >= flat.size())
@@ -2147,12 +2317,19 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
         auto cond_id = v.child(0);
         if (cond_id == NULL_NODE)
             continue;
+        if (primary_pred == 0)
+            primary_pred = static_cast<std::uint32_t>(cond_id);
+        if (primary_affected == 0)
+            primary_affected = static_cast<std::uint32_t>(if_id);
+        cs_.push_blame_affected_node(static_cast<std::uint32_t>(if_id));
         bool meet_used = false;
         bool join_used = false;
         auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
         if (occ && occ->refined_type.valid() && reg_.is_var(occ->refined_type))
             cs_.mark_touched_on_delta(occ->refined_type, true);
     }
+    cs_.set_active_mutation_id(mutation_id);
+    cs_.set_active_blame_context(primary_pred, primary_affected);
 }
 
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
@@ -4853,6 +5030,11 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
             //   - node_hash matched (AST shape unchanged)
             // We do NOT call type_check_flat_pure; the
             // caller gets the cached type directly.
+            // Issue #1528: surface cs_cache hits on CompilerMetrics.
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->solve_delta_cache_hit_total.fetch_add(1, std::memory_order_relaxed);
+            }
             return cached_type;
         }
     }
@@ -5286,6 +5468,59 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         return 0;
     }
 
+    // Issue #1528: expand the affected set via type_dep_graph_
+    // so dependents of *type variables* stamped on the primary
+    // mutation nodes are re-inferred without a full-function
+    // cascade. Ground types (Int/Bool/...) are intentionally
+    // not expanded (would pull every literal in the workspace).
+    //
+    // When the graph is empty (fresh TypeChecker per
+    // incremental_infer call), seed it from Variable nodes
+    // that already carry a type_id — O(n) once, O(uses) expand.
+    {
+        if (type_dep_graph_.empty() && flat.size() > 0) {
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag != NodeTag::Variable || v.type_id == 0)
+                    continue;
+                record_type_dependency(v.type_id, id);
+            }
+        }
+        std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+        std::vector<NodeId> seeds = affected;
+        if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size())
+            seeds.push_back(rec.target_node);
+        std::uint64_t expanded = 0;
+        std::unordered_set<std::uint32_t> seed_tids;
+        for (auto id : seeds) {
+            if (id == aura::ast::NULL_NODE || id >= flat.size())
+                continue;
+            const auto tid = static_cast<std::uint32_t>(flat.get(id).type_id);
+            if (tid == 0 || !seed_tids.insert(tid).second)
+                continue;
+            // Only expand type variables (not ground Int/Bool/...).
+            TypeId probe{};
+            probe.index = tid;
+            if (!types.is_var(probe))
+                continue;
+            for (auto dep : affected_nodes_for_type(tid)) {
+                if (dep == aura::ast::NULL_NODE || dep >= flat.size())
+                    continue;
+                if (static_cast<std::uint32_t>(flat.get(dep).type_id) != tid)
+                    continue; // stale graph entry
+                if (seen.insert(dep).second) {
+                    affected.push_back(dep);
+                    ++expanded;
+                }
+            }
+        }
+        if (expanded > 0 && metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->type_dep_graph_affected_expand_total.fetch_add(expanded,
+                                                                 std::memory_order_relaxed);
+        }
+    }
+
     // Issue #518 P0 Phase 1: collect dirty if-contexts from the
     // affected set plus the mutation target subtree (rebind
     // auto-wires kOccurrenceDirty on if-nodes in the new body
@@ -5345,6 +5580,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
                                                on_cross_delta_conflict_);
     engine.set_active_mutation_id(rec.mutation_id);
+    // Issue #1529: pre-seed blame affected sequence from the
+    // mutation primary + a bounded prefix of the affected set
+    // (full dump is O(delta), not O(workspace)).
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+        engine.push_blame_affected_node(static_cast<std::uint32_t>(rec.target_node));
+    constexpr std::size_t kBlameAffectedCap = 32;
+    for (std::size_t i = 0; i < affected.size() && i < kBlameAffectedCap; ++i) {
+        auto id = affected[i];
+        if (id != NULL_NODE && id < flat.size())
+            engine.push_blame_affected_node(static_cast<std::uint32_t>(id));
+    }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
@@ -5489,6 +5735,14 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             adt_roots.push_back(rec.parent_id);
         revalidate_adt_typed_mutation_scope(flat, pool, types, adt_roots, rec, cache_epoch_,
                                             metrics_);
+    }
+
+    // Issue #1528: lifetime re-infer node counter for O(delta)
+    // dashboards (pairs with type_dep_graph expand + solve_delta
+    // worklist prune metrics).
+    if (re_inferred > 0 && metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->incremental_reinfer_nodes_total.fetch_add(
+            re_inferred, std::memory_order_relaxed);
     }
 
     return re_inferred;
