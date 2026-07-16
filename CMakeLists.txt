@@ -5058,6 +5058,10 @@ aura_issue_test_link_llvm_jit(test_issue_1532)
 # (capture_fn_epoch at compile + runtime aura_jit_guard_shape_epoch_check).
 aura_add_issue_test(test_issue_1534)
 aura_issue_test_link_llvm_jit(test_issue_1534)
+# Issue #1535: Linear* dual-epoch fence (is_fn_epoch_stale + is_env_frame_stale
+# on Move/Borrow/Drop + safety_probe; deopt on mid-op mutate).
+aura_add_issue_test(test_issue_1535)
+aura_issue_test_link_llvm_jit(test_issue_1535)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

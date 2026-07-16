@@ -6,9 +6,14 @@
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <limits>
 #include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
+
+// Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
+extern "C" std::uint64_t aura_get_defuse_version(void);
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -704,6 +709,88 @@ extern "C" void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state
         default:
             break;
     }
+}
+
+// Issue #1535: EnvFrame context for the is_env_frame_stale half of the
+// Linear dual-epoch fence. UINT32_MAX = no context (skip env half).
+namespace {
+constexpr std::uint32_t kLinearEnvNull = std::numeric_limits<std::uint32_t>::max();
+std::atomic<std::uint32_t> g_linear_env_id{kLinearEnvNull};
+std::atomic<std::uint64_t> g_linear_frame_version{0};
+} // namespace
+
+// Mirrors Evaluator::is_env_frame_stale (evaluator.ixx static pure helper)
+// so the JIT bridge can call without importing the evaluator module.
+// Invariants match #1475: current==0 → inactive; NULL env → false;
+// frame_version==0 → strict stale; else frame < current → stale.
+static bool linear_is_env_frame_stale(std::uint32_t env_id, std::uint64_t frame_version,
+                                      std::uint64_t current_defuse) noexcept {
+    if (current_defuse == 0)
+        return false;
+    if (env_id == kLinearEnvNull)
+        return false;
+    if (frame_version == 0)
+        return true; // strict (legacy trust not applied on JIT path)
+    return frame_version < current_defuse;
+}
+
+extern "C" void aura_jit_set_linear_env_context(std::uint32_t env_id, std::uint64_t frame_version) {
+    g_linear_env_id.store(env_id, std::memory_order_release);
+    g_linear_frame_version.store(frame_version, std::memory_order_release);
+}
+
+extern "C" void aura_jit_clear_linear_env_context(void) {
+    g_linear_env_id.store(kLinearEnvNull, std::memory_order_release);
+    g_linear_frame_version.store(0, std::memory_order_release);
+}
+
+extern "C" int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
+                                                  std::uint32_t opcode) {
+    // Preserve #740 post-invalidate metrics when linear state is set.
+    if (linear_state != 0)
+        aura_jit_linear_post_invalidate_safety(linear_state, opcode);
+
+    aura_jit_closure_record_dual_check();
+    bool stale = false;
+
+    // #1477 is_fn_epoch_stale half (fn name vs AOT table / bridge epoch).
+    if (g_batch_deopt_jit && fn_name && fn_name[0]) {
+        g_batch_deopt_jit->mutable_metrics().jit_epoch_stale_check_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (aot_metrics()) {
+            aot_metrics()->jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const std::uint64_t cur_table = aura_aot_func_table_epoch();
+        if (g_batch_deopt_jit->is_fn_epoch_stale(fn_name, cur_table))
+            stale = true;
+    }
+
+    // #1475 is_env_frame_stale half (env context vs AOT defuse version).
+    {
+        const std::uint32_t env_id = g_linear_env_id.load(std::memory_order_acquire);
+        const std::uint64_t frame_ver = g_linear_frame_version.load(std::memory_order_acquire);
+        // Prefer AOT defuse (lockstep with service bump); fall back to
+        // aura_get_defuse_version when lock hooks are installed.
+        std::uint64_t cur_defuse = aura_get_aot_defuse_version();
+        if (cur_defuse == 0)
+            cur_defuse = aura_get_defuse_version();
+        if (linear_is_env_frame_stale(env_id, frame_ver, cur_defuse))
+            stale = true;
+    }
+
+    if (!stale)
+        return 0;
+
+    // Stale → runtime safety: deopt path metrics + live-closure prevented.
+    aura_jit_closure_record_stale_deopt();
+    aura_jit_closure_record_safe_fallback();
+    if (aot_metrics()) {
+        aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aot_metrics()->linear_post_mutate_enforcements_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+    return 1;
 }
 
 // Issue #972: prefer stderr with fixed prefix so --serve / agent log

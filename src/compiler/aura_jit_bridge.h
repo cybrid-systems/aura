@@ -176,6 +176,21 @@ void aura_jit_epoch_acquire_fence(void);
 // Issue #740: linear ownership safety probe in JIT L2 hot paths.
 void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint32_t opcode);
 
+// Issue #1535: Linear* dual-epoch fence (Move/Borrow/Drop + safety_probe).
+// Combines #1477 is_fn_epoch_stale (fn name vs AOT table epoch) with
+// #1475 is_env_frame_stale logic (env context vs AOT defuse version).
+// Returns 1 if stale/unsafe (caller must deopt / skip mutation), 0 if safe.
+// On every probe bumps jit_epoch_stale_check_total; on stale also bumps
+// compiler_live_closure_stale_prevented_total + linear_post_mutate_enforcements.
+// When linear_state != 0 also runs aura_jit_linear_post_invalidate_safety.
+int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
+                                       std::uint32_t opcode);
+// Host/test: set EnvFrame context for the is_env_frame_stale half of the
+// dual check (env_id + frame_version captured when the linear value was
+// created). Pass env_id == UINT32_MAX to clear / disable env half.
+void aura_jit_set_linear_env_context(std::uint32_t env_id, std::uint64_t frame_version);
+void aura_jit_clear_linear_env_context(void);
+
 // Issue #358 — incremental re-AOT foundation.
 //
 // `aura_set_is_define_dirty_fn` registers a host-side callback
