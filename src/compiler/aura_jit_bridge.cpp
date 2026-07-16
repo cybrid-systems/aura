@@ -70,6 +70,23 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
     return g_aot_defuse_version;
 }
 
+// ── Issue #1485 C2-wire: current bridge_epoch tracker for the
+// aura_closure_call 2-check (refine #1475). See aura_jit_bridge.h.
+// Set by service.ixx::bump_bridge_epoch() every time the
+// workspace's bridge_epoch advances; stamped into per-closure
+// AuraClosure::bridge_epoch at aura_alloc_closure time. Mismatch
+// at aura_closure_call → return 0 (caller falls back via
+// aura_jit.cpp OpApply emit's deopt-to-interpreter path).
+static std::uint64_t g_current_bridge_epoch = 0;
+
+extern "C" void aura_set_current_bridge_epoch(std::uint64_t v) {
+    g_current_bridge_epoch = v;
+}
+
+extern "C" std::uint64_t aura_get_current_bridge_epoch(void) {
+    return g_current_bridge_epoch;
+}
+
 // ── Issue #452: AOT hot-update counters (observable) ───────────
 //
 // Three atomics bumped by aura_reload_aot_module on each

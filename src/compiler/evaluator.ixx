@@ -4515,6 +4515,46 @@ public:
             m->compiler_root_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #1485 C1: bump_stale_closure_prevented — lifetime count of
+    // stale closures detected at apply_closure entry (complements
+    // closure_stale_apply_count_total which is bumped inside
+    // closure_needs_safe_fallback). This top-level "we caught a stale
+    // closure before dispatch" signal is distinct from the per-check
+    // breakdowns the helper bumps. See C1 commit message + the
+    // observability_metrics.h:218 area for the semantic split.
+    void bump_stale_closure_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->stale_closure_prevented.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1485 C1: bump_closure_epoch_mismatch_fallback —
+    // lifetime count of safe-fallback paths taken after a stale
+    // closure was detected (complements
+    // closure_safe_fallback_apply_count_total which counts ANY safe
+    // fallback; this one is specific to the bridge_epoch /
+    // defuse_version_ mismatch surface — distinct from
+    // linear_post_mutate_enforce fallbacks which are counted
+    // separately via linear_ownership_violation_prevented).
+    void bump_closure_epoch_mismatch_fallback() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closure_epoch_mismatch_fallback.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1485 C1: accessors for the 2 new atomics.
+    [[nodiscard]] std::uint64_t get_stale_closure_prevented() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->stale_closure_prevented.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_closure_epoch_mismatch_fallback() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->closure_epoch_mismatch_fallback.load(std::memory_order_relaxed);
+    }
     // Issue #600: incremental per-block re-lower + closure bridge synergy.
     void bump_incremental_closure_blocks_relowered(std::uint64_t n = 1) noexcept {
         if (compiler_metrics_) {

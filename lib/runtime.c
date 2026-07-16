@@ -39,6 +39,25 @@ unsigned long long aura_get_module_version(void) {
     return g_aot_module_version;
 }
 
+// Issue #1485 C2-wire: standalone-AOT impl of
+// aura_set/get_current_bridge_epoch. Mirrors the
+// aura_set_module_version pattern above — production
+// (host + JIT) binary uses the impl in aura_jit_bridge.cpp
+// (wired by service.ixx::bump_bridge_epoch); standalone AOT
+// has no host-side bridge so we provide a local impl here.
+// Default 0 — standalone AOT is single-threaded so the 2-check
+// (closure.bridge_epoch vs current, closure.defuse_version vs
+// current) is degenerate; closures always stamp 0, current
+// stays 0, the check always passes vacuously. This is correct
+// for standalone AOT — the safety net is only meaningful under
+// the host's concurrent-mutation regime.
+void aura_set_current_bridge_epoch(unsigned long long v) {
+    (void)v;
+}
+unsigned long long aura_get_current_bridge_epoch(void) {
+    return 0;
+}
+
 #define IS_PAIR(v)  (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)
@@ -335,6 +354,18 @@ typedef struct {
     int64_t env[MAX_CLOSURE_ENV];
     uint32_t env_count;
     bool live;
+    // Issue #1485 C2: per-closure captured bridge_epoch + defuse_version_
+    // for the aura_closure_call 2-check (bridge_epoch mismatch +
+    // defuse_version_ mismatch → refuse to dispatch, caller falls back).
+    // Stamped at aura_alloc_closure time from the current C-runtime
+    // values (aura_get_current_bridge_epoch + aura_get_aot_defuse_version),
+    // which the C++ side updates via aura_set_current_bridge_epoch
+    // (in service.ixx's bump_bridge_epoch) + aura_set_aot_defuse_version
+    // (existing bridge). Per-closure stamping happens in aura_alloc_closure
+    // — no struct ABI break for existing AOT callers (they don't touch the
+    // struct directly, only via the interface functions).
+    uint64_t bridge_epoch;
+    uint64_t defuse_version;
 } AuraClosure;
 
 // Function pointer table: maps func_id → compiled function pointer
@@ -385,6 +416,9 @@ int64_t aura_alloc_closure(int64_t func_id) {
         closure_heap[id].local_count = 0;
         closure_heap[id].env_count = 0;
         closure_heap[id].live = true;
+        // Issue #1485 C2: stamp bridge_epoch + defuse_version_ at alloc.
+        closure_heap[id].bridge_epoch = aura_get_current_bridge_epoch();
+        closure_heap[id].defuse_version = aura_get_aot_defuse_version();
         // Set function pointer from func_table
         uint64_t fid = (uint64_t)func_id;
         if (fid < MAX_FUNCTIONS && s_func_table[fid]) {
@@ -401,6 +435,9 @@ int64_t aura_alloc_closure(int64_t func_id) {
     }
     uint64_t id = closure_count++;
     closure_heap[id].live = true;
+    // Issue #1485 C2: stamp bridge_epoch + defuse_version_ at alloc.
+    closure_heap[id].bridge_epoch = aura_get_current_bridge_epoch();
+    closure_heap[id].defuse_version = aura_get_aot_defuse_version();
     // Set function pointer from func_table
     uint64_t fid = (uint64_t)func_id;
     if (fid < MAX_FUNCTIONS && s_func_table[fid]) {
@@ -435,6 +472,16 @@ static PrimFn s_prim_fns[MAX_PRIM_SLOTS];
 // Env offset for test functions (set before fn call, defined in test harness)
 int g_env_offset = 0;  // env offset for closure calls (used by test fn)
 
+// Issue #1485 C2-wire: per-closure captured bridge_epoch +
+// defuse_version_ for the aura_closure_call 2-check.
+// Definitions for aura_set/get_current_bridge_epoch live at
+// the top of this file (alongside aura_set_module_version)
+// for the standalone-AOT use case; the host (full aura binary)
+// uses the impl in aura_jit_bridge.cpp which is wired by
+// service.ixx::bump_bridge_epoch. Just before
+// aura_closure_call's 2-check below — see use sites at
+// lib/runtime.c:398 (aura_closure_call body).
+
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // AOT primitive dispatch: negative closure_id means this is an
     // evaluator primitive loaded via OpPrimitive (AOT mode).
@@ -445,11 +492,27 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         }
         return 0;
     }
-    
+
     // Normal closure dispatch.
     uint64_t id = (uint64_t)closure_id;
     if (id >= closure_count || !closure_heap[id].live || !closure_heap[id].fn)
         return 0;
+
+    // Issue #1485 C2: 2-check — bridge_epoch mismatch OR defuse_version_
+    // mismatch → refuse (return 0, caller falls back to interpreter via
+    // OpApply's deopt-to-interpreter path; see aura_jit.cpp OpApply
+    // emit). bridge_epoch was stamped at aura_alloc_closure from the
+    // current C-runtime tracker (aura_get_current_bridge_epoch), which
+    // the C++ service.ixx::bump_bridge_epoch keeps in sync via
+    // aura_set_current_bridge_epoch. defuse_version_ was stamped at
+    // alloc from aura_get_aot_defuse_version() (kept in sync by
+    // aura_set_aot_defuse_version from the C++ side).
+    if (closure_heap[id].bridge_epoch != g_current_bridge_epoch) {
+        return 0;
+    }
+    if (closure_heap[id].defuse_version != aura_get_aot_defuse_version()) {
+        return 0;
+    }
 
     ScalarFn fn = closure_heap[id].fn;
     uint32_t env_count = closure_heap[id].env_count;

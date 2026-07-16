@@ -52,6 +52,21 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_defuse_version(void)
     return g_aot_defuse_version_stub;
 }
 
+// Issue #1485 C2-wire: weak stubs for aura_set/get_current_bridge_epoch.
+// Production impl is in aura_jit_bridge.cpp; this ensures test
+// binaries that don't link aura_jit_bridge.cpp (test_spec_jit,
+// test_jit_*) still compile. Weak so production impl wins when
+// both are linked.
+static std::uint64_t g_current_bridge_epoch_stub = 0;
+
+extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_t v) {
+    g_current_bridge_epoch_stub = v;
+}
+
+extern "C" __attribute__((weak)) std::uint64_t aura_get_current_bridge_epoch(void) {
+    return g_current_bridge_epoch_stub;
+}
+
 // ── Weak stubs for AOT region / module / eval isolation APIs ──
 // CompilerService (in aura_test_objects) references these; light
 // bundles don't link aura_jit_bridge.cpp. Weak so production bridge
