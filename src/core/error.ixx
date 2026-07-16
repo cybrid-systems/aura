@@ -114,6 +114,14 @@ export enum class AuraErrorKind : std::uint8_t {
     ConcurrencyLockFailed,
     ConcurrencyGenerationInvalidated,
 
+    // ── Resource quota (cross-cutting: arena alloc / fiber spawn / mutation
+    //    budget / closure capture depth). Issued by #1481 enforcement paths
+    //    (arena allocate + MutationBoundaryGuard ctor) when a host-set
+    //    ResourceQuota limit is exceeded. The accompanying message carries
+    //    the offending dimension (memory / fibers / time / mutations) and the
+    //    current vs. limit value so callers can size their next allocation.
+    ResourceQuotaExceeded,
+
     // ── Internal (assertion-class; should never happen in correct code) ──
     InternalInvariantViolation,
     InternalNotImplemented,
