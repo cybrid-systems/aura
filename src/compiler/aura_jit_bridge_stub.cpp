@@ -110,6 +110,17 @@ extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) 
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) void
+aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t /*fn*/, void* /*userdata*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_dirty_count(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_region_filtered_skips(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_closure_dep_count(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) bool aura_reload_aot_module(const char* /*path*/,
                                                              std::uint64_t /*v*/) {
     return false;

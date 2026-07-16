@@ -6224,6 +6224,54 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> env_frames_stale_count{0};
     std::atomic<std::uint64_t> ast_arena_bytes_in_use{0};
     std::atomic<std::uint64_t> ast_arena_upstream_bytes{0};
+
+    // ── Issue #1480: incremental re-AOT pipeline (Phase 2) ───────────
+    //
+    // Tracks the end-to-end incremental re-AOT pipeline that
+    // supersedes the #1271 `aura_reemit_aot_for_dirty` skeleton
+    // (which returned 0 + bumped aot_reemit_dirty_skeleton_calls).
+    // The Phase 2 pipeline:
+    //   1. host (Evaluator) registers a re-emit candidate callback
+    //      via aura_set_reemit_candidate_fn (push-based — host
+    //      pushes (name, region) pairs from ir_cache_v2_ +
+    //      dep_graph_ cascade)
+    //   2. aura_reemit_aot_for_dirty iterates candidates,
+    //      applies per-function region mask (skip if region's bit
+    //      not in g_aot_emit_region_mask)
+    //   3. for each non-skipped: runs the AOT pipeline (stub in
+    //      #1480; full LLVM path is #1481 follow-up)
+    //   4. on any successful re-emit: commit_func_table_swap()
+    //      atomically bumps g_aot_table_epoch so concurrent
+    //      stale-frame probes see consistent before/after
+    //
+    // aot_incremental_reemit_count:
+    //   # of dirty FlatFunctions actually re-emitted this call
+    //   (after region-mask filter). Grows monotonically; AI agent
+    //   reads it via (query:aot-incremental-reemit-count) to verify
+    //   the per-mutation re-emit budget.
+    //
+    // aot_closure_dependency_reemit_total:
+    //   # of candidate (name, region) pairs pushed by the host
+    //   that came from closure-capture cascade dependents (not
+    //   direct CALLS cascade). Measures "how much extra work
+    //   closure captures add to re-emit" — drives the optimization
+    //   to short-circuit when the captured var is pure.
+    //
+    // aot_region_filtered_skips:
+    //   # of candidates that matched a dirty Define but whose
+    //   region bit was not in g_aot_emit_region_mask, so they
+    //   were skipped (not re-emitted in this region).
+    //
+    // aot_closure_bridge_refresh_total:
+    //   # of closure bridges re-stamped with the new bridge_epoch
+    //   after a successful re-emit commit. Pair metric with
+    //   jit_hotswap_live_closure_refreshed_total (JIT-side) —
+    //   both should grow together when an AOT swap happens with
+    //   live closure traffic.
+    std::atomic<std::uint64_t> aot_incremental_reemit_count{0};        // #1480
+    std::atomic<std::uint64_t> aot_closure_dependency_reemit_total{0}; // #1480
+    std::atomic<std::uint64_t> aot_region_filtered_skips{0};           // #1480
+    std::atomic<std::uint64_t> aot_closure_bridge_refresh_total{0};    // #1480
 };
 
 

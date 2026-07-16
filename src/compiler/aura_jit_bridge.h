@@ -71,8 +71,41 @@ bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expecte
 
 // Issue #1271: incremental re-emit skeleton + last commit epoch.
 // Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).
+//
+// Issue #1480 Phase 2: replaced the no-op skeleton with a real
+// pipeline. The host registers a re-emit candidate callback via
+// aura_set_reemit_candidate_fn() that pushes (name, region) pairs
+// from ir_cache_v2_ + dep_graph_ cascade. The pipeline then:
+//   1. iterates the pushed candidates
+//   2. applies per-function region mask (g_aot_emit_region_mask)
+//   3. runs the AOT path (stub in #1480; full LLVM emit is #1481)
+//   4. on any successful re-emit: commit_func_table_swap() atomically
+//      bumps g_aot_table_epoch so concurrent stale-frame probes see
+//      consistent before/after
+// Returns the count of dirty FlatFunctions actually re-emitted
+// (after region filter); bumps the 4 #1480 metrics atomically.
 std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version);
 std::uint64_t aura_aot_last_commit_epoch(void);
+
+// Issue #1480 Phase 2: host-side callback for the re-emit pipeline.
+// Pushes one candidate (name, region) at a time. region is a
+// per-function region bit index (0 = no region preference; non-zero
+// bits index into g_aot_emit_region_mask). The callback returns
+// true if it pushed a candidate, false when iteration is complete.
+//
+// userdata is the opaque pointer the host passed to the setter
+// (typically the CompilerService* so the callback can walk
+// ir_cache_v2_ + dep_graph_ in O(dirty + cascade_directed) time).
+typedef bool (*aura_reemit_candidate_fn_t)(void* userdata, const char** out_name,
+                                           std::uint64_t* out_region,
+                                           bool* out_from_closure_capture);
+void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata);
+// Last re-emit count (for tests + EDSL observability).
+std::uint64_t aura_reemit_dirty_count(void);
+// Last re-emit region-filtered skip count.
+std::uint64_t aura_reemit_region_filtered_skips(void);
+// Last re-emit closure-capture-dep count.
+std::uint64_t aura_reemit_closure_dep_count(void);
 
 // Issue #708 — region isolation + func_table refcount tracking.
 // Global (default) APIs — equivalent to for_eval(nullptr, ...).
