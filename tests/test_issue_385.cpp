@@ -98,8 +98,7 @@ bool test_snapshot_has_new_fields() {
 bool test_let_poly_stats_primitive() {
     std::println("\n--- AC3: (engine:metrics \"compile:let-poly-stats\") returns 4-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define lps (engine:metrics \"compile:let-poly-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define lps (engine:metrics \"compile:let-poly-stats\"))");
     for (const char* key :
          {"register-total", "dedup-hits-total", "instantiate-total", "dedup-ratio-bp"}) {
         std::string check = std::string("(hash-ref lps \"") + key + "\")";

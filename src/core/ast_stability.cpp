@@ -132,6 +132,22 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
     return ok;
 }
 
+// Issue #1500: full-provenance auto-refresh.
+//
+// Prior behavior required is_valid_id_gen(id, gen, wrap_epoch) — i.e.
+// the slot still carried the *captured* gen. That fails after any
+// restamp_all_node_generations() (MutationBoundaryGuard exit always
+// restamps), even when the node is still live. Production multi-agent
+// loops hit that path constantly.
+//
+// New policy for a still-live node (same wrap cycle, not free):
+//   1. restamp the subtree node_gen_ to current generation_
+//   2. remake full provenance (gen/wrap/cow/mutation_id/subtree_gen)
+//   3. preserve fiber_id / workspace_id / boundary_pinned from the
+//      caller's long-held handle (Agent / fiber context)
+//
+// Hard failures (return false): NULL/OOR id, free slot, wrap_epoch
+// mismatch with a non-zero captured epoch (second wrap cycle).
 bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     if (is_valid_in(ast)) {
         validate_with_provenance(ast);
@@ -139,18 +155,35 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     }
     if (id == NULL_NODE || id >= ast.size())
         return false;
-    if (wrap_epoch != ast.wrap_epoch())
+    // wrap_epoch == 0 means pre-#368 / brace-init legacy: allow
+    // refresh into the current wrap cycle. Non-zero mismatch is fatal.
+    if (wrap_epoch != 0 && wrap_epoch != ast.wrap_epoch())
         return false;
-    if (ast.is_free_slot(id))
+    if (ast.is_free_slot(id) || !ast.is_live_node(id))
         return false;
-    if (!ast.is_valid_id_gen(id, gen, wrap_epoch))
-        return false;
+
+    // Preserve cross-fiber / cross-layer / pin provenance across refresh.
+    const auto preserved_fiber = fiber_id;
+    const auto preserved_ws = workspace_id;
+    const auto preserved_pin = boundary_pinned;
+
+    // Align slot gen with current FlatAST generation before remake.
     ast.restamp_subtree_generation(id);
-    const auto fresh = ast.make_ref(id);
+    const auto fresh = ast.make_safe_ref(id, preserved_ws, preserved_fiber);
+    id = fresh.id;
     gen = fresh.gen;
+    mutation_id_at_capture = fresh.mutation_id_at_capture;
+    workspace_id = preserved_ws;
+    fiber_id = preserved_fiber;
+    last_validated_generation = ast.generation();
     wrap_epoch = fresh.wrap_epoch;
     subtree_gen_at_capture = fresh.subtree_gen_at_capture;
-    last_validated_generation = ast.generation();
+    // Always restamp cow_epoch to the live layer; pin flag is preserved
+    // so a subsequent COW advance without re-refresh still allows the
+    // boundary_pinned exception in is_valid / is_valid_in_layer.
+    cow_epoch_at_capture = fresh.cow_epoch_at_capture;
+    boundary_pinned = preserved_pin;
+
     ast.record_stale_ref_auto_refresh();
     return is_valid_in(ast);
 }

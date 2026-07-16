@@ -487,6 +487,16 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
             };
             insert_kv("contract-violations-caught", violations);
             insert_kv("consteval-checks", consteval_checks);
+            insert_kv("contract-hot-paths",
+                      static_cast<std::int64_t>(aura::core::cpp26::kContractHotPathsShipped));
+            insert_kv(
+                "contract-violation-hotpath",
+                static_cast<std::int64_t>(aura::core::cpp26::contract_violation_hotpath_count.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "hotpath-contracts-1519-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_1519_active.load(
+                    std::memory_order_relaxed)));
             insert_kv("hotpath-invariant-hits", hotpath_hits);
             insert_kv("schema", 742);
             auto hidx = g_hash_tables.size();

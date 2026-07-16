@@ -62,7 +62,7 @@ bool test_atomic_batch_stats_hash_ref() {
     for (const char* key :
          {"batch-count", "ops-total", "rollback-count", "ops-per-batch", "bumps-saved-total"}) {
         std::string q =
-            std::string("(hash-ref (stats:get " atomic - batch : stats ") \"") + key + "\")";
+            std::string("(hash-ref (stats:get \"atomic-batch:stats\") \"") + key + "\")";
         auto v = cs.eval(q);
         if (!v || !aura::compiler::types::is_int(*v)) {
             CHECK(false, std::string("hash-ref \"") + key + "\" returns int");
@@ -84,7 +84,7 @@ bool test_bumps_saved_after_batch() {
     (void)cs.eval("(eval-current)");
 
     const auto before =
-        eval_int(cs, "(hash-ref (stats:get " atomic - batch : stats ") \"bumps-saved-total\")");
+        eval_int(cs, "(hash-ref (stats:get \"atomic-batch:stats\") \"bumps-saved-total\")");
     CHECK(before >= 0, "bumps-saved-total readable before batch");
 
     std::string batch = "(mutate:atomic-batch (list "
@@ -98,7 +98,7 @@ bool test_bumps_saved_after_batch() {
           "3-op atomic-batch returns #t");
 
     const auto after =
-        eval_int(cs, "(hash-ref (stats:get " atomic - batch : stats ") \"bumps-saved-total\")");
+        eval_int(cs, "(hash-ref (stats:get \"atomic-batch:stats\") \"bumps-saved-total\")");
     CHECK(after > before, "bumps-saved-total increased after multi-op batch");
     std::println("  bumps-saved-total: {} -> {}", before, after);
     return true;

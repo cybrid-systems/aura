@@ -634,119 +634,43 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
     // primitives_detail header + needs the AI-Agent generate-
     // primitive demo + ./build.py check + CI gate coverage
     // from the issue body — separate follow-ups.
-    ObservabilityPrims::register_stats_impl(
-        "query:primitives-meta", [&ev](const auto& a) -> EvalValue {
-            // Bump the new per-primitive-lookup counter (distinct
-            // from primitives_meta_catalog_query_total #617).
-            if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())) {
-                m->primitives_meta_query_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            // The foundation scaffolding atomics (currently 0
-            // until AC1+AC3 wire-up).
-            const std::uint64_t define_macro_used =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                          ->define_primitive_macro_used_total.load(std::memory_order_relaxed)
-                    : 0;
-            const std::uint64_t prim_error_unified =
-                ev.compiler_metrics()
-                    ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
-                          ->prim_error_unified_total.load(std::memory_order_relaxed)
-                    : 0;
-            auto build_pair = [&](const std::string& name) -> EvalValue {
-                // Issue #669: enrich the per-name response with
-                // real PrimMeta fields (arity, pure, safety,
-                // doc, category) via meta_for_slot. Pre-#669 the
-                // shape returned hardcoded arity=0 + has-fn=1 +
-                // category="internal-observable" — PrimMeta was
-                // populated (#480) but never reached the Agent.
-                //
-                // Schema now exposes 8 fields:
-                //   - name              primitive name
-                //   - has-fn            1 if registered, 0 if unknown
-                //   - arity             from PrimMeta.arity (255 = variadic)
-                //   - pure              from PrimMeta.pure (bool)
-                //   - safety            from PrimMeta.safety_flags (int)
-                //   - doc               from PrimMeta.doc (string, "")
-                //   - category          from PrimMeta.category (string)
-                //   - schema            669 (drift sentinel — changed
-                //                       from 643 to signal the
-                //                       enriched field set)
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                auto insert_kv = [&](const char* k_str, EvalValue v) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (const char* p = k_str; *p; ++p)
-                        h = (h ^ static_cast<std::uint8_t>(*p)) *
-                            ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            auto kidx = ev.string_heap_.size();
-                            ev.string_heap_.push_back(k_str);
-                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            return;
-                        }
-                    }
-                };
-                auto name_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(name);
-                insert_kv("name", make_string(static_cast<std::uint64_t>(name_idx)));
-                // Look up the real PrimMeta via slot_for_name +
-                // meta_for_slot. If unknown, has-fn=0 + default
-                // PrimMeta{} (the Agent can distinguish "known
-                // primitive with no body" from "unknown" via
-                // has-fn).
-                const auto slot = ev.primitives_.slot_for_name(name);
-                const bool known = slot < ev.primitives_.slot_count();
-                const PrimMeta& pm = known ? ev.primitives_.meta_for_slot(slot) : PrimMeta{};
-                insert_kv("has-fn", make_int(known ? 1 : 0));
-                insert_kv("arity", make_int(static_cast<std::int64_t>(pm.arity)));
-                insert_kv("pure", make_bool(pm.pure));
-                insert_kv("safety", make_int(static_cast<std::int64_t>(pm.safety_flags)));
-                auto doc_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(pm.doc);
-                insert_kv("doc", make_string(static_cast<std::uint64_t>(doc_idx)));
-                auto cat_idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(pm.category);
-                insert_kv("category", make_string(static_cast<std::uint64_t>(cat_idx)));
-                insert_kv("schema", make_int(669));
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
-            // Dispatch: optional [name] argument.
-            if (!a.empty() && aura::compiler::types::is_string(a[0])) {
-                const auto idx = aura::compiler::types::as_string_idx(a[0]);
-                if (idx < ev.string_heap_.size()) {
-                    const auto& name = ev.string_heap_[idx];
-                    // Build the meta hash for the requested name.
-                    // Whether or not the primitive exists, we return
-                    // the meta shape so the Agent can introspect —
-                    // has-fn=0 + arity=0 if not found is a valid
-                    // response (lets the Agent distinguish "known
-                    // primitive with no body" from "unknown").
-                    return build_pair(name);
-                }
-                return make_void();
-            }
-            // No [name] arg → return a pair with the aggregate
-            // foundation counters + the schema sentinel so the
-            // Agent can dashboard at-a-glance. (Full catalog
-            // form is provided by #617 query:primitives-meta-
-            // catalog — the new primitive specializes on
-            // per-name lookup.)
+    add("query:primitives-meta", [&ev](const auto& a) -> EvalValue {
+        // Bump the new per-primitive-lookup counter (distinct
+        // from primitives_meta_catalog_query_total #617).
+        if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())) {
+            m->primitives_meta_query_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // The foundation scaffolding atomics (currently 0
+        // until AC1+AC3 wire-up).
+        const std::uint64_t define_macro_used =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->define_primitive_macro_used_total.load(std::memory_order_relaxed)
+                : 0;
+        const std::uint64_t prim_error_unified =
+            ev.compiler_metrics()
+                ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                      ->prim_error_unified_total.load(std::memory_order_relaxed)
+                : 0;
+        auto build_pair = [&](const std::string& name) -> EvalValue {
+            // Issue #669: enrich the per-name response with
+            // real PrimMeta fields (arity, pure, safety,
+            // doc, category) via meta_for_slot. Pre-#669 the
+            // shape returned hardcoded arity=0 + has-fn=1 +
+            // category="internal-observable" — PrimMeta was
+            // populated (#480) but never reached the Agent.
+            //
+            // Schema now exposes 8 fields:
+            //   - name              primitive name
+            //   - has-fn            1 if registered, 0 if unknown
+            //   - arity             from PrimMeta.arity (255 = variadic)
+            //   - pure              from PrimMeta.pure (bool)
+            //   - safety            from PrimMeta.safety_flags (int)
+            //   - doc               from PrimMeta.doc (string, "")
+            //   - category          from PrimMeta.category (string)
+            //   - schema            669 (drift sentinel — changed
+            //                       from 643 to signal the
+            //                       enriched field set)
             auto* ht = FlatHashTable::create(8);
             if (!ht)
                 return make_void();
@@ -754,7 +678,7 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            auto insert_kv = [&](const char* k_str, EvalValue v) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
@@ -768,19 +692,93 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
                         auto kidx = ev.string_heap_.size();
                         ev.string_heap_.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = v.val;
                         ht->size++;
                         return;
                     }
                 }
             };
-            insert_kv("define-macro-used", static_cast<std::int64_t>(define_macro_used));
-            insert_kv("prim-error-unified", static_cast<std::int64_t>(prim_error_unified));
-            insert_kv("schema", 643);
+            auto name_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(name);
+            insert_kv("name", make_string(static_cast<std::uint64_t>(name_idx)));
+            // Look up the real PrimMeta via slot_for_name +
+            // meta_for_slot. If unknown, has-fn=0 + default
+            // PrimMeta{} (the Agent can distinguish "known
+            // primitive with no body" from "unknown" via
+            // has-fn).
+            const auto slot = ev.primitives_.slot_for_name(name);
+            const bool known = slot < ev.primitives_.slot_count();
+            const PrimMeta& pm = known ? ev.primitives_.meta_for_slot(slot) : PrimMeta{};
+            insert_kv("has-fn", make_int(known ? 1 : 0));
+            insert_kv("arity", make_int(static_cast<std::int64_t>(pm.arity)));
+            insert_kv("pure", make_bool(pm.pure));
+            insert_kv("safety", make_int(static_cast<std::int64_t>(pm.safety_flags)));
+            auto doc_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(pm.doc);
+            insert_kv("doc", make_string(static_cast<std::uint64_t>(doc_idx)));
+            auto cat_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(pm.category);
+            insert_kv("category", make_string(static_cast<std::uint64_t>(cat_idx)));
+            insert_kv("schema", make_int(669));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
-        });
+        };
+        // Dispatch: optional [name] argument.
+        if (!a.empty() && aura::compiler::types::is_string(a[0])) {
+            const auto idx = aura::compiler::types::as_string_idx(a[0]);
+            if (idx < ev.string_heap_.size()) {
+                const auto& name = ev.string_heap_[idx];
+                // Build the meta hash for the requested name.
+                // Whether or not the primitive exists, we return
+                // the meta shape so the Agent can introspect —
+                // has-fn=0 + arity=0 if not found is a valid
+                // response (lets the Agent distinguish "known
+                // primitive with no body" from "unknown").
+                return build_pair(name);
+            }
+            return make_void();
+        }
+        // No [name] arg → return a pair with the aggregate
+        // foundation counters + the schema sentinel so the
+        // Agent can dashboard at-a-glance. (Full catalog
+        // form is provided by #617 query:primitives-meta-
+        // catalog — the new primitive specializes on
+        // per-name lookup.)
+        auto* ht = FlatHashTable::create(8);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("define-macro-used", static_cast<std::int64_t>(define_macro_used));
+        insert_kv("prim-error-unified", static_cast<std::int64_t>(prim_error_unified));
+        insert_kv("schema", 643);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
 }
 
 // Issue #909 part 13 (orig lines 2570-2641)

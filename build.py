@@ -603,10 +603,15 @@ def test_integ():
             if tc.expected.startswith(">="):
                 try:
                     threshold = int(tc.expected[2:].strip())
-                    val = int(check_stdout.strip().split()[-1])
-                    if val < threshold:
+                    tokens = check_stdout.strip().split()
+                    if not tokens:
                         ok_case = False
-                        issues.append(f"expected value>={threshold}, got: {check_stdout[:80]}...")
+                        issues.append(f"expected value>={threshold}, got empty stdout (stderr={stderr[:80]!r})")
+                    else:
+                        val = int(tokens[-1])
+                        if val < threshold:
+                            ok_case = False
+                            issues.append(f"expected value>={threshold}, got: {check_stdout[:80]}...")
                 except ValueError:
                     if tc.expected not in check_stdout:
                         ok_case = False

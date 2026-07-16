@@ -110,8 +110,8 @@ int aura_issue_525_observability_run() {
     // AC4: related Guard/reflect primitive regression
     {
         std::println("\n--- AC4: regression ---");
-        auto log = cs.eval("(query:mutation-boundary-log)");
-        auto snap = cs.eval("(query:mutation-impact-snapshot)");
+        auto log = cs.eval("(engine:metrics \"query:mutation-boundary-log\")");
+        auto snap = cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")");
         auto reflect = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         CHECK(log && aura::compiler::types::is_hash(*log), "mutation-boundary-log hash regression");
         CHECK(snap && aura::compiler::types::is_hash(*snap),

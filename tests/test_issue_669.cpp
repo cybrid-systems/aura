@@ -167,7 +167,7 @@ static void run_ac6_meta_hits_bump(aura::compiler::CompilerService& cs) {
 
 static void run_ac7_no_arg_form_preserved(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC7: no-arg form returns foundation counters (preserved) ---");
-    auto r = cs.eval("(query:primitives-meta)");
+    auto r = cs.eval("(engine:metrics \"query:primitives-meta\")");
     CHECK(r && aura::compiler::types::is_hash(*r), "no-arg form returns a hash");
     auto define_used =
         cs.eval("(hash-ref (engine:metrics \"query:primitives-meta\") 'define-macro-used)");
@@ -179,7 +179,7 @@ static void run_ac7_no_arg_form_preserved(aura::compiler::CompilerService& cs) {
 
 static void run_ac8_regression(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC8: regression — adjacent meta primitives reachable ---");
-    auto catalog = cs.eval("(query:primitives-meta-catalog)");
+    auto catalog = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
     auto describe = cs.eval(R"aura((primitive:describe "+"))aura");
     CHECK(catalog && aura::compiler::types::is_hash(*catalog),
           "query:primitives-meta-catalog (#617) regression [hash]");

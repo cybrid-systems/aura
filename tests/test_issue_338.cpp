@@ -125,8 +125,7 @@ bool test_and_or_precision_stats_primitive() {
     std::println(
         "\n--- AC5: (engine:metrics \"compile:and-or-precision-stats\") returns 2-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define aops (engine:metrics \"compile:and-or-precision-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define aops (engine:metrics \"compile:and-or-precision-stats\"))");
     for (const char* key : {"meet-uses-total", "join-uses-total"}) {
         std::string check = std::string("(hash-ref aops \"") + key + "\")";
         auto rv = cs.eval(check);

@@ -547,6 +547,10 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // bodies that don't actually reference the captured
     // scope (the most common case for this failure mode).
     if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
+        // Issue #1510: post-compact cleared env_id or OOB → empty Env
+        // fallback (globals still reachable; no dangling frame walk).
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return ne;
     }
     // Issue #145 P0 follow-up: hold env_frames_mtx_ shared
@@ -631,6 +635,9 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // Still stamp the empty Env with the current version so
         // downstream callers see a consistent snapshot.
         ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        // Issue #1510: post-rollback / invalid frame → fallback path.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return ne;
     }
     if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
@@ -960,8 +967,13 @@ std::size_t Evaluator::compact_env_frames() {
     if (orig_size == 0) {
         // Still bump defuse_version_ so the caller sees a
         // post-compact epoch marker (consistency with the
-        // non-empty path).
+        // non-empty path). Issue #1510/#1526: also bump bridge_epoch
+        // (+ AOT table via service hook) for dual-domain lockstep.
         defuse_version_.fetch_add(1, std::memory_order_release);
+        if (bridge_epoch_bump_fn_ && compiler_service_)
+            bridge_epoch_bump_fn_(compiler_service_);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
         return 0;
     }
     const auto current_defuse = defuse_version_.load(std::memory_order_acquire);
@@ -996,6 +1008,23 @@ std::size_t Evaluator::compact_env_frames() {
         // else: remap[i] stays -1 (from init), don't touch
     }
 
+    // Issue #1510: rewrite EnvFrame::parent_id through the same
+    // remap table. Without this, SoA parent walks post-compact
+    // resolve to wrong (or reclaimed) slots — UAF / wrong capture.
+    std::size_t parent_rewrites = 0;
+    for (auto& fr : new_env_frames) {
+        if (fr.parent_id == NULL_ENV_ID || fr.parent_id >= remap.size())
+            continue;
+        const auto np = remap[fr.parent_id];
+        if (np >= 0) {
+            fr.parent_id = static_cast<EnvId>(np);
+            ++parent_rewrites;
+        } else {
+            fr.parent_id = NULL_ENV_ID;
+            ++parent_rewrites;
+        }
+    }
+
     // Step 5: rewrite Closure::env_id (unique lock).
     // All closures pointing to a freed frame would have been
     // marked non-referenced in step 2, so the frame would have
@@ -1021,11 +1050,57 @@ std::size_t Evaluator::compact_env_frames() {
         }
     }
 
+    // Issue #1510: optional IR / external env_id remap (runtime_closures_).
+    // Still under compact_env_frames_lock_ (interlock held). Restamp of
+    // IRClosure::bridge_epoch happens after dual-epoch bump below.
+    if (compact_env_remap_fn_)
+        compact_env_remap_fn_(compact_env_remap_ctx_, remap.data(), remap.size());
+
     const std::size_t reclaimed = orig_size - new_env_frames.size();
     env_frames_ = std::move(new_env_frames);
+
+    // Issue #1510 / #1526: atomic dual-epoch pair under interlock —
+    // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure
+    // is_bridge_stale) + AOT table epoch (via service bump hook).
+    // Then restamp survivor Closure::bridge_epoch to the NEW epoch so
+    // remapped env_id + matching bridge_epoch stay dual-check consistent
+    // (JIT will not see "fresh epoch + dangling env_id" race).
     defuse_version_.fetch_add(1, std::memory_order_release);
     ++env_generation_;
+    if (bridge_epoch_bump_fn_ && compiler_service_)
+        bridge_epoch_bump_fn_(compiler_service_);
+
+    // Issue #1526: restamp tree-walker Closure::bridge_epoch → current.
+    std::size_t restamped = 0;
+    {
+        const auto cur_bridge = current_bridge_epoch();
+        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        for (auto& kv : closures_) {
+            // Restamp any previously-tracked closure (non-zero) so it
+            // matches post-compact dual-epoch. Leave 0 (untracked) alone.
+            if (kv.second.bridge_epoch != 0) {
+                kv.second.bridge_epoch = cur_bridge;
+                ++restamped;
+            }
+        }
+    }
+    // IR restamp: service-installed remap already rewrote env_id; if the
+    // ctx supports a second restamp pass it is invoked via the same hook
+    // with n==0 as a restamp signal, OR via dedicated restamp after bump.
+    // Prefer explicit restamp callback when set.
+    if (compact_env_restamp_fn_) {
+        const auto cur_bridge = current_bridge_epoch();
+        restamped += compact_env_restamp_fn_(compact_env_remap_ctx_, cur_bridge);
+    }
+
     bump_envframe_compact(reclaimed, rewritten);
+    // Issue #1510 / #1526 metrics (CompilerMetrics surface).
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->envframe_compact_rewrites_total.fetch_add(rewritten + parent_rewrites,
+                                                     std::memory_order_relaxed);
+        m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
+        m->envframe_compact_bridge_restamps_total.fetch_add(restamped, std::memory_order_relaxed);
+    }
     return reclaimed;
 }
 

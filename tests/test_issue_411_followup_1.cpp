@@ -90,14 +90,12 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (engine:metrics \"compile:per-symbol-reinfer-stats\") returns hash "
                  "with 6 keys ---");
     aura::compiler::CompilerService cs;
-    auto r1 =
-        cs.eval("(set-code \"(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))\")");
+    auto r1 = cs.eval("(define h (engine:metrics \"compile:per-symbol-reinfer-stats\"))");
     if (!r1) {
         std::println("  FAIL: define h failed");
         ++g_failed;
         return false;
     }
-    cs.eval("(eval-current)");
     auto rh = cs.eval("(hash? h)");
     if (!rh || !aura::compiler::types::is_bool(*rh) || !aura::compiler::types::as_bool(*rh)) {
         std::println("  FAIL: (hash? h) did not return #t");

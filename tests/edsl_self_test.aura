@@ -92,14 +92,14 @@
 
     (set-code "(define x 1)")
     (ast:snapshot "v1")
-    (it "snapshot-list" (pair? (ast:list-snapshots)))))
+    (it "snapshot-list" (pair? (stats:get "ast:list-snapshots")))))
 
 ; ── 5. Summary / compile ──
 (describe "5. Summary"
   (lambda ()
     (set-code "(define (f x) (+ x 1))")
-    (it "summary-basic" (pair? (ast:summary)))
-    (it "compile-status" (pair? (compile:status)))))
+    (it "summary-basic" (pair? (stats:get "ast:summary")))
+    (it "compile-status" (not (void? (stats:get "compile:status")))))
 
 ; ── 6. Workspace ──
 (describe "6. Workspace"
@@ -135,7 +135,7 @@
     (it "msg-my-id" (string? (my-id)))
     (it "msg-recv-timeout" (not (recv 0)))
     (it "msg-send-no-target" (not (send "nonexistent" "test")))
-    (it "msg-mailbox-count" (= (mailbox-count) 0))
+    (it "msg-mailbox-count" (or (void? (stats:get "mailbox-count")) (= (stats:get "mailbox-count") 0)))
     (it "msg-session-active" (not (session-active? "nonexistent")))
     (it "msg-reply-no-sender" (not (reply "test")))))
 

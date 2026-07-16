@@ -6,7 +6,7 @@
 // Scope-limited close (pair with #669/#617/#671/#697, which already
 // shipped the per-primitive foundation):
 //   - (query:primitives-meta [name])       enriched 8-field (#669)
-//   - (query:primitives-meta-catalog)      7-field catalog (#617)
+//   - (engine:metrics \"query:primitives-meta-catalog\")      7-field catalog (#617)
 //   - (engine:metrics \"query:primitives-meta-stats\")        4-field runtime stats (#669)
 //   - (primitive:generate-skeleton desc)   5-field AI bundle (#697)
 //   - (engine:metrics \"query:primitives-extension-stats\")   kit runtime (#697)
@@ -22,7 +22,7 @@
 //        same primitive the generator would target (drift check:
 //        generator's chosen category matches the runtime-categorized
 //        queries)
-//   AC2: (query:primitives-meta-catalog) returns 7-field hash with
+//   AC2: (engine:metrics \"query:primitives-meta-catalog\") returns 7-field hash with
 //        by-category-eda field growing after generator is invoked
 //        with an EDA description
 //   AC3: (primitive:generate-skeleton "coverpoint with bins") →
@@ -110,16 +110,16 @@ static void run_ac1_drift_check(aura::compiler::CompilerService& cs) {
 
 static void run_ac2_catalog_eda_growth(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC2: catalog by-category-eda growth path ---");
-    auto r = cs.eval("(query:primitives-meta-catalog)");
+    auto r = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
     CHECK(r && aura::compiler::types::is_hash(*r),
-          "(query:primitives-meta-catalog) returns a hash (#617)");
+          "(engine:metrics \"query:primitives-meta-catalog\") returns a hash (#617)");
     // by-category-eda is a count of primitives tagged with the
     // 'eda' category. After running the EDA-targeted generator
     // (#697), the count should be >= 0 (sanity). Pre-existing
     // primitives like (engine:metrics \"query:primitives-extension-stats\") already
     // carry the 'eda' category so by-category-eda > 0.
     const auto eda_before =
-        hash_int_field(cs, "(query:primitives-meta-catalog)", "by-category-eda");
+        hash_int_field(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "by-category-eda");
     CHECK(eda_before >= 0, std::format("by-category-eda = {} (sanity check, >= 0)", eda_before));
     // Now bump the counter via the generator (records the category
     // dispatch). Pre #711, generator counter touches the
@@ -128,7 +128,8 @@ static void run_ac2_catalog_eda_growth(aura::compiler::CompilerService& cs) {
     // not bump by-category-eda on its own — that field stays
     // tied to actually-registered primitives.
     (void)cs.eval(R"aura((primitive:generate-skeleton "interface modport update"))aura");
-    const auto eda_after = hash_int_field(cs, "(query:primitives-meta-catalog)", "by-category-eda");
+    const auto eda_after =
+        hash_int_field(cs, "(engine:metrics \"query:primitives-meta-catalog\")", "by-category-eda");
     CHECK(eda_after == eda_before,
           std::format("generator doesn't pollute catalog count ({} == {})", eda_before, eda_after));
 }
@@ -160,7 +161,7 @@ static void run_ac5_gen_eda_category(aura::compiler::CompilerService& cs) {
 static void run_ac6_closed_loop(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC6: closed-loop Agent sim (introspect → generate → verify) ---");
     // Step 1: query catalog for a known primitive family.
-    auto cat = cs.eval("(query:primitives-meta-catalog)");
+    auto cat = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
     CHECK(cat && aura::compiler::types::is_hash(*cat),
           "step 1: catalog reachable (Foundation from #617)");
     // Step 2: query per-name meta for a still-public primitive that
@@ -191,7 +192,7 @@ static void run_ac7_regression(aura::compiler::CompilerService& cs) {
     auto meta_stats = cs.eval("(engine:metrics \"query:primitives-meta-stats\")");
     auto ext_stats = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
     auto by_cat = cs.eval(R"aura((query:primitives-by-category "general"))aura");
-    auto cat = cs.eval("(query:primitives-meta-catalog)");
+    auto cat = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
     CHECK(meta_stats && aura::compiler::types::is_hash(*meta_stats),
           "query:primitives-meta-stats hash regression (#669)");
     CHECK(ext_stats && aura::compiler::types::is_hash(*ext_stats),

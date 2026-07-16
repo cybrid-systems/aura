@@ -131,6 +131,19 @@ public:
     std::string compile_to_llvm_ir();
     bool compile_to_object_file(const std::string& path);
 
+    // Issue #1516: per-function AOT — emit IR / native object for a
+    // previously compiled function (keyed by IR func_id registered
+    // via register_function, or by function name). Unlike
+    // compile_to_* which only sees the most recent module, these
+    // retain one module snapshot per function so multi-function
+    // EDA/hardware static-link builds can AOT selectively.
+    // Returns empty / false when the function was never compiled
+    // or the AOT snapshot was invalidated.
+    std::string compile_function_to_llvm_ir(std::uint32_t func_id);
+    bool compile_function_to_object(std::uint32_t func_id, const std::string& path);
+    std::string compile_function_to_llvm_ir_by_name(const char* name);
+    bool compile_function_to_object_by_name(const char* name, const std::string& path);
+
     // Register a compiled function with the runtime for closure calls
     void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
                            uint32_t arg_count, uint32_t env_count, const char* name = nullptr);
@@ -189,29 +202,46 @@ public:
         // metric is observable now and ready to be wired into
         // the lower() default case in the follow-up.
         std::atomic<std::uint64_t> fallback_count{0};
-        // Issue #461: consistency violations — set by the
-        // post-mutation consistency harness (follow-up that
-        // runs JIT and IRInterpreter side-by-side and compares
-        // outputs). Starts at 0; the harness bumps it when
-        // results differ.
+        // Issue #461 / #1512: consistency violations — set by the
+        // post-mutation consistency harness (JIT vs IRInterpreter
+        // side-by-side compare) or by record_consistency_result().
+        // Starts at 0; the harness bumps it when results differ.
         std::atomic<std::uint64_t> consistency_violations{0};
+        // Issue #1512: side-by-side compare counters (match + total).
+        std::atomic<std::uint64_t> consistency_compare_total{0};
+        std::atomic<std::uint64_t> consistency_match_total{0};
+        // Issue #1512: bitmasks for opcode coverage (kIROpcodeCount=54 ≤ 64).
+        // Bit i set ⇔ opcode i successfully lowered in some compile.
+        std::atomic<std::uint64_t> opcode_covered_mask{0};
+        // Bit i set ⇔ opcode i hit the unhandled default branch.
+        std::atomic<std::uint64_t> opcode_unhandled_mask{0};
         // Issue #1285: exception opcode coverage (TryBegin/End/Raise/IsError).
         // Bumped each time lower() handles those opcodes so Agents can
         // confirm JIT EH coverage vs unhandled_opcode_count.
         std::atomic<std::uint64_t> exception_opcode_lowered{0};
+        // Issue #1516: bitset of EH opcodes successfully lowered
+        // (bit0=IsError, bit1=TryBegin, bit2=TryEnd, bit3=Raise).
+        // popcount → exception_opcode_coverage_count() (0..4).
+        std::atomic<std::uint64_t> exception_opcode_mask{0};
+        // Issue #1516: per-function AOT emit counters.
+        std::atomic<std::uint64_t> aot_per_function_ir_total{0};
+        std::atomic<std::uint64_t> aot_per_function_object_total{0};
+        std::atomic<std::uint64_t> aot_per_function_miss_total{0};
+        std::atomic<std::uint64_t> aot_last_module_object_total{0};
         // Issue #1289: fail-fast default branch (return false → compile nullptr).
         std::atomic<std::uint64_t> unhandled_fail_fast_total{0};
         // Issue #1288: GuardShape paths that also probe linear_ownership_state.
         std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};
-        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
-        // total of AuraJIT::capture_fn_epoch + is_fn_epoch_stale
-        // calls (one per JIT compile + one per JIT Apply prologue
-        // check). Pairs with compiler_closure_epoch_mismatch_hits
-        // (IR side, observability_metrics.h) so dashboards can
-        // verify both reader paths see the same epoch.
+        // Issue #1514: partial recompile requests + dirty blocks observed.
+        std::atomic<std::uint64_t> partial_recompile_requests{0};
+        std::atomic<std::uint64_t> partial_recompile_dirty_blocks_total{0};
+        std::atomic<std::uint64_t> partial_recompile_cache_evictions{0};
+        // Issue #1522: fn_trackers_ batch deopt (bridge epoch bump notify).
+        std::atomic<std::uint64_t> batch_deopt_for_total{0};
+        std::atomic<std::uint64_t> batch_deopt_entries_marked{0};
+        std::atomic<std::uint64_t> deopt_pending_invoke_fallbacks{0};
+        // Issue #1477: JIT-side dual-epoch fence counter.
         std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
-        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
-        // Issue #1477: JIT-side dual-epoch fence counter. Lifetime
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
@@ -223,13 +253,24 @@ public:
     // methods (compile_count.fetch_add(1, ...), etc.).
     Metrics& mutable_metrics() noexcept { return metrics_; }
 
-    // Issue #1477: test-only accessor for the jit_epoch_stale_check_total
-    // counter. Tests use this to verify capture_fn_epoch +
-    // is_fn_epoch_stale bump the counter without exposing the
-    // full Metrics struct.
+    // Issue #1477: test-only accessor for jit_epoch_stale_check_total.
     [[nodiscard]] std::uint64_t test_jit_epoch_stale_check_total() const noexcept {
         return metrics_.jit_epoch_stale_check_total.load(std::memory_order_relaxed);
     }
+
+    // Issue #1512: strict consistency mode — unhandled opcodes also
+    // bump consistency_violations (JIT cannot match interpreter).
+    void set_strict_consistency_mode(bool on) noexcept { strict_consistency_mode_ = on; }
+    [[nodiscard]] bool strict_consistency_mode() const noexcept { return strict_consistency_mode_; }
+    // Issue #1512: record a JIT ↔ IRInterpreter side-by-side result.
+    void record_consistency_result(bool match) noexcept;
+    // Issue #1512: popcount of opcode_covered_mask / coverage percentage.
+    [[nodiscard]] std::uint64_t opcode_coverage_count() const noexcept;
+    [[nodiscard]] std::uint64_t opcode_coverage_pct() const noexcept; // 0..100
+    static constexpr std::uint32_t kTrackedOpcodeCount = 54;          // matches kIROpcodeCount
+    // Issue #1516: EH opcode coverage (IsError/TryBegin/TryEnd/Raise).
+    [[nodiscard]] std::uint64_t exception_opcode_coverage_count() const noexcept;
+    static constexpr std::uint32_t kExceptionOpcodeCount = 4;
 
     // Hot-swap: replace an already-compiled function with a new version.
     // Removes the old module from the JIT dylib and compiles + links the new one.
@@ -248,49 +289,30 @@ public:
     // in compile_fns_ and the next exec returns the old body.
     void invalidate_prefix(const char* prefix);
 
-    // Issue #1477: JIT-side dual-epoch fence counterpart to #1475
-    // (read-side is_bridge_stale + is_env_frame_stale in evaluator.ixx)
-    // + #1476 (write-side atomic_bump_epochs_and_stamp_bridge in
-    // service.ixx). Captures the current bridge_epoch at compile
-    // time (or on demand from service.ixx::atomic_bump_epochs_and_stamp_bridge
-    // when the function is re-registered); callers (e.g. JIT Apply
-    // prologue) then check is_fn_epoch_stale(name, current_bridge_epoch)
-    // and deopt to the interpreter on mismatch.
-    //
-    // Returns false when name was never captured (pass-through, the
-    // function wasn't compiled via this path or was registered
-    // before the fence was added).
-    void capture_fn_epoch(const char* name, uint64_t bridge_epoch);
-    [[nodiscard]] bool is_fn_epoch_stale(const char* name, uint64_t current_bridge_epoch) const;
+    // Issue #1514: partial recompile request — evicts native code for
+    // `name` (and name#* keys) so the next exec recompiles only the
+    // dirty function, not the whole process.
+    bool partial_recompile(const char* name, const std::uint32_t* dirty_block_ids,
+                           std::size_t n_dirty_blocks) noexcept;
 
-    // Issue #1477: JIT-side dual-epoch fence counterpart to #1475
-    // (read-side is_bridge_stale + is_env_frame_stale in evaluator.ixx)
-    // + #1476 (write-side atomic_bump_epochs_and_stamp_bridge in
-    // service.ixx). Captures the current bridge_epoch at compile
-    // time (or on demand from service.ixx::atomic_bump_epochs_and_stamp_bridge
-    // when the function is re-registered); callers (e.g. JIT Apply
-    // prologue) then check is_fn_epoch_stale(name, current_bridge_epoch)
-    // and deopt to the interpreter on mismatch.
-    //
-    // Returns false when name was never captured (pass-through, the
-    // function wasn't compiled via this path or was registered
-    // before the fence was added).
+    // Issue #1522: soft batch deopt for fn_trackers_ after bridge epoch bump.
+    std::size_t batch_deopt_for(const char* name, std::uint64_t current_epoch) noexcept;
+    std::size_t batch_deopt_prefix(const char* prefix, std::uint64_t current_epoch) noexcept;
+    [[nodiscard]] bool is_deopt_pending(const char* name) const noexcept;
+    [[nodiscard]] std::uint64_t deopt_pending_count() const noexcept;
 
-    // Issue #1477: JIT-side counterpart of #1475 (read-side dual
-    // check) + #1476 (write-side atomic bump). The captured
-    // bridge_epoch is captured at compile time; callers (e.g.
-    // service.ixx::atomic_bump_epochs_and_stamp_bridge on the
-    // write side, or the JIT Apply prologue on the read side)
-    // check `is_fn_epoch_stale(name, current_bridge_epoch)` and
-    // deopt to the interpreter when it returns true. Returns
-    // false when `name` was never captured (pass-through — fn
-    // wasn't compiled via this path).
-
+    // Issue #1477: JIT-side dual-epoch fence.
+    void capture_fn_epoch(const char* name, std::uint64_t bridge_epoch);
+    [[nodiscard]] bool is_fn_epoch_stale(const char* name,
+                                         std::uint64_t current_bridge_epoch) const;
 
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     mutable Metrics metrics_;
+    // Issue #1512: when true, unhandled opcodes also bump
+    // consistency_violations (strict JIT↔interp parity mode).
+    bool strict_consistency_mode_ = false;
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.

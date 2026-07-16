@@ -21,7 +21,7 @@
 //   - (stats:get "arena:stats-json") — JSON snapshot (#187)
 //   - (engine:metrics \"query:arena-auto-stats\") — group-level guard/skip (#464)
 //   - (engine:metrics \"query:arena-auto-compact-stats\") — alloc-path policy (#685)
-//   - (query:arena-fragmentation-snapshot) — live point-in-time
+//   - (engine:metrics \"query:arena-fragmentation-snapshot\") — live point-in-time
 //     hash (#604)
 //
 // What #623 ships that's NEW: 2 small Agent-tunables for the
@@ -165,9 +165,10 @@ int aura_issue_623_run() {
         auto s_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
         CHECK(s_compact.has_value(),
               "(engine:metrics \"query:arena-auto-compact-stats\") reachable (#685 back-compat)");
-        auto s_snap = cs.eval("(query:arena-fragmentation-snapshot)");
-        CHECK(s_snap.has_value(),
-              "(query:arena-fragmentation-snapshot) reachable (#604 back-compat)");
+        auto s_snap = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
+        CHECK(
+            s_snap.has_value(),
+            "(engine:metrics \"query:arena-fragmentation-snapshot\") reachable (#604 back-compat)");
     }
 
     // AC5: concurrent reads of (arena:auto-compact-threshold) under

@@ -84,15 +84,9 @@ bool test_aura_primitive_returns_hash() {
     std::println(
         "\n--- AC2: (engine:metrics \"compile:type-cache-stats\") returns hash with 5 keys ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define h (engine:metrics \"compile:type-cache-stats\"))\")");
+    auto r1 = cs.eval("(define h (engine:metrics \"compile:type-cache-stats\"))");
     if (!r1) {
         std::println("  FAIL: define h failed");
-        ++g_failed;
-        return false;
-    }
-    auto r2 = cs.eval("(eval-current)");
-    if (!r2) {
-        std::println("  FAIL: eval-current failed");
         ++g_failed;
         return false;
     }
@@ -146,13 +140,12 @@ bool test_typecheck_populates_cache() {
 bool test_stats_start_at_zero() {
     std::println("\n--- AC4: all type-cache-stats fields start at 0 on fresh service ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(set-code \"(define h (engine:metrics \"compile:type-cache-stats\"))\")");
+    auto r = cs.eval("(define h (engine:metrics \"compile:type-cache-stats\"))");
     if (!r) {
         std::println("  FAIL: define h failed");
         ++g_failed;
         return false;
     }
-    cs.eval("(eval-current)");
     for (const char* key : {"cache-hits-total", "cache-misses-total", "stale-cache-total",
                             "gen-saved-total", "gen-saved-ratio-bp"}) {
         std::string get_cmd =

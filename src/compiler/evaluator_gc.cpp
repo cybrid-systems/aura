@@ -187,8 +187,13 @@ bool Evaluator::validate_linear_ownership_state(std::uint8_t linear_state,
                                                 std::uint64_t current_version,
                                                 std::uint64_t bridge_epoch,
                                                 std::uint64_t current_bridge_epoch) noexcept {
+    // Issue #1515: untracked (0) always ok; Moved (4) is a terminal
+    // state that fails EnvFrame / bridge coordination checks so GC
+    // and runtime never treat moved values as live roots.
     if (linear_state == 0)
         return true;
+    if (linear_state == 4) // Moved — never a valid live ownership root
+        return false;
     if (frame_version < current_version)
         return false;
     if (bridge_epoch != 0 && bridge_epoch != current_bridge_epoch)
@@ -211,6 +216,8 @@ static void record_linear_gc_probe(Evaluator& ev, bool violation,
         m->linear_typed_mutate_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
         m->linear_postmutate_escape_violations_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        // Issue #1515 / #763: GC-compiler correlation counter.
+        m->linear_ownership_gc_violations_prevented_total.fetch_add(1, std::memory_order_relaxed);
     } else {
         m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
         m->linear_postmutate_guard_boundary_linear_safe_total.fetch_add(1,
@@ -219,7 +226,10 @@ static void record_linear_gc_probe(Evaluator& ev, bool violation,
     }
 }
 
-// Issue #1364: called at GC safepoint. Linear ownership probe only.
+// Issue #1364 / #1515: called at GC safepoint. Linear ownership probe
+// coordinates EnvFrame.version_ + IRClosure.bridge_epoch against the
+// live defuse/bridge snapshots so moved or epoch-stale captures cannot
+// stay as GC roots.
 // Mutation × safepoint contract (docs/development/safepoint-mutation.md):
 //   - STW window advertised via gc_hooks::in_gc_safepoint() / ScopedSafepoint
 //   - Concurrent mutate is benign: workspace_mtx_ serializes AST writes
@@ -237,6 +247,9 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
             continue;
         const auto& fr = env_frames_[cl.env_id];
+        // EnvFrame.version_ × bridge_epoch coordination (Issue #1515).
+        // (IRClosure.env_version is dual-checked on the IR apply path
+        // in #1513; TW Closure map uses frame.version_ here.)
         if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
                                              current_bridge)) {
             violation = true;
@@ -271,6 +284,22 @@ void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
     std::vector<std::int64_t> closure_roots;
     std::vector<std::int64_t> env_roots;
     collect_compiler_managed_gc_roots(closure_roots, env_roots, current_bridge_epoch());
+    // Issue #1515: every resync is a root re-registration event for the
+    // linear-ownership × GC coordination surface (#763 counters).
+    if (m) {
+        const auto n = closure_roots.size() + env_roots.size();
+        m->linear_ownership_gc_root_registrations_total.fetch_add(n == 0 ? 1 : n,
+                                                                  std::memory_order_relaxed);
+        m->linear_ownership_gc_env_version_resync_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #1515: unified safepoint entry — re-register linear roots under
+// the live bridge_epoch, then probe EnvFrame/version ownership. Called
+// from request_gc_safepoint (immediate path) and invalidate revalidate.
+void Evaluator::sync_linear_roots_and_bridge_epoch() noexcept {
+    resync_linear_jit_gc_roots_after_invalidate();
+    probe_linear_ownership_at_gc_safepoint();
 }
 
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
@@ -299,13 +328,17 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     // probe actually caught a violation, bump the
     // "ownership-violation-during-steal" correlation counter.
     // Safe to call with compiler_metrics_ == nullptr (no-op).
-    if (violation)
+    if (violation) {
         bump_runtime_observability_steal_ownership_violation_correlated();
 
-    // Issue #1473: also force validate_or_refresh on pinned StableNodeRefs
-    // at fiber-steal time. Mirrors the GC-safepoint hook above — pinned
-    // refs (boundary_pinned=true) need a refresh sweep when the fiber
-    // migrates to a different worker thread.
+        // Issue #1525: fiber-steal path is a multi-fiber race surface.
+        if (m) {
+            m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
+            m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1473: force validate_or_refresh on pinned StableNodeRefs
+    // at fiber-steal time.
     if (auto* ws = workspace_flat()) {
         std::size_t validated = 0;
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
@@ -313,8 +346,8 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
             if (pinned.validate_or_refresh(*ws))
                 ++validated;
         }
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
+        if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))
+            mm->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
     }
 }
 
@@ -325,6 +358,10 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
     for (const auto& [id, cl] : closures_) {
         if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch) {
             bump_compiler_root_dangling_prevented();
+            // Issue #1515: stale bridge_epoch root skipped during GC walk.
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->linear_ownership_gc_root_stale_hits_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             continue;
         }
         closure_roots_out.push_back(static_cast<std::int64_t>(id));

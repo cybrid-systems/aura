@@ -43,12 +43,12 @@ extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_
 extern "C" std::uint64_t aura_jit_fallback_count_v_read();
 extern "C" int64_t aura_jit_test();
 
-// ── AC1: stub returns the new sentinel (0xDEAD_BEEF_BEEF_DEAD) ──
+// ── AC1: stub returns tagged VOID (Issue #969; not poison DEADBEEF) ──
 bool test_stub_returns_sentinel() {
     std::println("\n--- AC1: aura_jit_fallback_to_interpreter returns sentinel ---");
     int64_t args[1] = {0};
     auto rc = aura_jit_fallback_to_interpreter(args, 1);
-    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull, "fallback stub returns 0xDEAD_BEEF_BEEF_DEAD sentinel");
+    CHECK(rc == 11ull, "fallback stub returns void sentinel (tag 11)");
     return true;
 }
 
@@ -68,7 +68,9 @@ bool test_stub_bumps_counter() {
 bool test_stub_null_args_safe() {
     std::println("\n--- AC3: fallback stub handles null args ---");
     auto rc = aura_jit_fallback_to_interpreter(nullptr, 0);
-    CHECK(rc == 0xDEAD'BEEF'BEEF'DEADull, "null args still returns sentinel (no crash)");
+    // Issue #969: fallback returns tagged VOID (11), not the old
+    // 0xDEADBEEFBEEFDEAD poison pattern that corrupted EvalValue math.
+    CHECK(rc == 11ull, "null args returns void sentinel (no crash)");
     return true;
 }
 

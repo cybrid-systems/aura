@@ -207,11 +207,11 @@ bool test_elapsed_us_primitive() {
 
 // ── AC3c: kept_for_debug primitive returns int ────────────
 bool test_kept_for_debug_primitive() {
-    std::println("\n--- AC3c: (compile:dead-coercion-kept-for-debug) primitive ---");
+    std::println("\n--- AC3c: (stats:get \"compile:dead-coercion-kept-for-debug\") primitive ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(compile:dead-coercion-kept-for-debug)");
+    auto r = cs.eval("(stats:get \"compile:dead-coercion-kept-for-debug\")");
     CHECK(r && aura::compiler::types::is_int(*r),
-          "(compile:dead-coercion-kept-for-debug) returns int");
+          "(stats:get \"compile:dead-coercion-kept-for-debug\") returns int");
     return true;
 }
 

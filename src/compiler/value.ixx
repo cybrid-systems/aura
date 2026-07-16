@@ -39,9 +39,12 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <string>
 #include <vector>
+#include <contracts>
 #include "value_tags.h"
+#include "core/cpp26_contract_stats.h"
 export module aura.compiler.value;
 import std;
 
@@ -95,6 +98,11 @@ double aura_float_ref(std::int64_t val);
 // All keep the same signature as before — this is a transparent refactor.
 
 export inline EvalValue make_int(std::int64_t v) noexcept {
+    // Issue #1519: fixnum must fit after << kFixnumShift (hot path contract).
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min() >> kFixnumShift;
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> kFixnumShift;
+    contract_assert(v >= kMin && v <= kMax);
+    aura::core::cpp26::record_hotpath_invariant_hit();
     return EvalValue(v << kFixnumShift); // fixnum encoding (#907)
 }
 export inline bool is_int(const EvalValue& v) noexcept {
@@ -102,10 +110,12 @@ export inline bool is_int(const EvalValue& v) noexcept {
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
     contract_assert(is_int(v));
+    aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
     return v.val >> kFixnumShift;
 }
 
 export inline EvalValue make_bool(bool v) noexcept {
+    aura::core::cpp26::record_hotpath_invariant_hit();  // Issue #1519
     return EvalValue(v ? kSpecialTrue : kSpecialFalse); // #902
 }
 export inline bool is_bool(const EvalValue& v) noexcept {
@@ -114,6 +124,7 @@ export inline bool is_bool(const EvalValue& v) noexcept {
 }
 export inline bool as_bool(const EvalValue& v) noexcept {
     contract_assert(is_bool(v));
+    aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
     return v.val == kSpecialTrue;
 }
 

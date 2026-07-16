@@ -7,6 +7,7 @@ module;
 #include <cstring>
 #include <expected>
 #include <format>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -75,9 +76,47 @@ static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch
     if (mismatch) {
         metrics->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
         metrics->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1515: also feed GC-compiler violation surface.
+        metrics->linear_ownership_gc_violations_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
     } else {
         metrics->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Issue #1515: linear_ownership_state state machine
+// (0=untracked, 1=Owned, 2=Borrowed, 3=MutBorrowed, 4=Moved).
+// Returns true when the instruction's stamped state is compatible
+// with the op about to run (runtime heap check still applies).
+enum class LinearOpKind : std::uint8_t { Move, Borrow, MutBorrow, Drop, Wrap };
+
+static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept {
+    if (state == 0)
+        return true; // untracked — runtime heap gate only
+    switch (op) {
+        case LinearOpKind::Wrap:
+            return state == 1; // Owned after LinearWrap
+        case LinearOpKind::Move:
+            // Move consumes Owned only; Borrowed/MutBorrowed/Moved reject.
+            return state == 1;
+        case LinearOpKind::Borrow:
+            // Immutable borrow from Owned or already Borrowed.
+            return state == 1 || state == 2;
+        case LinearOpKind::MutBorrow:
+            // Exclusive mut-borrow requires Owned.
+            return state == 1;
+        case LinearOpKind::Drop:
+            // Drop owns Owned; Moved is double-drop (reject).
+            return state == 1;
+    }
+    return true;
+}
+
+// Issue #1515: pure state-machine gate. Caller records metrics once
+// per op path (either state reject, or heap pass/fail) to avoid
+// double-counting linear_check_pass + violations.
+static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op) noexcept {
+    return linear_state_allows_op(state, op);
 }
 
 static void record_epoch_stale_steal_caught(CompilerMetrics* metrics) {
@@ -230,6 +269,54 @@ EvalResult IRInterpreter::execute() {
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
 }
 
+// Issue #1513: dual-check IRClosure (bridge_epoch + EnvFrame version_/id).
+// Returns true when the closure must take safe fallback (no dangling
+// flat*/pool* or EnvFrame walk after mutate/invalidate).
+static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
+                                           CompilerMetrics* metrics) {
+    if (!ev)
+        return false;
+    bool stale = false;
+    const auto cur_epoch = ev->current_bridge_epoch();
+    if (cl.bridge_epoch != 0 && cur_epoch != 0 &&
+        Evaluator::is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
+        stale = true;
+    }
+    // env_version=0 → unset/legacy (skip). Non-zero must not be behind defuse.
+    if (cl.env_version != 0) {
+        const auto defuse = ev->defuse_version();
+        if (cl.env_version < defuse)
+            stale = true;
+    }
+    constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
+    if (cl.env_id != kNullEnv) {
+        const auto eid = static_cast<EnvId>(cl.env_id);
+        if (ev->is_env_frame_invalid(eid) || ev->is_env_frame_stale(eid))
+            stale = true;
+    }
+    // Expired views (invalidate cleared flat/pool while epoch still set).
+    if (cl.bridge_epoch != 0 && !cl.flat && !cl.pool && cl.body_id == aura::ast::NULL_NODE) {
+        // Views cleared on invalidate — treat as needing fallback if
+        // we would otherwise try to eval through empty flat.
+        // Only force stale when we also have no params-only IR path
+        // (func_id dispatch still works without flat).
+        (void)0;
+    }
+    if (stale && metrics) {
+        metrics->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+        metrics->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+        metrics->closure_stale_apply_count_total.fetch_add(1, std::memory_order_relaxed);
+        metrics->closure_safe_fallback_apply_count_total.fetch_add(1, std::memory_order_relaxed);
+        metrics->ir_closure_env_version_stale_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1525: multi-fiber race/fallback (IR path).
+        metrics->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
+        metrics->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        record_epoch_stale_steal_caught(metrics);
+    }
+    return stale;
+}
+
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
     auto it = runtime_closures_.find(closure_id);
     if (it == runtime_closures_.end()) {
@@ -237,29 +324,18 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             Diagnostic{ErrorKind::InvalidClosure, "unknown IR closure in call_closure"});
     }
     auto& closure = it->second;
-    // Issue #681: bridge_epoch probe before IR dispatch.
-    if (closure.bridge_epoch != 0 && context_.evaluator) {
-        const auto cur = context_.evaluator->current_bridge_epoch();
-        if (cur != 0 && context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
-            if (context_.metrics) {
-                context_.metrics->compiler_closure_epoch_mismatch_hits.fetch_add(
-                    1, std::memory_order_relaxed);
-                context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
-                    1, std::memory_order_relaxed);
-                context_.metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-                record_epoch_stale_steal_caught(context_.metrics);
-            }
-            if (auto tw =
-                    context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
-                return *tw;
-            return std::unexpected(
-                Diagnostic{ErrorKind::InvalidClosure,
-                           "stale IR closure after mutation (bridge_epoch mismatch)"}
-                    .with_suggestion("re-run (eval-current) after mutate"));
-        }
-        if (context_.metrics)
-            context_.metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #681 / #1513: dual-check bridge_epoch + EnvFrame before IR dispatch.
+    if (context_.evaluator &&
+        ir_closure_needs_safe_fallback(closure, context_.evaluator, context_.metrics)) {
+        if (auto tw = context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
+            return *tw;
+        return std::unexpected(
+            Diagnostic{ErrorKind::InvalidClosure,
+                       "stale IR closure after mutation (bridge_epoch/env_version mismatch)"}
+                .with_suggestion("re-run (eval-current) after mutate"));
     }
+    if (context_.metrics && closure.bridge_epoch != 0)
+        context_.metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);
     if (closure.func_id >= module_.functions.size()) {
         return std::unexpected(
             Diagnostic{ErrorKind::IRCorruption, "invalid function id in IR closure"});
@@ -924,6 +1000,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // none is active, propagates the error up to
                     // the runtime (caller will see it as an EvalResult
                     // error).
+                    // Issue #1516: interpreter EH path participates in
+                    // exception coverage observability (parity with JIT).
+                    if (metrics_)
+                        metrics_->interpreter_exception_ops_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     if (ex_stack_.empty()) {
                         return std::unexpected(
                             Diagnostic{ErrorKind::UncaughtException, "uncaught exception"});
@@ -946,6 +1027,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // ops[0] = handler_block
                     // ops[1] = result_slot (where to store caught value)
                     // ops[2] = payload_slot (temp slot for the cause)
+                    // Issue #1516: interpreter EH coverage metric.
+                    if (metrics_)
+                        metrics_->interpreter_exception_ops_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     ExHandler h;
                     h.handler_block = (ops.size() > 0) ? ops[0] : 0;
                     h.result_slot = (ops.size() > 1) ? ops[1] : 0;
@@ -958,6 +1043,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Pop the matching TryBegin (if any). The TryEnd
                     // marks the end of the try body; control flow after
                     // TryEnd is the "normal" path (i.e., no exception).
+                    // Issue #1516: interpreter EH coverage metric.
+                    if (metrics_)
+                        metrics_->interpreter_exception_ops_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     if (!ex_stack_.empty()) {
                         ex_stack_.pop_back();
                     }
@@ -1009,6 +1098,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
                 case IROpcode::IsError: {
                     // IsError: result_slot=ops[0], value_slot=ops[1]
+                    // Issue #1516: interpreter EH coverage (parity with JIT).
+                    if (metrics_)
+                        metrics_->interpreter_exception_ops_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     locals[ops[0]] = make_bool(is_error(locals[ops[1]]));
                     break;
                 }
@@ -1087,27 +1180,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         }
 
                         auto& closure = it->second;
-                        // Issue #681: bridge_epoch version probe on apply.
-                        if (closure.bridge_epoch != 0 && context_.evaluator) {
-                            const auto cur = context_.evaluator->current_bridge_epoch();
-                            if (cur != 0 &&
-                                context_.evaluator->is_bridge_stale(closure.bridge_epoch, cur)) {
-                                if (context_.metrics) {
-                                    context_.metrics->compiler_closure_epoch_mismatch_hits
-                                        .fetch_add(1, std::memory_order_relaxed);
-                                    context_.metrics->compiler_closure_safe_fallbacks.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                    record_epoch_stale_steal_caught(context_.metrics);
-                                }
-                                if (auto tw =
-                                        context_.evaluator->apply_closure(closure_id, call_args))
-                                    locals[ops[3]] = *tw;
-                                else
-                                    return std::unexpected(
-                                        Diagnostic{ErrorKind::InvalidClosure,
-                                                   "stale IR closure after mutation"});
-                                break;
-                            }
+                        // Issue #681 / #1513: dual-check bridge_epoch + EnvFrame.
+                        if (context_.evaluator &&
+                            ir_closure_needs_safe_fallback(closure, context_.evaluator,
+                                                           context_.metrics)) {
+                            if (auto tw = context_.evaluator->apply_closure(closure_id, call_args))
+                                locals[ops[3]] = *tw;
+                            else
+                                return std::unexpected(Diagnostic{
+                                    ErrorKind::InvalidClosure, "stale IR closure after mutation"});
+                            break;
                         }
                         if (closure.func_id >= module_.functions.size())
                             return std::unexpected(
@@ -1164,6 +1246,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         ircl.bridge_epoch = bd.bridge_epoch;
                         if (ops[1] < module_.functions.size())
                             ircl.params = module_.functions[ops[1]].params;
+                    }
+                    // Issue #1513: stamp EnvFrame provenance for dual-check.
+                    // env_version captures current defuse_version_ so mutate
+                    // / compact that bumps defuse invalidates long-lived
+                    // IRClosures even when bridge_epoch was restamped.
+                    if (context_.evaluator) {
+                        ircl.env_version = context_.evaluator->defuse_version();
+                        // Prefer current bridge epoch when bridge table
+                        // did not stamp one (legacy empty bridge slot).
+                        if (ircl.bridge_epoch == 0)
+                            ircl.bridge_epoch = context_.evaluator->current_bridge_epoch();
                     }
                     runtime_closures_[id] = std::move(ircl);
                     locals[ops[0]] = make_closure(id);
@@ -1314,8 +1407,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 // ── M4 Linear ownership opcodes ────────────────────────
+                // Issue #1515: when linear_ownership_state is stamped
+                // (Owned/Borrowed/MutBorrowed/Moved), enforce the state
+                // machine at each op site + record linear_check_pass /
+                // violations once per path for production safety.
                 case IROpcode::LinearWrap: {
                     // Wrap value in a linear container with refcount=1
+                    if (instr.linear_ownership_state != 0) {
+                        record_linear_runtime_safety(
+                            metrics_, !enforce_linear_ownership_state(instr.linear_ownership_state,
+                                                                      LinearOpKind::Wrap));
+                    }
                     auto inner = locals[ops[1]];
                     auto lin_id = next_linear_id_++;
                     if (linear_heap_.size() <= lin_id)
@@ -1327,6 +1429,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::MoveOp: {
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
+                    // State-machine gate before heap check (Issue #1515).
+                    const bool state_ok = enforce_linear_ownership_state(
+                        instr.linear_ownership_state, LinearOpKind::Move);
                     // Move ownership: decrement source refcount, pass value through
                     // Runtime check: double-move detection
                     // Issue #106: source invalidation. After a move,
@@ -1340,6 +1445,13 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // local slot makes the no-double-drop invariant
                     // explicit in the IR.
                     auto val = locals[ops[1]];
+                    if (!state_ok) {
+                        std::println(std::cerr, "error: move of non-Owned linear_ownership_state");
+                        record_linear_runtime_safety(metrics_, true);
+                        locals[ops[0]] = types::make_int(0);
+                        locals[ops[1]] = types::make_int(0);
+                        break;
+                    }
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
@@ -1366,6 +1478,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
+                        if (instr.linear_ownership_state != 0)
+                            record_linear_runtime_safety(metrics_, false);
                         locals[ops[0]] = val;
                     }
                     // Source slot is now invalid — clear it so a
@@ -1374,9 +1488,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::BorrowOp: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
+                    const bool state_ok = enforce_linear_ownership_state(
+                        instr.linear_ownership_state, LinearOpKind::Borrow);
                     // Immutable borrow: increment refcount
                     // Runtime check: use-after-move detection
                     auto val = locals[ops[1]];
+                    if (!state_ok) {
+                        std::println(std::cerr, "error: borrow of Moved/MutBorrowed linear state");
+                        record_linear_runtime_safety(metrics_, true);
+                        locals[ops[0]] = types::make_int(0);
+                        break;
+                    }
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
@@ -1400,13 +1524,25 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
+                        if (instr.linear_ownership_state != 0)
+                            record_linear_runtime_safety(metrics_, false);
                         locals[ops[0]] = val;
                     }
                     break;
                 }
                 case IROpcode::MutBorrowOp: {
+                    if (instr.linear_ownership_state != 0)
+                        record_linear_jit_safety(metrics_, IROpcode::MoveOp);
+                    const bool state_ok = enforce_linear_ownership_state(
+                        instr.linear_ownership_state, LinearOpKind::MutBorrow);
                     // Mutable borrow: treat as move (exclusive access)
                     auto val = locals[ops[1]];
+                    if (!state_ok) {
+                        std::println(std::cerr, "error: mut-borrow of non-Owned linear state");
+                        record_linear_runtime_safety(metrics_, true);
+                        locals[ops[0]] = types::make_int(0);
+                        break;
+                    }
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
@@ -1427,6 +1563,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
+                        if (instr.linear_ownership_state != 0)
+                            record_linear_runtime_safety(metrics_, false);
                         locals[ops[0]] = val;
                     }
                     break;
@@ -1434,9 +1572,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::DropOp: {
                     if (instr.linear_ownership_state != 0)
                         record_linear_jit_safety(metrics_, IROpcode::DropOp);
+                    const bool state_ok = enforce_linear_ownership_state(
+                        instr.linear_ownership_state, LinearOpKind::Drop);
                     // Explicit destruct: decrement refcount, erase if zero
                     // Runtime check: double-drop detection
                     auto val = locals[ops[0]];
+                    if (!state_ok) {
+                        std::println(std::cerr, "error: drop of Moved/Borrowed linear state");
+                        record_linear_runtime_safety(metrics_, true);
+                        break;
+                    }
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         if (lin_id < linear_heap_.size() && linear_heap_[lin_id].live) {
@@ -1444,13 +1589,21 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (entry.ref_count <= 0) {
                                 std::println(std::cerr,
                                              "error: double drop — value already dropped");
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, true);
                             } else {
                                 if (--entry.ref_count == 0)
                                     entry.live = false;
+                                if (instr.linear_ownership_state != 0)
+                                    record_linear_runtime_safety(metrics_, false);
                             }
                         } else {
                             std::println(std::cerr, "error: double drop — value not in heap");
+                            if (instr.linear_ownership_state != 0)
+                                record_linear_runtime_safety(metrics_, true);
                         }
+                    } else if (instr.linear_ownership_state != 0) {
+                        record_linear_runtime_safety(metrics_, false);
                     }
                     break;
                 }
@@ -1653,8 +1806,13 @@ std::vector<CellSnapshot> IRInterpreter::list_cells() const {
 void IRInterpreter::collect_active_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                             std::uint64_t current_bridge_epoch) const {
     for (const auto& [id, ircl] : runtime_closures_) {
+        // Issue #1513: skip epoch-stale closures (and those with
+        // expired views) so GC root set does not pin dead closures.
         if (ircl.bridge_epoch != 0 && ircl.bridge_epoch != current_bridge_epoch)
             continue;
+        if (!ircl.flat && !ircl.pool && ircl.body_id == aura::ast::NULL_NODE &&
+            ircl.bridge_epoch != 0)
+            continue; // expired by invalidate live-walk
         closure_roots_out.push_back(static_cast<std::int64_t>(id));
     }
 }

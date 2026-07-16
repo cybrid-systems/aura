@@ -55,10 +55,11 @@ int aura_issue_604_run() {
 
     aura::compiler::CompilerService cs;
 
-    // AC1: (query:arena-fragmentation-snapshot) is a hash with the documented fields.
+    // AC1: (engine:metrics \"query:arena-fragmentation-snapshot\") is a hash with the documented
+    // fields.
     {
         std::println("\n--- AC1: query:arena-fragmentation-snapshot shape ---");
-        auto stats = cs.eval("(query:arena-fragmentation-snapshot)");
+        auto stats = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:arena-fragmentation-snapshot returns a hash");
         CHECK(stat_int(cs, "auto-compact-triggers") >= 0, "auto-compact-triggers present");

@@ -48,7 +48,7 @@ int aura_issue_504_run() {
     // AC1: query:mutation-boundary-log returns hash
     {
         std::println("\n--- AC1: query:mutation-boundary-log ---");
-        auto log = cs.eval("(query:mutation-boundary-log)");
+        auto log = cs.eval("(engine:metrics \"query:mutation-boundary-log\")");
         CHECK(log && aura::compiler::types::is_hash(*log),
               "query:mutation-boundary-log returns hash");
     }
@@ -66,7 +66,7 @@ int aura_issue_504_run() {
               std::format("impact_snapshot grew ({} -> {})", snap_before, snap_after));
         CHECK(ring_after > ring_before,
               std::format("ring_seq grew ({} -> {})", ring_before, ring_after));
-        auto log = cs.eval("(query:mutation-boundary-log)");
+        auto log = cs.eval("(engine:metrics \"query:mutation-boundary-log\")");
         CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash after Guard mutate");
     }
 
@@ -75,7 +75,7 @@ int aura_issue_504_run() {
         std::println("\n--- AC3: mutate batch → boundary log ---");
         const auto impact_batch = cs.evaluator().get_mutation_impact_count();
         CHECK(cs.eval("(mutate:rebind \"b\" \"20\")").has_value(), "second mutate under Guard");
-        auto log = cs.eval("(query:mutation-boundary-log)");
+        auto log = cs.eval("(engine:metrics \"query:mutation-boundary-log\")");
         CHECK(log && aura::compiler::types::is_hash(*log),
               "boundary-log consumable after batch mutate");
         CHECK(cs.evaluator().get_mutation_impact_count() > impact_batch,
@@ -87,7 +87,7 @@ int aura_issue_504_run() {
         std::println("\n--- AC4: mutate-then-query cycle ---");
         CHECK(cs.eval("(mutate:rebind \"a\" \"30\")").has_value(), "third mutate under Guard");
         (void)cs.eval("(query:pattern \"a\")");
-        auto log = cs.eval("(query:mutation-boundary-log)");
+        auto log = cs.eval("(engine:metrics \"query:mutation-boundary-log\")");
         CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash after query cycle");
     }
 
@@ -98,7 +98,7 @@ int aura_issue_504_run() {
         CHECK(setup_workspace(cs2), "fresh workspace for query-only path");
         const auto impact0 = cs2.evaluator().get_mutation_impact_count();
         (void)cs2.eval("(query:pattern \"a\")");
-        auto log = cs2.eval("(query:mutation-boundary-log)");
+        auto log = cs2.eval("(engine:metrics \"query:mutation-boundary-log\")");
         CHECK(log && aura::compiler::types::is_hash(*log), "boundary-log hash on query-only path");
         CHECK(cs2.evaluator().get_mutation_impact_count() == impact0,
               "mutation_impact unchanged on query-only path");
@@ -115,7 +115,7 @@ int aura_issue_504_run() {
         // here. Without re-registration, query:mutation-impact
         // / query:mutation-impact-snapshot would see nullptr.
         aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
-        auto mis = cs.eval("(query:mutation-impact-snapshot)");
+        auto mis = cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")");
         auto mi = cs.eval("(query:mutation-impact)");
         CHECK(mis && aura::compiler::types::is_hash(*mis), "mutation-impact-snapshot regression");
         CHECK(mi && aura::compiler::types::is_int(*mi), "mutation-impact regression");

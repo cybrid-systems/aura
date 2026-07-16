@@ -131,7 +131,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
         const auto pinned_after = cs.evaluator().atomic_batch_pinned_refs_total();
         CHECK(pinned_after >= pinned_before, "pinned refs total monotonic");
         auto abs =
-            cs.eval("(hash-ref (stats:get " atomic - batch : stats ") \"pinned-refs-last-batch\")");
+            cs.eval("(hash-ref (stats:get \"atomic-batch:stats\") \"pinned-refs-last-batch\")");
         CHECK(abs && aura::compiler::types::is_int(*abs),
               "atomic-batch:stats exposes pinned-refs-last-batch");
     }

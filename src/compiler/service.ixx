@@ -27,6 +27,7 @@ module;
 #include <vector>
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
+#include "lock_order_audit.h"
 #include "runtime_shared.h"
 #include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
 #include "observability_metrics.h"
@@ -529,9 +530,40 @@ public:
         Evaluator::set_query_evaluator(&evaluator_);
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
-        // Issue #685/#743: ShapeProfiler + IRSoA dirty synergy on compact/defrag.
+        // Issue #685/#743/#1518/#1521: ShapeProfiler + IRSoA dirty synergy on
+        // compact/defrag. Prefer on_arena_compact (soft version bump + preserve
+        // stability, no deopt-storm ring feed) over invalidate_all. Hard
+        // invalidate_all only when throttle allows AND no profiles yet need
+        // the soft path (legacy fallback when profiler empty is a no-op).
+        // 500ms throttle still gates aggressive JIT cache thrash accounting.
         arena_.set_on_compact_hook([this]() {
-            shape_profiler_.invalidate_all();
+            // Issue #1521: always soft-coordinate ShapeProfiler (version bump
+            // + ArenaCompact deopt hooks, keep is_stable / history).
+            const auto touched = shape_profiler_.on_arena_compact();
+            metrics_.shape_inval_on_compact_triggered_total.fetch_add(1, std::memory_order_relaxed);
+            metrics_.shape_stability_post_compact_preserved_total.store(
+                shape::shape_stability_post_compact_preserved.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            metrics_.deopt_from_arena_compact_total.store(
+                shape::deopt_from_arena_compact_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            (void)touched;
+
+            if (aura::core::arena_policy::try_render_deopt_throttle(500)) {
+                // Throttle pass: count as triggered deopt coordination.
+                // Soft on_arena_compact already fired kArenaCompact hooks;
+                // do NOT invalidate_all (would clear history + feed storm).
+                metrics_.arena_compact_deopt_triggered_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                aura::core::arena_policy::record_compact_deopt_triggered();
+                // Fiber / boundary post-compact sync (clears spurious storm).
+                (void)shape_profiler_.on_boundary_or_fiber_sync(/*clear_compact_only_storm=*/true);
+            } else {
+                // Soft path under pressure: IR dirty only + throttle count.
+                metrics_.arena_compact_deopt_throttled_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                aura::core::arena_policy::record_compact_deopt_throttled();
+            }
             aura::core::arena_policy::record_shape_inval_on_compact();
             for (auto& [_, entry] : ir_cache_v2_) {
                 entry.dirty = true;
@@ -588,11 +620,39 @@ public:
         // aura_reload_aot_module / checkpoint probes bump metrics_
         // before the first JIT eval (register_jit_primitives is lazy).
         aura_set_aot_metrics(&metrics_);
+        // Issue #1522: register AuraJIT for bridge C-API batch_deopt_for.
+        aura_set_jit_batch_deopt_target(&jit_);
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.
         evaluator_.install_bridge_epoch_fn([](void* svc) -> std::uint64_t {
             return static_cast<CompilerService*>(svc)->bridge_epoch();
+        });
+        // Issue #1510 / #1526: compact_env_frames dual-epoch bump —
+        // bridge_epoch + AOT func table (lockstep with defuse_version_
+        // inside compact). Survivors then restamp Closure::bridge_epoch
+        // to the new value under the same interlock.
+        evaluator_.install_bridge_epoch_bump_fn([](void* svc) {
+            if (!svc)
+                return;
+            auto* s = static_cast<CompilerService*>(svc);
+            s->bump_bridge_epoch();
+            // Dual-domain with JIT aura_closure_call (#1508 / #1524).
+            aura_aot_bump_func_table_epoch();
+        });
+        // Issue #1526: IR runtime_closures_ env_id remap + bridge restamp.
+        evaluator_.install_compact_env_remap_fn(
+            [](void* ctx, const std::int64_t* remap, std::size_t n) {
+                if (!ctx || !remap)
+                    return;
+                static_cast<CompilerService*>(ctx)->remap_ir_closure_env_ids_on_compact_(remap, n);
+            },
+            this);
+        evaluator_.install_compact_env_restamp_fn([](void* ctx,
+                                                     std::uint64_t new_epoch) -> std::size_t {
+            if (!ctx)
+                return 0;
+            return static_cast<CompilerService*>(ctx)->restamp_ir_closure_bridge_epochs_(new_epoch);
         });
         // Issue #682: register compiler IRClosure/EnvId GC roots at safepoint.
         evaluator_.install_compiler_gc_roots_fn([](void* svc, void* roots) {
@@ -2960,13 +3020,44 @@ public:
                     }
                 }
                 fn_ptr = jit_.compile(builder.flat_fn);
+                // Issue #1512: mirror AuraJIT coverage / unhandled masks into
+                // CompilerMetrics for Agent query surfaces.
+                metrics_.jit_opcode_covered_mask.store(
+                    jit_.metrics().opcode_covered_mask.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.jit_opcode_unhandled_mask.store(
+                    jit_.metrics().opcode_unhandled_mask.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                // Issue #1516: mirror EH + per-function AOT counters.
+                metrics_.jit_exception_opcode_lowered.store(
+                    jit_.metrics().exception_opcode_lowered.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.jit_exception_opcode_mask.store(
+                    jit_.metrics().exception_opcode_mask.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.jit_exception_opcodes_covered.store(jit_.exception_opcode_coverage_count(),
+                                                             std::memory_order_relaxed);
+                metrics_.aot_per_function_ir_total.store(
+                    jit_.metrics().aot_per_function_ir_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.aot_per_function_object_total.store(
+                    jit_.metrics().aot_per_function_object_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.aot_per_function_miss_total.store(
+                    jit_.metrics().aot_per_function_miss_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics_.aot_last_module_object_total.store(
+                    jit_.metrics().aot_last_module_object_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
                 if (!fn_ptr) {
                     // Issue #62 Iter 1: count compile misses
                     metrics_.jit_compile_misses.fetch_add(1, std::memory_order_relaxed);
+                    metrics_.opcode_cov_unhandled_hot_total.fetch_add(1, std::memory_order_relaxed);
                     return std::unexpected(aura::diag::Diagnostic{
                         aura::diag::ErrorKind::InternalError,
                         std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
                 }
+                metrics_.opcode_cov_hits_total.fetch_add(1, std::memory_order_relaxed);
                 // Success counter
                 metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
 
@@ -4162,6 +4253,11 @@ public:
 
     // Issue #741: selective bridge refresh — only expire shared_ptr views
     // for func indices named in impact_scope; bump epoch on the rest.
+    //
+    // Issue #1523 lock order: NO mutex acquired here (pure bridge table).
+    // Caller must already hold mutate_mtx_ when racing with concurrent
+    // invalidate_function (invalidate_function does). Public call sites
+    // that may race should take OrderedUniqueLock(mutate) first.
     void selective_invalidate_bridge_for_impact(const std::string& name, const ImpactScope& scope) {
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
@@ -4244,38 +4340,27 @@ public:
         (void)evaluator_.resync_live_closure_env_versions_on_invalidate();
     }
 
-    // Issue #1476: atomic epoch bump + bridge stamp. Called from
-    // mark_define_dirty + invalidate_function so the two failure
-    // paths share the same atomic protocol. Caller MUST hold
-    // mutate_mtx_ exclusive (canonical lock order: mutate_mtx_
-    // first, then workspace_mtx_ / env_frames_mtx_ / dep_graph_mtx_
-    // per #1388).
-    void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
-        // bridge_epoch FIRST (release ordering on mutation_epoch_).
-        bump_bridge_epoch();
-        // defuse_version_ (acq_rel via evaluator's
-        // bump_defuse_version_for_test). Both release so readers
-        // (apply_closure via #1475 helpers, JIT prologue) see
-        // consistent epoch values after lock release.
-        evaluator_.bump_defuse_version_for_test();
-        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-        // Stamp bridges for this define with current (newly
-        // bumped) epoch — captures next-apply sees the bump.
-        invalidate_bridge_for(name);
-    }
+    // atomic_bump_epochs_and_stamp_bridge: defined later (Issue #1522/#1476/#1524
+    // authoritative helper with AOT table epoch + JIT batch_deopt).
 
     void mark_define_dirty(const std::string& name) {
-        // Issue #1476: unify mark_define_dirty + invalidate_function as
-        // the single authoritative failure path. Acquire mutate_mtx_
-        // FIRST (canonical lock order per #1388) so the atomic epoch
-        // bump + dirty mark + BFS cascade are atomic w.r.t. concurrent
-        // invalidate / mutate.
-        std::unique_lock mutate_lock(mutate_mtx_);
+        // Issue #1476 + #1523: unify dirty mark + dual-epoch; acquire
+        // mutate FIRST when safe (skip if would invert lock order).
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_guard;
+        if (!lock_order::is_held(Level::Mutate)) {
+            if (lock_order::is_held(Level::Workspace) || lock_order::is_held(Level::EnvFrames) ||
+                lock_order::is_held(Level::DepGraph)) {
+                metrics_.lock_inversion_detected_total.fetch_add(1, std::memory_order_relaxed);
+                lock_order::g_lock_inversion_detected_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                mutate_guard = OrderedUniqueLock<std::shared_mutex>(mutate_mtx_, Level::Mutate);
+                sync_lock_order_metrics_();
+            }
+        }
 
-        // Issue #1261: always bump both epochs (via the unified helper)
-        // so nested lambda / macro hygiene dependents + closure-
-        // capture sites (#1475 dual check) see a newer version on
-        // next apply.
+        // Issue #1261 / #1476: bump both epochs via unified helper.
         atomic_bump_epochs_and_stamp_bridge(name);
 
         auto it = ir_cache_v2_.find(name);
@@ -4339,7 +4424,10 @@ public:
             bfs.pop();
             std::vector<std::string> called_by_snap;
             {
-                std::shared_lock dep_read(dep_graph_mtx_);
+                // Issue #1523: dep_graph is LAST in canonical order
+                // (mutate already held or intentionally skipped).
+                lock_order::OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_,
+                                                                          Level::DepGraph);
                 auto dit = dep_graph_.find(cur);
                 if (dit == dep_graph_.end())
                     continue;
@@ -4359,23 +4447,35 @@ public:
                     continue;
                 auto& centry = cit->second;
                 const bool nested_lambdas = centry.irs.size() > 2;
-                // Issue #1261: nested lambda dependents always full-dirty.
-                if (nested_lambdas) {
+                // Issue #1514 / #1505: nested-lambda dependents prefer
+                // body-only dirty (irs[1]) instead of mark_all — nested
+                // lambdas (irs[2..]) are self-contained and do not need
+                // re-lower when only the call edge in the body is affected.
+                // Falls back to full dirty only when body bitmasks missing.
+                if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
+                    // Targeted: mark only the body function's blocks dirty.
+                    // Convention: body Lambda is at irs[1]; irs[0] is __top__.
+                    centry.dirty = true;
+                    // Ensure bitmask rows exist for all funcs (nested may
+                    // have empty rows after init edge cases).
+                    if (centry.block_dirty_per_func_.size() < centry.irs.size())
+                        centry.block_dirty_per_func_.resize(centry.irs.size());
+                    for (auto& b : centry.block_dirty_per_func_[1]) {
+                        b = 1;
+                    }
+                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                    if (nested_lambdas) {
+                        // Issue #1514: targeted nested-lambda cascade hit.
+                        metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                } else if (nested_lambdas) {
+                    // Fallback: no body bitmask → full dirty (pre-#1514).
                     centry.dirty = true;
                     centry.mark_all_blocks_dirty();
                     metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
                     metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(
                         1, std::memory_order_relaxed);
-                } else if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
-                    // Try the targeted approach: mark only the
-                    // body function's blocks dirty. Convention:
-                    // body Lambda is at irs[1]; irs[0] is the
-                    // __top__ entry.
-                    centry.dirty = true;
-                    for (auto& b : centry.block_dirty_per_func_[1]) {
-                        b = 1;
-                    }
-                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 } else {
                     // Fallback: convention doesn't hold —
                     // conservatively mark all blocks dirty.
@@ -4605,12 +4705,36 @@ public:
                     dirty_func_idx = fi;
                 }
             }
-            if (dirty_func_count == 1 && dirty_func_idx == 1 &&
+            // Issue #1514: any single dirty function (body idx 1 OR a
+            // nested lambda idx >= 2) can take per-function re-lower
+            // when we have a source node. Nested-lambda-only dirty
+            // previously fell through to full bundle re-lower.
+            if (dirty_func_count == 1 && dirty_func_idx >= 1 &&
                 expanded_root != aura::ast::NULL_NODE) {
-                // Only the body function is dirty, and we
-                // have a source node id. Try per-function
-                // re-lower.
+                // Snapshot dirty block ids BEFORE re-lower clears them.
+                std::vector<std::uint32_t> dirty_ids;
+                if (dirty_func_idx < it->second.block_dirty_per_func_.size()) {
+                    const auto& fb = it->second.block_dirty_per_func_[dirty_func_idx];
+                    dirty_ids.reserve(fb.size());
+                    for (std::size_t bi = 0; bi < fb.size(); ++bi) {
+                        if (fb[bi])
+                            dirty_ids.push_back(static_cast<std::uint32_t>(bi));
+                    }
+                }
+                // Count clean functions we skip (nested lambda win).
+                const std::size_t clean_funcs = it->second.irs.size() > dirty_func_count
+                                                    ? it->second.irs.size() - dirty_func_count
+                                                    : 0;
                 if (relower_define_function(name, dirty_func_idx, flat, pool, expanded_root)) {
+                    if (clean_funcs > 0) {
+                        metrics_.relower_partial_funcs_saved_total.fetch_add(
+                            clean_funcs, std::memory_order_relaxed);
+                    }
+                    // Issue #1514: sync JIT — evict native code for this
+                    // define so next exec recompiles only the dirty fn.
+                    (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(), dirty_ids.size());
+                    metrics_.jit_partial_recompile_requests_total.fetch_add(
+                        1, std::memory_order_relaxed);
                     return true;
                 }
                 // If per-function failed, fall through to
@@ -4835,14 +4959,15 @@ public:
             blocks_replaced = new_func.blocks.size();
             entry.irs[func_idx] = std::move(new_func);
         }
-        // Issue #1474: bump per-block replaced counter so an
-        // AI agent can read snapshot() /
-        // (query:incremental-relower-stats) and verify the
-        // per-block win is real (incremental_relower_blocks_total
-        // should grow by dirty_block_count() per call, not by
-        // total_blocks()).
+        // Issue #1474: bump per-block replaced counter.
         metrics_.incremental_relower_blocks_total.fetch_add(blocks_replaced,
                                                             std::memory_order_relaxed);
+        // Issue #1514: also clear instruction-level dirty bits for
+        // this function so partial re-lower state stays coherent.
+        if (func_idx < entry.instruction_dirty_per_func_.size()) {
+            for (auto& b : entry.instruction_dirty_per_func_[func_idx])
+                b = 0;
+        }
         // Also clear the entry.dirty flag if this was the only
         // dirty function.
         if (entry.dirty_block_count() == 0) {
@@ -7059,6 +7184,10 @@ public:
     //    per-mutation typed_mutate calls already running their checks;
     //    a future issue can suppress per-mutation checks during the
     //    batch and run only the combined check at commit)
+    // Issue #1524: typed_mutate_atomic is the multi-mutate entry; each
+    // sub-call goes through typed_mutate which uses
+    // atomic_bump_epochs_and_stamp_bridge on success. Do not add a
+    // second bare bump_bridge_epoch here.
     [[nodiscard]] MutationResult typed_mutate_atomic(std::span<const std::string_view> mutations) {
         if (mutations.empty()) {
             return {0, false, "empty mutations"};
@@ -7109,6 +7238,13 @@ public:
                 result.invariant_diagnostics =
                     std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
             }
+            // Issue #1524: batch-level dual-epoch catch-all after all
+            // sub-mutations committed. typed_mutate already ran the helper
+            // per success; this final empty-name stamp ensures any define
+            // only dirtied mid-batch still sees the new epoch on both domains.
+            atomic_bump_epochs_and_stamp_bridge(/*name=*/{});
+            metrics_.typed_mutate_atomic_invalidations_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
         return result;
     }
@@ -7145,6 +7281,15 @@ public:
         if (!current_ast_ || !current_pool_) {
             return {0, false, "no AST loaded"};
         }
+        // Issue #1523: acquire mutate_mtx_ FIRST before MutationBoundaryGuard
+        // (workspace) so mark_define_dirty can take dep_graph without inversion:
+        //   mutate → workspace → (optional env) → dep_graph
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_guard =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        sync_lock_order_metrics_();
+
         // Wrap in a transaction: if evaluation fails (parse or runtime),
         // all mutations performed by the sexpr are automatically rolled back.
         MutationTransaction tx(*current_ast_);
@@ -7223,23 +7368,20 @@ public:
 
             tx.commit();
 
-            // Issue #1407 R1: bump the mutation epoch so any
-            // persistent caches that survived the typed_mutate
-            // (TypeChecker::cs_cache_, IR JIT cache,
-            // evaluator_workspace FlatAST caches, etc.) observe
-            // staleness on their next lookup. Without this bump,
-            // a typed_mutate that committed cleanly would leave
-            // downstream caches pointing at pre-mutation state.
+            // Issue #1407 R1 / #1524: dual-epoch + bridge stamp + JIT
+            // batch_deopt via the unified helper. NEVER bare
+            // bump_bridge_epoch() here — that breaks the #1475 dual-epoch
+            // contract (bridge bumped but AOT table / stamps lag).
+            // Empty name stamps all known bridges (affected set may be
+            // unknown for generic mutate:* forms; mark_define_dirty also
+            // routes through the same helper for named defines).
             //
-            // This mirrors the bump_bridge_epoch() call in
-            // invalidate_function (line ~7769) and the explicit
-            // fetch_add in hot_swap_function_impl (~1029) and
-            // reset_arena (~1152). typed_mutate was the missing
-            // site — it commits an AST mutation but never
-            // advanced the epoch. Locks in the typed_mutate ↔
-            // epoch invariant: every successful commit bumps.
-            bump_bridge_epoch();
+            // INVARIANT (#1524): all typed_mutate / typed_mutate_atomic
+            // invalidation goes through atomic_bump_epochs_and_stamp_bridge.
+            atomic_bump_epochs_and_stamp_bridge(/*name=*/{});
             metrics_.typed_mutate_epoch_bumps.fetch_add(1, std::memory_order_relaxed);
+            metrics_.typed_mutate_atomic_invalidations_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
 
             // Issue #147: post-mutation invariant check. Runs only
             // if invariant_check_mode_ is not Disabled. Iterates
@@ -8107,7 +8249,10 @@ private:
         // an exclusive lock. Concurrent populate / cache_define /
         // invalidate_function writers race on dep_graph_ without it.
         metrics_.dep_graph_record_total.fetch_add(1, std::memory_order_relaxed);
-        std::unique_lock write(dep_graph_mtx_);
+        // Issue #1523: dep_graph is LAST — safe alone or under mutate.
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        sync_lock_order_metrics_();
         auto& caller_entry = dep_graph_[caller];
         if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) !=
             caller_entry.calls.end()) {
@@ -8157,6 +8302,12 @@ private:
     // Invalidate a function and all its transitive dependents (called_by chain).
     // Instead of removing from cache, re-lowers each dependent with the current cache
     // so they stay resolvable in the IR pipeline with updated dependencies.
+    // Issue #1523 lock order for invalidate_function:
+    //   mutate_mtx_ (unique, FIRST)
+    //     → dep_graph_mtx_ (unique, for BFS/erase window)
+    //     → jit_cache_mtx_ (not in #1388 quartet; after mutate)
+    //   Does NOT take workspace_mtx_ / env_frames_mtx_ directly.
+    //   invalidate_bridge_for / batch_deopt run under mutate only.
     void invalidate_function(const std::string& name) {
         // Issue #59 Iter 3 + #1378: acquire the Mutation Lock FIRST so
         // epoch bump, block-dirty, BFS, and cache/JIT teardown are
@@ -8171,7 +8322,10 @@ private:
         // epoch publish but before dep_graph_ cleanup, producing
         // non-deterministic cascade topology. Epoch still uses
         // memory_order_release; readers load acquire (L739/L966/L1013).
-        std::unique_lock mutate_lock(mutate_mtx_);
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
+        sync_lock_order_metrics_();
 
         // Issue #166 Phase 1: bump the global mutation epoch under the lock.
         // Release ordering so apply_closure / JIT / interpreter paths that
@@ -8263,7 +8417,9 @@ private:
         // without holding the graph mutex across IR work.
         std::vector<std::string> dependents;
         {
-            std::unique_lock dep_write(dep_graph_mtx_);
+            // Issue #1523: mutate already held → dep_graph LAST is legal.
+            OrderedUniqueLock<std::shared_mutex> dep_write(dep_graph_mtx_, Level::DepGraph);
+            sync_lock_order_metrics_();
             std::deque<std::string> bfs;
             std::unordered_set<std::string> visited;
 
@@ -8374,16 +8530,21 @@ private:
         for (auto& dep_name : dependents)
             invalidate_bridge_with_impact(dep_name);
 
-        // Issue #601: live IRClosure walk — refresh closures whose
-        // bridge_epoch is stale (captured before the mutation_epoch_
-        // bump above) so they can continue executing without tripping
-        // `closure_needs_safe_fallback` on their next apply. Runs
-        // AFTER invalidate_bridge_for (so bridge data is fresh) and
-        // BEFORE clear_ir_define_env_binding (so the interpreter +
-        // its runtime_closures_ are still reachable). Best-effort:
-        // any closure mutated while a fiber concurrently reads its
-        // bridge_epoch has the same data-race contract as the
-        // existing collect_active_gc_roots / list_closures paths.
+        // Issue #601 / #1513: live IRClosure walk after invalidate.
+        //
+        // Pre-#1513 restamped bridge_epoch to current so apply passed
+        // the stale check while flat*/pool* could still be dangling
+        // (shared_ptr copies outlive bridge table reset). That was a
+        // use-after-mutation hazard.
+        //
+        // #1513 closed-loop: expire views on live IRClosures, leave
+        // bridge_epoch at the pre-bump value so is_bridge_stale fires,
+        // and zero env_version so dual-check also trips. Next apply
+        // takes safe fallback (tree-walker / re-parse) instead of
+        // evaluating through expired flat*/pool*.
+        //
+        // Runs AFTER invalidate_bridge_for and BEFORE
+        // clear_ir_define_env_binding (interpreter still reachable).
         {
             const std::uint64_t cur_epoch = bridge_epoch();
             const auto live_walk_one = [&]([[maybe_unused]] const std::string& affected_name) {
@@ -8393,17 +8554,17 @@ private:
                         continue;
                     binding->interpreter->walk_runtime_closures(
                         [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                            // Only touch closures that predate this invalidate.
                             if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
                                 return;
-                            // Refresh: align the closure's bridge_epoch
-                            // with the current epoch so subsequent apply
-                            // passes the pre-call stale check. The next
-                            // apply will re-bridge from body_source via
-                            // closure_bridge_ (already wired in
-                            // evaluator_eval_flat.cpp) if the captured
-                            // flat*/pool* are dangling.
-                            cl.bridge_epoch = cur_epoch;
-                            metrics_.jit_hotswap_live_closure_refreshed_total.fetch_add(
+                            // Expire captured views (do NOT restamp epoch).
+                            cl.flat.reset();
+                            cl.pool.reset();
+                            cl.body_id = aura::ast::NULL_NODE;
+                            cl.env_version = 0; // dual-check: force re-stamp on rebuild
+                            metrics_.jit_hotswap_forced_deopt_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            metrics_.ir_closure_invalidate_expired_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
                                 1, std::memory_order_relaxed);
@@ -8564,14 +8725,15 @@ private:
         }
     }
 
-    // Issue #683: LinearOwnershipRevalidate after invalidate/re-lower.
+    // Issue #683 / #1515: LinearOwnershipRevalidate after invalidate/re-lower.
+    // Unified sync_linear_roots_and_bridge_epoch registers GC roots
+    // under live bridge_epoch then probes EnvFrame × linear state.
     void run_linear_ownership_revalidate_after_invalidate(const std::string& name) {
         (void)name;
         metrics_.linear_relower_revalidate_hits.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_post_mutate_revalidations_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.linear_jit_post_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-        evaluator_.resync_linear_jit_gc_roots_after_invalidate();
-        evaluator_.probe_linear_ownership_at_gc_safepoint();
+        evaluator_.sync_linear_roots_and_bridge_epoch();
     }
 
     // Issue #1385: CountingMR — wraps new_delete_resource and
@@ -8859,13 +9021,60 @@ public:
             s.total_instructions > 0 ? (s.dirty_instructions * 100) / s.total_instructions : 0;
         return s;
     }
-    void public_invalidate_bridges_for(const std::string& name) { invalidate_bridge_for(name); }
+    // Issue #1523: public bridge invalidate takes mutate FIRST then stamps.
+    void public_invalidate_bridges_for(const std::string& name) {
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_guard(mutate_mtx_, Level::Mutate);
+        sync_lock_order_metrics_();
+        invalidate_bridge_for(name);
+    }
+    // Issue #1522 / #1524: public test hook for atomic epoch + bridge + fn_trackers deopt.
+    void public_atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
+        atomic_bump_epochs_and_stamp_bridge(name);
+    }
+    // Issue #1524: public typed_mutate surface for dual-epoch stress tests.
+    [[nodiscard]] MutationResult public_typed_mutate(std::string_view sexpr) {
+        return typed_mutate(sexpr);
+    }
+    [[nodiscard]] MutationResult
+    public_typed_mutate_atomic(std::span<const std::string_view> mutations) {
+        return typed_mutate_atomic(mutations);
+    }
+    [[nodiscard]] std::uint64_t public_typed_mutate_atomic_invalidations_total() const noexcept {
+        return metrics_.typed_mutate_atomic_invalidations_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_typed_mutate_epoch_bumps() const noexcept {
+        return metrics_.typed_mutate_epoch_bumps.load(std::memory_order_relaxed);
+    }
+    // Issue #1523: lock-order metrics surface for Agents / tests.
+    [[nodiscard]] std::uint64_t public_lock_inversion_detected_total() const noexcept {
+        return metrics_.lock_inversion_detected_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_mutate_mtx_contended_total() const noexcept {
+        return metrics_.mutate_mtx_contended_total.load(std::memory_order_relaxed);
+    }
+    void public_sync_lock_order_metrics() noexcept { sync_lock_order_metrics_(); }
+    [[nodiscard]] std::uint64_t public_jit_batch_deopt_for_total() const noexcept {
+        return jit_.metrics().batch_deopt_for_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_jit_batch_deopt_entries_marked() const noexcept {
+        return jit_.metrics().batch_deopt_entries_marked.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool public_jit_is_deopt_pending(const char* name) const noexcept {
+        return jit_.is_deopt_pending(name);
+    }
+    [[nodiscard]] std::uint64_t public_jit_deopt_pending_count() const noexcept {
+        return jit_.deopt_pending_count();
+    }
 
     // Issue #401: public test hook for invalidate_function. Lets tests
     // drive the BFS traversal directly without going through the Aura
     // (mutate:rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
+    // Issue #1514: test/Agent seam for dirty cascade without full invalidate.
+    void public_mark_define_dirty(const std::string& name) { mark_define_dirty(name); }
 
     // Issue #1378: test accessors for cascade ordering / epoch accounting.
     [[nodiscard]] std::uint64_t public_mutation_epoch() const noexcept {
@@ -9306,6 +9515,10 @@ public:
         }
     }
 
+    // Issue #1523 lock order for invalidate_bridge_for:
+    //   NO mutex. Safe under mutate_mtx_ held by invalidate_function /
+    //   mark_define_dirty. Public entry points must acquire mutate first
+    //   (see public_invalidate_bridges_for / atomic_bump_epochs_and_stamp_bridge).
     void invalidate_bridge_for(const std::string& name) {
         std::vector<aura::ir::ClosureBridgeData>* bridges = nullptr;
         if (auto bit = ir_cache_bridge_.find(name); bit != ir_cache_bridge_.end())
@@ -9313,9 +9526,13 @@ public:
         else if (auto vit = ir_cache_v2_.find(name);
                  vit != ir_cache_v2_.end() && !vit->second.bridges.empty())
             bridges = &vit->second.bridges;
+        // Issue #1522: always notify JIT fn_trackers_ even if no bridge table
+        // entry (direct-call path still holds native code). Soft batch_deopt
+        // marks deopt_pending; hard invalidate still used by invalidate_function.
+        const auto current_epoch = bridge_epoch();
+        notify_jit_fn_trackers_batch_deopt_(name, current_epoch);
         if (!bridges || bridges->empty())
             return;
-        const auto current_epoch = bridge_epoch();
         for (auto& bridge : *bridges) {
             bridge.bridge_epoch = current_epoch;
             // Issue #681: expire captured views so live IRClosure /
@@ -9328,6 +9545,126 @@ public:
         metrics_.bridge_invalidations_count.fetch_add(1, std::memory_order_relaxed);
         metrics_.compiler_inval_bridge_epoch_total.fetch_add(
             static_cast<std::uint64_t>(bridges->size()), std::memory_order_relaxed);
+    }
+
+    // Issue #1522 / #1476 / #1524: SINGLE AUTHORITATIVE invalidation helper.
+    //
+    // INVARIANT: every path that invalidates live closures / JIT / bridges
+    // after a mutation MUST call this (or invalidate_function which owns
+    // its own full cascade). Forbidden patterns:
+    //   - bare bump_bridge_epoch() without stamp / AOT table / batch_deopt
+    //   - bare invalidate_bridge_for() without a preceding dual-epoch bump
+    //     (except cascade dependents after this helper already bumped)
+    //
+    // Dual domains advanced atomically:
+    //   1. bridge / mutation_epoch_  (is_bridge_stale)
+    //   2. AOT func table epoch       (aura_closure_call dual check)
+    // Then stamp bridges + soft-deopt JIT fn_trackers_.
+    //
+    // name empty → stamp every known bridge / ir_cache_v2 entry (typed_mutate
+    // catch-all when the affected define set is unknown).
+    //
+    // Issue #1523 lock order: mutate_mtx_ unique FIRST (if not held),
+    // then epoch + bridge stamp (no dep_graph / workspace).
+    void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_guard =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        sync_lock_order_metrics_();
+        // bridge_epoch FIRST (release ordering on mutation_epoch_).
+        bump_bridge_epoch();
+        // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
+        evaluator_.bump_defuse_version_for_test();
+        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        // Keep AOT table epoch in lockstep for dual-check aura_closure_call.
+        aura_aot_bump_func_table_epoch();
+        // Stamp bridges (if any) + soft-deopt JIT trackers at the NEW epoch.
+        // invalidate_bridge_for already calls notify_jit_fn_trackers_batch_deopt_.
+        if (name.empty()) {
+            // typed_mutate catch-all: stamp every cached define / bridge.
+            std::vector<std::string> names;
+            names.reserve(ir_cache_bridge_.size() + ir_cache_v2_.size());
+            for (const auto& [n, _] : ir_cache_bridge_)
+                names.push_back(n);
+            for (const auto& [n, _] : ir_cache_v2_) {
+                if (ir_cache_bridge_.find(n) == ir_cache_bridge_.end())
+                    names.push_back(n);
+            }
+            if (names.empty()) {
+                notify_jit_fn_trackers_batch_deopt_("__typed_mutate__", bridge_epoch());
+            } else {
+                for (const auto& n : names)
+                    invalidate_bridge_for(n);
+            }
+        } else {
+            invalidate_bridge_for(name);
+        }
+    }
+
+    // Issue #1523: mirror process-wide lock_order atomics into CompilerMetrics.
+    void sync_lock_order_metrics_() noexcept {
+        metrics_.lock_inversion_detected_total.store(
+            lock_order::g_lock_inversion_detected_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        metrics_.mutate_mtx_contended_total.store(
+            lock_order::g_mutate_mtx_contended_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+    }
+
+    // Issue #1526: remap IRClosure::env_id through compact_env_frames remap table.
+    // Called under compact_env_frames_lock_ before dual-epoch bump.
+    void remap_ir_closure_env_ids_on_compact_(const std::int64_t* remap, std::size_t n) {
+        if (!remap || n == 0)
+            return;
+        constexpr auto kNull = std::numeric_limits<std::uint32_t>::max();
+        for (auto& [name, binding] : ir_define_env_bindings_) {
+            (void)name;
+            if (!binding || !binding->interpreter)
+                continue;
+            binding->interpreter->walk_runtime_closures(
+                [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                    if (cl.env_id == kNull || static_cast<std::size_t>(cl.env_id) >= n)
+                        return;
+                    const auto np = remap[cl.env_id];
+                    if (np >= 0)
+                        cl.env_id = static_cast<std::uint32_t>(np);
+                    else
+                        cl.env_id = kNull;
+                });
+        }
+    }
+
+    // Issue #1526: restamp IRClosure::bridge_epoch after dual-epoch bump.
+    // Returns number of restamps for metrics aggregation.
+    std::size_t restamp_ir_closure_bridge_epochs_(std::uint64_t new_epoch) {
+        std::size_t n = 0;
+        for (auto& [name, binding] : ir_define_env_bindings_) {
+            (void)name;
+            if (!binding || !binding->interpreter)
+                continue;
+            binding->interpreter->walk_runtime_closures(
+                [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                    if (cl.bridge_epoch != 0) {
+                        cl.bridge_epoch = new_epoch;
+                        ++n;
+                    }
+                });
+        }
+        return n;
+    }
+
+    // Issue #1522: notify AuraJIT fn_trackers_ (name + name#*).
+    void notify_jit_fn_trackers_batch_deopt_(const std::string& name, std::uint64_t current_epoch) {
+        const auto marked = jit_.batch_deopt_for(name.c_str(), current_epoch);
+        metrics_.jit_fn_trackers_batch_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.jit_fn_trackers_entries_marked_total.fetch_add(marked, std::memory_order_relaxed);
+        // Mirror into #1508 closure safe-fallback family so Agents see one surface.
+        if (marked > 0) {
+            metrics_.jit_closure_stale_deopt_total.fetch_add(marked, std::memory_order_relaxed);
+            metrics_.jit_closure_safe_fallbacks.fetch_add(marked, std::memory_order_relaxed);
+            metrics_.jit_closure_safe_fallbacks_total.fetch_add(marked, std::memory_order_relaxed);
+        }
     }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
@@ -9369,7 +9706,10 @@ public:
         // Issue #59 Iter 3: shared-lock the Mutation Lock so a
         // concurrent mutate:* waits for this compile to drain before
         // invalidating. Compiles can run concurrently with each other.
-        std::shared_lock mutate_read(mutate_mtx_);
+        // Issue #1523: mutate is FIRST in canonical order (shared is fine).
+        lock_order::OrderedSharedLock<std::shared_mutex> mutate_read(mutate_mtx_,
+                                                                     lock_order::Level::Mutate);
+        sync_lock_order_metrics_();
         if (ir_mod.functions.empty())
             return std::nullopt;
 
@@ -9509,10 +9849,20 @@ public:
                 }
                 if (!fn_ptr) {
                     fn_ptr = jit_.compile(flat_fn);
+                    // Issue #1512: mirror AuraJIT coverage masks.
+                    metrics_.jit_opcode_covered_mask.store(
+                        jit_.metrics().opcode_covered_mask.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    metrics_.jit_opcode_unhandled_mask.store(
+                        jit_.metrics().opcode_unhandled_mask.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                     if (!fn_ptr) {
                         metrics_.jit_compile_misses.fetch_add(1, std::memory_order_relaxed);
+                        metrics_.opcode_cov_unhandled_hot_total.fetch_add(
+                            1, std::memory_order_relaxed);
                         return std::nullopt;
                     }
+                    metrics_.opcode_cov_hits_total.fetch_add(1, std::memory_order_relaxed);
                     metrics_.jit_compilations.fetch_add(1, std::memory_order_relaxed);
                     if (ir_fn.name != "__top__") {
                         std::unique_lock cache_write(jit_cache_mtx_);
@@ -9863,7 +10213,11 @@ public:
         static_cast<CompilerService*>(raw)->on_shape_deopt_hook(fn_key, version, dirty_scope);
     }
 
-    // Issue #492: JIT/cache eviction + observability on shape deopt.
+    // Issue #492/#1521: JIT/cache eviction + observability on shape deopt.
+    // dirty_scope:
+    //   1 = stability loss (mutation churn) → storm tally + full JIT evict
+    //   2 = explicit invalidate → full JIT evict
+    //   3 = ArenaCompact → selective mark-dirty + epoch bump; no storm tally
     void on_shape_deopt_hook(shape::FnKey fn_key, std::uint64_t version,
                              std::uint32_t dirty_scope) noexcept {
         (void)version;
@@ -9902,6 +10256,22 @@ public:
             bump_shape_fiber_refresh();
         }
 
+        // Issue #1521: ArenaCompact — coordinate IR dirty + fiber refresh
+        // without counting as deopt storm / mutation churn.
+        if (dirty_scope == shape::kShapeDirtyScopeArenaCompact) {
+            metrics_.deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+            bump_shape_fiber_refresh();
+            if (!name.empty()) {
+                mark_shape_dirty_for_fn_key(fn_key);
+                // Soft: epoch bump so JIT shape_map guards recheck, but
+                // prefer mark-dirty over full jit_cache_ erase when possible.
+                bump_bridge_epoch();
+                metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                shape_jit_pass::record_incremental_recompile_hit();
+            }
+            return;
+        }
+
         if (!name.empty()) {
             mark_shape_dirty_for_fn_key(fn_key);
             bump_bridge_epoch();
@@ -9931,6 +10301,8 @@ public:
         // (query:aot-stats). Lifetime is tied to the
         // service (well-defined teardown order).
         aura_set_aot_metrics(&metrics_);
+        // Issue #1522: re-bind batch_deopt target (lazy JIT prims path).
+        aura_set_jit_batch_deopt_target(&jit_);
 
         // Issue #157 Phase 1: bind the lock hooks. Pattern matches
         // the g_prim_dispatcher pattern above — the runtime bridges

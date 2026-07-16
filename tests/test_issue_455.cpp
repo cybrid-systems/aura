@@ -63,12 +63,11 @@ bool test_query_ir_marker_stats() {
         ++g_failed;
         return false;
     }
-    // P0 ship returns make_int(0) (placeholder). The follow-up
-    // returns a 3-tuple. We accept either form: an int (P0)
-    // or a pair (follow-up).
+    // Shape evolved: P0 int → pair → hash (marker counts). Accept any.
     bool is_int = aura::compiler::types::is_int(*r);
     bool is_pair = aura::compiler::types::is_pair(*r);
-    CHECK(is_int || is_pair, "query:ir-marker-stats returns int (P0) or pair (follow-up)");
+    bool is_hash = aura::compiler::types::is_hash(*r);
+    CHECK(is_int || is_pair || is_hash, "query:ir-marker-stats returns int, pair, or hash");
     return true;
 }
 
@@ -88,7 +87,8 @@ bool test_query_ir_marker_stats_after_macro() {
     // No specific value check — just verify the primitive
     // doesn't crash after define (regression for the
     // marker-propagation path).
-    CHECK(aura::compiler::types::is_int(*r) || aura::compiler::types::is_pair(*r),
+    CHECK(aura::compiler::types::is_int(*r) || aura::compiler::types::is_pair(*r) ||
+              aura::compiler::types::is_hash(*r),
           "primitive returns a value post-define");
     return true;
 }

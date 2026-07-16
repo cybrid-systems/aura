@@ -93,8 +93,7 @@ bool test_constraint_dep_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:constraint-dep-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define cds (engine:metrics \"compile:constraint-dep-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define cds (engine:metrics \"compile:constraint-dep-stats\"))");
     for (const char* key : {"processed-total", "total", "ratio-bp"}) {
         std::string check = std::string("(hash-ref cds \"") + key + "\")";
         auto rv = cs.eval(check);

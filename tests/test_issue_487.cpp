@@ -92,8 +92,7 @@ bool test_dirty_impact_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:dirty-impact-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define dis (engine:metrics \"compile:dirty-impact-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define dis (engine:metrics \"compile:dirty-impact-stats\"))");
     for (const char* key : {"should-relower-total", "affected-subtree-total", "trigger-rate-bp"}) {
         std::string check = std::string("(hash-ref dis \"") + key + "\")";
         auto rv = cs.eval(check);

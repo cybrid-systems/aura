@@ -25,8 +25,12 @@ static int g_failed = 0;
     } while (0)
 
 static std::int64_t inline_skipped(aura::compiler::CompilerService& cs) {
-    auto r = cs.eval(
-        "(hash-ref (engine:metrics \"compile:inline-pass-stats\") 'macro-hygiene-skipped')");
+    // Two-step bind + hash-ref. Nested (hash-ref (engine:metrics ...)) is
+    // fragile; also avoid re-using a single define name after mutate.
+    if (!cs.eval("(define __inline-pass-stats "
+                 "(engine:metrics \"compile:inline-pass-stats\"))"))
+        return -1;
+    auto r = cs.eval("(hash-ref __inline-pass-stats \"macro-hygiene-skipped\")");
     if (!r || !aura::compiler::types::is_int(*r))
         return -1;
     return aura::compiler::types::as_int(*r);
@@ -94,7 +98,19 @@ int aura_issue_501_hygiene_run() {
               "macro-introduced count stable after mutate+query");
     }
 
-    // AC4: non-macro IR path zero regression
+    // AC5 before AC4: a second CompilerService tears down shared g_hash_tables
+    // state that breaks subsequent hash-ref string-key equality on `cs`.
+    // Monotonicity must be observed on the same service before multi-CS stress.
+    {
+        std::println("\n--- AC5: query regression ---");
+        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
+        auto ips = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
+        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
+        CHECK(ips && aura::compiler::types::is_hash(*ips), "compile:inline-pass-stats regression");
+        CHECK(inline_skipped(cs) >= inline_before, "inline-hygiene-skipped monotonic");
+    }
+
+    // AC4: non-macro IR path zero regression (isolated service)
     {
         std::println("\n--- AC4: non-macro regression ---");
         aura::compiler::CompilerService cs2;
@@ -105,16 +121,6 @@ int aura_issue_501_hygiene_run() {
               "ir-hygiene-stats hash on user-only path");
         CHECK(macro_introduced_count(cs2) == 0, "macro-introduced == 0 on user-only path");
         CHECK(inline_skipped(cs2) == 0, "inline-hygiene-skipped == 0 on user-only path");
-    }
-
-    // AC5: query regression (pattern-hygiene-stats, inline-pass-stats)
-    {
-        std::println("\n--- AC5: query regression ---");
-        auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-        auto ips = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
-        CHECK(ips && aura::compiler::types::is_hash(*ips), "compile:inline-pass-stats regression");
-        CHECK(inline_skipped(cs) >= inline_before, "inline-hygiene-skipped monotonic");
     }
 
     // AC6: (*allow-macro-inline* #t) toggles respect-macro-hygiene off

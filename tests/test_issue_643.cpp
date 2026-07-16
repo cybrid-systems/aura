@@ -10,10 +10,10 @@
 // Discovery before this PR: the AI-native primitives-meta
 // introspection surface already covers ~70% of the AC2 surface
 // via existing primitives:
-//   - (query:primitive-metadata) (#498) — base AI-native
+//   - (engine:metrics \"query:primitive-metadata\") (#498) — base AI-native
 //     primitive introspection (no per-primitive lookup arg,
 //     returns list — distinct from #643's per-name form)
-//   - (query:primitives-meta-catalog) (#617) — catalog
+//   - (engine:metrics \"query:primitives-meta-catalog\") (#617) — catalog
 //     primitive with category + arity + meta
 //   - (query:primitives-by-category) — category filter primitive
 //   - (engine:metrics \"query:primitives-extension-stats\") (#618/#625) — extension
@@ -81,15 +81,17 @@ int aura_issue_643_run() {
 
     aura::compiler::CompilerService cs;
 
-    // AC1: (query:primitives-meta) — no-arg form returns a hash
+    // AC1: (engine:metrics \"query:primitives-meta\") — no-arg form returns a hash
     // with the aggregate foundation counters + schema sentinel.
     {
-        std::println("\n--- AC1: (query:primitives-meta) no-arg form ---");
-        auto h = cs.eval("(query:primitives-meta)");
+        std::println("\n--- AC1: (engine:metrics \"query:primitives-meta\") no-arg form ---");
+        auto h = cs.eval("(engine:metrics \"query:primitives-meta\")");
         CHECK(h && aura::compiler::types::is_hash(*h), "primitives-meta (no-arg) returns a hash");
-        const auto define_used = hash_int(cs, "(query:primitives-meta)", "define-macro-used");
-        const auto err_unified = hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
-        const auto schema = hash_int(cs, "(query:primitives-meta)", "schema");
+        const auto define_used =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "define-macro-used");
+        const auto err_unified =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "prim-error-unified");
+        const auto schema = hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "schema");
         CHECK(define_used >= 0, std::format("define-macro-used >= 0 (got {})", define_used));
         CHECK(err_unified >= 0, std::format("prim-error-unified >= 0 (got {})", err_unified));
         CHECK(schema == 643, std::format("schema == 643 (got {})", schema));
@@ -121,12 +123,12 @@ int aura_issue_643_run() {
     // (back-compat — #643 doesn't disturb them).
     {
         std::println("\n--- AC3: existing primitives back-compat ---");
-        auto s_498 = cs.eval("(query:primitive-metadata)");
-        CHECK(s_498.has_value(),
-              "(query:primitive-metadata) reachable (#498 back-compat — distinct from #643)");
-        auto s_617 = cs.eval("(query:primitives-meta-catalog)");
-        CHECK(s_617.has_value(),
-              "(query:primitives-meta-catalog) reachable (#617 back-compat — catalog form)");
+        auto s_498 = cs.eval("(engine:metrics \"query:primitive-metadata\")");
+        CHECK(s_498.has_value(), "(engine:metrics \"query:primitive-metadata\") reachable (#498 "
+                                 "back-compat — distinct from #643)");
+        auto s_617 = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
+        CHECK(s_617.has_value(), "(engine:metrics \"query:primitives-meta-catalog\") reachable "
+                                 "(#617 back-compat — catalog form)");
         auto s_by_cat = cs.eval("(query:primitives-by-category 'core)");
         CHECK(s_by_cat.has_value(), "(query:primitives-by-category 'core) reachable (existing "
                                     "category filter back-compat)");
@@ -149,8 +151,10 @@ int aura_issue_643_run() {
     // PRIM_ERROR unification).
     {
         std::println("\n--- AC4: derived-metric invariants on fresh service ---");
-        const auto define_used = hash_int(cs, "(query:primitives-meta)", "define-macro-used");
-        const auto err_unified = hash_int(cs, "(query:primitives-meta)", "prim-error-unified");
+        const auto define_used =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "define-macro-used");
+        const auto err_unified =
+            hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "prim-error-unified");
         CHECK(define_used == 0,
               std::format("fresh-service define-macro-used == 0 (got {})", define_used));
         CHECK(err_unified == 0,
@@ -160,7 +164,7 @@ int aura_issue_643_run() {
     // AC5: schema sentinel is exactly 643 (not 642/641/640/637).
     {
         std::println("\n--- AC5: schema sentinel ---");
-        const auto schema = hash_int(cs, "(query:primitives-meta)", "schema");
+        const auto schema = hash_int(cs, "(engine:metrics \"query:primitives-meta\")", "schema");
         CHECK(schema == 643, std::format("no-arg schema == 643 (got {})", schema));
         const auto name_schema = hash_int(cs, "(query:primitives-meta 'foo)", "schema");
         CHECK(name_schema == 669, std::format("per-name schema == 669 (got {})", name_schema));
@@ -177,7 +181,7 @@ int aura_issue_643_run() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::lock_guard<std::mutex> lk(eval_mtx);
-                auto r = cs.eval("(query:primitives-meta)");
+                auto r = cs.eval("(engine:metrics \"query:primitives-meta\")");
                 if (r.has_value())
                     ok_count.fetch_add(1, std::memory_order_relaxed);
             }

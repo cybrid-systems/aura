@@ -59,7 +59,7 @@ int aura_issue_488_run() {
     // AC1: query:mutation-impact-snapshot hash fields
     {
         std::println("\n--- AC1: query:mutation-impact-snapshot ---");
-        auto stats = cs.eval("(query:mutation-impact-snapshot)");
+        auto stats = cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")");
         CHECK(stats && aura::compiler::types::is_hash(*stats),
               "query:mutation-impact-snapshot returns hash");
         CHECK(snap_stat(cs, "epoch-after") >= 0, "epoch-after present");
@@ -117,7 +117,7 @@ int aura_issue_488_run() {
         const auto selfmod_before = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
         (void)cs.eval("(query:pattern \"base\")");
         (void)cs.eval("(mutate:rebind \"base\" \"100\")");
-        (void)cs.eval("(query:mutation-impact-snapshot)");
+        (void)cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")");
         (void)cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
         const auto selfmod_after = cs.eval("(engine:metrics \"query:reflection-selfmod-stats\")");
         CHECK(selfmod_before && aura::compiler::types::is_int(*selfmod_before),

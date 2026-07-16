@@ -1,6 +1,7 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -50,6 +51,13 @@ export struct IRClosure {
     // is stale (arena reset / major mutation). The closure falls
     // back to re-parse from body_source or is invalidated.
     std::uint64_t bridge_epoch = 0;
+    // Issue #1513 / #1507: EnvFrame provenance for dual-check closed
+    // loop (bridge_epoch + EnvFrame version_). env_id uses UINT32_MAX
+    // as NULL (matches Evaluator::NULL_ENV_ID). env_version=0 means
+    // "unset / legacy" (skip version check); non-zero must be >=
+    // current defuse_version_ or apply takes safe fallback.
+    std::uint32_t env_id = std::numeric_limits<std::uint32_t>::max();
+    std::uint64_t env_version = 0;
 };
 
 // Returned by run_function's Call handler to signal a new call is needed.

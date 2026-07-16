@@ -1,7 +1,7 @@
 // @category: integration
 // @reason: Issue #298 — incremental compilation effectiveness metrics
 //
-// Validates (query:incremental-effectiveness) returns a 4-tuple:
+// Validates (engine:metrics \"query:incremental-effectiveness\") returns a 4-tuple:
 //   (recompile-ratio cascade-depth bridge-overhead fallback-freq)
 //
 // All 4 values are integers. Ratio is in basis points (0-10000).
@@ -70,7 +70,7 @@ static bool extract_4tuple(aura::compiler::CompilerService& cs,
 bool test_returns_4tuple() {
     std::println("\n--- AC #1: returns 4-tuple ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:incremental-effectiveness)");
+    auto r = cs.eval("(engine:metrics \"query:incremental-effectiveness\")");
     if (!r) {
         ++g_failed;
         std::println(std::cerr, "eval returned null");
@@ -85,7 +85,7 @@ bool test_returns_4tuple() {
 bool test_empty_workspace_zero() {
     std::println("\n--- AC #2: empty workspace → 0 metrics ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(query:incremental-effectiveness)");
+    auto r = cs.eval("(engine:metrics \"query:incremental-effectiveness\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -107,7 +107,7 @@ bool test_ratio_basis_points() {
     std::println("\n--- AC #3: recompile-ratio in basis points ---");
     aura::compiler::CompilerService cs;
     cs.eval("(set-code \"(define x 1) (define y 2)\")");
-    auto r = cs.eval("(query:incremental-effectiveness)");
+    auto r = cs.eval("(engine:metrics \"query:incremental-effectiveness\")");
     if (!r) {
         ++g_failed;
         return false;
@@ -128,7 +128,7 @@ bool test_4tuple_shape_via_aura() {
     // Structure: (e1 . (e2 . (e3 . e4))) — a dotted pair
     // chain. The terminal cdr is an int, not a pair. So we
     // check (cdr (cdr (cdr t))) is an int (the terminal).
-    auto r = cs.eval("(let ((t (query:incremental-effectiveness)))"
+    auto r = cs.eval("(let ((t (engine:metrics \"query:incremental-effectiveness\")))"
                      " (and (pair? t) (pair? (cdr t))"
                      "       (pair? (cdr (cdr t))) (integer? (cdr (cdr (cdr t))))"
                      "       (integer? (car t)) (integer? (car (cdr t)))"

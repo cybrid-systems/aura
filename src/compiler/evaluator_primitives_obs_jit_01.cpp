@@ -166,15 +166,12 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
-            // Compile-time constants — the file paths are
-            // recorded in the comment; the literal numbers
-            // are the live counts at the time of writing.
-            // The AI Agent detects drift by re-reading the
-            // file and comparing the count delta.
-            constexpr std::int64_t kConstevalInvariants =
-                24; // Issue #1143: match static_assert count in cxx26_invariants.ixx
+            // Issue #1519: prefer baked constants from cpp26_contract_stats
+            // so Agents see live consteval/Contract density without
+            // hand-updating stale literals (was 24/26; now 65/48).
+            constexpr std::int64_t kConstevalInvariants = aura::core::cpp26::kConstevalChecksTotal;
             constexpr std::int64_t kConceptCount = 13;
-            constexpr std::int64_t kContractHotPaths = 26;
+            constexpr std::int64_t kContractHotPaths = aura::core::cpp26::kContractHotPathsShipped;
             constexpr std::int64_t kConceptSelfChecks = 1;
             constexpr std::int64_t kConceptTargetsDoc = 9;
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -183,6 +180,14 @@ void ObservabilityPrims::register_jit_p8(PrimRegistrar add, Evaluator& ev) {
                 {"contract-hot-paths", make_int(kContractHotPaths)},
                 {"concept-self-checks", make_int(kConceptSelfChecks)},
                 {"concept-targets-documented", make_int(kConceptTargetsDoc)},
+                {"schema", make_int(1519)},
+                {"hotpath-contracts-active",
+                 make_int(static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_1519_active
+                                                        .load(std::memory_order_relaxed)))},
+                {"contract-violation-hotpath",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::cpp26::contract_violation_hotpath_count.load(
+                         std::memory_order_relaxed)))},
             };
             return build_hash(kv);
         });

@@ -530,6 +530,110 @@ extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
     return m ? m->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed) : 0;
 }
 
+// Issue #1508: dual-freshness probe for JIT aura_closure_call.
+// bridge_epoch ↔ g_aot_table_epoch (hot-swap / invalidate domain)
+// defuse/env_version ↔ g_aot_defuse_version (mutate / EnvFrame domain)
+// Zero capture = legacy/untracked side (not stale for that domain).
+extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
+                                          std::uint64_t captured_defuse_or_env_version) {
+    if (aot_metrics())
+        aot_metrics()->jit_closure_dual_check_total.fetch_add(1, std::memory_order_relaxed);
+    const std::uint64_t cur_bridge = g_aot_table_epoch.load(std::memory_order_acquire);
+    const std::uint64_t cur_defuse = g_aot_defuse_version;
+    const bool bridge_ok = (captured_bridge_epoch == 0) || (captured_bridge_epoch == cur_bridge);
+    const bool defuse_ok =
+        (captured_defuse_or_env_version == 0) || (captured_defuse_or_env_version == cur_defuse);
+    return bridge_ok && defuse_ok;
+}
+
+extern "C" void aura_jit_closure_record_dual_check(void) {
+    if (aot_metrics())
+        aot_metrics()->jit_closure_dual_check_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_jit_closure_record_stale_deopt(void) {
+    if (aot_metrics()) {
+        aot_metrics()->jit_closure_stale_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void aura_jit_closure_record_safe_fallback(void) {
+    if (aot_metrics()) {
+        aot_metrics()->jit_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+extern "C" std::uint64_t aura_jit_closure_dual_check_total(void) {
+    auto* m = aot_metrics();
+    return m ? m->jit_closure_dual_check_total.load(std::memory_order_relaxed) : 0;
+}
+
+extern "C" std::uint64_t aura_jit_closure_stale_deopt_total(void) {
+    auto* m = aot_metrics();
+    return m ? m->jit_closure_stale_deopt_total.load(std::memory_order_relaxed) : 0;
+}
+
+extern "C" std::uint64_t aura_jit_closure_safe_fallbacks(void) {
+    auto* m = aot_metrics();
+    return m ? m->jit_closure_safe_fallbacks.load(std::memory_order_relaxed) : 0;
+}
+
+extern "C" void aura_aot_bump_func_table_epoch(void) {
+    g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
+// Issue #1522: C-API batch_deopt for fn_trackers_ (host registers AuraJIT*).
+namespace {
+aura::jit::AuraJIT* g_batch_deopt_jit = nullptr;
+std::atomic<std::uint64_t> g_batch_deopt_for_total{0};
+std::atomic<std::uint64_t> g_batch_deopt_entries_marked{0};
+} // namespace
+
+extern "C" void aura_set_jit_batch_deopt_target(void* aura_jit_ptr) {
+    g_batch_deopt_jit = static_cast<aura::jit::AuraJIT*>(aura_jit_ptr);
+}
+
+extern "C" std::size_t aura_jit_batch_deopt_for(const char* name, std::uint64_t current_epoch) {
+    g_batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
+    if (!g_batch_deopt_jit || !name)
+        return 0;
+    const auto marked = g_batch_deopt_jit->batch_deopt_for(name, current_epoch);
+    g_batch_deopt_entries_marked.fetch_add(marked, std::memory_order_relaxed);
+    if (marked > 0) {
+        aura_jit_closure_record_stale_deopt();
+        aura_jit_closure_record_safe_fallback();
+        if (aot_metrics()) {
+            aot_metrics()->jit_fn_trackers_batch_deopt_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            aot_metrics()->jit_fn_trackers_entries_marked_total.fetch_add(
+                marked, std::memory_order_relaxed);
+            aot_metrics()->jit_closure_safe_fallbacks_total.fetch_add(marked,
+                                                                      std::memory_order_relaxed);
+        }
+    }
+    return marked;
+}
+
+extern "C" std::uint64_t aura_jit_batch_deopt_for_total(void) {
+    return g_batch_deopt_for_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_jit_batch_deopt_entries_marked(void) {
+    return g_batch_deopt_entries_marked.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_jit_deopt_pending_count(void) {
+    return g_batch_deopt_jit ? g_batch_deopt_jit->deopt_pending_count() : 0;
+}
+
+extern "C" int aura_jit_is_deopt_pending(const char* name) {
+    if (!g_batch_deopt_jit || !name)
+        return 0;
+    return g_batch_deopt_jit->is_deopt_pending(name) ? 1 : 0;
+}
+
 extern "C" void aura_aot_record_deopt_on_steal() {
     if (aot_metrics())
         aot_metrics()->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);

@@ -110,7 +110,7 @@ int aura_issue_534_observability_run() {
         auto compact_int = cs.eval("(engine:metrics \"query:arena-compaction-stats\")");
         auto compact_hash = cs.eval("(engine:metrics \"query:arena-compaction-stats-hash\")");
         auto auto_stats = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
-        auto frag_snap = cs.eval("(query:arena-fragmentation-snapshot)");
+        auto frag_snap = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
         CHECK(compact_int && aura::compiler::types::is_int(*compact_int),
               "query:arena-compaction-stats int regression");
         CHECK(compact_hash && aura::compiler::types::is_hash(*compact_hash),

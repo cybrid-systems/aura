@@ -270,7 +270,7 @@ bool test_aura_primitive_consistency() {
     // Read snapshot
     auto snap = cs.snapshot();
     // Read Aura primitive
-    auto rp = cs.eval("(hash-ref (stats:get " closure : stats ") \"calls-total\")");
+    auto rp = cs.eval("(hash-ref (stats:get \"closure:stats\") \"calls-total\")");
     if (!rp || !aura::compiler::types::is_int(*rp)) {
         std::println("  FAIL: hash-ref calls-total failed");
         ++g_failed;

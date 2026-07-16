@@ -96,8 +96,7 @@ bool test_constraint_solver_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:constraint-solver-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define css (engine:metrics \"compile:constraint-solver-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define css (engine:metrics \"compile:constraint-solver-stats\"))");
     for (const char* key : {"unify-total", "subtype-total", "restart-total"}) {
         std::string check = std::string("(hash-ref css \"") + key + "\")";
         auto rv = cs.eval(check);

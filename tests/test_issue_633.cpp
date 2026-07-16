@@ -10,7 +10,7 @@
 // Discovery before this PR: the stdlib observability surface
 // already covers ~80% of the AC5 surface via existing primitives:
 //   - (query:schema-of-primitive) (#617) — per-primitive schema
-//   - (query:primitives-meta-catalog) (#617) — 5-field catalog
+//   - (engine:metrics \"query:primitives-meta-catalog\") (#617) — 5-field catalog
 //   - (query:primitives-extensions-list) (#618) — extensions
 //   - (engine:metrics \"query:primitives-stats\") (#479) — 8-field hot-path hash
 //   - (engine:metrics \"query:primitives-meta-stats\") (#617) — primitive-meta
@@ -106,8 +106,9 @@ int aura_issue_633_run() {
         std::println("\n--- AC2: existing primitives back-compat ---");
         auto s_schema = cs.eval("(query:schema-of-primitive)");
         CHECK(s_schema.has_value(), "(query:schema-of-primitive) reachable (#617 back-compat)");
-        auto s_cat = cs.eval("(query:primitives-meta-catalog)");
-        CHECK(s_cat.has_value(), "(query:primitives-meta-catalog) reachable (#617 back-compat)");
+        auto s_cat = cs.eval("(engine:metrics \"query:primitives-meta-catalog\")");
+        CHECK(s_cat.has_value(),
+              "(engine:metrics \"query:primitives-meta-catalog\") reachable (#617 back-compat)");
         auto s_ext = cs.eval("(engine:metrics \"query:primitives-extension-stats\")");
         CHECK(s_ext.has_value(), "(engine:metrics \"query:primitives-extension-stats\") reachable "
                                  "(#618/#625 back-compat)");

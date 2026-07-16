@@ -104,8 +104,7 @@ bool test_schema_cache_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:schema-cache-stats\") returns 3-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define scs (engine:metrics \"compile:schema-cache-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define scs (engine:metrics \"compile:schema-cache-stats\"))");
     for (const char* key : {"lookups-total", "hits-total", "hit-rate-bp"}) {
         std::string check = std::string("(hash-ref scs \"") + key + "\")";
         auto rv = cs.eval(check);

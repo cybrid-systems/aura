@@ -890,8 +890,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // workspace loaded, so the Agent can branch on the bool-result
     // without confusing "unknown node" with "live node" (the
     // latter still returns a hash with all fields populated).
-    ObservabilityPrims::register_stats_impl(
-        "query:stable-ref-provenance",
+    add("query:stable-ref-provenance",
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->stable_ref_provenance_query_total.fetch_add(1, std::memory_order_relaxed);
@@ -2965,6 +2964,157 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("migration-schema", 568);
             insert_kv("soa-children-columnar-migration-total", static_cast<std::int64_t>(total));
             insert_kv("soa-children-columnar-migration-recommendation", recommendation);
+            // Issue #1520: live FlatAST columnar counters when workspace present.
+            if (ws) {
+                insert_kv("children-column-soa-hits",
+                          static_cast<std::int64_t>(ws->children_column_soa_hits()));
+                insert_kv("pcv-pin-count", static_cast<std::int64_t>(ws->pcv_pin_count()));
+                insert_kv("region-dense-hits", static_cast<std::int64_t>(ws->region_dense_hits()));
+                insert_kv("map-indirection-miss",
+                          static_cast<std::int64_t>(ws->map_indirection_miss_total()));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1520: query:children-column-stats — focused children_ SoA +
+    // region dense lookup surface (non-duplicative with #568 migration hash).
+    ObservabilityPrims::register_stats_impl(
+        "query:children-column-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* ws = ev->workspace_flat();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            const std::int64_t col =
+                ws ? static_cast<std::int64_t>(ws->children_column_soa_hits()) : 0;
+            const std::int64_t pin = ws ? static_cast<std::int64_t>(ws->pcv_pin_count()) : 0;
+            const std::int64_t dense = ws ? static_cast<std::int64_t>(ws->region_dense_hits()) : 0;
+            const std::int64_t map_miss =
+                ws ? static_cast<std::int64_t>(ws->map_indirection_miss_total()) : 0;
+            const std::int64_t raw = ws ? static_cast<std::int64_t>(ws->children_call_count()) : 0;
+            const std::int64_t safe =
+                ws ? static_cast<std::int64_t>(ws->children_safe_view_count()) : 0;
+            if (m) {
+                m->children_column_soa_hits_total.store(static_cast<std::uint64_t>(col),
+                                                        std::memory_order_relaxed);
+                m->pcv_pin_count_total.store(static_cast<std::uint64_t>(pin),
+                                             std::memory_order_relaxed);
+                m->region_dense_hits_total.store(static_cast<std::uint64_t>(dense),
+                                                 std::memory_order_relaxed);
+                m->map_indirection_miss_total.store(static_cast<std::uint64_t>(map_miss),
+                                                    std::memory_order_relaxed);
+            }
+            const auto denom = col + raw + 1;
+            const auto columnar_pct = (col * 100) / denom;
+            insert_kv("children-column-soa-hits", col);
+            insert_kv("pcv-pin-count", pin);
+            insert_kv("region-dense-hits", dense);
+            insert_kv("map-indirection-miss", map_miss);
+            insert_kv("children-raw-calls", raw);
+            insert_kv("children-safe-views", safe);
+            insert_kv("columnar-hit-rate-pct", columnar_pct);
+            insert_kv("schema", 1520);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1521: query:shape-arena-compact-stats — ShapeProfiler versioning
+    // + Arena compact soft deopt synergy (no deopt-storm from compact alone).
+    ObservabilityPrims::register_stats_impl(
+        "query:shape-arena-compact-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            const std::int64_t triggered = static_cast<std::int64_t>(
+                shape::shape_inval_on_compact_triggered.load(std::memory_order_relaxed));
+            const std::int64_t deopt_ac = static_cast<std::int64_t>(
+                shape::deopt_from_arena_compact_total.load(std::memory_order_relaxed));
+            const std::int64_t preserved = static_cast<std::int64_t>(
+                shape::shape_stability_post_compact_preserved.load(std::memory_order_relaxed));
+            const std::int64_t storm_suppressed = static_cast<std::int64_t>(
+                shape::deopt_storm_compact_suppressed.load(std::memory_order_relaxed));
+            const std::int64_t boundary_checks = static_cast<std::int64_t>(
+                shape::shape_boundary_post_compact_checks.load(std::memory_order_relaxed));
+            const std::int64_t fiber_sync = static_cast<std::int64_t>(
+                shape::shape_fiber_steal_sync_total.load(std::memory_order_relaxed));
+            if (m) {
+                m->shape_inval_on_compact_triggered_total.store(
+                    static_cast<std::uint64_t>(triggered), std::memory_order_relaxed);
+                m->deopt_from_arena_compact_total.store(static_cast<std::uint64_t>(deopt_ac),
+                                                        std::memory_order_relaxed);
+                m->shape_stability_post_compact_preserved_total.store(
+                    static_cast<std::uint64_t>(preserved), std::memory_order_relaxed);
+                m->deopt_storm_compact_suppressed_total.store(
+                    static_cast<std::uint64_t>(storm_suppressed), std::memory_order_relaxed);
+            }
+            insert_kv("shape-inval-on-compact-triggered", triggered);
+            insert_kv("deopt-from-arena-compact", deopt_ac);
+            insert_kv("shape-stability-post-compact-preserved", preserved);
+            insert_kv("deopt-storm-compact-suppressed", storm_suppressed);
+            insert_kv("boundary-post-compact-checks", boundary_checks);
+            insert_kv("fiber-steal-sync", fiber_sync);
+            insert_kv("schema", 1521);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

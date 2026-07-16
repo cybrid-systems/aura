@@ -65,8 +65,9 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <shared_mutex>
 #include <unwind.h>
 #include "runtime_shared.h"
-#include "value_tags.h" // Issue #181 Cycle 2: v2 string encoding helpers
-#include "hash_meta.h"  // Issue #908: kEmptySlot
+#include "value_tags.h"      // Issue #181 Cycle 2: v2 string encoding helpers
+#include "hash_meta.h"       // Issue #908: kEmptySlot
+#include "aura_jit_bridge.h" // Issue #1508: dual-check helpers
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 // Issue #1359: 1MB default (was 64MB), graceful OOM, env override.
@@ -511,6 +512,11 @@ static std::vector<size_t> g_arena_closure_env_sizes;
 // aura_closure_set_name() after aura_alloc_closure_arena(). Used as a
 // fallback in aura_closure_call when the func_id lookup fails.
 static std::vector<std::string> g_closure_names;
+// Issue #1508: dual-provenance stamps for aura_closure_call freshness.
+// bridge_epoch  ↔ aura_aot_func_table_epoch() (hot-swap / invalidate)
+// defuse_version ↔ aura_get_aot_defuse_version() (mutate / EnvFrame proxy)
+static std::vector<std::uint64_t> g_closure_bridge_epochs;
+static std::vector<std::uint64_t> g_closure_defuse_versions;
 // Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
 // g_closure_freed[i]==1 means slot i is free (must not call/capture).
 static std::vector<std::uint8_t> g_closure_freed;
@@ -546,6 +552,18 @@ static void invalidate_closure_cache_for(int64_t closure_id) {
     }
 }
 
+// Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
+static void stamp_closure_provenance_locked(size_t cid) {
+    const std::uint64_t bridge = aura_aot_func_table_epoch();
+    const std::uint64_t defuse = aura_get_aot_defuse_version();
+    if (cid >= g_closure_bridge_epochs.size())
+        g_closure_bridge_epochs.resize(cid + 1, 0);
+    if (cid >= g_closure_defuse_versions.size())
+        g_closure_defuse_versions.resize(cid + 1, 0);
+    g_closure_bridge_epochs[cid] = bridge;
+    g_closure_defuse_versions[cid] = defuse;
+}
+
 // Issue #1361: allocate or reuse a closure slot. Caller holds write lock.
 static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena) {
     if (!g_closure_free_list.empty()) {
@@ -565,6 +583,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
             g_arena_closure_env_sizes[cid] = 0;
         if (cid < g_closure_names.size())
             g_closure_names[cid].clear();
+        stamp_closure_provenance_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
         return static_cast<int64_t>(cid);
@@ -577,6 +596,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_arena_closure_env_sizes.push_back(0);
     g_closure_names.emplace_back();
     g_closure_freed.push_back(0);
+    g_closure_bridge_epochs.push_back(aura_aot_func_table_epoch());
+    g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
     return id;
 }
 
@@ -631,6 +652,10 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_is_arena[cid] = 0;
     if (cid < g_closure_names.size())
         g_closure_names[cid].clear();
+    if (cid < g_closure_bridge_epochs.size())
+        g_closure_bridge_epochs[cid] = 0;
+    if (cid < g_closure_defuse_versions.size())
+        g_closure_defuse_versions[cid] = 0;
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
     g_closure_freed[cid] = 1;
@@ -850,6 +875,29 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         size_t cid = static_cast<size_t>(closure_id);
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
             aura_unlock_workspace_read();
+            return 0;
+        }
+    }
+
+    // Issue #1508: dual check (bridge_epoch + defuse/env version) before any
+    // JIT dispatch. Every OpApply / OpCall lowers to aura_closure_call, so
+    // this is the JIT "prologue" safety gate. Stale → deopt/refuse (no UAF).
+    {
+        size_t cid = static_cast<size_t>(closure_id);
+        const std::uint64_t cap_bridge =
+            cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+        const std::uint64_t cap_defuse =
+            cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+        // Acquire fence so epoch loads see latest host bumps under steal.
+        aura_jit_epoch_acquire_fence();
+        if (!aura_is_jit_closure_fresh(cap_bridge, cap_defuse)) {
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
+            invalidate_closure_cache_for(closure_id);
+            aura_unlock_workspace_read();
+            // Safe fallback: refuse native JIT call (interpreter path
+            // re-enters via host after deopt; never run stale env).
             return 0;
         }
     }

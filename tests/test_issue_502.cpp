@@ -69,7 +69,7 @@ int aura_issue_502_run() {
     // AC3: query:mutation-impact-snapshot consumable (top-level hash call)
     {
         std::println("\n--- AC3: mutation-impact-snapshot ---");
-        auto snap = cs.eval("(query:mutation-impact-snapshot)");
+        auto snap = cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")");
         CHECK(snap && aura::compiler::types::is_hash(*snap),
               "query:mutation-impact-snapshot returns hash");
         CHECK(cs.evaluator().get_mutation_impact_count() >= 1,

@@ -467,148 +467,147 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
     //   AC4: counter increments after a primitive call
     //   AC5: unbound sym returns sensible (0,0,0,0) values
     //   AC6: reduction-ratio-bp matches manual calculation
-    ObservabilityPrims::register_stats_impl(
-        "compile:per-symbol-dirty-stats", [&ev](const auto& a) -> EvalValue {
-            // build_hash inlined (same FNV-1a fingerprint + linear
-            // probing pattern as the other compile:* primitives in
-            // this file; Issue #258 HASH_EMPTY collision avoided).
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
-            // Resolve sym name → SymId. Use the workspace pool +
-            // string heap (same pattern as query:def-use).
-            if (a.empty() || !is_string(a[0]))
-                return ev.make_merr("bad-arg", "usage: (compile:per-symbol-dirty-stats sym-name)");
-            auto sym_idx = as_string_idx(a[0]);
-            std::string sym_name;
-            if (sym_idx < ev.string_heap_.size()) {
-                sym_name = ev.string_heap_[sym_idx];
-            } else {
-                return ev.make_merr("bad-arg", "symbol name string index out of range");
-            }
-            aura::ast::SymId target_sym = aura::ast::INVALID_SYM;
-            if (ev.workspace_flat_ && ev.workspace_pool_) {
-                target_sym = ev.workspace_pool_->intern(sym_name);
-            }
-            // Compute per-symbol affected set (O(n) walk).
-            std::vector<aura::ast::NodeId> per_symbol_affected;
-            if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
-                per_symbol_affected = affected_subtree_for_symbol(*ev.workspace_flat_, target_sym);
-            }
-            // Compute ancestor-affected count: walk the parent_ chain
-            // from the def node (the Define/Let/LetRec that binds
-            // `target_sym`). If no def node is found, report -1 (unknown).
-            std::int64_t ancestor_affected = -1;
-            if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
-                aura::ast::NodeId def_node = aura::ast::NULL_NODE;
-                const std::size_t n = ev.workspace_flat_->size();
-                for (std::size_t i = 0; i < n; ++i) {
-                    auto v = ev.workspace_flat_->get(static_cast<aura::ast::NodeId>(i));
-                    if ((v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let ||
-                         v.tag == aura::ast::NodeTag::LetRec) &&
-                        v.sym_id == target_sym) {
-                        def_node = static_cast<aura::ast::NodeId>(i);
+    // Multi-arg (sym name required) — must stay public add();
+    // stats:get/engine:metrics cannot pass the symbol argument.
+    add("compile:per-symbol-dirty-stats", [&ev](const auto& a) -> EvalValue {
+        // build_hash inlined (same FNV-1a fingerprint + linear
+        // probing pattern as the other compile:* primitives in
+        // this file; Issue #258 HASH_EMPTY collision avoided).
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE; // avoid HASH_EMPTY collision
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
                         break;
                     }
                 }
-                if (def_node != aura::ast::NULL_NODE) {
-                    // Walk up the parent chain. mark_dirty_upward would
-                    // also include descendants of each ancestor; we
-                    // report the chain length only (the conservative
-                    // ancestor-only count, which is what the per-symbol
-                    // set needs to beat to justify the new path).
-                    //
-                    // Phase A1 migration: now uses
-                    // aura::compiler::walk_ancestors<Id, C, V> from
-                    // aura.compiler.query. The walk starts from
-                    // parent_of(def_node) to match the original semantics
-                    // (count ancestors of def_node, excluding def_node
-                    // itself). The size()-bounded safety cap is preserved
-                    // inside the visitor via early-return.
-                    std::int64_t chain_len = 0;
-                    auto start = ev.workspace_flat_->parent_of(def_node);
-                    const auto max_count = static_cast<std::size_t>(ev.workspace_flat_->size());
-                    if (start != aura::ast::NULL_NODE) {
-                        chain_len =
-                            static_cast<std::int64_t>(aura::compiler::walk_ancestors<std::uint32_t>(
-                                *ev.workspace_flat_, start,
-                                [&chain_len, max_count](aura::ast::NodeId) -> bool {
-                                    if (static_cast<std::size_t>(chain_len) >= max_count) {
-                                        return false; // safety cap
-                                    }
-                                    ++chain_len;
-                                    return true;
-                                }));
-                    }
-                    ancestor_affected = chain_len;
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
                 }
             }
-            // Bump metrics_.
-            std::uint64_t lookup_count = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-                m->per_symbol_dirty_lookups_total.fetch_add(1, std::memory_order_relaxed);
-                m->per_symbol_dirty_uses_total.fetch_add(
-                    static_cast<std::uint64_t>(per_symbol_affected.size()),
-                    std::memory_order_relaxed);
-                lookup_count = m->per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        // Resolve sym name → SymId. Use the workspace pool +
+        // string heap (same pattern as query:def-use).
+        if (a.empty() || !is_string(a[0]))
+            return ev.make_merr("bad-arg", "usage: (compile:per-symbol-dirty-stats sym-name)");
+        auto sym_idx = as_string_idx(a[0]);
+        std::string sym_name;
+        if (sym_idx < ev.string_heap_.size()) {
+            sym_name = ev.string_heap_[sym_idx];
+        } else {
+            return ev.make_merr("bad-arg", "symbol name string index out of range");
+        }
+        aura::ast::SymId target_sym = aura::ast::INVALID_SYM;
+        if (ev.workspace_flat_ && ev.workspace_pool_) {
+            target_sym = ev.workspace_pool_->intern(sym_name);
+        }
+        // Compute per-symbol affected set (O(n) walk).
+        std::vector<aura::ast::NodeId> per_symbol_affected;
+        if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
+            per_symbol_affected = affected_subtree_for_symbol(*ev.workspace_flat_, target_sym);
+        }
+        // Compute ancestor-affected count: walk the parent_ chain
+        // from the def node (the Define/Let/LetRec that binds
+        // `target_sym`). If no def node is found, report -1 (unknown).
+        std::int64_t ancestor_affected = -1;
+        if (ev.workspace_flat_ && target_sym != aura::ast::INVALID_SYM) {
+            aura::ast::NodeId def_node = aura::ast::NULL_NODE;
+            const std::size_t n = ev.workspace_flat_->size();
+            for (std::size_t i = 0; i < n; ++i) {
+                auto v = ev.workspace_flat_->get(static_cast<aura::ast::NodeId>(i));
+                if ((v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let ||
+                     v.tag == aura::ast::NodeTag::LetRec) &&
+                    v.sym_id == target_sym) {
+                    def_node = static_cast<aura::ast::NodeId>(i);
+                    break;
+                }
             }
-            // reduction-ratio-bp = per_symbol / ancestor * ::aura::compiler::kBasisPointScale.
-            // Cap at 10000 (per_symbol can't exceed ancestor in
-            // practice, but defensive). Use 0 when ancestor is 0/-
-            std::int64_t ratio_bp = 0;
-            if (ancestor_affected > 0 && !per_symbol_affected.empty()) {
-                const auto num = static_cast<std::int64_t>(per_symbol_affected.size());
-                ratio_bp = (num * ::aura::compiler::kBasisPointScale) / ancestor_affected;
-                if (ratio_bp > 10000)
-                    ratio_bp = 10000;
+            if (def_node != aura::ast::NULL_NODE) {
+                // Walk up the parent chain. mark_dirty_upward would
+                // also include descendants of each ancestor; we
+                // report the chain length only (the conservative
+                // ancestor-only count, which is what the per-symbol
+                // set needs to beat to justify the new path).
+                //
+                // Phase A1 migration: now uses
+                // aura::compiler::walk_ancestors<Id, C, V> from
+                // aura.compiler.query. The walk starts from
+                // parent_of(def_node) to match the original semantics
+                // (count ancestors of def_node, excluding def_node
+                // itself). The size()-bounded safety cap is preserved
+                // inside the visitor via early-return.
+                std::int64_t chain_len = 0;
+                auto start = ev.workspace_flat_->parent_of(def_node);
+                const auto max_count = static_cast<std::size_t>(ev.workspace_flat_->size());
+                if (start != aura::ast::NULL_NODE) {
+                    chain_len =
+                        static_cast<std::int64_t>(aura::compiler::walk_ancestors<std::uint32_t>(
+                            *ev.workspace_flat_, start,
+                            [&chain_len, max_count](aura::ast::NodeId) -> bool {
+                                if (static_cast<std::size_t>(chain_len) >= max_count) {
+                                    return false; // safety cap
+                                }
+                                ++chain_len;
+                                return true;
+                            }));
+                }
+                ancestor_affected = chain_len;
             }
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"per-symbol-affected-count",
-                 make_int(static_cast<std::int64_t>(per_symbol_affected.size()))},
-                {"ancestor-affected-count", make_int(ancestor_affected)},
-                {"reduction-ratio-bp", make_int(ratio_bp)},
-                {"lookup-count", make_int(static_cast<std::int64_t>(lookup_count))},
-            };
-            return build_hash(kv);
-        });
+        }
+        // Bump metrics_.
+        std::uint64_t lookup_count = 0;
+        if (ev.compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            m->per_symbol_dirty_lookups_total.fetch_add(1, std::memory_order_relaxed);
+            m->per_symbol_dirty_uses_total.fetch_add(
+                static_cast<std::uint64_t>(per_symbol_affected.size()), std::memory_order_relaxed);
+            lookup_count = m->per_symbol_dirty_lookups_total.load(std::memory_order_relaxed);
+        }
+        // reduction-ratio-bp = per_symbol / ancestor * ::aura::compiler::kBasisPointScale.
+        // Cap at 10000 (per_symbol can't exceed ancestor in
+        // practice, but defensive). Use 0 when ancestor is 0/-
+        std::int64_t ratio_bp = 0;
+        if (ancestor_affected > 0 && !per_symbol_affected.empty()) {
+            const auto num = static_cast<std::int64_t>(per_symbol_affected.size());
+            ratio_bp = (num * ::aura::compiler::kBasisPointScale) / ancestor_affected;
+            if (ratio_bp > 10000)
+                ratio_bp = 10000;
+        }
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"per-symbol-affected-count",
+             make_int(static_cast<std::int64_t>(per_symbol_affected.size()))},
+            {"ancestor-affected-count", make_int(ancestor_affected)},
+            {"reduction-ratio-bp", make_int(ratio_bp)},
+            {"lookup-count", make_int(static_cast<std::int64_t>(lookup_count))},
+        };
+        return build_hash(kv);
+    });
 }
 
 // Issue #909 compile part 46 (orig 3795-3871)

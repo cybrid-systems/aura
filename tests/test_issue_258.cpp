@@ -93,16 +93,9 @@ bool test_aura_primitive_returns_hash() {
     std::println("\n--- AC2: (engine:metrics \"compile:multi-mutation-stats\") primitive returns a "
                  "hash ---");
     aura::compiler::CompilerService cs;
-    auto r1 =
-        cs.eval("(set-code \"(define h (engine:metrics \"compile:multi-mutation-stats\"))\")");
+    auto r1 = cs.eval("(define h (engine:metrics \"compile:multi-mutation-stats\"))");
     if (!r1) {
         std::println("  FAIL: define h failed");
-        ++g_failed;
-        return false;
-    }
-    auto r2 = cs.eval("(eval-current)");
-    if (!r2) {
-        std::println("  FAIL: eval-current failed");
         ++g_failed;
         return false;
     }

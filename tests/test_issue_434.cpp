@@ -94,8 +94,7 @@ bool test_occurrence_dirty_stats_primitive() {
     std::println(
         "\n--- AC3: (engine:metrics \"compile:occurrence-dirty-stats\") returns 1-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define ods (engine:metrics \"compile:occurrence-dirty-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define ods (engine:metrics \"compile:occurrence-dirty-stats\"))");
     auto r = cs.eval("(hash-ref ods \"dirty-recovery-total\")");
     CHECK(r && aura::compiler::types::is_int(*r),
           "hash-ref ods \"dirty-recovery-total\" returns int");

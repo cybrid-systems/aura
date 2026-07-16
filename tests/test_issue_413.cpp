@@ -102,9 +102,7 @@ bool test_invalidation_stats_primitive() {
     std::println("\n--- AC4: (engine:metrics \"compile:mutation-log-invalidation-stats\") returns "
                  "2-key hash ---");
     aura::compiler::CompilerService cs;
-    cs.eval("(set-code \"(define stats (engine:metrics "
-            "\"compile:mutation-log-invalidation-stats\"))\")");
-    cs.eval("(eval-current)");
+    cs.eval("(define stats (engine:metrics \"compile:mutation-log-invalidation-stats\"))");
     for (const char* key : {"records-total", "trace-size"}) {
         std::string check = std::string("(hash-ref stats \"") + key + "\")";
         auto rv = cs.eval(check);

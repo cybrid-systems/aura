@@ -115,8 +115,9 @@ int aura_issue_646_run() {
         CHECK(
             s_642.has_value(),
             "(engine:metrics \"query:arena-auto-compaction-stats\") reachable (#642 back-compat)");
-        auto s_643 = cs.eval("(query:primitives-meta)");
-        CHECK(s_643.has_value(), "(query:primitives-meta) reachable (#643 back-compat)");
+        auto s_643 = cs.eval("(engine:metrics \"query:primitives-meta\")");
+        CHECK(s_643.has_value(),
+              "(engine:metrics \"query:primitives-meta\") reachable (#643 back-compat)");
         auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
         CHECK(s_640.has_value(), "(engine:metrics \"query:sv-verification-closedloop-stats\") "
                                  "reachable (#640 back-compat)");

@@ -80,7 +80,7 @@ bool test_aura_primitive_returns_int() {
     std::println(
         "\n--- AC2: (stats:get \"compile:linear-elide-count\") primitive returns an int ---");
     aura::compiler::CompilerService cs;
-    auto r1 = cs.eval("(set-code \"(define n (stats:get " compile : linear - elide - count "))\")");
+    auto r1 = cs.eval("(set-code \"(define n (stats:get \\\"compile:linear-elide-count\\\"))\")");
     if (!r1) {
         std::println("  FAIL: define n failed");
         ++g_failed;
