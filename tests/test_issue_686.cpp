@@ -1,7 +1,7 @@
 // @category: integration
 // @reason: Issue #686 ShapeProfiler ring + Value dispatch + Pass dirty wiring
 
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 #include <atomic>
 #include <iostream>

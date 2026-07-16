@@ -9,7 +9,7 @@
 //   - long stress (10000+ mutate sequences via env override)
 
 #include "test_harness.hpp"
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 #include "serve/fiber.h"
 #include "serve/scheduler.h"

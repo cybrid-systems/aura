@@ -15,7 +15,7 @@
 
 #include "test_harness.hpp"
 
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 import std;
 using aura::test::g_failed;

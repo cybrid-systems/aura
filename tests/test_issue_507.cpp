@@ -2,7 +2,7 @@
 // @reason: Issue #507 — Task4 hot-path Contracts + consteval invariants
 
 #include "test_harness.hpp"
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 
 import std;
 import aura.core.arena;

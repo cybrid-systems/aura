@@ -25,7 +25,7 @@
 
 #include "test_harness.hpp"
 
-#include "cpp26_contract_stats.h"
+#include "core/cpp26_contract_stats.h"
 
 import aura.core.ast;
 
