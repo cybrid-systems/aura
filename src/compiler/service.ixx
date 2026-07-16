@@ -6765,6 +6765,14 @@ public:
         // promoted to .error.
         aura::ast::InvariantStatus invariant_status = aura::ast::InvariantStatus::NotChecked;
         std::vector<aura::compiler::OwnershipNote> invariant_diagnostics;
+        // Issue #1538: combined linear post-mutate (runtime half of
+        // #1458 + #1478 pipeline). linear_post_mutate_status is one of
+        // "NotRun" | "Ok" | "Unsafe". Frames_checked is the number of
+        // EnvFrames swept by linear_post_mutate_enforce_all.
+        bool linear_post_mutate_enforced = false;
+        bool linear_post_mutate_safe = true;
+        std::uint64_t linear_post_mutate_frames_checked = 0;
+        std::string linear_post_mutate_status = "NotRun";
     };
 
     // Issue #147: configure post-mutation invariant check mode.
@@ -7024,6 +7032,9 @@ public:
         std::uint64_t author_fingerprint = 0;
         std::uint64_t parent_mutation_id = 0;
         std::uint64_t composite_transaction_id = 0;
+        // Issue #1538: linear post-mutate enforce status for --serve
+        // mutation-log JSON ("NotRun" | "Ok" | "Unsafe").
+        std::string linear_post_mutate_status = "NotRun";
     };
 
     // RAII transaction guard for mutation operations.
@@ -7251,6 +7262,8 @@ public:
                 result.invariant_diagnostics =
                     std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
             }
+            // Issue #1538: runtime linear post-mutate half (after type-checker).
+            apply_linear_post_mutate_pipeline_(result, result.mutation_id);
             // Issue #1524: batch-level dual-epoch catch-all after all
             // sub-mutations committed. typed_mutate already ran the helper
             // per success; this final empty-name stamp ensures any define
@@ -7510,6 +7523,7 @@ public:
             // runs at typed_mutate_atomic's commit, giving the same
             // final status with 1/N the work for an N-mutation batch.
             if (!suppress_invariant_check_) {
+                // Issue #147 / #1458: type-checker half (OwnershipEnv).
                 aura::compiler::PostMutationInvariantVisitor invariant_visitor(
                     *current_pool_, type_registry_, &metrics_);
                 aura::ast::run_mutation_pipeline(*ws_flat, invariant_visitor);
@@ -7517,6 +7531,10 @@ public:
                 res.invariant_status = invariant_visitor.worst_status();
                 res.invariant_diagnostics =
                     std::vector<aura::compiler::OwnershipNote>(invariant_visitor.notes());
+                // Issue #1538 / #1478: runtime half (EnvFrame linear enforce).
+                // Always paired with the invariant visitor so both halves
+                // of the post-mutation linear pipeline run together.
+                apply_linear_post_mutate_pipeline_(res, mid);
             }
             auto& log = ws_flat->all_mutations();
 
@@ -7695,13 +7713,20 @@ public:
                     ist = "NotChecked";
                     break;
             }
+            // Issue #1538: linear post-mutate status from combined pipeline.
+            std::string lin_status = "NotRun";
+            if (auto lit = mutation_linear_status_.find(rec.mutation_id);
+                lit != mutation_linear_status_.end()) {
+                lin_status = lit->second;
+            }
             result.push_back(MutationLogEntry{
                 rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
                 rec.old_type_str, rec.new_type_str, rec.summary,
                 rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack",
                 ist,
                 // Issue #1419: surface compound provenance
-                rec.author_fingerprint, rec.parent_mutation_id, rec.composite_transaction_id});
+                rec.author_fingerprint, rec.parent_mutation_id, rec.composite_transaction_id,
+                lin_status});
         }
         return result;
     }
@@ -8841,6 +8866,10 @@ private:
     // optimization. Reset by typed_mutate_atomic before returning so
     // a follow-up typed_mutate (single) runs its check normally.
     bool suppress_invariant_check_ = false;
+    // Issue #1538: mutation_id → linear_post_mutate_status for mutation_log
+    // JSON ("Ok" | "Unsafe"). Filled by apply_linear_post_mutate_pipeline_.
+    // mutable: query_mutation_log is const but needs read access.
+    mutable std::unordered_map<std::uint64_t, std::string> mutation_linear_status_;
 
     // Issue #1383: mode-flip counter + last-disabled-warn flip.
     // Bumped by set_invariant_check_mode on every change. The
@@ -9704,6 +9733,46 @@ public:
                 });
         }
         return n;
+    }
+
+    // Issue #1538: combined post-mutation linear pipeline (runtime half).
+    // Type-checker half is PostMutationInvariantVisitor /
+    // post_mutation_invariant_check. This runs linear_post_mutate_enforce_all
+    // and stamps MutationResult + per-mutation_id linear status map for
+    // mutation_log JSON exposure.
+    void apply_linear_post_mutate_pipeline_(MutationResult& res, std::uint64_t mutation_id) {
+        const auto sweep = evaluator_.linear_post_mutate_enforce_all();
+        res.linear_post_mutate_enforced = true;
+        res.linear_post_mutate_frames_checked = sweep.frames_checked;
+        res.linear_post_mutate_safe = sweep.all_safe;
+        res.linear_post_mutate_status = sweep.all_safe ? "Ok" : "Unsafe";
+        if (mutation_id > 0) {
+            mutation_linear_status_[mutation_id] = res.linear_post_mutate_status;
+        }
+        // Workspace MutationRecord.mutation_id may differ from the
+        // MutationResult.mutation_id (current_ast_ vs workspace_flat_
+        // counters). Stamp the most recent workspace log entries so
+        // query_mutation_log JSON surfaces linear status reliably.
+        if (auto* ws = evaluator_.workspace_flat()) {
+            const auto& log = ws->all_mutations();
+            // Stamp up to the last 8 records (covers multi-mutate atomic).
+            const std::size_t n = log.size();
+            const std::size_t start = n > 8 ? n - 8 : 0;
+            for (std::size_t i = start; i < n; ++i) {
+                mutation_linear_status_[log[i].mutation_id] = res.linear_post_mutate_status;
+            }
+        }
+        // When runtime half reports unsafe under Strict mode, surface as
+        // failure if invariant path did not already fail.
+        if (!sweep.all_safe && invariant_check_mode_ == InvariantCheckMode::Strict && res.success) {
+            res.success = false;
+            res.error = "linear post-mutate enforce reported unsafe env frames";
+        }
+        metrics_.linear_post_mutate_pipeline_total.fetch_add(1, std::memory_order_relaxed);
+        if (!sweep.all_safe) {
+            metrics_.linear_post_mutate_pipeline_unsafe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
     }
 
     // Issue #1522: notify AuraJIT fn_trackers_ (name + name#*).

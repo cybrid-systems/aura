@@ -3232,6 +3232,9 @@ struct CompilerMetrics {
     // counter + helper + wiring so the enforcement point is observable
     // end-to-end.
     std::atomic<std::uint64_t> linear_post_mutate_enforcements{0};
+    // Issue #1538: combined post-mutation linear pipeline (invariant + enforce).
+    std::atomic<std::uint64_t> linear_post_mutate_pipeline_total{0};
+    std::atomic<std::uint64_t> linear_post_mutate_pipeline_unsafe_total{0};
     std::atomic<std::uint64_t> linear_ownership_violation_prevented{0};
     // Issue #764: Arena AST / shared_ptr<FlatAST> lifetime safety
     // vs GC-managed Env/Closure in closure_bridge_ under
