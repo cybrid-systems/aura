@@ -11,8 +11,8 @@
 //   AC7: regression — free path still safe after dual check
 
 #include "test_harness.hpp"
-#include "runtime_shared.h"
-#include "aura_jit_bridge.h"
+#include "compiler/runtime_shared.h"
+#include "compiler/aura_jit_bridge.h"
 
 #include <cstdint>
 #include <print>

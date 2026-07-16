@@ -1,7 +1,7 @@
 // test_production_sweep_1291_1295.cpp — Issues #1291–#1295 Phase 1
 
 #include "test_harness.hpp"
-#include "security_capabilities.h"
+#include "compiler/security_capabilities.h"
 
 #include <cstdint>
 #include <string>

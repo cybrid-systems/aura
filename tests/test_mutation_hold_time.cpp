@@ -2,7 +2,7 @@
 // MutationBoundaryGuard hold-time metrics + 9-bucket histogram.
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <chrono>
 #include <cstdint>

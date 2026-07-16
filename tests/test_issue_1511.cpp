@@ -12,7 +12,7 @@
 //   AC5: 500× stale apply→bridge stress, no crash
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

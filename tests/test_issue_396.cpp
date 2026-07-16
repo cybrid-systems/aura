@@ -25,7 +25,7 @@
 //        ops-per-batch, bumps-saved-total) still work.
 
 #include "test_harness.hpp"
-#include "messaging_bridge.h"
+#include "compiler/messaging_bridge.h"
 
 using aura::test::g_failed;
 using aura::test::g_passed;

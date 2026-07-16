@@ -17,7 +17,7 @@
 //   AC8: metric coherence
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

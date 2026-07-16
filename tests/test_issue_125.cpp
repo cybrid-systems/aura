@@ -18,7 +18,7 @@
 //      when an unrelated module is touched.
 
 
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

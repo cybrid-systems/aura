@@ -5,7 +5,7 @@
 #include <print>
 #include <string>
 
-#include "aura_jit_bridge.h"
+#include "compiler/aura_jit_bridge.h"
 
 import aura.compiler.value;
 import aura.compiler.evaluator;

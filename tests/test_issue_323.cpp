@@ -14,7 +14,7 @@
 // AC #2 (mutation_loop.py integration), AC #4 (TSan), AC #5
 // (docs) are deferred.
 
-#include "aot_mangle.h"
+#include "compiler/aot_mangle.h"
 #include "issue_test_harness.hpp"
 
 #include <atomic>

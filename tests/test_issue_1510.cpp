@@ -13,7 +13,7 @@
 //   AC6: light EDSL capture still works post-compact
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

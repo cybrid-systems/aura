@@ -43,7 +43,7 @@
 namespace aura::jit {
 struct FlatFunction;
 }
-#include "aura_jit_bridge.h" // before import std (C-header hygiene)
+#include "compiler/aura_jit_bridge.h" // before import std (C-header hygiene)
 
 import std;
 using aura::test::g_failed;

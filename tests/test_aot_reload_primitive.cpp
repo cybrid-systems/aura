@@ -2,8 +2,8 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
-#include "observability_metrics.h"
-#include "runtime_shared.h"
+#include "compiler/observability_metrics.h"
+#include "compiler/runtime_shared.h"
 
 #include <cstdint>
 #include <cstdio>

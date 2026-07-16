@@ -10,7 +10,7 @@
 // AC7: incremental_infer multi-mutate smoke (no silent wrong types)
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <cstdint>

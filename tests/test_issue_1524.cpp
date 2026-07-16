@@ -17,7 +17,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

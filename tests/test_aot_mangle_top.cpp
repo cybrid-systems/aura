@@ -2,10 +2,10 @@
 // __top__ always includes _vN; per-function version probe.
 
 #include "test_harness.hpp"
-#include "aot_mangle.h"
+#include "compiler/aot_mangle.h"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/runtime_shared.h"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <cstdio>

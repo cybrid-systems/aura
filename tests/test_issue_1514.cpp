@@ -15,7 +15,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit.h"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

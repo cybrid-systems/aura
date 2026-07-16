@@ -11,7 +11,7 @@
 //   - fuzz/stress under fibers with zero collision attempts
 
 #include "test_harness.hpp"
-#include "value_tags.h"
+#include "compiler/value_tags.h"
 #include "compiler/shape_profiler.h"
 
 #include "serve/fiber.h"

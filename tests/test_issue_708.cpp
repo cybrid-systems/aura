@@ -10,7 +10,7 @@
 #include <string>
 #include <thread>
 
-#include "aura_jit_bridge.h"
+#include "compiler/aura_jit_bridge.h"
 #include "serve/scheduler.h"
 #include "serve/worker.h"
 

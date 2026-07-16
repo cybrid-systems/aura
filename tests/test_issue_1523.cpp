@@ -16,7 +16,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/lock_order_audit.h"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <cstdint>

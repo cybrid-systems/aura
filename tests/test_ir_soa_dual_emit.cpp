@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-#include "jit_typed_mutation_stats.h"
+#include "compiler/jit_typed_mutation_stats.h"
 
 import std;
 import aura.compiler.service;
