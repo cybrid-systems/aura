@@ -1546,6 +1546,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> per_fiber_ex_state_total{0};
     std::atomic<std::uint64_t> per_fiber_ex_state_hits_total{0};
     std::atomic<std::uint64_t> per_fiber_ex_state_savings_total{0};
+    // Issue #1483 C2: per-fiber mutation_stack_depth metrics.
+    //   - per_fiber_mutation_stack_depth_max: lifetime
+    //     high-water mark across all observed fibers
+    //     (monotonic; never decreases). Updated via
+    //     CAS on every cp.mutation_stack_depth assignment
+    //     site (L186 / L316 / L450 of
+    //     evaluator_fiber_mutation.cpp).
+    //   - per_fiber_mutation_stack_depth_current_max:
+    //     resettable high-water mark across the current
+    //     set of live fibers (decreases as fibers exit).
+    //     Useful for "what's the active max right now"
+    //     queries vs. "what was the all-time max".
+    std::atomic<std::uint64_t> per_fiber_mutation_stack_depth_max{0};
+    std::atomic<std::uint64_t> per_fiber_mutation_stack_depth_current_max{0};
     // Issue #846: aot-hotswap-pipeline-stats
     std::atomic<std::uint64_t> aot_hotswap_pipe_total{0};
     std::atomic<std::uint64_t> aot_hotswap_pipe_hits_total{0};

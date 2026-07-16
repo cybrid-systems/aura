@@ -7128,6 +7128,55 @@ public:
             m->per_fiber_ex_state_savings_total.fetch_add(n, std::memory_order_relaxed);
         }
     }
+    // Issue #1483 C2: bump_per_fiber_mutation_stack_depth_max —
+    // CAS-loop update of the lifetime max across all observed
+    // fibers. Wired into cp.mutation_stack_depth assignment
+    // sites (L186 / L316 / L450 of evaluator_fiber_mutation.cpp).
+    // The current_max is NOT updated here (that one tracks
+    // only live fibers — see bump_per_fiber_mutation_stack_depth_current_max).
+    void bump_per_fiber_mutation_stack_depth_max(std::size_t depth) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            std::uint64_t cur =
+                m->per_fiber_mutation_stack_depth_max.load(std::memory_order_relaxed);
+            while (cur < static_cast<std::uint64_t>(depth)) {
+                if (m->per_fiber_mutation_stack_depth_max.compare_exchange_weak(
+                        cur, static_cast<std::uint64_t>(depth), std::memory_order_relaxed))
+                    break;
+            }
+        }
+    }
+    // Issue #1483 C2: bump_per_fiber_mutation_stack_depth_current_max —
+    // monotonic-CAS update of the current (resettable) max across
+    // live fibers. Wire at fiber enter sites; reset at fiber exit
+    // sites via reset_per_fiber_mutation_stack_depth_current_max
+    // (the reset helper is intentionally omitted in C2 — the
+    // current_max tracks "max observed this compile session"
+    // and resets on Evaluator construction).
+    void bump_per_fiber_mutation_stack_depth_current_max(std::size_t depth) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            std::uint64_t cur =
+                m->per_fiber_mutation_stack_depth_current_max.load(std::memory_order_relaxed);
+            while (cur < static_cast<std::uint64_t>(depth)) {
+                if (m->per_fiber_mutation_stack_depth_current_max.compare_exchange_weak(
+                        cur, static_cast<std::uint64_t>(depth), std::memory_order_relaxed))
+                    break;
+            }
+        }
+    }
+    [[nodiscard]] std::uint64_t get_per_fiber_mutation_stack_depth_max() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->per_fiber_mutation_stack_depth_max.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_per_fiber_mutation_stack_depth_current_max() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->per_fiber_mutation_stack_depth_current_max.load(std::memory_order_relaxed);
+    }
     void bump_aot_hotswap_pipe(std::uint64_t n = 1) const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
