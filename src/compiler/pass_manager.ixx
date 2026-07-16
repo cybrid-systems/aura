@@ -1724,6 +1724,7 @@ public:
             // Other ops with has_result_slot=true per kOpcodeInfo:
             case aura::ir::IROpcode::MakeClosure:
             case aura::ir::IROpcode::NewCell:
+            case aura::ir::IROpcode::CellGet: // Issue #1530: result_slot, cell_id
             case aura::ir::IROpcode::PrimCall:
             case aura::ir::IROpcode::Primitive:
             case aura::ir::IROpcode::MakePair:
@@ -1985,15 +1986,26 @@ public:
 export class EscapeAnalysisPass {
 public:
     void run(aura::ir::IRModule& module) {
+        escaped_slots_total_ = 0;
+        functions_analyzed_ = 0;
         for (auto& func : module.functions) {
             run_on_function(func);
+            ++functions_analyzed_;
+            for (auto b : func.escape_map)
+                if (b)
+                    ++escaped_slots_total_;
         }
     }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "escape-analysis"; }
+    // Issue #1531: observability for IR escape analysis.
+    std::size_t escaped_slots_total() const { return escaped_slots_total_; }
+    std::size_t functions_analyzed() const { return functions_analyzed_; }
 
 private:
+    std::size_t escaped_slots_total_ = 0;
+    std::size_t functions_analyzed_ = 0;
     // Returns true if the opcode is a "return" that escapes its
     // operand value to the caller. Mirrors the escape-point
     // list in the existing JIT implementation.
@@ -2108,6 +2120,17 @@ private:
                             changed = true;
                         }
                         break;
+                    // Issue #1531: linear ownership ops propagate escape
+                    // from result → source (Move/Borrow/LinearWrap).
+                    case aura::ir::IROpcode::MoveOp:
+                    case aura::ir::IROpcode::BorrowOp:
+                    case aura::ir::IROpcode::MutBorrowOp:
+                    case aura::ir::IROpcode::LinearWrap:
+                        if (instr.operands[1] < local_count && !escape_map[instr.operands[1]]) {
+                            escape_map[instr.operands[1]] = 1;
+                            changed = true;
+                        }
+                        break;
                     default:
                         break;
                 }
@@ -2117,11 +2140,13 @@ private:
     }
 
     // True if this opcode is either an escape point OR a pure
-    // propagator (Local, MakePair) whose operands may need
-    // backward propagation.
+    // propagator (Local, MakePair, linear ownership ops) whose
+    // operands may need backward propagation.
     static bool is_escape_point_or_pure_propagator(aura::ir::IROpcode op) {
         return is_escape_point(op) || op == aura::ir::IROpcode::Local ||
-               op == aura::ir::IROpcode::MakePair;
+               op == aura::ir::IROpcode::MakePair || op == aura::ir::IROpcode::MoveOp ||
+               op == aura::ir::IROpcode::BorrowOp || op == aura::ir::IROpcode::MutBorrowOp ||
+               op == aura::ir::IROpcode::LinearWrap;
     }
 
     void run_on_function(aura::ir::IRFunction& func) {
@@ -2281,6 +2306,11 @@ private:
 //   - Not: result.type_id = src's slot type_id
 //   - Car/Cdr: result.type_id = pair (whatever the source
 //     pair's type_id is, if any)
+// Issue #1530 extended ops (+≥5 pure/ownership/pair/compare):
+//   - Eq/Lt/Gt/Le/Ge: narrow_evidence when both operands match
+//     (does not invent Bool type_id — no TypeRegistry)
+//   - MakePair: type_id when car==cdr type_id; narrow when both match
+//   - MoveOp/BorrowOp/LinearWrap/CellGet: unary type+narrow from src
 //
 // Cost: O(rounds × N) per block, rounds ≤ 8. Idempotent after
 // fixpoint. Issue #1457: iterative + CastOp / narrow_evidence
@@ -2298,6 +2328,7 @@ public:
         propagated_count_ = 0;
         narrow_propagated_ = 0;
         cast_result_stamped_ = 0;
+        extended_ops_propagated_ = 0;
         if (module.functions.empty())
             return;
         for (auto& func : module.functions) {
@@ -2317,10 +2348,12 @@ public:
     std::size_t propagated_count() const { return propagated_count_; }
     std::size_t narrow_propagated() const { return narrow_propagated_; }
     std::size_t cast_result_stamped() const { return cast_result_stamped_; }
+    // Issue #1530: stamps applied on the extended opcode set.
+    std::size_t extended_ops_propagated() const { return extended_ops_propagated_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
 
-private:
+    // Issue #1530: original #1457 set + extended pure/ownership/pair ops.
     static bool should_propagate(aura::ir::IROpcode op) {
         switch (op) {
             case aura::ir::IROpcode::Local:
@@ -2334,12 +2367,44 @@ private:
             case aura::ir::IROpcode::Car:
             case aura::ir::IROpcode::Cdr:
             case aura::ir::IROpcode::CastOp:
+                // baseline (#1457)
+                return true;
+            // Issue #1530 extended set
+            case aura::ir::IROpcode::Eq:
+            case aura::ir::IROpcode::Lt:
+            case aura::ir::IROpcode::Gt:
+            case aura::ir::IROpcode::Le:
+            case aura::ir::IROpcode::Ge:
+            case aura::ir::IROpcode::MakePair:
+            case aura::ir::IROpcode::MoveOp:
+            case aura::ir::IROpcode::BorrowOp:
+            case aura::ir::IROpcode::LinearWrap:
+            case aura::ir::IROpcode::CellGet:
                 return true;
             default:
                 return false;
         }
     }
 
+    static bool is_extended_op(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::Eq:
+            case aura::ir::IROpcode::Lt:
+            case aura::ir::IROpcode::Gt:
+            case aura::ir::IROpcode::Le:
+            case aura::ir::IROpcode::Ge:
+            case aura::ir::IROpcode::MakePair:
+            case aura::ir::IROpcode::MoveOp:
+            case aura::ir::IROpcode::BorrowOp:
+            case aura::ir::IROpcode::LinearWrap:
+            case aura::ir::IROpcode::CellGet:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+private:
     void run_on_block(aura::ir::BasicBlock& block) {
         if (block.instructions.empty())
             return;
@@ -2374,6 +2439,7 @@ private:
                 if (!DCEPass::has_result_slot_local(instr.opcode))
                     continue;
                 const auto slot = instr.operands[0];
+                const bool extended = is_extended_op(instr.opcode);
 
                 std::uint32_t inferred = 0;
                 std::uint32_t inferred_narrow = 0;
@@ -2408,7 +2474,12 @@ private:
                     case aura::ir::IROpcode::Local:
                     case aura::ir::IROpcode::Not:
                     case aura::ir::IROpcode::Car:
-                    case aura::ir::IROpcode::Cdr: {
+                    case aura::ir::IROpcode::Cdr:
+                    // Issue #1530: ownership / cell unaries — same as Local.
+                    case aura::ir::IROpcode::MoveOp:
+                    case aura::ir::IROpcode::BorrowOp:
+                    case aura::ir::IROpcode::LinearWrap:
+                    case aura::ir::IROpcode::CellGet: {
                         const auto src = instr.operands[1];
                         if (auto it = slot_type_id.find(src); it != slot_type_id.end())
                             inferred = it->second;
@@ -2421,11 +2492,28 @@ private:
                     case aura::ir::IROpcode::Mul:
                     case aura::ir::IROpcode::Div:
                     case aura::ir::IROpcode::And:
-                    case aura::ir::IROpcode::Or: {
+                    case aura::ir::IROpcode::Or:
+                    // Issue #1530: MakePair stamps when car/cdr agree
+                    // (homogeneous pair); compare ops only copy matching
+                    // narrow_evidence (no invented Bool type_id).
+                    case aura::ir::IROpcode::MakePair:
+                    case aura::ir::IROpcode::Eq:
+                    case aura::ir::IROpcode::Lt:
+                    case aura::ir::IROpcode::Gt:
+                    case aura::ir::IROpcode::Le:
+                    case aura::ir::IROpcode::Ge: {
                         auto t1 = slot_type_id.find(instr.operands[1]);
                         auto t2 = slot_type_id.find(instr.operands[2]);
-                        if (t1 != slot_type_id.end() && t2 != slot_type_id.end() &&
-                            t1->second != 0 && t1->second == t2->second)
+                        const bool both_typed = t1 != slot_type_id.end() &&
+                                                t2 != slot_type_id.end() && t1->second != 0 &&
+                                                t1->second == t2->second;
+                        // Compare results are Bool — do not stamp operand type_id.
+                        const bool is_compare = instr.opcode == aura::ir::IROpcode::Eq ||
+                                                instr.opcode == aura::ir::IROpcode::Lt ||
+                                                instr.opcode == aura::ir::IROpcode::Gt ||
+                                                instr.opcode == aura::ir::IROpcode::Le ||
+                                                instr.opcode == aura::ir::IROpcode::Ge;
+                        if (both_typed && !is_compare)
                             inferred = t1->second;
                         auto n1 = slot_narrow.find(instr.operands[1]);
                         auto n2 = slot_narrow.find(instr.operands[2]);
@@ -2443,12 +2531,16 @@ private:
                     slot_type_id[slot] = inferred;
                     ++propagated_count_;
                     ++progress;
+                    if (extended)
+                        ++extended_ops_propagated_;
                 }
                 if (inferred_narrow != 0 && instr.narrow_evidence == 0) {
                     instr.narrow_evidence = inferred_narrow;
                     slot_narrow[slot] = inferred_narrow;
                     ++narrow_propagated_;
                     ++progress;
+                    if (extended)
+                        ++extended_ops_propagated_;
                 }
                 if (instr.type_id != 0)
                     slot_type_id[slot] = instr.type_id;
@@ -2463,6 +2555,7 @@ private:
     std::size_t propagated_count_ = 0;
     std::size_t narrow_propagated_ = 0;
     std::size_t cast_result_stamped_ = 0;
+    std::size_t extended_ops_propagated_ = 0;
     std::uint64_t pipeline_epoch_ = 0;
 };
 

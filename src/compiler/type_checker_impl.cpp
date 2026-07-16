@@ -4189,24 +4189,74 @@ static std::vector<std::string> adt_match_missing_constructors(TypeRegistry& reg
 
 std::vector<std::string> analyze_match_exhaustiveness(const FlatAST& flat, const StringPool& pool,
                                                       TypeRegistry& reg, NodeId let_node) {
+    return check_match_exhaustiveness(flat, pool, reg, let_node).missing_constructors;
+}
+
+// Issue #1532: structured exhaustiveness check.
+MatchExhaustivenessResult check_match_exhaustiveness(const FlatAST& flat, const StringPool& pool,
+                                                     TypeRegistry& reg, NodeId let_node) {
+    MatchExhaustivenessResult r;
+    r.match_let_node = let_node;
     if (let_node == NULL_NODE || let_node >= flat.size())
-        return {};
+        return r;
     auto v = flat.get(let_node);
     if (v.tag != NodeTag::Let)
-        return {};
+        return r;
     if (std::string(pool.resolve(v.sym_id)) != "__match_tmp")
-        return {};
+        return r;
     if (!flat.has_match_info(let_node))
-        return {};
+        return r;
     const auto* minfo = flat.get_match_info(let_node);
     if (!minfo)
-        return {};
+        return r;
     std::uint32_t tid_raw = minfo->subject_type_id;
     if (tid_raw == 0 || tid_raw >= reg.size())
         tid_raw = flat.type_id(v.child(0));
     if (tid_raw == 0 || tid_raw >= reg.size())
+        return r;
+    TypeId subject{tid_raw, 1};
+    if (reg.tag_of(subject) == TypeTag::FUNC) {
+        if (auto* f = reg.func_of(subject))
+            subject = f->ret;
+    }
+    r.subject_type_name = std::string(reg.name_of(subject));
+    if (auto* ctors = reg.get_adt_constructors(subject))
+        r.all_constructors = *ctors;
+    r.missing_constructors = adt_match_missing_constructors(reg, pool, *minfo, subject);
+    r.checked = !r.all_constructors.empty() || minfo->has_wildcard ||
+                !minfo->used_constructors.empty() || !minfo->candidate_constructors.empty();
+    // If we have ADT ctors, a real check happened; wildcard → exhaustive.
+    if (minfo->has_wildcard) {
+        r.checked = true;
+        r.exhaustive = true;
+        r.missing_constructors.clear();
+    } else if (!r.all_constructors.empty()) {
+        r.checked = true;
+        r.exhaustive = r.missing_constructors.empty();
+    } else if (!r.missing_constructors.empty()) {
+        r.checked = true;
+        r.exhaustive = false;
+    }
+    return r;
+}
+
+std::string format_match_exhaustiveness_message(const MatchExhaustivenessResult& r) {
+    if (r.exhaustive || r.missing_constructors.empty())
         return {};
-    return adt_match_missing_constructors(reg, pool, *minfo, TypeId{tid_raw, 1});
+    std::string msg = "match: ";
+    if (r.missing_constructors.size() == 1) {
+        msg += "missing constructor '" + r.missing_constructors[0] + "'";
+    } else {
+        msg += "missing constructors: ";
+        for (std::size_t mi = 0; mi < r.missing_constructors.size(); ++mi) {
+            if (mi > 0)
+                msg += ", ";
+            msg += "'" + r.missing_constructors[mi] + "'";
+        }
+    }
+    if (!r.subject_type_name.empty())
+        msg += " in " + r.subject_type_name;
+    return msg;
 }
 
 TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
@@ -4321,38 +4371,37 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
             updated.subject_type_id = subject_type.index;
             flat.set_match_info(node_id, std::move(updated));
         }
-        auto missing = analyze_match_exhaustiveness(flat, pool, reg_, node_id);
-        if (!missing.empty()) {
-            TypeId subject_type = val_norm;
-            if (reg_.tag_of(subject_type) == TypeTag::FUNC) {
-                if (auto* f = reg_.func_of(subject_type))
-                    subject_type = f->ret;
+        // Issue #1532: structured exhaustiveness check + progressive
+        // diag (Warning in non-strict, TypeError in strict_).
+        auto exh = check_match_exhaustiveness(flat, pool, reg_, node_id);
+        // Prefer refined subject name when available.
+        if (exh.subject_type_name.empty() && subject_type.valid())
+            exh.subject_type_name = std::string(reg_.name_of(subject_type));
+        if (cs_.metrics_ && exh.checked) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->adt_exhaustiveness_checked_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!exh.exhaustive && !exh.missing_constructors.empty()) {
+            if (cs_.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
+                m->non_exhaustive_match_diagnostics_total.fetch_add(1, std::memory_order_relaxed);
             }
-            auto type_name = std::string(reg_.name_of(subject_type));
-            std::string msg = "match: ";
-            if (missing.size() == 1) {
-                msg += "missing constructor '" + missing[0] + "'";
-            } else {
-                msg += "missing constructors: ";
-                for (std::size_t mi = 0; mi < missing.size(); ++mi) {
-                    if (mi > 0)
-                        msg += ", ";
-                    msg += "'" + missing[mi] + "'";
-                }
-            }
-            msg += " in " + type_name;
-            if (missing.size() == 1) {
-                diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
-                                 .with_suggestion("add clause for '" + missing[0] + "' pattern"));
+            auto msg = format_match_exhaustiveness_message(exh);
+            // Issue #1532: progressive — warn unless strict mode.
+            const auto kind = strict_ ? ErrorKind::TypeError : ErrorKind::Warning;
+            if (exh.missing_constructors.size() == 1) {
+                diag_.report(Diagnostic(kind, msg, cur_loc_)
+                                 .with_suggestion("add clause for '" + exh.missing_constructors[0] +
+                                                  "' pattern"));
             } else {
                 std::string suggest = "add clauses for ";
-                for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                for (std::size_t mi = 0; mi < exh.missing_constructors.size(); ++mi) {
                     if (mi > 0)
                         suggest += ", ";
-                    suggest += "'" + missing[mi] + "'";
+                    suggest += "'" + exh.missing_constructors[mi] + "'";
                 }
-                diag_.report(
-                    Diagnostic(ErrorKind::TypeError, msg, cur_loc_).with_suggestion(suggest));
+                diag_.report(Diagnostic(kind, msg, cur_loc_).with_suggestion(suggest));
             }
         }
     }
@@ -5716,8 +5765,21 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             record_linear_ownership_mutation_metrics(metrics_, true, ownership_notes,
                                                      ownership_pass);
             if (metrics_) {
-                static_cast<struct CompilerMetrics*>(metrics_)
-                    ->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1531: validate_ownership already runs escape
+                // re-analysis; surface the counters here as well for
+                // dashboards that only watch the partial-infer path.
+                m->linear_escape_reanalysis_total.fetch_add(1, std::memory_order_relaxed);
+                m->ownership_dirty_revalidate_hits.fetch_add(linear_bindings.size(),
+                                                             std::memory_order_relaxed);
+                for (const auto& n : ownership_notes) {
+                    if (n.kind == "escape-while-borrowed")
+                        m->linear_escape_while_borrowed_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    else if (n.kind == "escape-after-move")
+                        m->linear_escape_after_move_total.fetch_add(1, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -5773,7 +5835,159 @@ bool OwnershipEnv::validate_ownership(const FlatAST& flat, const StringPool& poo
                                       std::vector<OwnershipNote>& notes_out) {
     if (dirty_bindings.empty())
         return true;
-    return validate_ownership_impl(flat, pool, root, dirty_bindings, notes_out);
+    const bool own_ok = validate_ownership_impl(flat, pool, root, dirty_bindings, notes_out);
+    // Issue #1531: always run AST escape re-analysis on dirty
+    // linear bindings so escape-while-borrowed / escape-after-move
+    // are caught even when the pure ownership walk passed.
+    LinearEscapeAnalysisResult esc;
+    const bool esc_ok =
+        analyze_linear_escape_for_dirty(flat, pool, root, dirty_bindings, notes_out, esc);
+    return own_ok && esc_ok;
+}
+
+// Issue #1531: AST-level escape re-analysis for dirty linear bindings.
+// Simulates ownership state while walking, and flags escape sites:
+//   - Variable used as Call/Apply arg while Borrowed/MutBorrowed
+//   - Variable used after Move (escape-after-move, pairs with UAM)
+// Escape sites: Call/Apply args (children[1..]), Lambda body return
+// (last child of body if Variable), CellSet-like List forms are rare
+// at AST so we focus on Call + Lambda return + Begin tail return.
+bool analyze_linear_escape_for_dirty(const FlatAST& flat, const StringPool& pool, NodeId root,
+                                     const std::unordered_set<std::string>& dirty_bindings,
+                                     std::vector<OwnershipNote>& notes_out,
+                                     LinearEscapeAnalysisResult& out) {
+    out = {};
+    if (dirty_bindings.empty() || root == NULL_NODE || root >= flat.size())
+        return true;
+
+    out.bindings_scanned = dirty_bindings.size();
+    out.dirty_revalidate_hits = dirty_bindings.size();
+    out.escape_reanalysis_hits = 1;
+
+    OwnershipEnv tmp;
+    for (const auto& name : dirty_bindings)
+        tmp.mark(name, OwnershipState::Owned);
+
+    bool all_pass = true;
+
+    auto note_escape = [&](NodeId id, const std::string& name, OwnershipState st,
+                           const char* kind) {
+        notes_out.push_back(
+            {id, std::string(kind) + ": " + name + " is " + tmp.state_name(st), kind});
+        all_pass = false;
+        if (std::string_view(kind) == "escape-while-borrowed")
+            ++out.escape_while_borrowed;
+        else if (std::string_view(kind) == "escape-after-move")
+            ++out.escape_after_move;
+        ++out.escape_sites;
+    };
+
+    auto apply_own = [&](NodeTag tag, const std::string& name) {
+        switch (tag) {
+            case NodeTag::Move:
+                tmp.mark(name, OwnershipState::Moved);
+                break;
+            case NodeTag::Borrow:
+                tmp.mark(name, OwnershipState::Borrowed);
+                break;
+            case NodeTag::MutBorrow:
+                tmp.mark(name, OwnershipState::MutBorrowed);
+                break;
+            case NodeTag::Drop:
+                tmp.mark(name, OwnershipState::Moved);
+                break;
+            default:
+                break;
+        }
+    };
+
+    auto check_escape_use = [&](NodeId id, const std::string& name) {
+        if (dirty_bindings.count(name) == 0)
+            return;
+        auto st = tmp.get(name);
+        if (st == OwnershipState::Moved) {
+            note_escape(id, name, st, "escape-after-move");
+        } else if (st == OwnershipState::Borrowed || st == OwnershipState::MutBorrowed) {
+            note_escape(id, name, st, "escape-while-borrowed");
+        }
+        // Owned at escape site is a transfer (OK for Call) or
+        // leak detection is handled by validate_ownership_impl.
+    };
+
+    auto walk = [&](this const auto& self, NodeId id) -> void {
+        if (id == NULL_NODE || id >= flat.size())
+            return;
+        auto v = flat.get(id);
+
+        // Ownership ops first (update state, do not treat as escape).
+        if (v.tag == NodeTag::Move || v.tag == NodeTag::Borrow || v.tag == NodeTag::MutBorrow ||
+            v.tag == NodeTag::Drop) {
+            if (!v.children.empty()) {
+                auto inner = flat.get(v.child(0));
+                if (inner.tag == NodeTag::Variable && inner.sym_id != INVALID_SYM) {
+                    auto name = std::string(pool.resolve(inner.sym_id));
+                    if (dirty_bindings.count(name))
+                        apply_own(v.tag, name);
+                } else if (v.child(0) != NULL_NODE) {
+                    self(v.child(0));
+                }
+            }
+            return;
+        }
+
+        // Call application: (f a b ...) — args escape.
+        if (v.tag == NodeTag::Call) {
+            // children[0] = callee; [1..] = args (escape sites).
+            for (std::size_t i = 0; i < v.children.size(); ++i) {
+                auto cid = v.child(i);
+                if (cid == NULL_NODE)
+                    continue;
+                if (i == 0) {
+                    self(cid); // walk callee first
+                    continue;
+                }
+                auto cv = flat.get(cid);
+                if (cv.tag == NodeTag::Variable && cv.sym_id != INVALID_SYM) {
+                    auto name = std::string(pool.resolve(cv.sym_id));
+                    check_escape_use(cid, name);
+                } else {
+                    self(cid);
+                }
+            }
+            return;
+        }
+
+        // Lambda body: last expression is the return escape site.
+        if (v.tag == NodeTag::Lambda) {
+            // Body is typically children[0] (params in param_data_).
+            if (!v.children.empty() && v.child(0) != NULL_NODE) {
+                auto body = v.child(0);
+                self(body);
+                // If body is Begin, tail is last child; else body itself.
+                auto bv = flat.get(body);
+                NodeId ret = body;
+                if (bv.tag == NodeTag::Begin && !bv.children.empty())
+                    ret = bv.child(bv.children.size() - 1);
+                if (ret != NULL_NODE && ret < flat.size()) {
+                    auto rv = flat.get(ret);
+                    if (rv.tag == NodeTag::Variable && rv.sym_id != INVALID_SYM) {
+                        auto name = std::string(pool.resolve(rv.sym_id));
+                        check_escape_use(ret, name);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Generic walk children.
+        for (auto cid : v.children) {
+            if (cid != NULL_NODE)
+                self(cid);
+        }
+    };
+
+    walk(root);
+    return all_pass;
 }
 
 // Issue #117: full re-simulation mode. Walks the AST to
@@ -6345,7 +6559,10 @@ namespace {
             }
             if (narrowed_subject && m)
                 m->adt_occurrence_narrow_in_match_total.fetch_add(1, std::memory_order_relaxed);
-            auto missing = analyze_match_exhaustiveness(flat, pool, reg, id);
+            // Issue #1532: structured re-check.
+            auto exh = check_match_exhaustiveness(flat, pool, reg, id);
+            if (m && exh.checked)
+                m->adt_exhaustiveness_checked_total.fetch_add(1, std::memory_order_relaxed);
             if (auto* mi = flat.get_match_info(id)) {
                 MatchClauseInfo updated = *mi;
                 updated.exhaustiveness_checked = true;
@@ -6353,14 +6570,20 @@ namespace {
                     updated.subject_type_id = flat.type_id(let_v.child(0));
                 flat.set_match_info(id, std::move(updated));
             }
-            if (!missing.empty()) {
+            if (!exh.missing_constructors.empty()) {
+                if (m) {
+                    m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
+                    m->non_exhaustive_match_diagnostics_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                }
                 OwnershipNote note;
                 note.node = id;
                 note.kind = "MissingConstructorInNestedMatch";
-                note.message =
-                    "match exhaustiveness stale after mutation: missing '" + missing[0] + "'";
-                if (missing.size() > 1) {
-                    note.message += " (and " + std::to_string(missing.size() - 1) + " more)";
+                note.message = "match exhaustiveness stale after mutation: missing '" +
+                               exh.missing_constructors[0] + "'";
+                if (exh.missing_constructors.size() > 1) {
+                    note.message +=
+                        " (and " + std::to_string(exh.missing_constructors.size() - 1) + " more)";
                 }
                 attach_mutation_blame(note, rec);
                 notes_out.push_back(std::move(note));
@@ -6551,10 +6774,17 @@ void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, 
                 }
             }
         }
-        const auto missing = analyze_match_exhaustiveness(flat, pool, reg, id);
-        if (!missing.empty() && metrics) {
+        // Issue #1532: structured re-check after ADT/match mutate.
+        const auto exh = check_match_exhaustiveness(flat, pool, reg, id);
+        if (metrics && exh.checked) {
+            static_cast<CompilerMetrics*>(metrics)->adt_exhaustiveness_checked_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        if (!exh.exhaustive && !exh.missing_constructors.empty() && metrics) {
             static_cast<CompilerMetrics*>(metrics)->adt_non_exhaustive_caught_total.fetch_add(
                 1, std::memory_order_relaxed);
+            static_cast<CompilerMetrics*>(metrics)
+                ->non_exhaustive_match_diagnostics_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (auto* mi = flat.get_match_info(id)) {
             MatchClauseInfo updated = *mi;
@@ -6583,7 +6813,8 @@ void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
             m->linear_occurrence_escape_prevented_total.fetch_add(1, std::memory_order_relaxed);
         for (const auto& note : ownership_notes) {
             if (note.kind == "use-after-move" || note.kind == "double-borrow" ||
-                note.kind == "invalid-state" || note.kind == "leaked-linear")
+                note.kind == "invalid-state" || note.kind == "leaked-linear" ||
+                note.kind == "escape-while-borrowed" || note.kind == "escape-after-move")
                 m->linear_occurrence_escape_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     };
@@ -6601,9 +6832,14 @@ void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
         if (note.kind == "leaked-linear") {
             m->linear_leak_prevented_total.fetch_add(1, std::memory_order_relaxed);
         } else if (note.kind == "use-after-move" || note.kind == "double-borrow" ||
-                   note.kind == "invalid-state") {
+                   note.kind == "invalid-state" || note.kind == "escape-while-borrowed" ||
+                   note.kind == "escape-after-move") {
             m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
         }
+        if (note.kind == "escape-while-borrowed")
+            m->linear_escape_while_borrowed_total.fetch_add(1, std::memory_order_relaxed);
+        else if (note.kind == "escape-after-move")
+            m->linear_escape_after_move_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
