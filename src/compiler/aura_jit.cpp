@@ -2297,14 +2297,6 @@ struct AuraJIT::Impl {
     // re-running LLVM. Parallel to fn_unhandled_counts_ pattern — atomic
     // per-entry, compile_mtx_ guards the map mutation.
     std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_captured_epochs_{};
-    // Issue #1477: per-fn captured bridge_epoch (set when fn is
-    // compiled or when service.ixx::atomic_bump_epochs_and_stamp_bridge
-    // re-stamps the fn on the write side). Lets callers (JIT Apply
-    // prologue + service.ixx dual-check) detect stale compiled code via
-    // AuraJIT::is_fn_epoch_stale(name, current_bridge_epoch) without
-    // re-running LLVM. Parallel to fn_unhandled_counts_ pattern — atomic
-    // per-entry, compile_mtx_ guards the map mutation.
-    std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_captured_epochs_{};
     // Tracks the most recent function being compiled (set by
     // compile() before calling lower()).
     std::string current_compile_fn_{};
@@ -2339,52 +2331,15 @@ struct AuraJIT::Impl {
     // Returns false when name was never captured (pass-through, fn
     // wasn't compiled via this path or was registered before the
     // fence was added).
-    void capture_fn_epoch(const char* name, std::uint64_t bridge_epoch) {
-        std::lock_guard<std::mutex> lock(compile_mtx_);
-        fn_captured_epochs_[name].store(bridge_epoch, std::memory_order_release);
-        metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    bool is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch) const {
-        std::lock_guard<std::mutex> lock(compile_mtx_);
-        auto it = fn_captured_epochs_.find(name);
-        if (it == fn_captured_epochs_.end())
-            return false;
-        return it->second.load(std::memory_order_acquire) != current_bridge_epoch;
-    }
-    // Issue #1477: dual-epoch fence helpers. The capture path is
-    // called from service.ixx::atomic_bump_epochs_and_stamp_bridge on
-    // the write side (or once at compile time if the JIT knows the
-    // current bridge_epoch); the is_epoch_stale path is called from
-    // the JIT Apply prologue on the read side (#1475 counterpart).
-    // Lock pattern matches fn_unhandled_counts_ writes/reads
-    // (compile_mtx_ guards the map mutation). Release ordering on
-    // store pairs with acquire ordering in is_fn_epoch_stale so
-    // readers see consistent epoch values after the lock release.
     //
-    // Returns false when name was never captured (pass-through, fn
-    // wasn't compiled via this path or was registered before the
-    // fence was added).
-    void capture_fn_epoch(const char* name, std::uint64_t bridge_epoch) {
-        std::lock_guard<std::mutex> lock(compile_mtx_);
-        fn_captured_epochs_[name].store(bridge_epoch, std::memory_order_release);
-        metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    bool is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch) const {
-        std::lock_guard<std::mutex> lock(compile_mtx_);
-        auto it = fn_captured_epochs_.find(name);
-        if (it == fn_captured_epochs_.end())
-            return false;
-        return it->second.load(std::memory_order_acquire) != current_bridge_epoch;
-    }
+    // Note: AuraJIT::capture_fn_epoch + AuraJIT::is_fn_epoch_stale
+    // (public wrappers, file-level below) implement this logic
+    // directly against impl_->fn_captured_epochs_ + AuraJIT::metrics_
+    // — there are no Impl::capture_fn_epoch / Impl::is_fn_epoch_stale
+    // methods here (a #1477 leftover was removed during #1480 chore
+    // since the Impl-level copy could not reach the enclosing
+    // AuraJIT::metrics_ and would have been dead code anyway).
     std::unordered_map<std::string, llvm::orc::ResourceTrackerSP> fn_trackers_;
-
-    // Issue #1477: per-fn captured bridge_epoch (set when fn is
-    // compiled). Lets callers (service.ixx::atomic_bump_epochs_and_stamp_bridge
-    // + JIT Apply entry) detect stale compiled code via
-    // AuraJIT::is_fn_epoch_stale without re-running LLVM.
-    // Parallel to fn_unhandled_counts_ pattern — atomic per-entry,
-    // compile_mtx_ guards the map lookup.
-    std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_captured_epochs_;
 
     // Issue #170 Phase 1: most recently compiled LLVM module.
     // Held as a unique_ptr so we can release it when a new
