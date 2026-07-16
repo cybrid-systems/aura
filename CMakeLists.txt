@@ -5633,6 +5633,16 @@ aura_issue_test_link_llvm_jit(test_issue_1473)
 # full function).
 aura_add_issue_test(test_issue_1474)
 aura_issue_test_link_llvm_jit(test_issue_1474)
+# Issue #1475: Force bridge_epoch + defuse_version_ dual checks
+# in apply_closure / IR closure call paths. This test ships the
+# pure helper `is_env_frame_stale(env_id, frame_version, current)`
+# (parallel to is_bridge_stale) and verifies its 7 invariant cases
+# + integration with defuse_version_for_test /
+# bump_defuse_version_for_test. Hot-path wiring of the dual check
+# into the 3 IR executor sites + JIT + closure_bridge_ callback +
+# multi-fiber stress test is deferred to follow-up issues.
+aura_add_issue_test(test_issue_1475)
+aura_issue_test_link_llvm_jit(test_issue_1475)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics

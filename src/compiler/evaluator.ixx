@@ -1229,6 +1229,61 @@ public:
         return bridge_epoch != current_epoch;
     }
 
+    // Issue #1475: dual-check complement to is_bridge_stale. Even
+    // when bridge_epoch matches, an EnvFrame captured pre-mutation
+    // (frame.version_ < current defuse_version_) may have stale
+    // bindings — the mutation that bumped defuse_version_ may have
+    // overwritten a cell that the closure captured. Without this
+    // second check, a long-lived closure that survives a
+    // mutate:set-body could read post-mutation cell values against
+    // pre-mutation captured bindings, producing semantically wrong
+    // results (or, in the linear-ownership case, UAF on freed
+    // binding memory).
+    //
+    // INVARIANT (EnvFrame Version Contract, parallel to #1365):
+    //   1. current_defuse_version == 0 → tracking inactive
+    //      (pre-#242 era): never treat as stale.
+    //   2. env_id == NULL_ENV_ID → closure doesn't carry an EnvFrame
+    //      reference (legacy / pre-SoA closures): never stale here
+    //      (the bridge check still applies).
+    //   3. frame not found by resolve_env_frame → env_id is post-
+    //      truncate stale (Issue #1360): conservative stale.
+    //   4. frame.version_ == 0 with current != 0 → unversioned
+    //      while tracking is active → STALE (strict by default;
+    //      AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 re-enables legacy trust).
+    //   5. Non-zero mismatch → stale (frame captured pre-mutation).
+    //
+    // Per-frame version_ is set on frame allocation (Issue #612):
+    // `frame.version_ = defuse_version_.load(acquire)` at
+    // evaluation-time capture, and `bump_defuse_version_for_test`
+    // (or real mutation paths) bump it post-commit. After
+    // mutation, frame.version_ < current means the captured
+    // bindings are stale.
+    static bool is_env_frame_stale(EnvId env_id, std::uint64_t frame_version,
+                                   std::uint64_t current_defuse_version) noexcept {
+        if (current_defuse_version == 0)
+            return false; // tracking inactive
+        if (env_id == NULL_ENV_ID) {
+            // Issue #1475: closure without env_id is not subject to
+            // this check (legacy / pre-SoA paths). The bridge check
+            // still applies for those.
+            return false;
+        }
+        if (frame_version == 0) {
+            // Unversioned frame captured pre-#242 — strict by default
+            // (legacy opt-in via AURA_BRIDGE_EPOCH_LEGACY_TRUST, same
+            // env var as is_bridge_stale so a single env override
+            // covers both domains).
+            static const bool legacy_trust = []() noexcept {
+                if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+                    return e[0] != '0' && e[0] != '\0';
+                return false;
+            }();
+            return !legacy_trust;
+        }
+        return frame_version < current_defuse_version;
+    }
+
     // Issue #1365: stamp construction-site epoch (call on every new Closure).
     void stamp_closure_bridge_epoch(Closure& cl) const noexcept {
         cl.bridge_epoch = current_bridge_epoch();
