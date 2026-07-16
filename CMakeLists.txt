@@ -5034,6 +5034,14 @@ aura_issue_test_link_llvm_jit(test_issue_1526)
 # Issue #1527: fix aura_jit_test_objects link; re-enable #1477 dual-epoch fence test.
 aura_add_issue_test(test_issue_1477)
 aura_issue_test_link_llvm_jit(test_issue_1477)
+# Issue #1528: O(delta) re-inference — solve_delta local worklist prune +
+# type_dep_graph expand + incremental_reinfer metrics.
+aura_add_issue_test(test_issue_1528)
+aura_issue_test_link_llvm_jit(test_issue_1528)
+# Issue #1529: complete blame/provenance chain for occurrence narrowing
+# after delta conflicts (mutation_id + predicate + affected NodeId).
+aura_add_issue_test(test_issue_1529)
+# Pure ConstraintSystem unit test — no JIT link required.
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

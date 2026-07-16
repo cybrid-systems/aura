@@ -46,6 +46,31 @@ export struct Constraint {
     enum Kind { EQUAL, CONSISTENT };
     Kind kind;
     aura::core::TypeId lhs, rhs;
+    // Issue #1529: delta blame provenance (0 = unset).
+    // Stamped by add_delta from ConstraintSystem active context
+    // so cross-delta CONFLICT can dump a full blame chain.
+    std::uint64_t source_mutation_id = 0;
+    std::uint32_t predicate_cond_node = 0; // NodeId of if-predicate
+    std::uint32_t affected_node = 0;       // NodeId in affected set
+};
+
+// Issue #1529: one frame of a cross-delta blame chain.
+export struct DeltaBlameFrame {
+    std::uint64_t source_mutation_id = 0;
+    std::uint32_t predicate_cond_node = 0;
+    std::uint32_t affected_node = 0;
+    std::uint32_t constraint_index = UINT32_MAX;
+    std::uint8_t kind = 0; // Constraint::Kind
+};
+
+// Issue #1529: full blame chain persisted on CONFLICT.
+// complete == true when root_mutation_id + at least one frame
+// carries predicate_cond_node AND at least one carries affected_node
+// (the AC triple for AI-debuggable narrow/delta conflicts).
+export struct DeltaBlameChain {
+    std::vector<DeltaBlameFrame> frames;
+    std::uint64_t root_mutation_id = 0;
+    bool complete = false;
 };
 
 // Issue #118: explicit solve result. The previous `bool solve()`
@@ -128,6 +153,12 @@ export class ConstraintSystem {
     static constexpr std::size_t kReverifyCleanScanLimit = 256;
     static constexpr std::size_t kReverifyCleanScanMax = 4096;
     std::uint64_t active_mutation_id_ = 0;
+    // Issue #1529: active occurrence / affected node context stamped
+    // onto add_delta constraints (predicate + NodeId sequence).
+    std::uint32_t active_predicate_cond_node_ = 0;
+    std::uint32_t active_affected_node_ = 0;
+    std::vector<std::uint32_t> blame_affected_nodes_;
+    DeltaBlameChain last_blame_chain_;
     void note_touched_var(aura::core::TypeId id);
     [[nodiscard]] std::uint32_t union_find_rep_index(aura::core::TypeId id) const;
     [[nodiscard]] int constraint_reverify_priority(std::size_t idx) const;
@@ -203,6 +234,26 @@ public:
     // Issue #690: link cross-delta conflicts to the active mutation
     // for blame-chain completeness metrics.
     void set_active_mutation_id(std::uint64_t id) noexcept { active_mutation_id_ = id; }
+    // Issue #1529: stamp occurrence predicate + primary affected node
+    // onto subsequent add_delta constraints (and blame chain dump).
+    void set_active_blame_context(std::uint32_t predicate_cond_node,
+                                  std::uint32_t affected_node = 0) noexcept {
+        active_predicate_cond_node_ = predicate_cond_node;
+        active_affected_node_ = affected_node;
+    }
+    void push_blame_affected_node(std::uint32_t node) noexcept {
+        if (node != 0)
+            blame_affected_nodes_.push_back(node);
+    }
+    void clear_blame_context() noexcept {
+        active_predicate_cond_node_ = 0;
+        active_affected_node_ = 0;
+        blame_affected_nodes_.clear();
+        last_blame_chain_ = {};
+    }
+    [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
+        return last_blame_chain_;
+    }
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
     void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false);
@@ -512,6 +563,17 @@ public:
     // Issue #690: mutation-scoped touched_roots seeding for
     // infer_flat_partial structural typed mutation.
     void set_active_mutation_id(std::uint64_t id) noexcept { cs_.set_active_mutation_id(id); }
+    // Issue #1529: forward blame provenance context to ConstraintSystem.
+    void set_active_blame_context(std::uint32_t predicate_cond_node,
+                                  std::uint32_t affected_node = 0) noexcept {
+        cs_.set_active_blame_context(predicate_cond_node, affected_node);
+    }
+    void push_blame_affected_node(std::uint32_t node) noexcept {
+        cs_.push_blame_affected_node(node);
+    }
+    [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
+        return cs_.last_blame_chain();
+    }
     [[nodiscard]] std::size_t constraint_touched_roots_size() const noexcept {
         return cs_.touched_roots_size();
     }
@@ -1596,6 +1658,9 @@ export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::Fl
 // Issue #1456: prefers target_node over parent_id and stops
 // dirty-upward at Define/Let/Module boundaries so multi-form
 // workspaces do not re-infer sibling bindings.
+// Issue #1528: infer_flat_partial further refines the set via
+// type_dep_graph_ (TypeVar use-sites only) + solve_delta local
+// worklist prune (touched / occurrence roots).
 export std::vector<aura::ast::NodeId>
 affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
                                const aura::ast::MutationRecord& rec);
