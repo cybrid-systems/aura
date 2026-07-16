@@ -310,6 +310,9 @@ struct LLVMBuilder {
     // Runtime definition: extern "C" void aura_deopt_inc() in
     // aura_jit_runtime.cpp.
     llvm::Function* fn_deopt_inc = nullptr;
+    // Issue #1534: GuardShape dual-epoch fence — runtime call to
+    // aura_jit_guard_shape_epoch_check(fn_name) before narrow_evidence.
+    llvm::Function* fn_guard_shape_epoch_check = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
@@ -401,6 +404,11 @@ struct LLVMBuilder {
         fn_deopt_inc =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                    llvm::Function::ExternalLinkage, "aura_deopt_inc", mod);
+
+        // Issue #1534: i32 aura_jit_guard_shape_epoch_check(i8* name)
+        fn_guard_shape_epoch_check = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, {ptr_i8}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_guard_shape_epoch_check", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -794,64 +802,98 @@ struct LLVMBuilder {
                 if (metrics && inst.linear_ownership_state != 0)
                     metrics->guard_shape_linear_unified_checks.fetch_add(1,
                                                                          std::memory_order_relaxed);
+
+                // Issue #1534: dual-epoch fence BEFORE narrow_evidence /
+                // shape fast-path. Runtime probe:
+                //   aura_jit_guard_shape_epoch_check(fn.name)
+                // → 1 = stale → deopt (store false + aura_deopt_inc)
+                // → 0 = fresh → existing GuardShape body.
+                // capture_fn_epoch is wired at AuraJIT::compile(); epoch
+                // source is aura_aot_func_table_epoch (lockstep with
+                // CompilerService::bridge_epoch via atomic_bump).
+                auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                auto* entry_bb = irb->GetInsertBlock();
+                auto* parent_func = entry_bb->getParent();
+                auto* bb_stale = llvm::BasicBlock::Create(ctx, "gs_epoch_stale", parent_func);
+                auto* bb_ok = llvm::BasicBlock::Create(ctx, "gs_epoch_ok", parent_func);
+                auto* bb_merge = llvm::BasicBlock::Create(ctx, "gs_epoch_merge", parent_func);
+
+                {
+                    const char* fn_name = (fn.name && fn.name[0]) ? fn.name : "";
+                    auto* name_gv = irb->CreateGlobalString(fn_name, "gs_fn_name");
+                    auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                    auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                        name_gv->getValueType(), name_gv,
+                        llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
+                    // Issue #739: acquire fence before epoch-sensitive probe.
+                    irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
+                    auto* stale_i =
+                        irb->CreateCall(llvm::FunctionCallee(fn_guard_shape_epoch_check),
+                                        llvm::ArrayRef<llvm::Value*>{name_ptr});
+                    auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
+                    irb->CreateCondBr(is_stale, bb_stale, bb_ok);
+                }
+
+                // Stale path: deopt-to-interpreter (guard fails → generic).
+                irb->SetInsertPoint(bb_stale);
+                if (fn_deopt_inc)
+                    irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
+                store(inst.ops[0], c64(KWD_FALSE_VAL));
+                irb->CreateBr(bb_merge);
+
+                // Fresh path: existing narrow_evidence / shape check.
+                irb->SetInsertPoint(bb_ok);
                 // Issue #538: trust occurrence-narrowing evidence and
                 // skip the runtime shape check (mirrors ir_executor).
                 if (inst.narrow_evidence != 0) {
                     aura::compiler::jit_typed_mutation::record_narrow_evidence_hit();
                     store(inst.ops[0], c64(KWD_TRUE_VAL));
-                    return true;
+                    irb->CreateBr(bb_merge);
+                } else {
+                    auto* arg_val = load(inst.ops[1]);
+                    // The runtime shape of a tagged value: extract a 32-bit
+                    // shape id. We do this with a chain of icmp + select
+                    // to keep the codegen straight-line (no branches).
+                    // For tagged values: bit 0 = 0 means fixnum, bit 0 = 1
+                    // means ref. A positive non-ref value is fixnum.
+                    // We rely on the encoding (matches value_tags.h):
+                    //   shape = 1 (Int)    if is_fixnum  (val & 1 == 0, val > FLOAT_BIAS)
+                    //   shape = 2 (Float)  if val in (FLOAT_BIAS, STRING_BIAS]
+                    //   shape = 4 (String) if val <= STRING_BIAS
+                    //   shape = 3 (Bool)   if val == 3 or 7
+                    //   shape = 10 (Pair)  if val & 1 == 1 (ref)
+                    // The interpreter uses runtime_shape_of() which is
+                    // exact; here we use a compact approximation that the
+                    // JIT can do in O(1) with a couple of icmp:
+                    //   shape_id = (is_ref ? 10 : (is_int ? 1 : (is_string ? 4 : 0)))
+                    // This is conservative: e.g. a Float value is reported
+                    // as Dynamic (0) and the guard fails.
+                    auto* bit0 = irb->CreateAnd(arg_val, c64(1));
+                    auto* is_ref = irb->CreateICmpEQ(bit0, c64(1));
+                    // Issue #181 Cycle 2: v2 string encoding. Use
+                    // (v & 3) == 2 as the dedicated string tag, plus
+                    // a range check against STRING_BIAS_VAL_2.
+                    auto* low2 = irb->CreateAnd(arg_val, c64(3));
+                    auto* is_string_tag = irb->CreateICmpEQ(low2, c64(2));
+                    auto* is_string_approx = irb->CreateAnd(
+                        is_string_tag,
+                        irb->CreateICmpSLE(arg_val, c64(aura::compiler::types::STRING_BIAS_VAL_2)));
+                    // Combine: ref -> 10; string -> 4; else 1 (treat as
+                    // fixnum; over-approximation — interpreter re-checks).
+                    auto* pair_id = c64(SHAPE_PAIR);     // 10
+                    auto* string_id = c64(SHAPE_STRING); // 4
+                    auto* int_id = c64(SHAPE_INT);       // 1
+                    auto* shape_sel1 = irb->CreateSelect(is_ref, pair_id, int_id);
+                    auto* shape_val = irb->CreateSelect(is_string_approx, string_id, shape_sel1);
+                    // Compare against expected
+                    auto* matches = irb->CreateICmpEQ(shape_val, c64(inst.ops[2]));
+                    // Write 1 (true) on match, 0 (false) on mismatch
+                    auto* one_or_zero = irb->CreateZExt(matches, i64_ty);
+                    store(inst.ops[0], one_or_zero);
+                    irb->CreateBr(bb_merge);
                 }
-                // Issue #739: acquire fence before runtime shape probe.
-                irb->CreateCall(llvm::FunctionCallee(fn_epoch_acquire_fence));
-                auto* arg_val = load(inst.ops[1]);
-                // The runtime shape of a tagged value: extract a 32-bit
-                // shape id. We do this with a chain of icmp + select
-                // to keep the codegen straight-line (no branches).
-                auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                auto* not_int = irb->CreateICmpSGT(arg_val, c64(0));
-                // For tagged values: bit 0 = 0 means fixnum, bit 0 = 1
-                // means ref. A positive non-ref value is fixnum.
-                // We rely on the encoding (matches value_tags.h):
-                //   shape = 1 (Int)    if is_fixnum  (val & 1 == 0, val > FLOAT_BIAS)
-                //   shape = 2 (Float)  if val in (FLOAT_BIAS, STRING_BIAS]
-                //   shape = 4 (String) if val <= STRING_BIAS
-                //   shape = 3 (Bool)   if val == 3 or 7
-                //   shape = 10 (Pair)  if val & 1 == 1 (ref)
-                // For a simple Open-coded shape id, we use a single
-                // encoding that the IR interpreter also understands.
-                // The interpreter uses runtime_shape_of() which is
-                // exact; here we use a compact approximation that the
-                // JIT can do in O(1) with a couple of icmp:
-                //   shape_id = (is_ref ? 10 : (is_int ? 1 : (is_string ? 4 : 0)))
-                // This is conservative: e.g. a Float value is reported
-                // as Dynamic (0) and the guard fails. The
-                // interpreter's runtime_shape_of() is the source of
-                // truth; the JIT's approximation is only used as a
-                // fast path for the common case.
-                auto* bit0 = irb->CreateAnd(arg_val, c64(1));
-                auto* is_ref = irb->CreateICmpEQ(bit0, c64(1));
-                // Issue #181 Cycle 2: v2 string encoding. Use
-                // (v & 3) == 2 as the dedicated string tag, plus
-                // a range check against STRING_BIAS_VAL_2 (the
-                // safety belt, mirrors the C++ is_string helper).
-                auto* low2 = irb->CreateAnd(arg_val, c64(3));
-                auto* is_string_tag = irb->CreateICmpEQ(low2, c64(2));
-                auto* is_string_approx = irb->CreateAnd(
-                    is_string_tag,
-                    irb->CreateICmpSLE(arg_val, c64(aura::compiler::types::STRING_BIAS_VAL_2)));
-                // Combine: ref -> 10; string -> 4; else 1 (treat as
-                // fixnum; this is an over-approximation, which is
-                // fine because the interpreter re-checks on deopt).
-                auto* pair_id = c64(SHAPE_PAIR);     // 10
-                auto* string_id = c64(SHAPE_STRING); // 4
-                auto* int_id = c64(SHAPE_INT);       // 1
-                auto* shape_sel1 = irb->CreateSelect(is_ref, pair_id, int_id);
-                auto* shape_val = irb->CreateSelect(is_string_approx, string_id, shape_sel1);
-                // Compare against expected
-                auto* matches = irb->CreateICmpEQ(shape_val, c64(inst.ops[2]));
-                // Write 1 (true) on match, 0 (false) on mismatch
-                auto* one_or_zero = irb->CreateZExt(matches, i64_ty);
-                store(inst.ops[0], one_or_zero);
+
+                irb->SetInsertPoint(bb_merge);
                 return true;
             }
             case OpJump:
@@ -2047,6 +2089,9 @@ uint64_t aura_exception_fiber_count();
 void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
+// Issue #157 Phase 1c / #1534: deopt counter + GuardShape epoch fence.
+void aura_deopt_inc();
+int aura_jit_guard_shape_epoch_check(const char* name);
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
@@ -2416,6 +2461,10 @@ struct AuraJIT::Impl {
         reg("aura_jit_epoch_acquire_fence", (void*)aura_jit_epoch_acquire_fence);
         reg("aura_jit_linear_post_invalidate_safety",
             (void*)aura_jit_linear_post_invalidate_safety);
+        // Issue #1534: GuardShape dual-epoch fence + deopt counter for stale path.
+        reg("aura_jit_guard_shape_epoch_check", (void*)aura_jit_guard_shape_epoch_check);
+        reg("aura_deopt_inc", (void*)aura_deopt_inc);
+        reg("aura_get_defuse_version", (void*)aura_get_defuse_version);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);
@@ -2772,6 +2821,14 @@ ScalarFn AuraJIT::compile(const FlatFunction& fn) {
     // (not a reference) so it can be null in tests that construct
     // an Impl directly.
     auto result = impl_->compile(fn, &metrics_);
+    // Issue #1534: capture fn epoch at compile time so OpGuardShape's
+    // runtime is_fn_epoch_stale probe can detect post-compile bumps.
+    // Epoch source: aura_aot_func_table_epoch (kept in lockstep with
+    // CompilerService::bridge_epoch by atomic_bump_epochs_and_stamp_bridge).
+    // Capture even when compile returns nullptr (tracker may still exist).
+    if (fn.name && fn.name[0]) {
+        capture_fn_epoch(fn.name, aura_aot_func_table_epoch());
+    }
     // Issue #1512: on full lower success, stamp every opcode in the
     // FlatFunction into opcode_covered_mask (coverage observability).
     // On fail-fast unhandled, optional strict mode bumps consistency
