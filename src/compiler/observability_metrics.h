@@ -3235,6 +3235,9 @@ struct CompilerMetrics {
     // Issue #1538: combined post-mutation linear pipeline (invariant + enforce).
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_total{0};
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_unsafe_total{0};
+    // Issue #1540: JIT hot-path linear_post_mutate_enforce probes.
+    std::atomic<std::uint64_t> jit_linear_post_mutate_enforcements_total{0};
+    std::atomic<std::uint64_t> jit_linear_post_mutate_violations_total{0};
     std::atomic<std::uint64_t> linear_ownership_violation_prevented{0};
     // Issue #764: Arena AST / shared_ptr<FlatAST> lifetime safety
     // vs GC-managed Env/Closure in closure_bridge_ under

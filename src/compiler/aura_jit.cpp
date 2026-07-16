@@ -317,6 +317,8 @@ struct LLVMBuilder {
     // Issue #1535: Linear* dual-epoch fence — is_fn_epoch_stale +
     // is_env_frame_stale before Move/Borrow/Drop mutation.
     llvm::Function* fn_linear_epoch_safety_check = nullptr;
+    // Issue #1540: JIT Apply linear_post_mutate_enforce probe.
+    llvm::Function* fn_linear_post_mutate_enforce = nullptr;
     // Issue #1537: Apply-prologue dual-epoch helpers.
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
@@ -424,6 +426,11 @@ struct LLVMBuilder {
         fn_linear_epoch_safety_check = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, {ptr_i8, i8_ty, i32_ty}, false),
             llvm::Function::ExternalLinkage, "aura_jit_linear_epoch_safety_check", mod);
+
+        // Issue #1540: i32 aura_jit_linear_post_mutate_enforce(i32 env_id)
+        fn_linear_post_mutate_enforce = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, {i32_ty}, false), llvm::Function::ExternalLinkage,
+            "aura_jit_linear_post_mutate_enforce", mod);
 
         // Issue #1537: Apply prologue dual-epoch helpers.
         fn_get_current_bridge_epoch = llvm::Function::Create(
@@ -586,10 +593,11 @@ struct LLVMBuilder {
                 irb->CreateCall(fn_deopt_inc);
             return false;
         }
-        // Issue #740 + #1535: linear-owned instructions consult the dual-epoch
-        // safety hook (is_fn_epoch_stale + is_env_frame_stale + post-invalidate
-        // metrics). Return value is ignored here — Linear* ops that need
-        // deopt-on-stale use begin_linear_epoch_fence instead.
+        // Issue #740 + #1535 + #1540: linear-owned instructions consult the
+        // dual-epoch + linear_post_mutate_enforce safety hook. On unsafe
+        // (return 1) emit deopt_inc so JIT Apply falls back observability
+        // matches interpreter closure_needs_safe_fallback. Linear* ops that
+        // need body-skip deopt also use begin_linear_epoch_fence.
         auto linear_safety_probe = [&]() {
             if (inst.linear_ownership_state == 0)
                 return;
@@ -600,12 +608,25 @@ struct LLVMBuilder {
             auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
                 name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
-            irb->CreateCall(
+            auto* unsafe_i = irb->CreateCall(
                 llvm::FunctionCallee(fn_linear_epoch_safety_check),
                 llvm::ArrayRef<llvm::Value*>{
                     name_ptr,
                     llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
                     llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
+            // Issue #1540: on epoch stale OR linear post-mutate violation,
+            // bump deopt counter (interpreter fallback path observability).
+            auto* is_unsafe = irb->CreateICmpNE(unsafe_i, zero32);
+            auto* entry_bb = irb->GetInsertBlock();
+            auto* parent = entry_bb->getParent();
+            auto* bb_deopt = llvm::BasicBlock::Create(ctx, "lin_probe_deopt", parent);
+            auto* bb_ok = llvm::BasicBlock::Create(ctx, "lin_probe_ok", parent);
+            irb->CreateCondBr(is_unsafe, bb_deopt, bb_ok);
+            irb->SetInsertPoint(bb_deopt);
+            if (fn_deopt_inc)
+                irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
+            irb->CreateBr(bb_ok);
+            irb->SetInsertPoint(bb_ok);
         };
         // Issue #1535: dual-epoch fence for Linear* ops (Move/Borrow/Drop).
         // Emits runtime call to aura_jit_linear_epoch_safety_check; on stale
@@ -2182,6 +2203,7 @@ void aura_deopt_inc();
 int aura_jit_guard_shape_epoch_check(const char* name);
 int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
                                        std::uint32_t opcode);
+int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 std::uint64_t aura_jit_get_current_bridge_epoch(void);
 int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch);
 std::int64_t aura_jit_deopt_to_interpreter(const char* name);
@@ -2557,6 +2579,7 @@ struct AuraJIT::Impl {
         // Issue #1534 / #1535 / #1537: dual-epoch fences + deopt counter.
         reg("aura_jit_guard_shape_epoch_check", (void*)aura_jit_guard_shape_epoch_check);
         reg("aura_jit_linear_epoch_safety_check", (void*)aura_jit_linear_epoch_safety_check);
+        reg("aura_jit_linear_post_mutate_enforce", (void*)aura_jit_linear_post_mutate_enforce);
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
         reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
@@ -2747,11 +2770,12 @@ struct AuraJIT::Impl {
             builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
         }
 
-        // Issue #1537: dual-epoch Apply prologue — every JIT'd fn entry
-        // checks is_fn_epoch_stale before body execution. Minimal IR:
+        // Issue #1537 + #1540: Apply prologue — dual-epoch + linear_post_mutate.
         //   %cur = call @aura_jit_get_current_bridge_epoch()
         //   %stale = call @aura_jit_is_fn_epoch_stale(name, %cur)
-        //   br %stale, deopt, cont
+        //   %lin = call @aura_jit_linear_post_mutate_enforce(UINT32_MAX)
+        //   %unsafe = or %stale, %lin
+        //   br %unsafe, deopt, cont
         //   deopt: ret call @aura_jit_deopt_to_interpreter(name)
         //   cont:  <function body>
         builder.entry_body_bb = nullptr;
@@ -2771,8 +2795,17 @@ struct AuraJIT::Impl {
             auto* stale_i =
                 builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
                                         llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
-            auto* is_stale = builder.irb->CreateICmpNE(stale_i, zero32);
-            builder.irb->CreateCondBr(is_stale, bb_deopt, bb_cont);
+            // UINT32_MAX → use g_linear_env_id (host sets context before Apply).
+            auto* env_max = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0xFFFFFFFFu);
+            llvm::Value* lin_i = zero32;
+            if (builder.fn_linear_post_mutate_enforce) {
+                lin_i = builder.irb->CreateCall(
+                    llvm::FunctionCallee(builder.fn_linear_post_mutate_enforce),
+                    llvm::ArrayRef<llvm::Value*>{env_max});
+            }
+            auto* unsafe_i = builder.irb->CreateOr(stale_i, lin_i);
+            auto* is_unsafe = builder.irb->CreateICmpNE(unsafe_i, zero32);
+            builder.irb->CreateCondBr(is_unsafe, bb_deopt, bb_cont);
             // Deopt path: return interpreter-fallback sentinel.
             builder.irb->SetInsertPoint(bb_deopt);
             auto* deopt_ret =

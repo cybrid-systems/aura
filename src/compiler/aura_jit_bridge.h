@@ -195,6 +195,8 @@ void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint
 // Issue #1535: Linear* dual-epoch fence (Move/Borrow/Drop + safety_probe).
 // Combines #1477 is_fn_epoch_stale (fn name vs AOT table epoch) with
 // #1475 is_env_frame_stale logic (env context vs AOT defuse version).
+// Issue #1540: also consults linear_post_mutate_enforce (via host callback)
+// when env context is set — returns 1 on linear violation (deopt).
 // Returns 1 if stale/unsafe (caller must deopt / skip mutation), 0 if safe.
 // On every probe bumps jit_epoch_stale_check_total; on stale also bumps
 // compiler_live_closure_stale_prevented_total + linear_post_mutate_enforcements.
@@ -206,6 +208,18 @@ int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_
 // created). Pass env_id == UINT32_MAX to clear / disable env half.
 void aura_jit_set_linear_env_context(std::uint32_t env_id, std::uint64_t frame_version);
 void aura_jit_clear_linear_env_context(void);
+
+// Issue #1540: host wires Evaluator::linear_post_mutate_enforce.
+// Callback returns 1 if UNSAFE (deopt), 0 if safe. user_data is typically
+// Evaluator*. nullptr fn clears. Called from linear_safety_probe / Apply
+// prologue when env context is active.
+typedef int (*aura_linear_post_mutate_enforce_fn_t)(void* user_data, std::uint32_t env_id);
+void aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t fn,
+                                            void* user_data);
+// Direct probe (tests + prologue). env_id UINT32_MAX → use g_linear_env_id.
+// Returns 1 if unsafe (deopt), 0 if safe / no callback / no context.
+// Always bumps jit_linear_post_mutate_enforcements_total when callback set.
+int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 
 // Issue #358 — incremental re-AOT foundation.
 //
