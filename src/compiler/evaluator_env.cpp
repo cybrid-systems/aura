@@ -198,7 +198,47 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // string-keyed Env::lookup(name) will not find this frame's
 // bindings — that path is being migrated.
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
-    bindings_symid_.emplace_back(s, v);
+    bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
+}
+
+void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
+    bindings_symid_.emplace_back(s, std::move(v));
+    bindings_linear_ownership_state_.push_back(state);
+}
+
+void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
+    bindings_.emplace_back(std::string(n), std::move(v));
+    binding_index_[bindings_.back().first] = bindings_.size() - 1;
+    // Keep SymId SoA + linear state in lockstep when pool is set.
+    if (pool_) {
+        // pool_ is const*; intern is non-const but safe on shared pool.
+        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        bindings_symid_.emplace_back(s, bindings_.back().second);
+        bindings_linear_ownership_state_.push_back(state);
+    }
+}
+
+bool Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
+    for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
+        const std::size_t idx = i - 1;
+        if (bindings_symid_[idx].first == s) {
+            if (idx >= bindings_linear_ownership_state_.size())
+                bindings_linear_ownership_state_.resize(bindings_symid_.size(),
+                                                        linear_rt::Untracked);
+            bindings_linear_ownership_state_[idx] = state;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Env::set_linear_ownership_state_by_name(std::string_view n, std::uint8_t state) {
+    if (pool_) {
+        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        if (set_linear_ownership_state(s, state))
+            return true;
+    }
+    return false;
 }
 
 // Issue #145: SymId-based lookup. Iterates bindings_symid_
@@ -346,19 +386,57 @@ std::optional<types::EvalValue> Env::lookup_by_intern(std::string_view n,
 // bind_symid (the fast path). If you need both arrays in sync,
 // bind via SymId + have pool_ set.
 void EnvFrame::bind(const std::string& n, types::EvalValue v) {
-    bindings_.emplace_back(n, v);
+    bind_with_linear_state(n, std::move(v), linear_rt::Untracked);
 }
 
 // EnvFrame::bind_symid — parallel to Env::bind_symid. Mirrors
 // to bindings_ when pool_ is set so legacy lookup(string)
 // callers still find the param.
 void EnvFrame::bind_symid(aura::ast::SymId s, types::EvalValue v) {
+    bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
+}
+
+// Issue #1539: bind with explicit linear ownership state.
+void EnvFrame::bind_with_linear_state(const std::string& n, types::EvalValue v,
+                                      std::uint8_t state) {
+    bindings_.emplace_back(n, v);
+    // If pool_ can resolve name → SymId, keep primary SoA in sync.
+    if (pool_) {
+        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        bindings_symid_.emplace_back(s, v);
+        bindings_linear_ownership_state_.push_back(state);
+    }
+}
+
+void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v,
+                                            std::uint8_t state) {
     bindings_symid_.emplace_back(s, v);
+    bindings_linear_ownership_state_.push_back(state);
     if (pool_) {
         std::string_view sv = pool_->resolve(s);
         if (!sv.empty())
             bindings_.emplace_back(std::string(sv), v);
     }
+}
+
+bool EnvFrame::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
+    for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
+        const std::size_t idx = i - 1;
+        if (bindings_symid_[idx].first == s) {
+            if (idx >= bindings_linear_ownership_state_.size())
+                bindings_linear_ownership_state_.resize(bindings_symid_.size(),
+                                                        linear_rt::Untracked);
+            bindings_linear_ownership_state_[idx] = state;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool EnvFrame::set_linear_ownership_state_by_name(const std::string& n, std::uint8_t state) {
+    if (!pool_)
+        return false;
+    return set_linear_ownership_state(const_cast<aura::ast::StringPool*>(pool_)->intern(n), state);
 }
 
 // EnvFrame::lookup_local — Env::lookup minus parent walk +
@@ -473,6 +551,14 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // lazily via Env::bindings_with_names() when materialized.
     auto bss = e.bindings_symid();
     fr.bindings_symid_.assign(bss.begin(), bss.end());
+    // Issue #1539: copy linear ownership SoA (pad/truncate to match).
+    auto los = e.bindings_linear_ownership_state();
+    fr.bindings_linear_ownership_state_.assign(los.begin(), los.end());
+    if (fr.bindings_linear_ownership_state_.size() < fr.bindings_symid_.size()) {
+        fr.bindings_linear_ownership_state_.resize(fr.bindings_symid_.size(), linear_rt::Untracked);
+    } else if (fr.bindings_linear_ownership_state_.size() > fr.bindings_symid_.size()) {
+        fr.bindings_linear_ownership_state_.resize(fr.bindings_symid_.size());
+    }
     ensure_envframe_dual_path_consistency(fr);
     // Issue #1384: re-stamp version_ AFTER all assignments so the
     // frame captures defuse_version_ at COMPLETION, not at the
@@ -681,6 +767,14 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // Env::bindings_with_names() when an explicit named view is requested. Only the SymId-keyed
     // array is copied.
     ne.bindings_symid_mut() = fr.bindings_symid_;
+    // Issue #1539: copy linear ownership SoA into materialized Env.
+    ne.bindings_linear_ownership_state_mut() = fr.bindings_linear_ownership_state_;
+    if (ne.bindings_linear_ownership_state_mut().size() < ne.bindings_symid().size()) {
+        ne.bindings_linear_ownership_state_mut().resize(ne.bindings_symid().size(),
+                                                        linear_rt::Untracked);
+    }
+    // Also need access from Env for alloc_env_frame_from_env copy source:
+    // fr.bindings_linear_ownership_state_ is public on EnvFrame.
     if (fr.parent_id != NULL_ENV_ID) {
         ne.set_owner(this);
         ne.set_parent_id(fr.parent_id);
@@ -753,8 +847,49 @@ bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
     if (m) {
         m->linear_post_mutate_enforcements.fetch_add(1, std::memory_order_relaxed);
     }
-    // MVP: real per-cell linear scan deferred to #1543.
+    // Issue #1539: real per-cell linear scan via bindings_linear_ownership_state_.
+    // Return false if any captured binding is Moved (use-after-move / post-mutate
+    // violation). Other states (Owned/Borrowed/MutBorrowed/Untracked) are safe.
+    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    if (env_id >= env_frames_.size())
+        return true;
+    const EnvFrame& fr = env_frames_[env_id];
+    const std::size_t n =
+        std::min(fr.bindings_symid_.size(), fr.bindings_linear_ownership_state_.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        if (fr.bindings_linear_ownership_state_[i] == linear_rt::Moved) {
+            if (m) {
+                m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return false;
+        }
+    }
     return true;
+}
+
+bool Evaluator::mark_linear_binding_moved(Env& env, aura::ast::SymId s) {
+    bool any = env.set_linear_ownership_state(s, linear_rt::Moved);
+    const EnvId pid = env.parent_id();
+    if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
+        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        if (pid < env_frames_.size())
+            any = env_frames_[pid].set_linear_ownership_state(s, linear_rt::Moved) || any;
+    }
+    return any;
+}
+
+bool Evaluator::mark_linear_binding_moved_by_name(Env& env, std::string_view name) {
+    bool any = env.set_linear_ownership_state_by_name(name, linear_rt::Moved);
+    const EnvId pid = env.parent_id();
+    if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
+        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        if (pid < env_frames_.size())
+            any = env_frames_[pid].set_linear_ownership_state_by_name(std::string(name),
+                                                                      linear_rt::Moved) ||
+                  any;
+    }
+    return any;
 }
 
 // Issue #1538: combined post-mutation linear pipeline — runtime half.

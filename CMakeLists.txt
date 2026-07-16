@@ -5072,6 +5072,9 @@ aura_issue_test_link_llvm_jit(test_issue_1537)
 # Issue #1538: combined post_mutation_invariant_check + linear_post_mutate_enforce.
 aura_add_issue_test(test_issue_1538)
 aura_issue_test_link_llvm_jit(test_issue_1538)
+# Issue #1539: EnvFrame bindings_linear_ownership_state_ SoA + real enforce.
+aura_add_issue_test(test_issue_1539)
+aura_issue_test_link_llvm_jit(test_issue_1539)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
