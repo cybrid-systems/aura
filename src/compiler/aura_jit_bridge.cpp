@@ -634,6 +634,32 @@ extern "C" int aura_jit_is_deopt_pending(const char* name) {
     return g_batch_deopt_jit->is_deopt_pending(name) ? 1 : 0;
 }
 
+// Issue #1534: OpGuardShape dual-epoch fence (JIT Apply / GuardShape path).
+// Uses #1477 is_fn_epoch_stale + AOT table epoch (lockstep with bridge_epoch).
+extern "C" int aura_jit_guard_shape_epoch_check(const char* name) {
+    // Dual-reader probe: pairs with compiler_live_closure_stale_prevented.
+    aura_jit_closure_record_dual_check();
+    if (!g_batch_deopt_jit || !name || !name[0])
+        return 0;
+    const std::uint64_t cur = aura_aot_func_table_epoch();
+    // Observability: one check per GuardShape epoch probe (Apply path).
+    g_batch_deopt_jit->mutable_metrics().jit_epoch_stale_check_total.fetch_add(
+        1, std::memory_order_relaxed);
+    if (aot_metrics()) {
+        aot_metrics()->jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!g_batch_deopt_jit->is_fn_epoch_stale(name, cur))
+        return 0;
+    // Stale → deopt path: record dual-check stale + live-closure prevented.
+    aura_jit_closure_record_stale_deopt();
+    aura_jit_closure_record_safe_fallback();
+    if (aot_metrics()) {
+        aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    return 1;
+}
+
 extern "C" void aura_aot_record_deopt_on_steal() {
     if (aot_metrics())
         aot_metrics()->aot_deopt_on_steal_.fetch_add(1, std::memory_order_relaxed);

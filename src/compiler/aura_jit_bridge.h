@@ -160,6 +160,16 @@ std::uint64_t aura_jit_batch_deopt_entries_marked(void);
 std::uint64_t aura_jit_deopt_pending_count(void);
 int aura_jit_is_deopt_pending(const char* name);
 
+// Issue #1534: GuardShape dual-epoch fence — runtime helper called from
+// JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.
+// Returns 1 if the named fn is stale vs aura_aot_func_table_epoch()
+// (lockstep with CompilerService::bridge_epoch via atomic_bump), else 0.
+// Bumps AuraJIT::Metrics::jit_epoch_stale_check_total on every probe;
+// on stale, also records dual-check stale deopt + compiler_live_closure
+// stale-prevented (when aot_metrics is set). Host must have called
+// aura_set_jit_batch_deopt_target so is_fn_epoch_stale can be reached.
+int aura_jit_guard_shape_epoch_check(const char* name);
+
 // Issue #739: acquire fence before GuardShape / epoch-sensitive JIT paths.
 void aura_jit_epoch_acquire_fence(void);
 

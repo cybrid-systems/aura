@@ -147,6 +147,9 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_deopt_pending_count(void
 extern "C" __attribute__((weak)) int aura_jit_is_deopt_pending(const char* /*name*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {
     return 0;
 }
