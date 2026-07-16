@@ -3085,6 +3085,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_ownership_gc_root_stale_hits_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
+    // Issue #1478: linear post-mutate enforcement counters (Issue #1478
+    // AC #4). Distinct from the *_gc_* counters above (those track
+    // GC-root registration lifecycle; these track per-closure-call
+    // post-mutate enforcement).
+    //   - linear_post_mutate_enforcements: # of post-mutate checks
+    //     performed at apply_closure entry on captured closure envs
+    //     (extends closure_needs_safe_fallback from #1475 epoch check).
+    //   - linear_ownership_violation_prevented: # of times a captured
+    //     linear value was found in Moved/invalid state at
+    //     apply_closure entry, intercepted via safe-fallback path.
+    // MVP: counters are plumbed and incremented by the helper. Actual
+    // linear-cell scan (which captures the per-cell ownership state and
+    // detects Moved vs Owned/Borrowed) requires runtime linear cell
+    // tagging infrastructure deferred to #1543. This MVP ships the
+    // counter + helper + wiring so the enforcement point is observable
+    // end-to-end.
+    std::atomic<std::uint64_t> linear_post_mutate_enforcements{0};
+    std::atomic<std::uint64_t> linear_ownership_violation_prevented{0};
     // Issue #764: Arena AST / shared_ptr<FlatAST> lifetime safety
     // vs GC-managed Env/Closure in closure_bridge_ under
     // incremental re-lower + mutation (non-duplicative with #741

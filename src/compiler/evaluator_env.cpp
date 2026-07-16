@@ -675,6 +675,50 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
     return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
+// Issue #1478: linear post-mutate enforcement (passive MVP).
+// Parallel to is_env_frame_stale — extends the pre-call safety
+// check at closure invocation to include linear value ownership
+// state on captured bindings.
+//
+// MVP behavior:
+//   - Bumps linear_post_mutate_enforcements counter on every
+//     call (when env_id has a valid frame to validate).
+//   - Returns true (no Moved linear captures detected).
+//
+// Real per-cell linear scan requires runtime linear cell tagging
+// infrastructure (linear_ownership_state lookup table for cells
+// in EnvFrame.bindings_) deferred to #1543. The MVP plumbs the
+// enforcement point end-to-end and makes it observable via the
+// counter so production telemetry can track enforcement coverage
+// while the real scan is being built.
+//
+// When real linear scan ships (#1543), this function will:
+//   1. Walk env_frames_[env_id].bindings_ for cells tagged linear.
+//   2. Check each tagged cell's linear_ownership_state against
+//      current post-mutation state.
+//   3. Return false if any cell is Moved or invalid; bump
+//      linear_ownership_violation_prevented via the caller
+//      (closure_needs_safe_fallback).
+//
+// Coordination with dual-epoch contract:
+//   - Read-side: #1475 is_env_frame_stale + this helper.
+//   - Write-side: #1476 atomic_bump_epochs_and_stamp_bridge.
+//   - JIT-side: #1477 capture_fn_epoch + is_fn_epoch_stale.
+//
+// Counter bump pattern matches the closure_bridge_epoch_safety_
+// enforced family from #1475 — caller bumps linear_ownership_
+// violation_prevented on false return.
+bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
+    if (env_id == NULL_ENV_ID || env_id >= env_frames_.size())
+        return true; // no captures to validate, or invalid id (safety net)
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (m) {
+        m->linear_post_mutate_enforcements.fetch_add(1, std::memory_order_relaxed);
+    }
+    // MVP: real per-cell linear scan deferred to #1543.
+    return true;
+}
+
 // Issue #355: refresh_stale_frame_in_walk — single source of
 // truth for the "saw a stale frame during a walk" pattern.
 //
