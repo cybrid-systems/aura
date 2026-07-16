@@ -246,6 +246,10 @@ public:
         std::atomic<std::uint64_t> walk_active_closures_total{0};
         std::atomic<std::uint64_t> walk_active_closures_examined{0};
         std::atomic<std::uint64_t> walk_active_closures_stale_found{0};
+        // Issue #1537: Apply-prologue dual-epoch check (per native call).
+        std::atomic<std::uint64_t> prologue_epoch_check_total{0};
+        std::atomic<std::uint64_t> prologue_epoch_stale_deopt_total{0};
+        std::atomic<std::uint64_t> prologue_emit_total{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.

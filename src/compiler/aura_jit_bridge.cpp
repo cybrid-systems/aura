@@ -14,6 +14,8 @@
 
 // Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
 extern "C" std::uint64_t aura_get_defuse_version(void);
+// Defined in aura_jit_runtime.cpp (workspace deopt counter).
+extern "C" void aura_deopt_inc(void);
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -665,6 +667,50 @@ extern "C" std::uint64_t aura_jit_walk_active_closures_stale_found(void) {
     return g_batch_deopt_jit ? g_batch_deopt_jit->metrics().walk_active_closures_stale_found.load(
                                    std::memory_order_relaxed)
                              : 0;
+}
+
+// Issue #1537: Apply-prologue dual-epoch helpers (called from JIT'd native code).
+extern "C" std::uint64_t aura_jit_get_current_bridge_epoch(void) {
+    return aura_aot_func_table_epoch();
+}
+
+extern "C" int aura_jit_is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_epoch) {
+    // AC4: one bump per Apply prologue probe (fresh or stale).
+    if (g_batch_deopt_jit) {
+        g_batch_deopt_jit->mutable_metrics().jit_epoch_stale_check_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_batch_deopt_jit->mutable_metrics().prologue_epoch_check_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (aot_metrics()) {
+        aot_metrics()->jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!g_batch_deopt_jit || !name || !name[0])
+        return 0;
+    return g_batch_deopt_jit->is_fn_epoch_stale(name, current_bridge_epoch) ? 1 : 0;
+}
+
+extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
+    // Stale Apply entry: record dual-reader metrics + soft-deopt the tracker
+    // so subsequent get_function_ptr refuses native. Return fixnum 0 sentinel.
+    if (g_batch_deopt_jit) {
+        g_batch_deopt_jit->mutable_metrics().prologue_epoch_stale_deopt_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (name && name[0]) {
+            const auto cur = aura_aot_func_table_epoch();
+            (void)g_batch_deopt_jit->batch_deopt_for(name, cur);
+        }
+    }
+    aura_jit_closure_record_stale_deopt();
+    aura_jit_closure_record_safe_fallback();
+    if (aot_metrics()) {
+        aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aot_metrics()->jit_closure_stale_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->jit_closure_safe_fallbacks_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_deopt_inc();
+    return 0; // fixnum 0 sentinel
 }
 
 // Issue #1534: OpGuardShape dual-epoch fence (JIT Apply / GuardShape path).
