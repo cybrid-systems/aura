@@ -160,6 +160,12 @@ std::uint64_t aura_jit_batch_deopt_entries_marked(void);
 std::uint64_t aura_jit_deopt_pending_count(void);
 int aura_jit_is_deopt_pending(const char* name);
 
+// Issue #1536: bulk walk_active_closures over captured fns.
+// Returns number of stale fns found (marks deopt_pending on match).
+std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
+std::uint64_t aura_jit_walk_active_closures_total(void);
+std::uint64_t aura_jit_walk_active_closures_stale_found(void);
+
 // Issue #1534: GuardShape dual-epoch fence — runtime helper called from
 // JIT-compiled OpGuardShape before narrow_evidence / shape fast-path.
 // Returns 1 if the named fn is stale vs aura_aot_func_table_epoch()

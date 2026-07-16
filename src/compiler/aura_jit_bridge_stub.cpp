@@ -147,6 +147,16 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_deopt_pending_count(void
 extern "C" __attribute__((weak)) int aura_jit_is_deopt_pending(const char* /*name*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::size_t
+aura_jit_walk_active_closures(std::uint64_t /*current_bridge_epoch*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_walk_active_closures_total(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_walk_active_closures_stale_found(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }

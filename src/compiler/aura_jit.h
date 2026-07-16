@@ -242,6 +242,10 @@ public:
         std::atomic<std::uint64_t> deopt_pending_invoke_fallbacks{0};
         // Issue #1477: JIT-side dual-epoch fence counter.
         std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
+        // Issue #1536: bulk walk_active_closures (invalidate-time batch).
+        std::atomic<std::uint64_t> walk_active_closures_total{0};
+        std::atomic<std::uint64_t> walk_active_closures_examined{0};
+        std::atomic<std::uint64_t> walk_active_closures_stale_found{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
@@ -305,6 +309,14 @@ public:
     void capture_fn_epoch(const char* name, std::uint64_t bridge_epoch);
     [[nodiscard]] bool is_fn_epoch_stale(const char* name,
                                          std::uint64_t current_bridge_epoch) const;
+
+    // Issue #1536: bulk walk of active (captured) fns after invalidate /
+    // mark_define_dirty. O(C + T) where C = |fn_captured_epochs_| and
+    // T = |fn_trackers_| — not O(N²). For each captured fn with
+    // is_fn_epoch_stale(name, current): bump jit_epoch_stale_check_total
+    // and mark matching trackers deopt_pending (deopt-on-next-apply).
+    // Returns the number of stale fns found (not tracker entries).
+    std::size_t walk_active_closures(std::uint64_t current_bridge_epoch) noexcept;
 
 private:
     struct Impl;

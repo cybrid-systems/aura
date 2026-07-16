@@ -8384,6 +8384,8 @@ private:
         // and writers agree on the epoch.
         evaluator_.bump_defuse_version_for_test();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        // Keep AOT table epoch in lockstep (same as atomic_bump helper).
+        aura_aot_bump_func_table_epoch();
         // Issue #1414: invalidate solved_delta_cache_ so any
         // cached solve_delta results from the pre-mutation
         // state don't get reused. Paired with bump_bridge_epoch
@@ -8561,6 +8563,10 @@ private:
         invalidate_bridge_with_impact(name);
         for (auto& dep_name : dependents)
             invalidate_bridge_with_impact(dep_name);
+
+        // Issue #1536: bulk walk_active_closures after invalidate so any
+        // remaining captured fns (not hard-erased) are deopt-on-next-apply.
+        notify_walk_active_closures_(bridge_epoch());
 
         // Issue #601 / #1513: live IRClosure walk after invalidate.
         //
@@ -9099,6 +9105,14 @@ public:
     [[nodiscard]] std::uint64_t public_jit_deopt_pending_count() const noexcept {
         return jit_.deopt_pending_count();
     }
+    // Issue #1536: public test hook for bulk walk_active_closures.
+    std::size_t public_walk_active_closures() { return jit_.walk_active_closures(bridge_epoch()); }
+    [[nodiscard]] std::uint64_t public_walk_active_closures_total() const noexcept {
+        return metrics_.jit_walk_active_closures_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_walk_active_closures_stale_total() const noexcept {
+        return metrics_.jit_walk_active_closures_stale_total.load(std::memory_order_relaxed);
+    }
 
     // Issue #401: public test hook for invalidate_function. Lets tests
     // drive the BFS traversal directly without going through the Aura
@@ -9635,6 +9649,9 @@ public:
         } else {
             invalidate_bridge_for(name);
         }
+        // Issue #1536: after name-specific batch_deopt, bulk-walk all
+        // captured fns so un-named active closures also deopt-on-next-apply.
+        notify_walk_active_closures_(bridge_epoch());
     }
 
     // Issue #1523: mirror process-wide lock_order atomics into CompilerMetrics.
@@ -9699,6 +9716,26 @@ public:
             metrics_.jit_closure_stale_deopt_total.fetch_add(marked, std::memory_order_relaxed);
             metrics_.jit_closure_safe_fallbacks.fetch_add(marked, std::memory_order_relaxed);
             metrics_.jit_closure_safe_fallbacks_total.fetch_add(marked, std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #1536: bulk walk_active_closures after epoch bump / invalidate.
+    // Marks every captured fn that is_fn_epoch_stale for deopt-on-next-apply
+    // and pairs jit_epoch_stale_check_total with live_closure_stale_prevented.
+    void notify_walk_active_closures_(std::uint64_t current_epoch) {
+        const auto stale = jit_.walk_active_closures(current_epoch);
+        metrics_.jit_walk_active_closures_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.jit_walk_active_closures_stale_total.fetch_add(stale, std::memory_order_relaxed);
+        if (stale > 0) {
+            // AuraJIT already bumped its own jit_epoch_stale_check_total;
+            // mirror onto CompilerMetrics for dual-reader dashboards.
+            metrics_.jit_epoch_stale_check_total.fetch_add(stale, std::memory_order_relaxed);
+            metrics_.compiler_live_closure_stale_prevented_total.fetch_add(
+                stale, std::memory_order_relaxed);
+            metrics_.jit_closure_stale_deopt_total.fetch_add(stale, std::memory_order_relaxed);
+            metrics_.jit_closure_safe_fallbacks_total.fetch_add(stale, std::memory_order_relaxed);
+            metrics_.jit_fn_trackers_entries_marked_total.fetch_add(stale,
+                                                                    std::memory_order_relaxed);
         }
     }
 

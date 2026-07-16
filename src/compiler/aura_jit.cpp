@@ -38,6 +38,7 @@ namespace types = aura::compiler::types;
 #include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <string>
 #include "hash_meta.h" // #908
@@ -3348,6 +3349,67 @@ bool AuraJIT::is_fn_epoch_stale(const char* name, std::uint64_t current_bridge_e
     return it->second.load(std::memory_order_acquire) != current_bridge_epoch;
 }
 
+// Issue #1536: bulk walk of active captured fns — O(C + T).
+// Marks deopt-on-next-apply for every tracker whose base name is stale
+// vs current_bridge_epoch. Bumps jit_epoch_stale_check_total once per
+// stale fn found (not per tracker entry).
+std::size_t AuraJIT::walk_active_closures(std::uint64_t current_bridge_epoch) noexcept {
+    metrics_.walk_active_closures_total.fetch_add(1, std::memory_order_relaxed);
+    if (!impl_)
+        return 0;
+    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+
+    // Phase 1: O(C) — collect stale names from fn_captured_epochs_.
+    std::unordered_set<std::string> stale_names;
+    stale_names.reserve(impl_->fn_captured_epochs_.size());
+    std::size_t examined = 0;
+    std::size_t stale_found = 0;
+    for (const auto& [name, ep] : impl_->fn_captured_epochs_) {
+        ++examined;
+        const auto capt = ep.load(std::memory_order_acquire);
+        // Same predicate as is_fn_epoch_stale (never-captured already excluded).
+        if (capt == current_bridge_epoch)
+            continue;
+        stale_names.insert(name);
+        ++stale_found;
+        // AC3: one bump per stale fn found.
+        metrics_.jit_epoch_stale_check_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    metrics_.walk_active_closures_examined.fetch_add(examined, std::memory_order_relaxed);
+    metrics_.walk_active_closures_stale_found.fetch_add(stale_found, std::memory_order_relaxed);
+
+    if (stale_names.empty())
+        return 0;
+
+    // Phase 2: O(T) — mark matching trackers deopt_pending (deopt-on-next-apply).
+    auto base_name = [](const std::string& key) -> std::string {
+        const auto pos = key.find('#');
+        return pos == std::string::npos ? key : key.substr(0, pos);
+    };
+    for (auto& [key, entry] : impl_->fn_trackers_) {
+        if (!stale_names.count(key) && !stale_names.count(base_name(key)))
+            continue;
+        if (!entry.deopt_pending) {
+            entry.deopt_pending = true;
+            entry.compile_epoch = current_bridge_epoch;
+            metrics_.batch_deopt_entries_marked.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // Drop compile cache for stale names so next compile re-runs the pipeline.
+    {
+        std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
+        for (auto it = impl_->compile_fns_.begin(); it != impl_->compile_fns_.end();) {
+            if (stale_names.count(it->first) || stale_names.count(base_name(it->first)))
+                it = impl_->compile_fns_.erase(it);
+            else
+                ++it;
+        }
+    }
+
+    return stale_found;
+}
+
 std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epoch) noexcept {
     metrics_.batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
     if (!impl_ || !name || !name[0])
@@ -3514,6 +3576,11 @@ std::uint64_t AuraJIT::deopt_pending_count() const noexcept {
 void AuraJIT::capture_fn_epoch(const char*, std::uint64_t) {}
 bool AuraJIT::is_fn_epoch_stale(const char*, std::uint64_t) const {
     return false;
+}
+std::size_t AuraJIT::walk_active_closures(std::uint64_t current_bridge_epoch) noexcept {
+    metrics_.walk_active_closures_total.fetch_add(1, std::memory_order_relaxed);
+    (void)current_bridge_epoch;
+    return 0;
 }
 std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char*) const {
     return 0;

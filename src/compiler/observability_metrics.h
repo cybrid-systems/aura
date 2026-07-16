@@ -114,7 +114,11 @@ struct CompilerMetrics {
     //     check). Sustained high value vs. the captured-epoch
     //     miss rate (jit_epoch_stale_hits / jit_epoch_stale_check_total)
     //     indicates how often the JIT path sees a stale fn.
+    //     Also bumped by walk_active_closures (#1536) once per stale fn.
     std::atomic<std::uint64_t> jit_epoch_stale_check_total{0};
+    // Issue #1536: bulk walk_active_closures after invalidate / dirty mark.
+    std::atomic<std::uint64_t> jit_walk_active_closures_total{0};
+    std::atomic<std::uint64_t> jit_walk_active_closures_stale_total{0};
     // Issue #1476: unified mark_define_dirty / invalidate_function atomic
     // protocol observability.
     //   - bridge_epoch_bumps_total: lifetime total of bump_bridge_epoch()
