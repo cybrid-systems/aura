@@ -4244,12 +4244,39 @@ public:
         (void)evaluator_.resync_live_closure_env_versions_on_invalidate();
     }
 
-    void mark_define_dirty(const std::string& name) {
-        // Issue #1261: always bump defuse_version_ so nested lambda /
-        // macro hygiene dependents see a newer version even if this
-        // entry is missing from ir_cache_v2_ (AOT/JIT paths consult it).
+    // Issue #1476: atomic epoch bump + bridge stamp. Called from
+    // mark_define_dirty + invalidate_function so the two failure
+    // paths share the same atomic protocol. Caller MUST hold
+    // mutate_mtx_ exclusive (canonical lock order: mutate_mtx_
+    // first, then workspace_mtx_ / env_frames_mtx_ / dep_graph_mtx_
+    // per #1388).
+    void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {
+        // bridge_epoch FIRST (release ordering on mutation_epoch_).
+        bump_bridge_epoch();
+        // defuse_version_ (acq_rel via evaluator's
+        // bump_defuse_version_for_test). Both release so readers
+        // (apply_closure via #1475 helpers, JIT prologue) see
+        // consistent epoch values after lock release.
         evaluator_.bump_defuse_version_for_test();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        // Stamp bridges for this define with current (newly
+        // bumped) epoch — captures next-apply sees the bump.
+        invalidate_bridge_for(name);
+    }
+
+    void mark_define_dirty(const std::string& name) {
+        // Issue #1476: unify mark_define_dirty + invalidate_function as
+        // the single authoritative failure path. Acquire mutate_mtx_
+        // FIRST (canonical lock order per #1388) so the atomic epoch
+        // bump + dirty mark + BFS cascade are atomic w.r.t. concurrent
+        // invalidate / mutate.
+        std::unique_lock mutate_lock(mutate_mtx_);
+
+        // Issue #1261: always bump both epochs (via the unified helper)
+        // so nested lambda / macro hygiene dependents + closure-
+        // capture sites (#1475 dual check) see a newer version on
+        // next apply.
+        atomic_bump_epochs_and_stamp_bridge(name);
 
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
@@ -4269,11 +4296,6 @@ public:
                 metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Issue #225 cycle 3: invalidate the bridge data for
-        // the mutated function. The bridge_epoch_ field is
-        // bumped so any closure holding a reference will
-        // detect staleness and re-parse on next use.
-        invalidate_bridge_for(name);
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for
         // correctness but std::queue is more idiomatic and self-documenting.
@@ -4310,7 +4332,9 @@ public:
         std::unordered_set<std::string> visited;
         bfs.push(name);
         visited.insert(name);
+        std::size_t depth = 0;
         while (!bfs.empty()) {
+            ++depth;
             auto cur = bfs.front();
             bfs.pop();
             std::vector<std::string> called_by_snap;
@@ -4325,6 +4349,11 @@ public:
                 if (!visited.insert(dependent).second)
                     continue;
                 bfs.push(dependent);
+                // Issue #1476: per-dependent atomic bump (closure
+                // captures for the dependent need new epoch too —
+                // paired with the helper that pairs with #1475's
+                // is_bridge_stale / is_env_frame_stale dual check).
+                atomic_bump_epochs_and_stamp_bridge(dependent);
                 auto cit = ir_cache_v2_.find(dependent);
                 if (cit == ir_cache_v2_.end())
                     continue;
@@ -4354,12 +4383,18 @@ public:
                     centry.mark_all_blocks_dirty();
                     metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
                 }
-                // Issue #225 cycle 3: also invalidate the
-                // bridge data for the dependent. Closures
-                // that captured the mutated function's
-                // bindings will see the new epoch_ and re-parse.
-                invalidate_bridge_for(dependent);
             }
+        }
+        // Issue #1476 AC5: track invalidate_cascade_depth_max via
+        // CAS loop. Sustained high values indicate hot dep_graph
+        // edges (many siblings depend on the same mutated
+        // define).
+        const auto final_depth = static_cast<std::uint64_t>(depth);
+        auto expected = metrics_.invalidate_cascade_depth_max.load(std::memory_order_relaxed);
+        while (
+            final_depth > expected &&
+            !metrics_.invalidate_cascade_depth_max.compare_exchange_weak(expected, final_depth)) {
+            // retry
         }
         metrics_.dep_graph_hygiene_propagate.fetch_add(1, std::memory_order_relaxed);
     }
@@ -8152,6 +8187,17 @@ private:
         // decoupling of the two domains will fail to compile here
         // rather than silently desync.
         bump_bridge_epoch();
+        // Issue #1476 AC2: also bump defuse_version_ here so the
+        // dual-epoch atomicity matches mark_define_dirty (which
+        // now bumps both via atomic_bump_epochs_and_stamp_bridge).
+        // Without this, closures captured against EnvFrames from
+        // pre-mutation state would survive invalidate_function
+        // and read stale bindings on next apply — #1475's
+        // is_env_frame_stale helper catches them at apply time,
+        // but the write side should also be atomic so readers
+        // and writers agree on the epoch.
+        evaluator_.bump_defuse_version_for_test();
+        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
         // Issue #1414: invalidate solved_delta_cache_ so any
         // cached solve_delta results from the pre-mutation
         // state don't get reused. Paired with bump_bridge_epoch
@@ -9075,7 +9121,15 @@ public:
     // visible. The current implementation reuses
     // mutation_epoch_ which is bumped together with cache
     // invalidation in mark_define_dirty / mark_all_defines_dirty.
-    void bump_bridge_epoch() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_release); }
+    void bump_bridge_epoch() noexcept {
+        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        // Issue #1476: bump the bridge_epoch_bumps_total counter
+        // alongside the atomic so observability tracks every epoch
+        // advance. Pairs with mutation_epoch_ acquire-load counters
+        // (compiler_closure_epoch_mismatch_hits / is_bridge_stale
+        // helper from #1475) to verify epoch progress vs catch-up.
+        metrics_.bridge_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // Issue #1414: invalidate the solved_delta_cache_ and
     // bump solve_delta_cache_epoch_. Called from

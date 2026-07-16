@@ -110,6 +110,19 @@ struct CompilerMetrics {
     // (jit_cache_evictions - invalidate_function_calls) / invalidate_function_calls
     // tells you the average dependent fan-out per invalidation.
     std::atomic<std::uint64_t> invalidate_function_calls{0};
+    // Issue #1476: unified mark_define_dirty / invalidate_function atomic
+    // protocol observability.
+    //   - bridge_epoch_bumps_total: lifetime total of bump_bridge_epoch()
+    //     calls (one per mark_define_dirty + one per invalidate_function +
+    //     one per cascade dependent). Pairs with mutation_epoch_ acquire-
+    //     load counters (compiler_closure_epoch_mismatch_hits) to verify
+    //     epoch progress vs. catch-up.
+    //   - invalidate_cascade_depth_max: high-water mark of BFS cascade
+    //     depth from a single mark_define_dirty root. Sustained high
+    //     values indicate hot dep_graph edges (many siblings depend
+    //     on the same mutated define).
+    std::atomic<std::uint64_t> bridge_epoch_bumps_total{0};
+    std::atomic<std::uint64_t> invalidate_cascade_depth_max{0};
     // Issue #402: needs_tree_walker_fallback counters. The
     // (call) counter is bumped on every invocation (incl.
     // early returns). The (fast_path) counter bumps when
