@@ -2227,8 +2227,21 @@ public:
         }
 
         // ── Run escape analysis pass ───────────────────────
+        // Issue #1531: EscapeAnalysisWrap (JIT maps) + EscapeAnalysisPass
+        // (IRFunction::escape_map + linear ownership propagators) +
+        // LinearOwnershipPass for post-escape ownership validation.
         EscapeAnalysisWrap escape_pass;
         escape_pass.run(ir_mod);
+        EscapeAnalysisPass ir_escape;
+        ir_escape.run(ir_mod);
+        LinearOwnershipPass linear_own;
+        linear_own.run(ir_mod);
+        metrics_.ir_escape_analysis_runs_total.fetch_add(1, std::memory_order_relaxed);
+        if (ir_escape.escaped_slots_total() > 0) {
+            metrics_.ir_escape_slots_marked_total.fetch_add(ir_escape.escaped_slots_total(),
+                                                            std::memory_order_relaxed);
+        }
+        metrics_.linear_ownership_escape_check_total.fetch_add(1, std::memory_order_relaxed);
 
         // Issue #462: ShapeAwareFoldingPass — runs AFTER
         // EscapeAnalysis so it can use the per-function
@@ -7741,6 +7754,11 @@ private:
         if (total > 0) {
             metrics_.type_propagation_total_.fetch_add(total, std::memory_order_relaxed);
         }
+        // Issue #1530: extended opcode stamp hits.
+        if (tp.extended_ops_propagated() > 0) {
+            metrics_.type_propagation_extended_ops_total.fetch_add(tp.extended_ops_propagated(),
+                                                                   std::memory_order_relaxed);
+        }
     }
 
     // Issue #538: accumulate coercion zero-overhead metrics from a
@@ -7790,6 +7808,20 @@ private:
         if (zerooverhead_win_run > 0) {
             metrics_.coercion_zerooverhead_win_total.fetch_add(zerooverhead_win_run,
                                                                std::memory_order_relaxed);
+        }
+        // Issue #1530: latest CastOp elision win rate (basis points).
+        // win = eliminated / (castop_emitted + eliminated); store as 0..10000.
+        {
+            const auto eliminated = static_cast<std::uint64_t>(dce.eliminated_count());
+            const auto emitted = static_cast<std::uint64_t>(ts.castop_emitted());
+            const auto denom = emitted + eliminated;
+            if (denom > 0) {
+                const auto bp = (eliminated * 10000ull) / denom;
+                metrics_.cast_elision_win_rate_bp.store(bp, std::memory_order_relaxed);
+            }
+            if (eliminated > 0) {
+                metrics_.dce_cast_elision_total.fetch_add(eliminated, std::memory_order_relaxed);
+            }
         }
     }
 

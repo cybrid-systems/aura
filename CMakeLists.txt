@@ -5042,6 +5042,18 @@ aura_issue_test_link_llvm_jit(test_issue_1528)
 # after delta conflicts (mutation_id + predicate + affected NodeId).
 aura_add_issue_test(test_issue_1529)
 # Pure ConstraintSystem unit test — no JIT link required.
+# Issue #1530: expand TypePropagationPass opcode coverage + CastOp
+# elision win-rate metrics (pure IR unit + CompilerService metrics).
+aura_add_issue_test(test_issue_1530)
+aura_issue_test_link_llvm_jit(test_issue_1530)
+# Issue #1531: OwnershipEnv + escape re-analysis for linear safety
+# under typed_mutate (AST escape + IR EscapeAnalysisPass metrics).
+aura_add_issue_test(test_issue_1531)
+aura_issue_test_link_llvm_jit(test_issue_1531)
+# Issue #1532: ADT match exhaustiveness structured API + progressive
+# warn/error (strict_) + checked/diagnostics metrics.
+aura_add_issue_test(test_issue_1532)
+aura_issue_test_link_llvm_jit(test_issue_1532)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

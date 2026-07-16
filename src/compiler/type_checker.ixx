@@ -449,6 +449,29 @@ public:
                                         std::vector<OwnershipNote>& notes_out);
 };
 
+// Issue #1531: AST-level linear escape re-analysis for dirty
+// bindings (pairs OwnershipEnv validation with escape sites:
+// Call args, Lambda returns, CellSet/Hash-style stores).
+export struct LinearEscapeAnalysisResult {
+    std::size_t bindings_scanned = 0;
+    std::size_t escape_sites = 0;
+    std::size_t escape_reanalysis_hits = 0;
+    std::size_t dirty_revalidate_hits = 0;
+    std::size_t escape_while_borrowed = 0;
+    std::size_t escape_after_move = 0;
+};
+
+// Walk dirty linear bindings and report escape-related ownership
+// violations into notes_out (kinds: "escape-while-borrowed",
+// "escape-after-move"). Returns false if any violation found.
+// Always fills `out` counters for metrics.
+export bool analyze_linear_escape_for_dirty(const aura::ast::FlatAST& flat,
+                                            const aura::ast::StringPool& pool,
+                                            aura::ast::NodeId root,
+                                            const std::unordered_set<std::string>& dirty_bindings,
+                                            std::vector<OwnershipNote>& notes_out,
+                                            LinearEscapeAnalysisResult& out);
+
 // Issue #1458: discover linear-related bindings under a subtree
 // for post-mutate rebind/set-body ownership validation.
 export void discover_linear_bindings_in_subtree(const aura::ast::FlatAST& flat,
@@ -1635,6 +1658,28 @@ export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::Fl
                                                              const aura::ast::StringPool& pool,
                                                              aura::core::TypeRegistry& reg,
                                                              aura::ast::NodeId let_node);
+
+// Issue #1532: structured exhaustiveness result for AI-readable diag
+// + typed_mutate re-check dashboards.
+export struct MatchExhaustivenessResult {
+    bool checked = false;          // true if a real ADT subject + match site
+    bool exhaustive = true;        // true if no missing ctors (or N/A)
+    std::string subject_type_name; // ADT type name when known
+    std::vector<std::string> missing_constructors;
+    std::vector<std::string> all_constructors; // full ctor set from registry
+    aura::ast::NodeId match_let_node = aura::ast::NULL_NODE;
+};
+
+// Issue #1532: first-class check API. Wraps analyze_match_exhaustiveness
+// and fills the full ctor set for diagnostics. Does not emit diag —
+// callers decide Warning vs TypeError based on strict mode.
+export MatchExhaustivenessResult check_match_exhaustiveness(const aura::ast::FlatAST& flat,
+                                                            const aura::ast::StringPool& pool,
+                                                            aura::core::TypeRegistry& reg,
+                                                            aura::ast::NodeId let_node);
+
+// Format missing constructors for human/AI diagnostics.
+export std::string format_match_exhaustiveness_message(const MatchExhaustivenessResult& r);
 
 // Issue #148 Phase 3: identify the affected node set for a mutation.
 // Returns NodeIds in the dirty subtree (descendants of the mutated

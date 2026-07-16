@@ -686,6 +686,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> adt_pattern_narrow_refreshes_total{0};
     std::atomic<std::uint64_t> adt_non_exhaustive_caught_total{0};
     std::atomic<std::uint64_t> adt_pattern_provenance_complete_total{0};
+    // Issue #1532: type-checker match exhaustiveness observability.
+    //   - adt_exhaustiveness_checked_total: every successful
+    //     check_match_exhaustiveness / synthesize __match_tmp check
+    //   - non_exhaustive_match_diagnostics_total: times a non-exhaustive
+    //     match produced a Warning or TypeError diagnostic
+    std::atomic<std::uint64_t> adt_exhaustiveness_checked_total{0};
+    std::atomic<std::uint64_t> non_exhaustive_match_diagnostics_total{0};
     // Issue #693: Hardware backend SV commercial closed-loop.
     std::atomic<std::uint64_t> hardware_backend_hook_calls_total{0};
     std::atomic<std::uint64_t> commercial_reemits_total{0};
@@ -5264,6 +5271,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_propagation_total_{0};
     std::atomic<std::uint64_t> type_propagation_unknown_{0};
     std::atomic<std::uint64_t> type_propagation_int_width_{0};
+    // Issue #1530: extended TypePropagationPass opcode coverage +
+    // CastOp elision win-rate observability.
+    //   - type_propagation_extended_ops_total: stamps applied on the
+    //     #1530 extended set (Eq/Lt/Gt/Le/Ge/MakePair/Move/Borrow/
+    //     LinearWrap/CellGet)
+    //   - cast_elision_win_rate_bp: latest pipeline win rate in basis
+    //     points (0..10000) = eliminated / max(1, castop_emitted +
+    //     eliminated) * 10000 after TypeProp + DCE
+    std::atomic<std::uint64_t> type_propagation_extended_ops_total{0};
+    std::atomic<std::uint64_t> cast_elision_win_rate_bp{0};
     // Issue #306: hardware resource linear-ownership
     // observability counters (EDA track — wire/reg/mem/port
     // borrow + double-drive detection). Exposed via the
@@ -5323,6 +5340,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_relower_revalidate_hits{0};
     // Issue #688: infer_flat_partial OwnershipEnv post-mutate revalidate.
     std::atomic<std::uint64_t> linear_dirty_revalidate_count{0};
+    // Issue #1531: escape analysis + OwnershipEnv dirty revalidate.
+    //   - linear_escape_reanalysis_total: AST escape re-analysis runs
+    //     after dirty ownership validation (typed_mutate path)
+    //   - ownership_dirty_revalidate_hits: dirty bindings actually
+    //     scanned by escape re-analysis
+    //   - linear_escape_while_borrowed_total / escape_after_move_total
+    //     violation counters
+    //   - ir_escape_analysis_runs_total / ir_escape_slots_marked_total
+    //     IR EscapeAnalysisPass observability
+    std::atomic<std::uint64_t> linear_escape_reanalysis_total{0};
+    std::atomic<std::uint64_t> ownership_dirty_revalidate_hits{0};
+    std::atomic<std::uint64_t> linear_escape_while_borrowed_total{0};
+    std::atomic<std::uint64_t> linear_escape_after_move_total{0};
+    std::atomic<std::uint64_t> ir_escape_analysis_runs_total{0};
+    std::atomic<std::uint64_t> ir_escape_slots_marked_total{0};
     // Issue #747: linear + Occurrence predicate-branch safety under typed mutate.
     std::atomic<std::uint64_t> linear_occurrence_revalidate_hits_total{0};
     std::atomic<std::uint64_t> linear_occurrence_escape_prevented_total{0};
