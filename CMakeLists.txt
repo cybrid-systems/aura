@@ -5643,6 +5643,17 @@ aura_issue_test_link_llvm_jit(test_issue_1474)
 # multi-fiber stress test is deferred to follow-up issues.
 aura_add_issue_test(test_issue_1475)
 aura_issue_test_link_llvm_jit(test_issue_1475)
+# Issue #1476: Unify mark_define_dirty / invalidate_function + atomic
+# bridge_epoch + mutation_epoch bump protocol. This test verifies
+# the MVP: bridge_epoch_bumps_total wired to bump_bridge_epoch +
+# mark_define_dirty acquires mutate_mtx_ + bumps BOTH epochs
+# (bridge_epoch via mutation_epoch_ release + defuse_version acq_rel)
+# atomically via atomic_bump_epochs_and_stamp_bridge helper +
+# invalidate_cascade_depth_max tracked via CAS loop. JIT fn_trackers_
+# notify + lock-ordering audit + multi-fiber concurrent stress +
+# typed_mutate migration deferred to follow-up issues.
+aura_add_issue_test(test_issue_1476)
+aura_issue_test_link_llvm_jit(test_issue_1476)
 # Issue #633: stdlib commercial-evolution reverse-ask observability
 # foundation — 1 new Aura primitive
 # (query:stdlib-compiler-demands-stats-hash) + 2 new atomics
