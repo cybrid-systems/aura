@@ -485,6 +485,23 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     return id;
 }
 
+// Issue #1482 Commit 3 (desync strengthen, part A): post-Commit 1/2 the legacy
+// `bindings_` array is no longer eagerly populated — it stays empty until a
+// caller invokes `Env::bindings_with_names()` (which materializes via
+// `pool_->resolve()` + `"@<symid:N>"` fallback). The legacy size-only
+// check `bindings_.size() != bindings_symid_.size()` will now always fire
+// (0 vs N) for any non-empty frame, which is observability noise, not
+// semantic desync. Kept the legacy `bump_envframe_desync_detected()` counter
+// as a "lazy materialization not yet fired" hint; the real semantic check
+// (compare `Env::bindings_with_names()` output against a synthesized expected
+// view from `bindings_symid_` + `pool_->resolve()`) is deferred to followup
+// `#1550` (dual-path consistency validation in walk/GC paths).
+//
+// Future work (Commit 3 part B, deferred): replace this size-only check with
+// a semantic comparison that compares `Env::bindings_with_names()` output
+// against a synthesized expected view derived from `bindings_symid_` +
+// `pool_->resolve()`. That is O(N) per frame at consistency-check time but
+// catches actual mismatches (not just empty-vs-populated).
 void Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept {
     if (fr.bindings_.size() != fr.bindings_symid_.size()) {
         bump_envframe_desync_detected();
