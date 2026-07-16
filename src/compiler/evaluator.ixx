@@ -4193,8 +4193,29 @@ public:
         if (mutation_boundary_depth() > 0) {
             bump_gc_safepoint_deferred();
             bump_orchestration_llm_gc_safepoint_adapted();
+            // Issue #1483 C4: natural defer path also bumps the
+            // adaptive threshold (the same pressure that triggered
+            // mutation_boundary_depth > 0 is a pressure signal for
+            // the adaptive heuristic). Doubles the threshold.
+            bump_safepoint_adaptive_threshold();
             return 1;
         }
+        // Issue #1483 C4: adaptive-threshold consult at the
+        // immediate path. When the threshold is > 0 AND the
+        // current per-fiber mutation_stack_depth exceeds the
+        // threshold (pressure signal), force deferral instead
+        // of immediate. Bumps the adaptive-defer counter
+        // (distinct from the natural-defer path) and doubles
+        // the threshold.
+        if (should_adapt_safepoint_threshold()) {
+            bump_gc_safepoint_deferred();
+            bump_safepoint_adaptive_defer_count();
+            bump_safepoint_adaptive_threshold();
+            return 1;
+        }
+        // No adaptive pressure: reset the threshold so future
+        // immediate paths aren't deferred by stale state.
+        reset_safepoint_adaptive_threshold();
         // Issue #1515: at immediate safepoint, sync linear roots +
         // bridge_epoch then probe EnvFrame ownership (supersedes
         // probe-only #683 path — still probes inside sync).
@@ -7176,6 +7197,70 @@ public:
             return 0;
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
         return m->per_fiber_mutation_stack_depth_current_max.load(std::memory_order_relaxed);
+    }
+    // Issue #1483 C4: bump_safepoint_adaptive_threshold — CAS-loop
+    // exponential backoff. Doubles the current threshold on each
+    // call, capped at kSafepointAdaptiveThresholdMax (1024). The
+    // CAS retry pattern matches bump_per_fiber_mutation_stack_depth_max
+    // from C2 (CAS under contention is benign — the doubling only
+    // depends on "is current < target").
+    void bump_safepoint_adaptive_threshold() const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        constexpr std::uint64_t kMax = 1024;
+        std::uint64_t cur = m->safepoint_adaptive_threshold.load(std::memory_order_relaxed);
+        while (cur < kMax) {
+            const std::uint64_t next = (cur == 0) ? 1 : (cur * 2);
+            const std::uint64_t capped = next > kMax ? kMax : next;
+            if (m->safepoint_adaptive_threshold.compare_exchange_weak(cur, capped,
+                                                                      std::memory_order_relaxed))
+                break;
+        }
+    }
+    // Issue #1483 C4: reset_safepoint_adaptive_threshold — zeroes
+    // the threshold (called when an immediate safepoint succeeds
+    // and the pressure signal drops).
+    void reset_safepoint_adaptive_threshold() const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->safepoint_adaptive_threshold.store(0, std::memory_order_relaxed);
+    }
+    // Issue #1483 C4: bump_safepoint_adaptive_defer_count — increments
+    // the adaptive-defer counter (distinct from the natural
+    // mutation_boundary_depth > 0 defer path).
+    void bump_safepoint_adaptive_defer_count() const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->safepoint_adaptive_defer_count.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_safepoint_adaptive_threshold() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->safepoint_adaptive_threshold.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_safepoint_adaptive_defer_count() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        return m->safepoint_adaptive_defer_count.load(std::memory_order_relaxed);
+    }
+    // Issue #1483 C4: should_adapt_safepoint_threshold — returns true
+    // when the adaptive threshold should force deferral at the
+    // immediate path. The heuristic (per #1483 plan (a) exponential
+    // backoff): defer when threshold > 0 AND current per-fiber
+    // mutation_stack_depth > threshold. This is the "pressure
+    // signal" — if fibers are already deep, an immediate safepoint
+    // would cause excessive drift, so we back off.
+    [[nodiscard]] bool should_adapt_safepoint_threshold() const noexcept {
+        const std::uint64_t threshold = get_safepoint_adaptive_threshold();
+        if (threshold == 0)
+            return false;
+        const std::uint64_t pressure = get_per_fiber_mutation_stack_depth_current_max();
+        return pressure > threshold;
     }
     void bump_aot_hotswap_pipe(std::uint64_t n = 1) const noexcept {
         if (compiler_metrics_) {

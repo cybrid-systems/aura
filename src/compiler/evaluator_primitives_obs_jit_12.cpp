@@ -321,6 +321,68 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1483 C4: query:gc-safepoint-adaptive-stats — exposes
+    // the adaptive safepoint threshold + adaptive-defer counter
+    // added at C4 (observability_metrics.h safepoint_adaptive_*
+    // atomics + wire in request_gc_safepoint at evaluator.ixx:4191
+    // area + helper functions at evaluator.ixx:7198-7259 area).
+    // Returns a 4-field hash: {threshold, defer_count, schema=1483}.
+    //
+    // Closes EDSL-visibility gap — the C4 adaptive threshold logic
+    // lives on CompilerMetrics + Evaluator but no Aura primitive
+    // surfaces it, so orchestration queries + LLM-bottleneck
+    // monitors can't observe whether the adaptive heuristic is
+    // backing off (threshold > 0) or how many adaptive deferrals
+    // have happened (defer_count) without importing
+    // observability_metrics directly.
+    //
+    // The threshold-doubled-per-defer pattern matches the
+    // exponential-backoff heuristic (a) from the #1483 plan. The
+    // pair of threshold + defer_count lets orchestrators verify
+    // both the current backoff state AND the cumulative
+    // adaptive-defer pressure (vs. the natural mutation_boundary_
+    // depth > 0 defer path tracked by bump_gc_safepoint_deferred).
+    ObservabilityPrims::register_stats_impl(
+        "query:gc-safepoint-adaptive-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t threshold =
+                static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold());
+            const std::int64_t defer_count =
+                static_cast<std::int64_t>(ev.get_safepoint_adaptive_defer_count());
+            auto* ht = FlatHashTable::create(8) /* #1141 */;
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("threshold", threshold);
+            insert_kv("defer-count", defer_count);
+            insert_kv("schema", 1483);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 98 (orig lines 20621-20671)

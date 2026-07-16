@@ -685,6 +685,12 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // per_fiber_mutation_stack_depth_max + _current_max atomics
     // wired at evaluator_fiber_mutation.cpp:316 + :454 sites).
     "query:per-fiber-mutation-stack-stats",
+    // Issue #1483 — Adaptive GC safepoint threshold observability
+    // (sister to per-fiber-mutation-stack-stats above; reads the
+    // safepoint_adaptive_threshold + _defer_count atomics wired at
+    // request_gc_safepoint() evaluator.ixx:4191 area via the C4
+    // exponential-backoff heuristic (a)).
+    "query:gc-safepoint-adaptive-stats",
     // Issue #708 — AOT hot-reload refcount + checkpoint version
     "query:aot-reload-stats",
     "query:aot-checkpoint-version-stats",
