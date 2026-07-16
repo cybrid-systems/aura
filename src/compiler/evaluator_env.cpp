@@ -466,10 +466,11 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
     EnvFrame& fr = env_frames_[id];
     // e is `const`, so .bindings()/.bindings_symid() return
-    // std::span (const overload). Use assign from iterators
-    // to copy into the frame's vector storage.
-    auto bs = e.bindings();
-    fr.bindings_.assign(bs.begin(), bs.end());
+    // std::span (const overload). Issue #1482 Commit 2: bindings_symid_
+    // is PRIMARY on Env (bindings_ is empty post Commit 1 mirror drop) so
+    // only the SymId-keyed array gets copied into the new frame. The
+    // legacy bindings_ array on the frame stays empty and is populated
+    // lazily via Env::bindings_with_names() when materialized.
     auto bss = e.bindings_symid();
     fr.bindings_symid_.assign(bss.begin(), bss.end());
     ensure_envframe_dual_path_consistency(fr);
@@ -650,7 +651,11 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
                          cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
         }
     }
-    ne.bindings() = fr.bindings_;
+    // Issue #1482 Commit 2: bindings_symid_ is PRIMARY on Env (bindings_ is empty post Commit 1
+    // mirror drop). The legacy string-keyed assignments on ne.bindings() are no longer needed; the
+    // materialized env's bindings_ stays empty and is populated lazily via
+    // Env::bindings_with_names() when an explicit named view is requested. Only the SymId-keyed
+    // array is copied.
     ne.bindings_symid_mut() = fr.bindings_symid_;
     if (fr.parent_id != NULL_ENV_ID) {
         ne.set_owner(this);
