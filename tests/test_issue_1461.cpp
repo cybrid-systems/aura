@@ -14,7 +14,7 @@
 //   AC6: no bare demoted query:*-stats dependence (facade / contract only)
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <chrono>
 #include <fstream>

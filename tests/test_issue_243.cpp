@@ -45,7 +45,7 @@
 // new banners.
 
 
-#include "aot_mangle.h"
+#include "compiler/aot_mangle.h"
 
 // The C-linkage setter/getter for g_aot_defuse_version are
 // defined in aura_jit_bridge.cpp. test_issue_243 doesn't

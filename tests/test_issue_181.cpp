@@ -41,7 +41,7 @@
 
 // Use the cross-boundary header so the test exercises the
 // raw encoding (the same one lib/runtime.c uses).
-#include "value_tags.h"
+#include "compiler/value_tags.h"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

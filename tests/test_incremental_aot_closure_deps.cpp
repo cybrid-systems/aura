@@ -43,8 +43,8 @@
 
 #include "test_harness.hpp"
 
-#include "aura_jit_bridge.h"
-#include "observability_metrics.h"
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <cstdint>

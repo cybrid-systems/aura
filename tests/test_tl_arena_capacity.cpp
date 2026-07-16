@@ -1,7 +1,7 @@
 // test_tl_arena_capacity.cpp — Issue #1359: TLarena 1MB default + graceful OOM
 
 #include "test_harness.hpp"
-#include "runtime_shared.h"
+#include "compiler/runtime_shared.h"
 
 #include <atomic>
 #include <cstddef>

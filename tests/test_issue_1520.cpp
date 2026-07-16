@@ -17,7 +17,7 @@
 
 #include "test_harness.hpp"
 #include "core/persistent_child_vector.hh"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

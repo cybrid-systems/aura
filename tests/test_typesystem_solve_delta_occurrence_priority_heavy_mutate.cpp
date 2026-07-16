@@ -12,7 +12,7 @@
 //   - AC6: query regression (constraint-typed-mutate-stats)
 //   - AC7: multi-round mutate + typecheck stress (#674)
 
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 #include "test_harness.hpp"
 
 #include <atomic>

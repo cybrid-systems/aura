@@ -19,7 +19,7 @@
 
 #include "test_harness.hpp"
 #include "core/cpp26_contract_stats.h"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <print>

@@ -14,7 +14,7 @@
 //   AC6: collect_active_gc_roots skips expired epoch-stale ids
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <cstdint>
 #include <limits>

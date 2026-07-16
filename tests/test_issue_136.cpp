@@ -24,7 +24,7 @@
 // mangle_aot_name is defined in aot_mangle.h (extracted from
 // aura_jit_bridge.cpp in Issue #136 so tests can call it
 // without linking the full AOT bridge).
-#include "aot_mangle.h"
+#include "compiler/aot_mangle.h"
 
 // Unified test harness (Issue #226). Provides
 // CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local

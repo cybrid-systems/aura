@@ -17,7 +17,7 @@
 //   AC8: 100× record_shape + on_arena_compact stress, stable ratio > 0.95
 
 #include "test_harness.hpp"
-#include "shape_profiler.h"
+#include "compiler/shape_profiler.h"
 #include "core/arena_auto_policy_stats.h"
 
 #include <cstdint>

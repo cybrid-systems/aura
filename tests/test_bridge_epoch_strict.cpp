@@ -1,7 +1,7 @@
 // test_bridge_epoch_strict.cpp — Issue #1365: stamp bridge_epoch + strict is_bridge_stale
 
 #include "test_harness.hpp"
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <cstdint>

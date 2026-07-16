@@ -1,7 +1,7 @@
 // @category: integration
 // @reason: Issue #690 constraint typed-mutation reverify + blame
 
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <iostream>

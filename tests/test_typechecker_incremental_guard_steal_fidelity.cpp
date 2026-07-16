@@ -11,7 +11,7 @@
 //   - AC7:  aggregate counters monotonic after bump matrix
 //   - AC8:  query regression (#608 type-incremental, #509 constraint-delta)
 
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 #include "test_harness.hpp"
 
 #include <cstdint>

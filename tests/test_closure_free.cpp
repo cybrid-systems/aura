@@ -1,7 +1,7 @@
 // test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
 
 #include "test_harness.hpp"
-#include "runtime_shared.h"
+#include "compiler/runtime_shared.h"
 
 #include <atomic>
 #include <cstdint>

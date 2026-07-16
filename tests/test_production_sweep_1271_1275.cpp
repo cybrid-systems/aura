@@ -1,7 +1,7 @@
 // test_production_sweep_1271_1275.cpp — Issues #1271–#1275 Phase 1
 
 #include "test_harness.hpp"
-#include "aura_jit_bridge.h"
+#include "compiler/aura_jit_bridge.h"
 
 #include <cstdint>
 #include <string>

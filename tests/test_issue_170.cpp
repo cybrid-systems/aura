@@ -20,9 +20,9 @@
 //     8. Metrics::format() output includes unhandled_opcode value
 //     9. Counter can be reset (store 0) without affecting others
 
-#include "aura_jit.h"
-#include "spec_jit_controller.h" // before import std (shape.h pulls cstring)
-#include "test_harness.hpp"      // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
+#include "compiler/aura_jit.h"
+#include "compiler/spec_jit_controller.h" // before import std (shape.h pulls cstring)
+#include "test_harness.hpp"               // Provides CHECK / EXPECT_* / TEST / RUN_ALL_TESTS.
 
 // Stub: the full definition lives in service.ixx (under the
 // AURA_HAVE_LLVM guard). The test_issue_170 target only links

@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-#include "observability_metrics.h"
+#include "compiler/observability_metrics.h"
 #include "compiler/evaluator.ixx"
 #include "compiler/evaluator_fiber_mutation.cpp"
 

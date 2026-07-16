@@ -33,7 +33,7 @@
 // and reloads it for full end-to-end coverage.
 
 #include "test_harness.hpp"
-#include "aot_mangle.h"
+#include "compiler/aot_mangle.h"
 
 #include <atomic>
 #include <chrono>
