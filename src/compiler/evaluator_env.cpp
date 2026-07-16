@@ -187,19 +187,18 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // interns names but the body's `lookup(name)` does the
 // string-keyed loop). Without the mirror, lambda params would
 // be invisible to body code.
+// Issue #1482 Commit 1: bindings_symid_ is now PRIMARY on Env.
+// The legacy bindings_ + binding_index_ arrays are no longer
+// eagerly mirrored here; they are LAZY-derived from bindings_symid_
+// via Env::bindings_with_names() (which uses pool_->resolve() per
+// SymId, with "@<symid:N>" fallback when pool_ is null). The
+// followup commits (#1550 + #1551) handle the full lazy-derive
+// + desync tightening + dual-path consistency validation in
+// walk/GC paths. Until that lands, callers of the legacy
+// string-keyed Env::lookup(name) will not find this frame's
+// bindings — that path is being migrated.
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
     bindings_symid_.emplace_back(s, v);
-    if (pool_) {
-        // Resolve SymId → string once, then write to both
-        // arrays. The string resolve is O(string-length) at
-        // bind time; the int-compare is O(1) at lookup time.
-        // Net: lookup is the hot path, so this is a win.
-        std::string_view sv = pool_->resolve(s);
-        if (!sv.empty()) {
-            bindings_.emplace_back(std::string(sv), v);
-            binding_index_[bindings_.back().first] = bindings_.size() - 1; // #894
-        }
-    }
 }
 
 // Issue #145: SymId-based lookup. Iterates bindings_symid_
@@ -439,7 +438,17 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
 // position in the SoA arena); callers can override with an
 // explicit parent_id if they want to re-parent the frame.
 //
-// P0: Only bindings_ + bindings_symid_ are mirrored.
+// P0 + Issue #1482 Commit 1: bindings_ no longer eagerly mirrored
+// from Env::bind_symid — bindings_symid_ is PRIMARY on Env. The legacy
+// bindings_ array on the frame is populated lazily via
+// Env::bindings_with_names() (per-SymId pool_->resolve() with
+// "@<symid:N>" fallback when pool_ is null) and copied here only
+// when an explicit named-view is materialized by a caller. The
+// legacy EnvFrame::bindings() getter still returns a span over the
+// possibly-empty bindings_ array; SymId-keyed readers should use
+// Env::bindings_symid() instead. See followups #1550 / #1551 for
+// the follow-on lazy-derive + dual-path consistency validation work.
+//
 // primitives_/pool_/cells_ deliberately not part of the frame
 // (cells_ removed entirely from EnvFrame struct in P0 step 1;
 // resolution centralized on Evaluator). This keeps frames
