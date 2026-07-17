@@ -111,9 +111,10 @@ static void ac4_hygiene_stats_schema() {
     // #1501 structured surface on macro-hygiene-stats.
     auto h = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
     CHECK(h && is_hash(*h), "macro-hygiene-stats hash");
-    CHECK(href(cs, "query:macro-hygiene-stats", "schema") == 1609 ||
+    CHECK(href(cs, "query:macro-hygiene-stats", "schema") == 1613 ||
+              href(cs, "query:macro-hygiene-stats", "schema") == 1609 ||
               href(cs, "query:macro-hygiene-stats", "schema") == 1501,
-          "schema 1609|1501");
+          "schema 1613|1609|1501");
     CHECK(href(cs, "query:macro-hygiene-stats", "root-skips") >= 0, "root-skips");
     CHECK(href(cs, "query:macro-hygiene-stats", "hygiene-index-served") >= 0,
           "hygiene-index-served");

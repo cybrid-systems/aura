@@ -75,10 +75,12 @@ static void ac1_schema_orch_fields() {
     CompilerService cs;
     auto h = cs.eval(std::format("(engine:metrics \"{}\")", kQ));
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1599 || href(cs, "schema") == 1597 || href(cs, "schema") == 1593,
-          "schema 1599|1597|1593");
-    CHECK(href(cs, "issue") == 1599 || href(cs, "issue") == 1597 || href(cs, "issue") == 1593,
-          "issue 1599|1597|1593");
+    CHECK(href(cs, "schema") == 1613 || href(cs, "schema") == 1599 || href(cs, "schema") == 1597 ||
+              href(cs, "schema") == 1593,
+          "schema 1613|1599|1597|1593");
+    CHECK(href(cs, "issue") == 1613 || href(cs, "issue") == 1599 || href(cs, "issue") == 1597 ||
+              href(cs, "issue") == 1593,
+          "issue 1613|1599|1597|1593");
     CHECK(href(cs, "health-score") >= 0 && href(cs, "health-score") <= 100, "health");
     CHECK(href(cs, "orch-health-score") >= 0 && href(cs, "orch-health-score") <= 100,
           "orch-health");
