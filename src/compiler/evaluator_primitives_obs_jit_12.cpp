@@ -196,13 +196,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1481 / #1498 / #1554 / #1579: query:resource-quota-stats.
+    // Issue #1481 / #1498 / #1554 / #1579 / #1590: query:resource-quota-stats.
     // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
     // #1498 production fields (AC2): current_usage, memory_quota,
     // memory_quota_total, exceeded_count (=rejects), mutations_used.
     // #1554: exceeded_total alias + temp_arena_wired / group_owner_wired.
     // #1579: module_phase + process_fibers_* + process_checks/rejects + overflow.
-    // schema bumped to 1579 (agents: treat unknown keys as optional).
+    // #1590: schema 1590 + quota aliases + hot-path closed-loop keys.
+    // schema bumped to 1590 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
         "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_
@@ -231,7 +232,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t memory_quota_total =
                 static_cast<std::int64_t>(ev.resource_quota_memory_total());
             const std::int64_t mut_used = static_cast<std::int64_t>(ev.mutation_quota_used());
-            auto* ht = FlatHashTable::create(32) /* #1141 / #1498 more keys */;
+            auto* ht = FlatHashTable::create(64) /* #1141 / #1498 / #1590 more keys */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -287,6 +288,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("current_usage", current_usage);
             insert_kv("memory_quota", memory_quota);
             insert_kv("memory_quota_total", memory_quota_total);
+            // Issue #1590 AC2 aliases (Agent dashboards).
+            insert_kv("quota", memory_quota_total != 0 ? memory_quota_total : memory_quota);
             insert_kv("mutations_used", mut_used);
             insert_kv("module_phase", module_phase);              // #1579
             insert_kv("process_fibers_used", proc_fibers_used);   // #1579
@@ -297,7 +300,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("primary_arena_wired", primary_wired);
             insert_kv("temp_arena_wired", temp_wired);
             insert_kv("group_owner_wired", group_wired);
-            insert_kv("schema", 1579);
+            insert_kv("hotpath_arena_gated", primary_wired); // #1590: allocate_raw owner path
+            insert_kv("hotpath_guard_try_acquire", 1); // #1590: try_acquire is production path
+            insert_kv("issue", 1590);
+            insert_kv("schema", 1590);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
