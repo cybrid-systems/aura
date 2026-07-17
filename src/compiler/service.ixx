@@ -4405,7 +4405,8 @@ public:
         (void)evaluator_.resync_live_closure_env_versions_on_invalidate();
     }
 
-    // atomic_bump_epochs_and_stamp_bridge: defined later (Issue #1522/#1476/#1524
+    // atomic_bump_epochs_and_stamp_bridge: defined later
+    // (Issue #1522/#1476/#1524/#1496/#1607 — single soft/hard epoch protocol)
     // authoritative helper with AOT table epoch + JIT batch_deopt).
 
     void mark_define_dirty(const std::string& name) {

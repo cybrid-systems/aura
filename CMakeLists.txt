@@ -5217,6 +5217,9 @@ aura_issue_test_link_llvm_jit(test_incremental_relower)
 # Issue #1606: walk_active_closures + linear live scan on invalidate/compact/JIT.
 aura_add_issue_test(test_walk_active_closures_1606)
 aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)
+# Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
+aura_add_issue_test(test_unified_invalidation_1607)
+aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
