@@ -382,6 +382,133 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+
+    // Issue #1504: (query:mutation-boundary-depth) — current Guard
+    // nesting depth for Agent orchestration (0 = steal-safe / yield-safe).
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-depth", [&ev](const auto&) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
+        });
+
+    // Shared builder for safe-yield action surfaces (#1504).
+    auto build_safe_yield_hash = [&ev](int rc) -> EvalValue {
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k_str);
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto slot = ((h >> 1) + at) & (hcap - 1);
+                if (meta[slot] == 0xFF) {
+                    meta[slot] = fp;
+                    keys[slot] = make_string(kidx).val;
+                    vals[slot] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        const bool yielded = (rc == 0);
+        const bool skipped = (rc == 1);
+        insert_kv("yielded", yielded ? 1 : 0);
+        insert_kv("skipped-held", skipped ? 1 : 0);
+        insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
+        insert_kv("depth-slot", static_cast<std::int64_t>(ev.mutation_boundary_depth_slot_value()));
+        insert_kv("held-now", ev.mutation_boundary_held() ? 1 : 0);
+        insert_kv("safe-yield-ok-total", static_cast<std::int64_t>(ev.get_safe_yield_ok_total()));
+        insert_kv("safe-yield-skipped-held-total",
+                  static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
+        insert_kv("safe-yield-no-fiber-total",
+                  static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
+        insert_kv("schema", 1504);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+
+    // Issue #1504: (query:mutation-boundary-safe-yield) — attempt cooperative
+    // yield only at a safe point (depth==0). Side-effecting metrics surface.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-safe-yield",
+        [&ev, build_safe_yield_hash](const auto& a) -> EvalValue {
+            std::int64_t timeout_ms = 0;
+            if (!a.empty() && is_int(a[0]))
+                timeout_ms = as_int(a[0]);
+            const int rc = ev.try_safe_yield_at_boundary(timeout_ms);
+            return build_safe_yield_hash(rc);
+        });
+
+    // Issue #1504: (ast:yield-at-boundary [timeout-ms]) — alias for Agents
+    // that prefer the ast: namespace (same contract as safe-yield above).
+    ObservabilityPrims::register_stats_impl(
+        "ast:yield-at-boundary", [&ev, build_safe_yield_hash](const auto& a) -> EvalValue {
+            std::int64_t timeout_ms = 0;
+            if (!a.empty() && is_int(a[0]))
+                timeout_ms = as_int(a[0]);
+            const int rc = ev.try_safe_yield_at_boundary(timeout_ms);
+            return build_safe_yield_hash(rc);
+        });
+
+    // Issue #1504: lifetime counters + depth instrumentation (read-only).
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-safe-yield-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k_str);
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = make_string(kidx).val;
+                        vals[slot] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
+            insert_kv("depth-slot",
+                      static_cast<std::int64_t>(ev.mutation_boundary_depth_slot_value()));
+            insert_kv("nested-guard-depth-max",
+                      static_cast<std::int64_t>(ev.nested_guard_depth_max()));
+            insert_kv("per-fiber-stack-depth-max",
+                      static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max()));
+            insert_kv("held-now", ev.mutation_boundary_held() ? 1 : 0);
+            insert_kv("safe-yield-ok-total",
+                      static_cast<std::int64_t>(ev.get_safe_yield_ok_total()));
+            insert_kv("safe-yield-skipped-held-total",
+                      static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
+            insert_kv("safe-yield-no-fiber-total",
+                      static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
+            insert_kv("schema", 1504);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 42 (orig lines 5536-5657)

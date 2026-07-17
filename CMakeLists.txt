@@ -5142,6 +5142,9 @@ aura_issue_test_link_llvm_jit(test_issue_1502)
 # Issue #1503: incremental tag_arity_index + dirty linkage + rebuild policy.
 aura_add_issue_test(test_issue_1503)
 aura_issue_test_link_llvm_jit(test_issue_1503)
+# Issue #1504: first-class safe yield at MutationBoundaryGuard + depth stats.
+aura_add_issue_test(test_issue_1504)
+aura_issue_test_link_llvm_jit(test_issue_1504)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)

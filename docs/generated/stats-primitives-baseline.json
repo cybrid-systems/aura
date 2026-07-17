@@ -1,5 +1,5 @@
 {
-  "count": 421,
+  "count": 425,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -12,6 +12,7 @@
     "ast:ref-serialize",
     "ast:ref-valid?",
     "ast:ref-workspace-id",
+    "ast:yield-at-boundary",
     "closure:free-stats",
     "compile:aot-stats",
     "compile:arena-stats",
@@ -222,9 +223,12 @@
     "query:mutate-batch-atomic-stats",
     "query:mutate-batch-stats",
     "query:mutation-audit-log",
+    "query:mutation-boundary-depth",
     "query:mutation-boundary-hold-stats",
     "query:mutation-boundary-invariant-stats",
     "query:mutation-boundary-log",
+    "query:mutation-boundary-safe-yield",
+    "query:mutation-boundary-safe-yield-stats",
     "query:mutation-coordination-stats",
     "query:mutation-impact-snapshot",
     "query:mutation-log-compact-stats",
@@ -425,5 +429,5 @@
   ],
   "note": "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b / #1448). No new *-stats, string-*/json-*/math-*/vector-*/path-*/time-* (or : forms), or ast:ref-* without --update-baseline + PR justification. Prefer stdlib (lib/std/surface) and (engine:metrics). SlimSurface target public budget: 420.",
   "schema": 2,
-  "stats_count": 398
+  "stats_count": 402
 }

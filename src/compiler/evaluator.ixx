@@ -3216,6 +3216,13 @@ private:
     //     and decide when to enable lockless fast paths)
     mutable std::atomic<std::uint64_t> unsafe_boundary_attempts_{0};
     mutable std::atomic<std::uint64_t> lock_contention_us_{0};
+    // Issue #1504: first-class safe yield-at-boundary observability.
+    //   safe_yield_ok_          — cooperative yield at depth==0 succeeded
+    //   safe_yield_skipped_held_— refused because MutationBoundaryGuard held
+    //   safe_yield_no_fiber_    — safe point observed but no fiber to yield
+    mutable std::atomic<std::uint64_t> safe_yield_ok_total_{0};
+    mutable std::atomic<std::uint64_t> safe_yield_skipped_held_total_{0};
+    mutable std::atomic<std::uint64_t> safe_yield_no_fiber_total_{0};
     // Issue #439: GC safepoint + MutationBoundary
     // coordination observability. Bumped in
     // Fiber::check_gc_safepoint / request_gc_safepoint /
@@ -10948,6 +10955,27 @@ public:
     // unit" errors. The actual implementation is in evaluator_fiber_mutation.cpp
     // which DOES include messaging_bridge.h.
     void yield_mutation_boundary();
+
+    // Issue #1504: Agent-facing cooperative yield at a *safe* point.
+    // Contract (non-duplicative to #362 / #1014):
+    //   - If MutationBoundaryGuard is held (depth > 0 or held flag):
+    //     do NOT yield (would deadlock on workspace_mtx_); count skip.
+    //   - Else: yield with MutationBoundary reason when a fiber is
+    //     active; if no fiber (test/stdin path), no-op count as safe.
+    // Returns: 0 = yielded (or safe no-op no-fiber), 1 = skipped-held.
+    // Optional timeout_ms is reserved for future preemption (MVP ignored).
+    int try_safe_yield_at_boundary(std::int64_t timeout_ms = 0) noexcept;
+    [[nodiscard]] std::uint64_t get_safe_yield_ok_total() const noexcept {
+        return safe_yield_ok_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_safe_yield_skipped_held_total() const noexcept {
+        return safe_yield_skipped_held_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_safe_yield_no_fiber_total() const noexcept {
+        return safe_yield_no_fiber_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #1504: per-Evaluator thread-local Guard nesting (depth slot).
+    [[nodiscard]] int mutation_boundary_depth_slot_value() const noexcept;
 
     // Issue #285: explicit mutation-boundary flush. Called from
     // MutationBoundaryGuard destructor and Fiber::yield
