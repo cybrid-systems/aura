@@ -9,6 +9,7 @@
 #include "shape_jit_pass_closedloop_stats.h"
 #include "value_tags.h"
 #include "core/cpp26_contract_stats.h"
+#include "core/arena_auto_policy_stats.h" // Issue #1621: shape churn → arena policy
 #include <algorithm>
 #include <contracts>
 #include <cstdint>
@@ -419,6 +420,9 @@ bool ShapeProfiler::invalidate(FnKey fn) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
         shape_jit_pass::record_stability_churn_deopt();
         shape_jit_pass::record_speculative_win_lost();
+        // Issue #1621: Shape churn → Arena smart auto-compact closed-loop.
+        aura::core::arena_policy::signal_shape_churn();
+        aura::core::arena_policy::signal_dirty_cascade();
     }
     const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
     if (epoch > it->second.version)
@@ -448,6 +452,8 @@ void ShapeProfiler::invalidate_all() noexcept {
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1621: arena compact is a Shape↔Arena closed-loop edge —
+    // do not re-signal shape_churn (would re-enter compact). Metrics only.
 
     const auto keys = tracked_fns();
     if (keys.empty()) {

@@ -145,6 +145,111 @@ inline void record_shape_stability_post_compact_preserved(std::uint64_t n = 1) n
     shape_stability_post_compact_preserved_total.fetch_add(n, std::memory_order_relaxed);
 }
 
+// ── Issue #1621: smart auto-compact policy (frag + dirty + Shape churn + fiber) ──
+//
+// Closed-loop: dirty cascade / ShapeProfiler churn / high fragmentation /
+// defrag request → evaluate_auto_compact_policy → compact or live_defrag
+// at fiber safepoint (not during render hot path).
+
+// Shape churn pending (ShapeProfiler invalidate / stability loss).
+inline std::atomic<bool> shape_churn_pending{false};
+inline std::atomic<std::uint64_t> smart_policy_evaluations_total{0};
+inline std::atomic<std::uint64_t> smart_policy_triggers_total{0};
+inline std::atomic<std::uint64_t> shape_churn_triggers_total{0};
+inline std::atomic<std::uint64_t> boundary_exit_compact_total{0};
+inline std::atomic<std::uint64_t> fiber_transition_compact_total{0};
+inline std::atomic<std::uint64_t> live_defrag_policy_hits_total{0};
+inline std::atomic<std::uint64_t> smart_policy_soft_gated_total{0};
+inline std::atomic<std::uint64_t> smart_policy_wired{1};
+
+// Reason bits for AutoCompactDecision::reason.
+inline constexpr std::uint8_t kPolicyReasonFrag = 0x01;
+inline constexpr std::uint8_t kPolicyReasonSmallPool = 0x02;
+inline constexpr std::uint8_t kPolicyReasonDirty = 0x04;
+inline constexpr std::uint8_t kPolicyReasonShapeChurn = 0x08;
+inline constexpr std::uint8_t kPolicyReasonDefragReq = 0x10;
+inline constexpr std::uint8_t kPolicyReasonFiberSafe = 0x20;
+
+struct AutoCompactDecision {
+    bool should_compact = false;
+    bool prefer_live_defrag = false;
+    std::uint8_t reason = 0;
+};
+
+inline void signal_shape_churn() noexcept {
+    shape_churn_pending.store(true, std::memory_order_release);
+}
+
+[[nodiscard]] inline bool consume_shape_churn() noexcept {
+    return shape_churn_pending.exchange(false, std::memory_order_acq_rel);
+}
+
+[[nodiscard]] inline bool peek_shape_churn() noexcept {
+    return shape_churn_pending.load(std::memory_order_acquire);
+}
+
+// Production policy thresholds (documented for Agents).
+inline constexpr double kSmartFragThreshold = 0.30;
+inline constexpr double kSmartFragSoftThreshold = 0.15; // with defrag_req / churn
+inline constexpr double kSmartSmallPoolThreshold = 0.85;
+
+// Evaluate whether auto-compact / live-defrag should fire.
+// render_hotpath → always soft-gate (caller should skip).
+// fiber_active → mark fiber-safe reason (caller runs safepoint).
+[[nodiscard]] inline AutoCompactDecision
+evaluate_auto_compact_policy(double frag_ratio, bool defrag_requested, bool dirty_cascade,
+                             bool shape_churn, bool fiber_active, bool render_hotpath,
+                             double small_pool_util = 0.0) noexcept {
+    smart_policy_evaluations_total.fetch_add(1, std::memory_order_relaxed);
+    AutoCompactDecision d{};
+    if (render_hotpath) {
+        smart_policy_soft_gated_total.fetch_add(1, std::memory_order_relaxed);
+        return d;
+    }
+    const bool frag_high = frag_ratio >= kSmartFragThreshold;
+    const bool frag_soft = frag_ratio >= kSmartFragSoftThreshold;
+    const bool small_high = small_pool_util >= kSmartSmallPoolThreshold;
+    if (frag_high)
+        d.reason |= kPolicyReasonFrag;
+    if (small_high)
+        d.reason |= kPolicyReasonSmallPool;
+    if (dirty_cascade)
+        d.reason |= kPolicyReasonDirty;
+    if (shape_churn)
+        d.reason |= kPolicyReasonShapeChurn;
+    if (defrag_requested)
+        d.reason |= kPolicyReasonDefragReq;
+    if (fiber_active)
+        d.reason |= kPolicyReasonFiberSafe;
+
+    // Trigger when any pressure signal is high, or when a pending
+    // defrag request coincides with soft frag / dirty / shape churn
+    // (so we do not clear defrag_req on a no-op low-frag path).
+    d.should_compact =
+        frag_high || small_high || dirty_cascade || shape_churn ||
+        (defrag_requested && (frag_soft || dirty_cascade || shape_churn || frag_high));
+
+    // Prefer live_defrag when user/Agent requested defrag or freelist
+    // pressure is implied by high frag + defrag_req.
+    d.prefer_live_defrag = defrag_requested || (frag_high && (dirty_cascade || shape_churn));
+
+    if (d.should_compact) {
+        smart_policy_triggers_total.fetch_add(1, std::memory_order_relaxed);
+        if (shape_churn)
+            shape_churn_triggers_total.fetch_add(1, std::memory_order_relaxed);
+        if (d.prefer_live_defrag)
+            live_defrag_policy_hits_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return d;
+}
+
+inline void record_boundary_exit_compact() noexcept {
+    boundary_exit_compact_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void record_fiber_transition_compact() noexcept {
+    fiber_transition_compact_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::arena_policy
 
 #endif // AURA_CORE_ARENA_AUTO_POLICY_STATS_H
