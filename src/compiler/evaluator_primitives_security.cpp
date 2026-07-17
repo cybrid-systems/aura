@@ -11,7 +11,8 @@ module;
 #include "security_capabilities.h"
 #include "serve/http_health.h"
 #include "serve/metrics.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"              // FNV constants (#901)
+#include "core/capability_model.hh" // #1565: snapshot_capability_effect_stats
 
 module aura.compiler.evaluator;
 
@@ -84,7 +85,57 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.primitive_error_counter_ptr());
         }
         ev.set_sandbox_mode(want);
+        // #1565: mirror bool sandbox into effect Restricted/Off.
+        if (want && ev.effect_sandbox_mode() == 0)
+            ev.set_effect_sandbox_mode(1); // Restricted
+        if (!want && ev.effect_sandbox_mode() != 2)
+            ev.set_effect_sandbox_mode(0);
         return make_bool(old);
+    });
+
+    // Issue #1565: (security:set-effect-sandbox-mode! n) 0=Off 1=Restricted 2=Strict
+    add("security:set-effect-sandbox-mode!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()));
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard) &&
+            as_int(a[0]) < static_cast<std::int64_t>(ev.effect_sandbox_mode())) {
+            // Downgrade while sandboxed requires wildcard
+            ev.bump_capability_denial();
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "security:set-effect-sandbox-mode!: wildcard required to lower mode",
+                ev.primitive_error_counter_ptr());
+        }
+        const auto prev = ev.effect_sandbox_mode();
+        ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(as_int(a[0])));
+        return make_int(static_cast<std::int64_t>(prev));
+    });
+
+    // Issue #1565: (security:grant-effect! name effect-bits [tenant])
+    add("security:grant-effect!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+            return make_bool(false);
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_bool(false);
+        }
+        const auto sidx = as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto bits = static_cast<std::uint16_t>(as_int(a[1]));
+        const auto tenant = a.size() >= 3 && is_int(a[2]) ? static_cast<std::uint64_t>(as_int(a[2]))
+                                                          : ev.capability_tenant_id();
+        ev.grant_effect_capability(tenant, ev.string_heap_[sidx], bits, 0);
+        return make_bool(true);
+    });
+
+    // Issue #1565: (security:check-effect required-bits) → #t/#f
+    add("security:check-effect", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        const auto bits = static_cast<std::uint16_t>(as_int(a[0]));
+        return make_bool(ev.check_and_record_effect(bits, bits, "security:check-effect", 0,
+                                                    ev.capability_tenant_id(), 0));
     });
 
     ObservabilityPrims::register_stats_impl(
@@ -165,8 +216,67 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(ev.mutation_audit_total()))},
                 {"granted-capabilities",
                  make_int(static_cast<std::int64_t>(ev.granted_capability_count()))},
+                {"effect-sandbox-mode",
+                 make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()))},
             };
             return build_hash(kv);
+        });
+
+    // Issue #1565: query:capability-effect-stats
+    ObservabilityPrims::register_stats_impl(
+        "query:capability-effect-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::core::capability;
+            const auto snap = snapshot_capability_effect_stats();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->capability_effect_enforced_total.store(snap.enforced, std::memory_order_relaxed);
+                m->capability_effect_denied_total.store(snap.denied, std::memory_order_relaxed);
+                m->capability_provenance_mismatch_total.store(snap.provenance_mismatch,
+                                                              std::memory_order_relaxed);
+                m->capability_effect_grant_total.store(snap.grants, std::memory_order_relaxed);
+                m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1565);
+            insert_kv("active", 1);
+            insert_kv("phase", snap.phase);
+            insert_kv("enforced", static_cast<std::int64_t>(snap.enforced));
+            insert_kv("denied", static_cast<std::int64_t>(snap.denied));
+            insert_kv("provenance-mismatch", static_cast<std::int64_t>(snap.provenance_mismatch));
+            insert_kv("grants", static_cast<std::int64_t>(snap.grants));
+            insert_kv("revokes", static_cast<std::int64_t>(snap.revokes));
+            insert_kv("checks", static_cast<std::int64_t>(snap.checks));
+            insert_kv("audits", static_cast<std::int64_t>(snap.audits));
+            insert_kv("sandbox-mode", snap.sandbox_mode);
+            insert_kv("tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // (query:mutation-audit-log) — Issue #676: exportable security
