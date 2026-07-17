@@ -13,6 +13,18 @@
 ; ── 规则存储 ──────────────────────────────────────────────
 (define *rules* '())
 
+;; Issue #1585: rule:apply-all + rule:list-violations use `for-each` which
+;; isn't bound by any require in this file (map happens to be in scope
+;; via std/list, but for-each is missing). Define a local for-each with
+;; the standard Scheme contract (applies fn to each list element for
+;; side effects, returns unspecified when done).
+(define (for-each fn lst)
+  (let loop ((rest lst))
+    (if (null? rest) #f
+      (begin
+        (fn (car rest))
+        (loop (cdr rest))))))
+
 ; ── 内部：查找规则 ─────────────────────────────────────────
 (define (find-rule name)
   (let loop ((remaining *rules*))
