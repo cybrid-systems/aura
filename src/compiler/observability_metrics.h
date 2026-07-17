@@ -6281,6 +6281,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_jit_deopt_throttled{0};
     std::atomic<std::uint64_t> render_jit_aot_prefer_hits{0};
     std::atomic<std::uint64_t> render_deopt_throttle_window_ms{500};
+    // Issue #1563: AOT/hot preference hit rate in basis points (0..10000).
+    std::atomic<std::uint64_t> render_aot_hit_rate_bp{0};
+    std::atomic<std::uint64_t> render_critical_meta_count{0};
     std::atomic<std::uint64_t> render_hotpath_enter_total{0};
     // #1559: dirty short-circuit skip counter (mirrors arena_policy::render_hotpath_skip_total)
     std::atomic<std::uint64_t> render_hotpath_skip_total{0};

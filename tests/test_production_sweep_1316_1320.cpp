@@ -19,8 +19,9 @@ using aura::compiler::types::is_string;
 
 namespace {
 
+// Facade-only *-stats resolve via engine:metrics (#1449 demotion).
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    auto r = cs.eval(std::format("(hash-ref {} \"{}\")", aura::test::aura_call_expr(q), key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -55,7 +56,14 @@ int main() {
         auto throttled = href(cs, Q, "render-jit-deopt-throttled");
         CHECK(throttled >= 1, "second probe throttled within 500ms");
         auto st = cs.eval("(engine:metrics \"query:render-jit-stability-stats\")");
-        CHECK(st && is_string(*st), "query:render-jit-stability-stats string");
+        // #1563: structured hash (schema 1563); still reachable under same name.
+        CHECK(st && is_hash(*st), "query:render-jit-stability-stats hash (#1563)");
+        auto s =
+            cs.eval("(hash-ref (engine:metrics \"query:render-jit-stability-stats\") \"schema\")");
+        CHECK(s && is_int(*s) && as_int(*s) == 1563, "stability schema 1563");
+        auto thr = cs.eval(
+            "(hash-ref (engine:metrics \"query:render-jit-stability-stats\") \"deopt-throttled\")");
+        CHECK(thr && is_int(*thr) && as_int(*thr) >= 1, "stability stats deopt-throttled");
     }
 
     // #1317: terminal primitives + obs queries

@@ -244,6 +244,11 @@ aura_add_issue_test(test_dirty_delta_present)
 aura_issue_test_link_llvm_jit(test_dirty_delta_present)
 add_dependencies(all_test_issue_targets test_dirty_delta_present)
 
+# Issue #1563: render_critical deopt throttle under mutation pressure
+aura_add_issue_test(test_render_hotpath_stability_under_mutation)
+aura_issue_test_link_llvm_jit(test_render_hotpath_stability_under_mutation)
+add_dependencies(all_test_issue_targets test_render_hotpath_stability_under_mutation)
+
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)
