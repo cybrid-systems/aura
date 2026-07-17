@@ -182,7 +182,13 @@
                                                "COMPILE ERROR" "OUTPUT MISMATCH")
                                  " ===") fb))
       (set! fb (cons (string-append "Phase: " phase " (ratio: " (number->string ratio) ")") fb))
-      (set! fb (cons (string-append "Expected to contain: ") fb))
+      (set! fb (cons (string-append "Expected to contain: "
+                                    (let j ((rest expected-list) (acc ""))
+                                      (cond
+                                        ((null? rest) acc)
+                                        ((string=? acc "") (car rest))
+                                        (else (j (cdr rest) (string-append acc ", " (car rest)))))))
+                     fb))
       (set! fb (cons (string-append "Actual output: " output) fb))
       ;; Check for common issues
       (if (string=? (string-trim output) "")
