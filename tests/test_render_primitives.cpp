@@ -249,7 +249,7 @@ int main() {
     {
         CHECK(aura::renderer::kRenderPrimitivesPhase == 1, "kRenderPrimitivesPhase == 1");
         CHECK(aura::renderer::kRenderPrimitivesIssue == 1559, "kRenderPrimitivesIssue == 1559");
-        CHECK(aura::core::zero_copy::kZeroCopyOutputPhase == 1, "zero_copy phase");
+        CHECK(aura::core::zero_copy::kZeroCopyOutputPhase == 2, "zero_copy phase (#1561 Arena)");
     }
 
     if (g_failed)

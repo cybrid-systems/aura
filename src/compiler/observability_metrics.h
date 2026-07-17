@@ -5907,10 +5907,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> production_sweep_1177_1201_active{1};
     std::atomic<std::uint64_t> ffi_hot_path_scaffold{1};           // #1177
     std::atomic<std::uint64_t> zero_copy_framebuffer_supported{1}; // #1178
-    std::atomic<std::uint64_t> render_dirty_aware_scaffold{1};     // #1179/#1186
-    std::atomic<std::uint64_t> security_core_modules_scaffold{1};  // #1180
-    std::atomic<std::uint64_t> ansi_helper_supported{1};           // #1181
-    std::atomic<std::uint64_t> render_ffi_scaffold{1};             // #1182
+    // Issue #1561: Arena-backed zero-copy present path metrics
+    std::atomic<std::uint64_t> zero_copy_arena_alloc_bytes{0};
+    std::atomic<std::uint64_t> zero_copy_hit_in_render{0};
+    std::atomic<std::uint64_t> zero_copy_arena_path_active{1};
+    std::atomic<std::uint64_t> zero_copy_arena_acquire_count{0};
+    std::atomic<std::uint64_t> render_dirty_aware_scaffold{1};    // #1179/#1186
+    std::atomic<std::uint64_t> security_core_modules_scaffold{1}; // #1180
+    std::atomic<std::uint64_t> ansi_helper_supported{1};          // #1181
+    std::atomic<std::uint64_t> render_ffi_scaffold{1};            // #1182
     // #1354: render FFI registry + c-* hot path
     std::atomic<std::uint64_t> render_ffi_registered{0};
     std::atomic<std::uint64_t> render_ffi_hot_path_dispatches{0};

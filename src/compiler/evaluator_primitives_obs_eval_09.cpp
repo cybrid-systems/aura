@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/zero_copy_output.hh"
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
@@ -762,22 +763,30 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
     //   - schema == 781
     ObservabilityPrims::register_stats_impl(
         "query:zero-copy-framebuffer-stats", [&ev](const auto&) -> EvalValue {
-            const auto* m = ev.compiler_metrics()
-                                ? static_cast<const CompilerMetrics*>(ev.compiler_metrics())
-                                : nullptr;
-            // Reused #491 atomic — the pair allocation counter
-            // the body identifies as the "unnecessary allocations
-            // and copies" pressure signal.
+            auto* m = ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                            : nullptr;
+            // Mirror #1561 process-wide arena zero-copy metrics into CompilerMetrics.
+            const auto zc = aura::core::zero_copy::snapshot_zero_copy_stats();
+            if (m) {
+                m->zero_copy_arena_alloc_bytes.store(zc.arena_alloc_bytes,
+                                                     std::memory_order_relaxed);
+                m->zero_copy_hit_in_render.store(zc.hit_in_render, std::memory_order_relaxed);
+                m->zero_copy_arena_path_active.store(zc.arena_path_active,
+                                                     std::memory_order_relaxed);
+                m->zero_copy_arena_acquire_count.store(zc.arena_acquire_count,
+                                                       std::memory_order_relaxed);
+                // Arena path active ⇒ zero-copy supported flag stays 1.
+                if (zc.arena_path_active)
+                    m->zero_copy_framebuffer_supported.store(1, std::memory_order_relaxed);
+            }
             const std::int64_t pair_alloc_total =
                 m ? static_cast<std::int64_t>(m->pair_alloc_total.load(std::memory_order_relaxed))
                   : 0;
-            // Issues #1178/#1181/#1184 Phase 1: real support flags.
-            // zero_copy_output.ixx + batch_terminal ANSI helpers + render
-            // memory-profiling metrics are now scaffolded / active.
-            const std::int64_t zero_copy_supported =
-                m ? static_cast<std::int64_t>(
-                        m->zero_copy_framebuffer_supported.load(std::memory_order_relaxed))
-                  : 1;
+            // Issues #1178/#1181/#1184/#1561: Arena path marks zero-copy supported.
+            const std::int64_t zero_copy_supported = static_cast<std::int64_t>(
+                zc.zero_copy_supported != 0
+                    ? 1
+                    : (m ? m->zero_copy_framebuffer_supported.load(std::memory_order_relaxed) : 1));
             const std::int64_t ansi_helper_supported =
                 m ? static_cast<std::int64_t>(
                         m->ansi_helper_supported.load(std::memory_order_relaxed))
@@ -786,20 +795,18 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->render_memory_profiling_supported.load(std::memory_order_relaxed))
                   : 1;
-            // Recommendation: derived from the 3 support flags +
-            // pair_alloc_total signal.
             std::int64_t recommendation = 3;
             if (zero_copy_supported == 1 && ansi_helper_supported == 1 &&
                 memory_profiling_supported == 1)
-                recommendation = 0; // production-ready
+                recommendation = 0;
             else if (zero_copy_supported == 1 || ansi_helper_supported == 1 ||
                      memory_profiling_supported == 1)
-                recommendation = 1; // partial
+                recommendation = 1;
             else if (pair_alloc_total > 0)
-                recommendation = 2; // missing-primitive (allocations happening)
+                recommendation = 2;
             else
-                recommendation = 3; // early-stage (no allocation activity)
-            auto* ht = FlatHashTable::create(8);
+                recommendation = 3;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -817,12 +824,9 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == 0xFF) {
                         meta[idx] = fp;
-                        // Issue #1397: string_heap_ push_back atomic
-
                         std::lock_guard lock(ev.alloc_storage_lock_);
                         auto kidx = ev.string_heap_.size();
                         ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -835,7 +839,18 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ansi-helper-supported", ansi_helper_supported);
             insert_kv("memory-profiling-supported", memory_profiling_supported);
             insert_kv("recommendation", recommendation);
+            // #1561 Arena-backed path counters
+            insert_kv("zero-copy-arena-alloc-bytes",
+                      static_cast<std::int64_t>(zc.arena_alloc_bytes));
+            insert_kv("zero-copy-hit-in-render", static_cast<std::int64_t>(zc.hit_in_render));
+            insert_kv("zero-copy-arena-path-active",
+                      static_cast<std::int64_t>(zc.arena_path_active));
+            insert_kv("zero-copy-arena-acquire-count",
+                      static_cast<std::int64_t>(zc.arena_acquire_count));
+            insert_kv("zero-copy-phase", static_cast<std::int64_t>(zc.phase));
+            // schema stays 781 (#781 contract); arena extension via phase + fields (#1561).
             insert_kv("schema", 781);
+            insert_kv("arena-schema", 1561);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
