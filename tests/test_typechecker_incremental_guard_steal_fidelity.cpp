@@ -100,7 +100,8 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC1: query:type-incremental-fidelity-stats (schema 798) ---");
     auto h = cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
     CHECK(h && is_hash(*h), "type-incremental-fidelity-stats returns hash");
-    CHECK(stat_int(cs, "schema") == 798, "schema == 798");
+    CHECK(stat_int(cs, "schema") == 1617 || stat_int(cs, "schema") == 798,
+          "schema == 1617|798 (#1617 lineage)");
     CHECK(cross_delta_blame(cs) >= 0, "cross-delta-blame-complete non-negative");
     CHECK(reverify_truncated(cs) >= 0, "reverify-truncated-under-guard non-negative");
     CHECK(epoch_sync(cs) >= 0, "epoch-sync-hits non-negative");

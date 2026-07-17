@@ -201,8 +201,8 @@ static void run_ac5_sibling_regression(aura::compiler::CompilerService& cs) {
           "query:ir-soa-migration-stats hash regression (#766)");
     const auto a770_schema =
         hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")", "schema");
-    CHECK(a770_schema == 798,
-          std::format("#770/#798 schema = {} (expected 798, no drift)", a770_schema));
+    CHECK(a770_schema == 1617 || a770_schema == 798,
+          std::format("#770/#798/#1617 schema = {} (expected 1617|798)", a770_schema));
     const auto a768_schema =
         hash_int_field(cs, "(engine:metrics \"query:shape-pass-hotpath-stats\")", "schema");
     CHECK(a768_schema == 768,

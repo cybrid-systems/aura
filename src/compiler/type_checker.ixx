@@ -146,6 +146,11 @@ export class ConstraintSystem {
     // Issue #745: Union-Find roots from Occurrence-narrowed vars —
     // boosted in effective_reverify_limit + priority scan order.
     std::unordered_set<std::uint32_t> occurrence_priority_roots_;
+    // Issue #1617: Union-Find roots tied to Let-Polymorphism
+    // generalization / instantiation sites. Priority between
+    // occurrence (4) and plain touched (1); targeted reverify
+    // fallback when the clean-scan is truncated.
+    std::unordered_set<std::uint32_t> let_poly_dirty_roots_;
     // Issue #536: optional hooks for Evaluator observability
     // (touched_roots snapshot + cross-delta CONFLICT detection).
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
@@ -257,7 +262,16 @@ public:
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
     void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false);
+    // Issue #1617: mark a Let-Polymorphism free/instantiated var as a
+    // high-priority dirty root for solve_delta worklist + re-generalize.
+    void mark_let_poly_dirty(aura::core::TypeId var);
     [[nodiscard]] std::size_t touched_roots_size() const noexcept { return touched_roots_.size(); }
+    [[nodiscard]] std::size_t let_poly_dirty_roots_size() const noexcept {
+        return let_poly_dirty_roots_.size();
+    }
+    [[nodiscard]] std::size_t occurrence_priority_roots_size() const noexcept {
+        return occurrence_priority_roots_.size();
+    }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }

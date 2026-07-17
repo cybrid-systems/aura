@@ -4682,18 +4682,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       delta_win));
         });
 
-    // Issue #798: query:type-incremental-fidelity-stats — ConstraintSystem
-    // incremental fidelity under Guard/steal/MutationBoundary (refines #792/#793/
-    // #466/#409; non-duplicative with #608 type-incremental-stats and #509
-    // constraint-delta-stats).
+    // Issue #798 / #1617: query:type-incremental-fidelity-stats — ConstraintSystem
+    // incremental fidelity under Guard/steal/MutationBoundary + Let-Poly dirty
+    // invalidation (refines #792/#793/#466/#409/#745; non-duplicative with
+    // #608 type-incremental-stats and #509 constraint-delta-stats).
     //
-    // Fields (4 + sentinel):
+    // Fields (4 lineage + #1617 Let-Poly + sentinel):
     //   - cross-delta-blame-complete  type_incremental_cross_delta_blame_complete_total
     //   - reverify-truncated-under-guard
     //       type_incremental_reverify_truncated_under_guard_total
     //   - epoch-sync-hits             type_incremental_epoch_sync_hits_total
     //   - blame-chain-length          type_incremental_blame_chain_length_total
-    //   - schema == 798
+    //   - let-poly-dirty-roots        let_poly_dirty_roots_tracked_total
+    //   - let-poly-regeneralize       let_poly_regeneralize_check_total
+    //   - let-poly-truncation-fallback let_poly_truncation_fallback_total
+    //   - let-poly-priority-reverify  let_poly_priority_reverify_hits_total
+    //   - let-poly-post-mutation-scope let_poly_post_mutation_scope_total
+    //   - reverify-truncated          reverify_truncated_total
+    //   - solve-delta-worklist-peak   solve_delta_worklist_size_peak
+    //   - let-poly-wired              1
+    //   - schema == 1617 (lineage 798)
     ObservabilityPrims::register_stats_impl(
         "query:type-incremental-fidelity-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -4720,7 +4728,36 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(m->type_incremental_blame_chain_length_total.load(
                         std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            const std::int64_t let_poly_dirty =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_dirty_roots_tracked_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t let_poly_regen =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_regeneralize_check_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t let_poly_trunc =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_truncation_fallback_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t let_poly_pri =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_priority_reverify_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t let_poly_post =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_post_mutation_scope_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t reverify_trunc_all =
+                m ? static_cast<std::int64_t>(
+                        m->reverify_truncated_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t worklist_peak =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_worklist_size_peak.load(std::memory_order_relaxed))
+                  : 0;
+            // Power-of-2 capacity; 13 keys need headroom (create(16) can drop).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4747,11 +4784,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
+            // #798 lineage
             insert_kv("cross-delta-blame-complete", cross_delta_blame);
             insert_kv("reverify-truncated-under-guard", reverify_truncated);
             insert_kv("epoch-sync-hits", epoch_sync);
             insert_kv("blame-chain-length", blame_chain);
-            insert_kv("schema", 798);
+            // #1617 Let-Poly / solve_delta AC keys
+            insert_kv("let-poly-dirty-roots", let_poly_dirty);
+            insert_kv("let_poly_dirty_roots_tracked", let_poly_dirty);
+            insert_kv("let-poly-regeneralize", let_poly_regen);
+            insert_kv("let_poly_regeneralize_check", let_poly_regen);
+            insert_kv("let-poly-truncation-fallback", let_poly_trunc);
+            insert_kv("let-poly-priority-reverify", let_poly_pri);
+            insert_kv("let-poly-post-mutation-scope", let_poly_post);
+            insert_kv("reverify-truncated", reverify_trunc_all);
+            insert_kv("solve-delta-worklist-peak", worklist_peak);
+            insert_kv("solve_delta_worklist_size", worklist_peak);
+            insert_kv("let-poly-wired", 1);
+            insert_kv("issue", 1617);
+            insert_kv("schema", 1617); // lineage 798
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

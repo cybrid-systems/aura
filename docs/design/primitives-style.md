@@ -100,7 +100,7 @@ add("my-mutate-prim", [&ev, primitive_error_counter](auto a) {
 | `(query:concurrent-safety-full-cycle-stats)` | 755 | MutationBoundary + steal + AOT + GC full-cycle safety (6 fields) |
 | `(query:dead-coercion-elision-stats)`    | 799    | narrow_evidence CastOp elision + zero-overhead savings (5 fields) |
 | `(query:linear-postmutate-fidelity-stats)` | 800  | linear ownership post-mutate / steal / EnvFrame fidelity (5 fields) |
-| `(query:type-incremental-fidelity-stats)` | 798  | ConstraintSystem incremental fidelity under Guard/steal (5 fields) |
+| `(query:type-incremental-fidelity-stats)` | 1617 | ConstraintSystem fidelity + Let-Poly dirty / solve_delta (lineage 798) |
 | `(query:eda-infra-stats)`                | 841    | EDA production infrastructure parse/mutate/feedback/co-sim (5 fields) |
 | `(query:sv-commercial-emit-fidelity-stats)` | 801 | SV commercial emit roundtrip + dirty re-emit fidelity (5 fields) |
 | `(query:sv-verification-self-evolution-stats)` | 802 | feedback-driven SV self-evolution closed-loop (5 fields) |
@@ -199,15 +199,23 @@ Distinct from `(query:dead-coercion-elim-stats)` (#687): #799 is the narrow_evid
 
 Distinct from `(query:linear-ownership-gc-compiler-stats)` (#763): #800 tracks post-mutate fidelity under Guard/steal/rollback; #763 tracks compiler IRClosure GC root registration.
 
-### `(query:type-incremental-fidelity-stats)` fields (#798)
+### `(query:type-incremental-fidelity-stats)` fields (#1617 / lineage #798)
 
 - `cross-delta-blame-complete` — `type_incremental_cross_delta_blame_complete_total` (cross-delta conflicts with auditable `active_mutation_id` blame chain)
 - `reverify-truncated-under-guard` — `type_incremental_reverify_truncated_under_guard_total` (clean-constraint reverify scan capped while MutationBoundary active)
 - `epoch-sync-hits` — `type_incremental_epoch_sync_hits_total` (touched-root / narrow delta marks under Guard boundary)
 - `blame-chain-length` — `type_incremental_blame_chain_length_total` (cumulative blame chain steps on cross-delta hits)
-- `schema` — 798 (drift sentinel)
+- `let-poly-dirty-roots` / `let_poly_dirty_roots_tracked` — `let_poly_dirty_roots_tracked_total` (#1617)
+- `let-poly-regeneralize` — `let_poly_regeneralize_check_total` (re-generalize checks in solve_delta / post-mutation)
+- `let-poly-truncation-fallback` — `let_poly_truncation_fallback_total` (targeted reverify after reverify_truncated)
+- `let-poly-priority-reverify` — `let_poly_priority_reverify_hits_total`
+- `let-poly-post-mutation-scope` — `let_poly_post_mutation_scope_total`
+- `reverify-truncated` — `reverify_truncated_total`
+- `solve-delta-worklist-peak` / `solve_delta_worklist_size` — `solve_delta_worklist_size_peak`
+- `let-poly-wired` — 1
+- `schema` — **1617** (lineage 798)
 
-Distinct from `(query:type-incremental-stats)` (#608): #798 tracks Guard/steal/MutationBoundary coordination and blame completeness; #608 is the general incremental type reliability sum.
+Distinct from `(query:type-incremental-stats)` (#608): #798/#1617 track Guard/steal/MutationBoundary + Let-Poly dirty fidelity; #608 is the general incremental type reliability sum.
 
 ### `(query:eda-infra-stats)` fields (#841)
 
