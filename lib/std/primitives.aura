@@ -1,0 +1,98 @@
+; lib/std/primitives.aura — Engine primitives discoverability (#1552)
+;
+; Agent-facing facade over the C++ PrimRegistrar surface.
+; Implementation lives in src/compiler/evaluator_primitives_*.cpp
+; and is orchestrated by evaluator_primitives_registry.cpp.
+;
+; Import: (require "std/primitives" all:)
+; Docs:   docs/generated/primitives.md
+;         docs/generated/primitives-registry.md
+
+(export primitives:help primitives:list primitives:categories
+        primitives:entry-points primitives:registry-file
+        primitives:discover)
+
+; Canonical registry TU (central register_all_primitives).
+(define *primitives-registry-file*
+  "src/compiler/evaluator_primitives_registry.cpp")
+
+; High-level registration groups (mirrors register_all_primitives order).
+(define *primitives-categories*
+  (list
+    "type-char"
+    "pair-string"
+    "json"
+    "list"
+    "vector-hash"
+    "math-regex-arithmetic"
+    "reflect-type"
+    "query"
+    "runtime"
+    "test"
+    "diagnostic"
+    "misc"
+    "file"
+    "git"
+    "module"
+    "control"
+    "char"
+    "mutation"
+    "auto-evolve"
+    "workspace-query"
+    "mutate"
+    "workspace"
+    "persist"
+    "eval"
+    "observability"
+    "stdlib-review"
+    "eda"
+    "security"
+    "verify-tool"))
+
+; Agent entry points for introspection (engine primitives).
+(define *primitives-entry-points*
+  (list
+    (list "primitive:describe"
+          "(primitive:describe \"+\")  ; PrimMeta: arity/pure/doc")
+    (list "query:primitive-list-with-meta"
+          "(query:primitive-list-with-meta)  ; list names+meta")
+    (list "query:primitives-meta"
+          "(query:primitives-meta)  ; catalog / per-name meta")
+    (list "query:primitives-meta-catalog"
+          "(query:primitives-meta-catalog)")
+    (list "query:primitives-meta-stats"
+          "(engine:metrics \"query:primitives-meta-stats\")")
+    (list "engine:metrics"
+          "(engine:metrics \"query:primitives-hotpath-stats\")")
+    (list "docs"
+          "docs/generated/primitives.md + primitives-registry.md")))
+
+(define (primitives:registry-file)
+  *primitives-registry-file*)
+
+(define (primitives:categories)
+  *primitives-categories*)
+
+(define (primitives:entry-points)
+  *primitives-entry-points*)
+
+; (primitives:list) — category names for Agent discovery (not the full
+; 500+ prim dump; use query:primitive-list-with-meta for that).
+(define (primitives:list)
+  *primitives-categories*)
+
+(define (primitives:help)
+  (list
+    "Engine primitives (C++ PrimRegistrar)"
+    *primitives-registry-file*
+    "Use (primitive:describe name) and query:primitives-meta* for runtime meta."
+    "Fiber/mutation hot paths: mutation + mutate + workspace-query + control."
+    "Full catalog: docs/generated/primitives.md"))
+
+; One-shot discovery payload for Agents.
+(define (primitives:discover)
+  (list
+    (list "registry-file" (primitives:registry-file))
+    (list "categories" (primitives:categories))
+    (list "entry-points" (primitives:entry-points))
+    (list "help" (primitives:help))))

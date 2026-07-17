@@ -123,6 +123,18 @@ AURA_PRIMITIVES=full ./build/aura        # 默认
 
 **P0 已完成**：`init_pair_primitives()` 内无内联 `primitives_.add("...")`；静态原语均在 `evaluator_primitives_*.cpp`（31 个 TU），经 `prim_registrar()` 回调注册。完整列表见 `docs/generated/primitives.md`（`./build.py docs` 生成）。
 
+**Discoverability（#1552）**：Agent / 开发者不必翻 30+ TU 才能找到入口。
+
+| 表面 | 用法 |
+|------|------|
+| Stdlib facade | `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover` |
+| INDEX | `(require "std/INDEX" all:)` → `(stdlib:help "primitives")` |
+| Runtime meta | `(primitive:describe "+")`、`(query:primitive-list-with-meta)`、`(query:primitives-meta-catalog)` |
+| 生成文档 | `docs/generated/primitives.md`（全名）+ `primitives-registry.md`（中央 `register_*` 组序） |
+| 中央编排 | `src/compiler/evaluator_primitives_registry.cpp` → `register_all_primitives()` |
+
+Fiber / mutation 热路径组：`mutation`、`mutate`、`workspace-query`、`control`（多 Agent 循环优先 Guard / safe-yield，见 #1504 / #1547）。新增 primitive：在对应 `evaluator_primitives_*.cpp` 注册并确保中央 registry 调用该 `register_*`，附 `PrimMeta`，加 suite/回归，再 `./build.py docs`。
+
 注册点：`init_pair_primitives()`、`Evaluator()` 构造器（network/type 等），或 `ffi_runtime_` / `adt_runtime_`（外部 runtime 模式）。
 
 | 簇 / 前缀 | 源文件 | 注册函数 | 备注 |

@@ -1,0 +1,43 @@
+; Issue #1552 — primitives discoverability (INDEX + std/primitives facade)
+; Run: ./build/aura --load tests/suite/primitives_discover.aura
+(require "std/test" all:)
+(require "std/list" all:)
+(require "std/INDEX" all:)
+(require "std/primitives" all:)
+
+(test-suite "primitives:index"
+  (check (member? "primitives" (stdlib:list)))
+  (let ((h (stdlib:help "primitives")))
+    (check (list? h))
+    (check (not (string=? "not-found" (car h))))
+    (check (string? (car h)))
+    ; example call in second field
+    (check (string? (car (cdr h))))))
+
+(test-suite "primitives:facade"
+  (check (string=? "src/compiler/evaluator_primitives_registry.cpp"
+                   (primitives:registry-file)))
+  (let ((cats (primitives:categories)))
+    (check (list? cats))
+    (check (> (length cats) 10))
+    (check (member? "mutate" cats))
+    (check (member? "mutation" cats))
+    (check (member? "list" cats)))
+  (check (equal? (primitives:list) (primitives:categories)))
+  (let ((help (primitives:help)))
+    (check (list? help))
+    (check (> (length help) 2)))
+  (let ((eps (primitives:entry-points)))
+    (check (list? eps))
+    (check (> (length eps) 3)))
+  (let ((d (primitives:discover)))
+    (check (list? d))
+    (check (= 4 (length d)))
+    (check (string=? "registry-file" (car (car d))))
+    (check (string=? "categories" (car (car (cdr d)))))))
+
+(test-suite "primitives:engine-meta"
+  ; Runtime engine surfaces still work (optional AC surface).
+  (check (procedure? primitive:describe))
+  (let ((m (primitive:describe "+")))
+    (check (or (hash? m) (list? m) (string? m) (not (eq? m #f))))))
