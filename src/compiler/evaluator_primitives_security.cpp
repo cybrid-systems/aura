@@ -14,6 +14,7 @@ module;
 #include "hash_meta.h"                 // FNV constants (#901)
 #include "core/capability_model.hh"    // #1565: snapshot_capability_effect_stats
 #include "core/workspace_isolation.hh" // #1566: snapshot_tenant_isolation_stats
+#include "core/mutation_audit_wal.hh"  // #1567: snapshot_audit_wal_stats
 
 module aura.compiler.evaluator;
 
@@ -3747,25 +3748,117 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+    // Issue #1567: (security:set-audit-persist-dir! path-or-empty)
+    // Empty string disables WAL. Non-empty enables + replays.
+    add("security:set-audit-persist-dir!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        const auto sidx = as_string_idx(a[0]);
+        if (sidx >= ev.string_heap_.size())
+            return make_bool(false);
+        const auto& path = ev.string_heap_[sidx];
+        if (path.empty()) {
+            ev.disable_mutation_audit_wal();
+            return make_bool(true);
+        }
+        return make_bool(ev.enable_mutation_audit_wal(path));
+    });
+
+    // Issue #1567: query:audit-wal-stats
+    ObservabilityPrims::register_stats_impl(
+        "query:audit-wal-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::core::audit_wal;
+            const auto snap = snapshot_audit_wal_stats();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->audit_record_persisted_total.store(snap.persisted, std::memory_order_relaxed);
+                m->audit_wal_replay_count.store(snap.replay_count, std::memory_order_relaxed);
+                m->audit_crash_recovery_success.store(snap.crash_recovery_success,
+                                                      std::memory_order_relaxed);
+                m->audit_wal_bytes_written.store(snap.bytes_written, std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1567);
+            insert_kv("active", 1);
+            insert_kv("phase", snap.phase);
+            insert_kv("persisted", static_cast<std::int64_t>(snap.persisted));
+            insert_kv("replay-count", static_cast<std::int64_t>(snap.replay_count));
+            insert_kv("crash-recovery-success",
+                      static_cast<std::int64_t>(snap.crash_recovery_success));
+            insert_kv("append-fail", static_cast<std::int64_t>(snap.append_fail));
+            insert_kv("rotate-total", static_cast<std::int64_t>(snap.rotate_total));
+            insert_kv("bytes-written", static_cast<std::int64_t>(snap.bytes_written));
+            insert_kv("enabled", static_cast<std::int64_t>(snap.enabled));
+            insert_kv("segments", static_cast<std::int64_t>(snap.segments));
+            insert_kv("last-seq", static_cast<std::int64_t>(snap.last_seq));
+            insert_kv("wal-enabled", ev.mutation_audit_wal_enabled() ? 1 : 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #676/#1567: (query:mutation-audit-log [limit] [tenant] [effect] [mutation-id])
+    // Filters: tenant>=0, effect!=0, mutation-id!=0 match when provided.
+    // Lines include effect/tenant/provenance/epoch for post-mortem.
     ObservabilityPrims::register_stats_impl(
         "query:mutation-audit-log", [&ev](std::span<const EvalValue> a) -> EvalValue {
             std::size_t limit = 10;
             if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
                 limit = static_cast<std::size_t>(as_int(a[0]));
-            const auto total = ev.mutation_audit_total();
+            const bool filt_tenant = a.size() >= 2 && is_int(a[1]);
+            const auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
+            const bool filt_effect = a.size() >= 3 && is_int(a[2]) && as_int(a[2]) != 0;
+            const auto want_effect = filt_effect ? static_cast<std::uint16_t>(as_int(a[2])) : 0;
+            const bool filt_prov = a.size() >= 4 && is_int(a[3]) && as_int(a[3]) != 0;
+            const auto want_prov = filt_prov ? static_cast<std::uint64_t>(as_int(a[3])) : 0;
+
             const auto seq = ev.mutation_audit_seq();
             EvalValue result = make_void();
             std::size_t emitted = 0;
-            for (std::size_t i = 0; i < limit && i < Evaluator::kMutationAuditRingSize; ++i) {
+            // Scan full ring for filters (newest first).
+            for (std::size_t i = 0; i < Evaluator::kMutationAuditRingSize && emitted < limit; ++i) {
                 if (seq <= i)
                     break;
                 const auto& entry = ev.mutation_audit_entry_at(seq - 1 - i);
                 if (entry.seq == 0)
                     continue;
-                auto line =
-                    std::format("seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={}",
-                                entry.seq, entry.fiber_id, entry.op, entry.target_node,
-                                entry.nodes_changed, entry.epoch_delta, entry.timestamp_ms);
+                if (filt_tenant && entry.tenant_id != want_tenant)
+                    continue;
+                if (filt_effect && (entry.effect_bits & want_effect) != want_effect)
+                    continue;
+                if (filt_prov && entry.provenance_mutation_id != want_prov)
+                    continue;
+                auto line = std::format(
+                    "seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={} "
+                    "effect={} tenant={} mutation_id={} epoch={} denied={}",
+                    entry.seq, entry.fiber_id, entry.op, entry.target_node, entry.nodes_changed,
+                    entry.epoch_delta, entry.timestamp_ms, entry.effect_bits, entry.tenant_id,
+                    entry.provenance_mutation_id, entry.epoch, entry.effect_denied ? 1 : 0);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -3773,8 +3866,6 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 result = make_pair(pid);
                 ++emitted;
             }
-            (void)total;
-            (void)emitted;
             return result;
         });
 

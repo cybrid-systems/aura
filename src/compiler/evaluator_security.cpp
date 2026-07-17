@@ -1,4 +1,4 @@
-// evaluator_security.cpp — Issue #676 sandbox + audit; #1565 effects; #1566 isolation.
+// evaluator_security.cpp — Issue #676/#1565/#1566/#1567 security + audit WAL.
 
 module;
 
@@ -9,6 +9,7 @@ module;
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
+#include "core/mutation_audit_wal.hh"
 
 module aura.compiler.evaluator;
 
@@ -60,6 +61,7 @@ void Evaluator::grant_capability(std::string cap) {
 
 void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
                                     std::string_view op, ast::NodeId target_node) noexcept {
+    using namespace aura::core::audit_wal;
     const auto seq = mutation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
     auto& slot = mutation_audit_ring_[seq % kMutationAuditRingSize];
     slot.seq = seq;
@@ -79,7 +81,17 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     slot.tenant_id = capability_tenant_id_;
     slot.provenance_mutation_id = 0;
     slot.effect_denied = false;
+    // #1567: full epoch stamp
+    slot.epoch = current_bridge_epoch();
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+    // #1567: WAL append (optional; no-op when disabled)
+    if (g_mutation_audit_wal().is_enabled()) {
+        const auto rec = make_record(slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
+                                     slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
+                                     slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
+                                     slot.effect_denied);
+        (void)g_mutation_audit_wal().append(rec);
+    }
 }
 
 // Issue #1565: force side-effect paths through capability effect check.
@@ -130,7 +142,19 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     slot.tenant_id = tenant;
     slot.provenance_mutation_id = provenance_mutation_id;
     slot.effect_denied = !ok;
+    // #1567: full epoch + WAL persist on effect path too
+    slot.epoch = prov.epoch;
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+    {
+        using namespace aura::core::audit_wal;
+        if (g_mutation_audit_wal().is_enabled()) {
+            const auto rec = make_record(
+                slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed, slot.epoch_delta,
+                slot.target_node, slot.op, slot.effect_bits, slot.tenant_id,
+                slot.provenance_mutation_id, slot.epoch, slot.effect_denied);
+            (void)g_mutation_audit_wal().append(rec);
+        }
+    }
 
     if (!ok) {
         bump_capability_denial();
@@ -138,6 +162,49 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     }
     g_sandbox_state().effect_checks++;
     return ok;
+}
+
+// Issue #1567: enable WAL under persist_dir; replay prior records into ring.
+bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept {
+    using namespace aura::core::audit_wal;
+    std::vector<AuditWalRecord> replayed;
+    if (!g_mutation_audit_wal().enable(persist_dir, &replayed, kMutationAuditRingSize))
+        return false;
+    // Install recovered records into ring (preserve seq continuity).
+    std::uint64_t max_seq = 0;
+    for (const auto& rec : replayed) {
+        if (rec.seq == 0)
+            continue;
+        auto& slot = mutation_audit_ring_[rec.seq % kMutationAuditRingSize];
+        slot.seq = rec.seq;
+        slot.timestamp_ms = rec.timestamp_ms;
+        slot.fiber_id = rec.fiber_id;
+        slot.nodes_changed = rec.nodes_changed;
+        slot.epoch_delta = rec.epoch_delta;
+        slot.target_node = rec.target_node;
+        std::memcpy(slot.op, rec.op, sizeof(slot.op));
+        slot.effect_bits = rec.effect_bits;
+        slot.tenant_id = rec.tenant_id;
+        slot.provenance_mutation_id = rec.provenance_mutation_id;
+        slot.effect_denied = rec.effect_denied != 0;
+        slot.epoch = rec.epoch;
+        if (rec.seq + 1 > max_seq)
+            max_seq = rec.seq + 1;
+    }
+    if (max_seq > 0) {
+        mutation_audit_seq_.store(max_seq, std::memory_order_relaxed);
+        // total reflects recovered + future; seed with recovered count.
+        mutation_audit_total_.store(replayed.size(), std::memory_order_relaxed);
+    }
+    return true;
+}
+
+void Evaluator::disable_mutation_audit_wal() noexcept {
+    aura::core::audit_wal::g_mutation_audit_wal().disable();
+}
+
+bool Evaluator::mutation_audit_wal_enabled() const noexcept {
+    return aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
 }
 
 void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
