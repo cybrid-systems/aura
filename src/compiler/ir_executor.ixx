@@ -77,6 +77,14 @@ struct ExecFrame {
     std::vector<EvalValue> locals;
     std::vector<EvalValue> args;
     std::size_t resume_instr = 0;
+    // Issue #1485-followup: tracks WHICH block set resume_instr.
+    // resume_instr is per-block semantically (skip past a Call on
+    // re-entry into the SAME block), but stored per-frame for
+    // PendingCall resolution. Without this, stale resume_instr
+    // leaks via Jump/Branch into the next block (e.g. the Local
+    // in if-handler merge_blk) and skips instructions. Sentinel
+    // UINT32_MAX = no pending resume.
+    std::uint32_t resume_block_id = UINT32_MAX;
     bool is_top_level = false;
     std::uint32_t result_slot = 0;
     // Issue #124: per-frame exception-stack depth marker. The
