@@ -920,6 +920,9 @@ public:
             // DeadCoercionEliminationPass wired in #1418).
             aura::compiler::DeadCoercionAstStats dce_stats;
             aura::compiler::apply_coercion_map(flat, coercions, &dce_stats, &coercions);
+            // Issue #1615: post-coercion linear ownership revalidation.
+            (void)aura::compiler::revalidate_linear_after_coercion(flat, pool, type_registry,
+                                                                   coercions, nullptr, metrics);
             if (metrics && dce_stats.eliminated > 0) {
                 static_cast<struct CompilerMetrics*>(metrics)
                     ->dead_coercion_eliminated_total.fetch_add(dce_stats.eliminated,

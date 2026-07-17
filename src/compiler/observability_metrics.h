@@ -2183,6 +2183,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typed_mutation_linear_ok_total{0};
     std::atomic<std::uint64_t> typed_mutation_prov_ok_total{0};
 
+    // Issue #1615: linear ownership + coercion synergy.
+    std::atomic<std::uint64_t> linear_coercion_reval_count{0};
+    std::atomic<std::uint64_t> linear_coercion_reval_ok_total{0};
+    std::atomic<std::uint64_t> linear_coercion_violations_total{0};
+    std::atomic<std::uint64_t> linear_coercion_sites_total{0};
+    std::atomic<std::uint64_t> narrow_evidence_propagated_total{0};
+
     // Issue #756: EnvFrame dual-path consistency enforcement +
     // desync panic policy + GCEnvWalkFn stale handling under
     // concurrent mutation/steal counters backing the

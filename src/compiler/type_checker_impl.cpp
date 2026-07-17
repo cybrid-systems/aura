@@ -6843,6 +6843,80 @@ void record_linear_ownership_mutation_metrics(void* metrics, bool revalidated,
     }
 }
 
+// Issue #1615: post-coercion linear ownership revalidation + narrow_evidence
+// propagation accounting. Called after apply_coercion_map so Linear ~ Dynamic
+// rejections are not the only linear/coercion safety net.
+std::size_t revalidate_linear_after_coercion(aura::ast::FlatAST& flat, const StringPool& pool,
+                                             TypeRegistry& reg, const CoercionMap& map,
+                                             std::vector<OwnershipNote>* notes_out, void* metrics) {
+    (void)reg;
+    std::vector<OwnershipNote> local_notes;
+    auto& notes = notes_out ? *notes_out : local_notes;
+    const auto notes_before = notes.size();
+
+    std::unordered_set<std::string> linear_bindings;
+    std::size_t narrow_propagated = 0;
+    std::size_t sites = 0;
+
+    auto consider_node = [&](NodeId nid) {
+        if (nid == NULL_NODE || nid >= flat.size())
+            return;
+        ++sites;
+        discover_linear_bindings_in_subtree(flat, pool, nid, linear_bindings);
+        // CoercionNode stores narrow_evidence in float_val (#691).
+        if (flat.get(nid).tag == NodeTag::Coercion) {
+            const auto ne = static_cast<std::uint32_t>(flat.get(nid).float_value);
+            if (ne != 0)
+                ++narrow_propagated;
+        }
+    };
+
+    for (const auto& e : map.entries()) {
+        consider_node(static_cast<NodeId>(e.original_child));
+        if (e.parent_id != NULL_NODE)
+            consider_node(static_cast<NodeId>(e.parent_id));
+        if (e.narrow_evidence != 0)
+            ++narrow_propagated;
+    }
+
+    // Also scan existing Coercion nodes (idempotent re-apply / post-mutate).
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        if (flat.get(id).tag != NodeTag::Coercion)
+            continue;
+        consider_node(id);
+    }
+
+    bool ownership_pass = true;
+    if (!linear_bindings.empty() && flat.root != NULL_NODE && flat.root < flat.size()) {
+        ownership_pass =
+            OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes);
+    }
+
+    std::vector<OwnershipNote> ownership_notes;
+    if (notes.size() > notes_before) {
+        ownership_notes.assign(notes.begin() + static_cast<std::ptrdiff_t>(notes_before),
+                               notes.end());
+    }
+    record_linear_ownership_mutation_metrics(metrics, /*revalidated=*/true, ownership_notes,
+                                             ownership_pass);
+
+    if (auto* m = static_cast<CompilerMetrics*>(metrics)) {
+        m->linear_coercion_reval_count.fetch_add(1, std::memory_order_relaxed);
+        if (sites > 0)
+            m->linear_coercion_sites_total.fetch_add(sites, std::memory_order_relaxed);
+        if (narrow_propagated > 0)
+            m->narrow_evidence_propagated_total.fetch_add(narrow_propagated,
+                                                          std::memory_order_relaxed);
+        if (!ownership_pass)
+            m->linear_coercion_violations_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            m->linear_coercion_reval_ok_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return notes.size() - notes_before;
+}
+
 aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& flat,
                                                          const StringPool& pool, TypeRegistry& reg,
                                                          const aura::ast::MutationRecord& rec,
@@ -6896,6 +6970,24 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
                                    notes_out.end());
         }
         record_linear_ownership_mutation_metrics(metrics, true, ownership_notes, ownership_pass);
+    }
+
+    // Issue #1615: dirty Coercion nodes → post-coercion linear reval +
+    // narrow_evidence accounting (closes linear/coercion blind spot).
+    {
+        CoercionMap coercion_sites;
+        for (auto nid : dirty_nodes) {
+            if (nid >= flat.size())
+                continue;
+            if (flat.get(nid).tag != NodeTag::Coercion)
+                continue;
+            const auto ne = static_cast<std::uint32_t>(flat.get(nid).float_value);
+            coercion_sites.add(flat.parent_of(nid), 0, nid, /*type_tag=*/0, flat.type_id(nid), 0, 0,
+                               /*predicate_cond_node=*/0, /*source_mutation_id=*/0, ne);
+        }
+        if (!coercion_sites.empty())
+            (void)revalidate_linear_after_coercion(flat, pool, reg, coercion_sites, &notes_out,
+                                                   metrics);
     }
 
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────

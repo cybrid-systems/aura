@@ -5241,6 +5241,9 @@ aura_issue_test_link_llvm_jit(test_macro_hygiene_closedloop_health_1613)
 # Issue #1614: TypedMutationAudit real type/linear/provenance checks.
 aura_add_issue_test(test_typed_mutation_invariant_audit_1614)
 aura_issue_test_link_llvm_jit(test_typed_mutation_invariant_audit_1614)
+# Issue #1615: linear ownership + coercion synergy / post-coercion reval.
+aura_add_issue_test(test_linear_coercion_synergy_1615)
+aura_issue_test_link_llvm_jit(test_linear_coercion_synergy_1615)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
