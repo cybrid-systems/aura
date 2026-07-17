@@ -1100,6 +1100,9 @@ public:
     // arena's bump-allocator doesn't run destructors).
     ~Evaluator();
     void set_arena(ast::ASTArena* a) {
+        // Issue #1546: drop owner link from previous arena if any.
+        if (arena_ && arena_ != a)
+            arena_->clear_arena_owner();
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
         // compaction re-pins pinned StableNodeRef / COW children in
@@ -1108,6 +1111,15 @@ public:
         // re_pin_cow_children_from_snapshot().
         if (arena_) {
             arena_->set_on_compact_hook([this]() { this->on_arena_compact_hook(); });
+            // Issue #1546: thread this Evaluator as arena_owner_ so
+            // ASTArena::allocate_raw consults check_arena_quota before
+            // every allocation (orphan arenas stay unlimited).
+            arena_->set_arena_owner(
+                this, +[](void* owner, std::size_t size) noexcept -> bool {
+                    auto* ev = static_cast<Evaluator*>(owner);
+                    // check_arena_quota returns nullopt when allowed.
+                    return !ev->check_arena_quota(static_cast<std::uint64_t>(size)).has_value();
+                });
         }
     }
     void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
@@ -8644,7 +8656,10 @@ public:
                                          std::to_string(resource_quota_time_us_) + "us"};
     }
 
-    // Issue #1481: typed-error arena allocation (quota first).
+    // Issue #1481 / #1546: typed-error arena allocation (quota first).
+    // When arena_ has arena_owner_ wired (set_arena), allocate_raw also
+    // re-checks quota; the early check here surfaces AuraError cleanly
+    // without a wasted allocate_raw trip on reject.
     [[nodiscard]] aura::core::AuraResult<void*>
     allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept {
         if (auto err = check_arena_quota(static_cast<std::uint64_t>(size))) {
@@ -8655,9 +8670,17 @@ public:
                 aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
                                       std::string("allocate_checked called with null arena")});
         }
-        // Public entry: try_allocate (allocate_raw is private).
+        // Public entry: try_allocate → allocate_raw (quota-bound when owner set).
         void* ptr = arena_->try_allocate(size);
         if (!ptr) {
+            // Distinguishes quota (already counted on the early check path
+            // when limit set) from genuine OOM / failure.
+            if (resource_quota_memory_ > 0 &&
+                static_cast<std::uint64_t>(size) > resource_quota_memory_) {
+                return std::unexpected(
+                    aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                          std::string("allocate_checked: arena quota exceeded")});
+            }
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
                                       std::string("allocate_checked: arena try_allocate failed")});
