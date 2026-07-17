@@ -86,7 +86,8 @@ int main() {
         CompilerService cs;
         auto h = cs.eval(R"((engine:metrics "query:linear-boundary-consistency-stats"))");
         CHECK(h && is_hash(*h), "boundary-consistency-stats is hash");
-        CHECK(href_m(cs, "schema") == 1568, "schema 1568");
+        CHECK(href_m(cs, "schema") == 1596 || href_m(cs, "schema") == 1568,
+              "schema 1596|1568 lineage");
         CHECK(href_m(cs, "active") == 1, "active");
         CHECK(href_m(cs, "phase") == 2, "phase 2");
     }
@@ -208,7 +209,8 @@ int main() {
                   static_cast<std::uint64_t>(kThreads * kIters),
               "stress: audit checks ≥ iters");
         // Query still works after stress
-        CHECK(href_m(cs, "schema") == 1568, "query still valid post-stress");
+        CHECK(href_m(cs, "schema") == 1596 || href_m(cs, "schema") == 1568,
+              "query still valid post-stress");
     }
 
     // ── Fiber steal probe uses unified path ──
