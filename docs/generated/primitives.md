@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**521** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**522** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 99 primitives (19%)
-- **core**: 371 primitives (71%)
+- **core**: 372 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
 
@@ -178,7 +178,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (259)
+## Core builtins (260)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -346,6 +346,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-dispatch-hits` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -778,7 +779,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (371)
+### Core builtins (must remain primitive) (372)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -984,6 +985,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orchestration:tune-gc-frequency` — `src/compiler/evaluator_primitives_query.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
+- `parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-dispatch-hits` — `src/compiler/evaluator_primitives_memory.cpp`
