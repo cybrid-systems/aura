@@ -46,6 +46,15 @@ new code; new caches (v2) require v2+ reader.
      bytes, String = u32 len + chars, Span = u32 byte_count +
      bytes, etc.)
 
+Later sections (Agent-facing, not FlatAST binary):
+
+9. [Engine primitives discoverability](#9-related-engine-primitives-discoverability-1552)
+5*. [Mutation-boundary / fiber orchestration metrics](#5-mutation-boundary--fiber-orchestration-metrics-issue-1591)
+10. [Parallel orchestration contracts (#1584–#1600)](#10-parallel-orchestration-contracts-1584--1600)
+    — `(parallel-intend)` result hash, orch/mailbox/join/quota metrics
+
+Tutorial: [orchestration-tutorial.md](orchestration-tutorial.md)
+
 ---
 
 ## 1. NodeView wire format
@@ -546,3 +555,108 @@ sibling counters (quota, steal, post-steal, safe-yield), orchestration
 `adaptive-concurrency-recommended`), plus linear GC linkage
 (`linear-gc-root-audit-checks`, `linear-live-closure-scans`,
 `mutation_stack_depth_histogram`). See `docs/design/ai-closedloop-readiness.md`.
+
+---
+
+## 10. Parallel orchestration contracts (#1584–#1600)
+
+Agent-facing **hash / metrics** shapes for multi-fiber parallel work.
+These are not FlatAST binary frames; they are stable EvalValue hashes
+returned by primitives and `engine:metrics` surfaces. Unknown keys must
+be ignored. Full tutorial: [orchestration-tutorial.md](orchestration-tutorial.md).
+
+### 10.1 `(parallel-intend …)` result hash (schema **1587**)
+
+```scheme
+(parallel-intend
+  (vector (lambda () …) (lambda () …))
+  :max-concurrency 8
+  :timeout-ms 60000
+  :fail-fast #f
+  :collect-errors #t)
+```
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `status` | string | `ok` · `partial` · `timeout` · `fail-fast` · `invalid` · `quota-exceeded` |
+| `ok-count` | int | Successful tasks |
+| `err-count` | int | Failed tasks |
+| `aborted-count` | int | Fail-fast aborted / never started |
+| `wait-us` | int | Wall time in join |
+| `results` | vector of hashes | Per-task `{ok, index, value\|error}` |
+| `schema` | int | **1587** |
+
+`orch:parallel-intend` is an alias (same shape). C++ mirror:
+`aura::serve::parallel_orch::BatchResult` with `BatchStatus` enum
+(`Ok`/`Partial`/`Timeout`/`FailFast`/`Invalid`/`QuotaExceeded`).
+
+### 10.2 `query:parallel-orch-stats` (schema **1586**)
+
+Process-wide counters from `g_parallel_orch_stats`:
+
+| Key | Meaning |
+|-----|---------|
+| `batches` | `intend_batches` |
+| `spawned` / `joined` / `ok` / `err` | Task lifecycle |
+| `fail-fast-aborts` / `timeouts` | Policy outcomes |
+| `mailbox-posts` | Optional MultiFiberMailbox fan-in posts |
+| `phase` | Implementation phase tag (≥2 production) |
+| `schema` | **1586** |
+
+### 10.3 `query:orch-module-stats` (schema **1588**)
+
+`src/orch/` module counters (`g_orch_module_stats`):
+
+| Key | Meaning |
+|-----|---------|
+| `agents-spawned` / `agents-joined` | Lifecycle |
+| `agents-send` / `agents-recv` | Mailbox traffic |
+| `spawn-failures` / `spawn-quota-rejects` | Errors (#1600) |
+| `parallel-batches` | `conduct_parallel` / parallel_intend via orch |
+| `schema` | **1588** |
+
+### 10.4 Join status (Fiber::join / orch:agent-join)
+
+C++ `JoinStatus`: `Ok` · `Timeout` · `Cancelled` · `Invalid`.
+
+Aura `(orch:agent-join name-or-id [:timeout-ms n])` returns a hash with at
+least `status`, `wait-us`, `ok` (boolean). Prefer timeouts over blocking forever
+in Agent loops.
+
+### 10.5 MultiFiberMailbox message shape (#1585)
+
+C++ `MailMessage` (logical JSON for Agents serializing over serve):
+
+```json
+{
+  "payload": "opaque-string",
+  "priority": "normal",
+  "from_fiber": 0,
+  "to_fiber": 0
+}
+```
+
+`PushStatus`: `Ok` · `Backpressure` · `Closed`. Under high load Agents must
+handle backpressure (retry with yield / drop / fail-fast). Linear-claim
+payloads may use a `linear-viol:` prefix (#1595).
+
+### 10.6 ResourceQuota on orch paths (#1600)
+
+When Fibers quota is exhausted:
+
+- C++: `BatchStatus::QuotaExceeded`, `AgentHandle.quota_exceeded = true`,
+  error string contains `ResourceQuotaExceeded`
+- Metrics: `query:resource-quota-stats` orch keys +
+  `fiber_spawn_rejected_total` / `orchestration_quota_exceeded_total`
+
+See `docs/design/orch-resource-quota-1600.md`.
+
+### 10.7 Related metrics surfaces
+
+| Surface | Schema | Role |
+|---------|--------|------|
+| `query:ai-closedloop-readiness-stats` | 1599 | `orch-health-score`, join latency, parallel throughput |
+| `query:mf-mailbox-stats` | 1585 | Mailbox depth / backpressure |
+| `query:post-steal-closed-loop-stats` | 1592 | Post-steal resume safety |
+
+Stress suite: `tests/suite/parallel_orchestration_stress.aura` (#1602).

@@ -164,6 +164,24 @@ echo '(+ 1 2 3)' | ./build/aura    # → 6
 
 测试：`tests/suite/orchestrator.aura` · 实现：`lib/std/orchestrator.aura`
 
+### Multi-fiber 并行（生产路径）
+
+```scheme
+;; 真正的多 fiber 批处理 — 并发 cap + timeout + 结果聚合
+(define batch
+  (parallel-intend
+    (vector (lambda () 1) (lambda () 2) (lambda () 3))
+    :max-concurrency 4
+    :timeout-ms 10000
+    :fail-fast #f))
+(hash-ref batch "ok-count")   ; → 3
+(hash-ref batch "status")     ; → "ok"
+```
+
+完整教程（背压、错误处理、观测、C++ `src/orch/`）：
+[orchestration-tutorial.md](orchestration-tutorial.md) · 压力套件
+`tests/suite/parallel_orchestration_stress.aura`
+
 ---
 
 ## C FFI（摘要）

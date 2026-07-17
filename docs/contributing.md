@@ -402,10 +402,51 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 | `src/orch/*` | unified agent orchestration facade (#1588): `agent_spawn`、`orch.h`；Aura `orch:spawn-agent` / `orch:parallel-intend` |
 | `main.cpp` | CLI、`--serve` JSON 分发 |
 
+## §Orch 新原语 / 编排扩展指南（#1603）
+
+并行编排栈分层见 [architecture.md §Agent 编排](architecture.md#agent-编排)。扩展时优先 **组合** 现有 serve 原语，而不是复制 fiber 调度逻辑。
+
+### 放哪里？
+
+| 变更类型 | 目标 | 不要 |
+|----------|------|------|
+| Fiber / join / steal | `src/serve/fiber.*` · `scheduler.*` | 在 evaluator 里手写 ucontext |
+| Mailbox / 背压 | `src/serve/multi_fiber_mailbox.*` | 无界全局队列 |
+| 批并行 policy | `src/serve/parallel_orch.*` | 绕过 concurrency gate |
+| Agent 组合 API | **`src/orch/agent_spawn.h`** | 在多个 TU 各写一份 spawn |
+| Aura 表面 | `evaluator_primitives_agent.cpp` | 为每个 counter 新增 public `*-stats` 原语 |
+| 纯 Aura 角色图 | `lib/std/orchestrator.aura` | 把 M:N 调度塞进 stdlib |
+
+### 添加 checklist
+
+1. **读治理**：§2 冻结规则 + [primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md)。观测走 `(engine:metrics "…")`，禁止新 public `query:*-stats` 名（用 `register_stats_impl`）。
+2. **C++ API**：优先 header-only 组合（`orch.h` / `parallel_orch.h` 风格）；`AgentHandle` / `BatchResult` 错误字符串包含可机读前缀（如 `ResourceQuotaExceeded:`）。
+3. **Aura 表面**：keyword 参数 `:max-concurrency` / `:timeout-ms` / `:fail-fast`；返回 **hash**（`status` + counts + `schema`），见 [wire-formats.md §10](wire-formats.md#10-parallel-orchestration-contracts-1584--1600)。
+4. **线程安全**：跨 fiber 不共享裸 `NodeId`；eval 热路径用 mutex 或明确文档“仅 host 线程”。mutation 必须 `MutationBoundaryGuard`。
+5. **配额**：spawn / parallel batch 走 `process_resource_quota` Fibers 维（#1600）；拒绝时 typed error + metrics bump。
+6. **测试**（至少一类）：
+   - unit：`tests/test_parallel_orch.cpp` / `tests/test_orch_agent_spawn.cpp` 模式
+   - Aura：`tests/test_parallel_intend_primitive.cpp` 或 suite
+   - stress：`tests/suite/parallel_orchestration_stress.aura` 或 C++ stress
+7. **文档**：更新 `src/orch/README.md` 或 `docs/design/parallel-orch.md`；Agent 教程 [orchestration-tutorial.md](orchestration-tutorial.md)；协议字段改动必须同步 wire-formats §10。
+8. **门禁**：`./build.py docs` · `./build.py gate` · 相关 ctest 绿。
+
+### 参考实现
+
+| Issue | 产物 |
+|-------|------|
+| #1584 | `Fiber::join` / `join(span)` |
+| #1585 | MultiFiberMailbox |
+| #1586 | `parallel_intend` + `query:parallel-orch-stats` |
+| #1587 | `(parallel-intend)` Aura |
+| #1588 | `src/orch/` + `orch:*` |
+| #1600 | ResourceQuota on orch paths |
+| #1602 | stress suite |
+
 ## 维护规则（3 条）
 
 1. **加/改 primitive** → 测试用例 + `./build.py docs`（`check` 会校验未过期）。
-2. **改 serve 协议** → [wire-formats.md](wire-formats.md) + `tests/test_serve_async.aura`。
+2. **改 serve / orch 协议** → [wire-formats.md](wire-formats.md)（含 §10 并行编排）+ 相关 suite / stress 测试。
 3. **改不变式** → 更新本文 §1–§4 或 [architecture.md](architecture.md)。
 
 历史设计：`git tag docs-archive-pre-2026-06`。
