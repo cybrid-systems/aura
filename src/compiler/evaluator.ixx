@@ -2583,12 +2583,18 @@ private:
     mutable std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>> tag_arity_index_;
     // Reverse map: node-id → indexed (tag, arity) key.
     mutable std::vector<std::uint64_t> tag_arity_indexed_key_;
+    // Issue #1501: user-only (non-MacroIntroduced) parallel index so
+    // query:pattern hygiene default serves O(1) buckets without
+    // scanning MacroIntroduced roots out of the full (tag,arity) map.
+    mutable std::unordered_map<std::uint64_t, std::vector<ast::NodeId>> tag_arity_index_user_;
     // flat.size() / generation captured at last sync.
     mutable std::size_t tag_arity_index_synced_size_ = 0;
     mutable std::uint16_t tag_arity_index_synced_gen_ = 0;
     // The workspace pointer the index was built for.
     // When this changes, the index must be rebuilt.
     mutable const ast::FlatAST* tag_arity_index_workspace_ = nullptr;
+    // Issue #1501: # of times snapshot served the user-only hygiene index.
+    mutable std::atomic<std::uint64_t> tag_arity_hygiene_index_served_total_{0};
     // Issue #371: shared_mutex around the (tag, arity)
     // index. Reader (query:pattern fast path read in
     // evaluator_primitives_query_workspace.cpp,
@@ -2636,6 +2642,7 @@ private:
     void invalidate_tag_arity_index() const {
         std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
         tag_arity_index_.clear();
+        tag_arity_index_user_.clear();
         tag_arity_indexed_key_.clear();
         tag_arity_index_workspace_ = nullptr;
         tag_arity_index_synced_size_ = 0;
@@ -9199,16 +9206,21 @@ public:
     void force_build_tag_arity_index() const {
         build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery));
     }
-    // Issue #1372: build (if needed) + copy bucket under a single
-    // unique_lock — closes the #371 race window. Match runs on the
-    // snapshot outside the lock.
-    [[nodiscard]] std::vector<ast::NodeId>
-    snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger = static_cast<std::uint8_t>(
-                                                     PatternIndexRebuildTrigger::LazyQuery)) const;
+    // Issue #1372 / #1501: build (if needed) + copy bucket under a
+    // single unique_lock. When skip_macro_introduced is true, serve
+    // the user-only hygiene index (no MacroIntroduced roots).
+    [[nodiscard]] std::vector<ast::NodeId> snapshot_tag_arity_bucket(
+        std::uint64_t key,
+        std::uint8_t trigger = static_cast<std::uint8_t>(PatternIndexRebuildTrigger::LazyQuery),
+        bool skip_macro_introduced = false) const;
     // Issue #1372: race-window hits (0 with snapshot path). Exposed
     // via query:pattern-index-stats-hash "race-window-hits".
     [[nodiscard]] std::uint64_t get_tag_arity_index_race_window_hits() const noexcept {
         return tag_arity_index_race_window_hits_.load(std::memory_order_relaxed);
+    }
+    // Issue #1501: hygiene index serve counter.
+    [[nodiscard]] std::uint64_t get_tag_arity_hygiene_index_served() const noexcept {
+        return tag_arity_hygiene_index_served_total_.load(std::memory_order_relaxed);
     }
     // Test accessors for setting the workspace directly
     // (bypassing the Aura primitive pipeline, which is

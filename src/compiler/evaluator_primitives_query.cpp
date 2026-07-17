@@ -1766,19 +1766,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
     // Issue #547: query:pattern-hygiene-stats. Returns
     // the sum of the 2 query:pattern hygiene observability
-    // counters:
-    //   - macro_introduced_skipped_in_query_  (# of nodes
-    //     the matcher skipped because their
-    //     SyntaxMarker was MacroIntroduced and
-    //     :respect-hygiene was the default #f)
-    //   - hygiene_violation_count_  (# of explicit
-    //     hygiene violations bumped by the matcher / query
-    //     layer when a MacroIntroduced node was returned to
-    //     a caller that didn't expect it)
-    //
-    // P0: returns an integer = sum of both counters.
-    // Follow-up: returns a 2-tuple (skips violations) so
-    // the AI Agent can react to each category independently.
+    // counters (int, back-compat for #486/#421/#528 regressions).
+    // Structured #1501 fields live on query:macro-hygiene-stats.
     ObservabilityPrims::register_stats_impl(
         "query:pattern-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -1790,21 +1779,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(skips + violations));
         });
 
-    // Issue #486: query:macro-hygiene-stats. Hash view of the
-    // MacroIntroduced hygiene decision surface for AI self-evolution
-    // loops (non-duplicative with #547 2-counter int sum and #421
-    // 7-counter pattern-macro-filter bundle):
-    //   - root-skips: macro_introduced_skipped_in_query_
-    //   - recursive-skips: pattern_recursive_macro_skipped_
-    //   - hygiene-violations: hygiene_violation_count_
-    //   - macro-markers: workspace MacroIntroduced marker tally
+    // Issue #486 / #1501: query:macro-hygiene-stats. Hash view of the
+    // MacroIntroduced hygiene decision surface for AI self-evolution:
+    //   - root-skips / recursive-skips / hygiene-violations / macro-markers
+    //   - hygiene-index-served (#1501 user-only tag_arity index serves)
+    //   - schema 1501
     ObservabilityPrims::register_stats_impl(
         "query:macro-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1839,6 +1825,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
             insert_kv("macro-markers",
                       static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
+            // Issue #1501: user-only tag_arity index serve counter.
+            insert_kv("hygiene-index-served",
+                      static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served()));
+            insert_kv("schema", 1501);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
