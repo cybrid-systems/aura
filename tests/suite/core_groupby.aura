@@ -1,0 +1,52 @@
+; Issue #1550 — core:group-by single-pass correctness + scale
+; Run: ./build/aura --load tests/suite/core_groupby.aura
+(require "std/test" all:)
+(require "std/core" all:)
+(require "std/list" all:)
+
+(test-suite "core:group-by-basic"
+  (check= (list) (core:group-by (lambda (x) x) (list)))
+  (check= ((1 (1))) (core:group-by (lambda (x) x) (list 1)))
+  ; first-seen key order; elements keep input order
+  (check= ((a (1 3)) (b (2 4)))
+          (core:group-by (lambda (x) (if (= (modulo x 2) 1) "a" "b"))
+                         (list 1 2 3 4)))
+  ; all same key — single group, O(n) path
+  (check= ((k (1 2 3)))
+          (core:group-by (lambda (x) "k") (list 1 2 3)))
+  ; identity keys
+  (check= ((1 (1)) (2 (2)) (3 (3)))
+          (core:group-by (lambda (x) x) (list 1 2 3))))
+
+(test-suite "core:group-by-order"
+  ; later keys must not reorder earlier groups
+  (let ((g (core:group-by (lambda (p) (car p))
+                          (list (list "x" 1) (list "y" 2) (list "x" 3)))))
+    (check= "x" (car (car g)))
+    (check= "y" (car (car (cdr g))))
+    (check= ((list "x" 1) (list "x" 3)) (car (cdr (car g))))
+    (check= ((list "y" 2)) (car (cdr (car (cdr g)))))))
+
+(test-suite "core:group-by-scale"
+  ; N=400 with few keys (worst-case for old O(n²) filter). Named-let
+  ; depth gate ~700 so stay under; still large enough to stress grouping.
+  (let* ((n 400)
+         (xs (range 0 n))
+         (g (core:group-by (lambda (x) (modulo x 5)) xs))
+         (n-groups (length g)))
+    (check= 5 n-groups)
+    ; each bucket ~80 elements
+    (check= 80 (length (car (cdr (car g)))))
+    (check= 80 (length (car (cdr (car (cdr g))))))
+    ; sum of group sizes == n
+    (check= n (foldl (lambda (acc pair) (+ acc (length (car (cdr pair)))))
+                     0 g))))
+
+(test-suite "core:group-by-all-same-key"
+  ; classic O(n²) trap: every element same key
+  (let* ((xs (range 0 300))
+         (g (core:group-by (lambda (x) 0) xs)))
+    (check= 1 (length g))
+    (check= 300 (length (car (cdr (car g)))))
+    (check= 0 (car (car (cdr (car g)))))
+    (check= 299 (last (car (cdr (car g)))))))
