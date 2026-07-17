@@ -87,7 +87,7 @@ python3 tests/benchmark.py --update   # commit baseline + PR rationale
 2. CMake: `aura_add_issue_test(<name>)` in `CMakeLists.txt` or `cmake/AuraDomainTests.cmake`
 3. If the test needs FlatHashTable / JIT symbols: `aura_issue_test_link_llvm_jit(<name>)`
 4. Optional: `add_dependencies(all_test_issue_targets <name>)`
-5. Headers: `// @category: unit|integration` and `// @reason: Issue #N — …` for `scripts/gen_test_registry.py`
+5. Headers: `// @category: unit|integration` and `// @reason: Issue #N — …` for `scripts/gen_test_registry.py`（#1572：pre-commit / `./build.py test-registry --fix` 自动刷 `docs/generated/test-registry.json`）
 
 Helper definition: `CMakeLists.txt` → `function(aura_add_issue_test NAME)`  
 Domain batch list: `cmake/AuraDomainTests.cmake`
