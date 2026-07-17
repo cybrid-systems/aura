@@ -1,6 +1,6 @@
 # Linear Validation Pipeline (Post-Mutation)
 
-**Issues:** #1486 (closed-loop parent), #1458, #1478, #1538–#1545
+**Issues:** #1494 / #1486 (closed-loop parents), #1458, #1478, #1538–#1545
 
 ## Summary
 
@@ -24,6 +24,16 @@ Issue **#1538** unifies them so every successful `typed_mutate` / `typed_mutate_
 | 4 Metrics | `linear_post_mutate_enforcements`, `linear_ownership_violation_prevented` | #1478 |
 | 5 Tests | use-after-move + stress | #1539, #1544, `test_issue_1486` |
 
+### #1494 closed-loop map (invalidate / mutate active mark)
+
+| AC | Surface | Shipped |
+|----|---------|---------|
+| 1 Scan + mark on mutate/invalidate | `scan_live_closures_for_linear_captures` (+ optional `filter_env_id`); Moved mark bumps `linear_ownership_violation_prevented` | #1494 |
+| 2 typed_mutate pipeline | `apply_linear_post_mutate_pipeline_` → enforce_all **then** scan only_if_moved | #1494 |
+| 3 invalidate_function | scan (all linear) + `linear_post_mutate_enforce_all` | #1494 |
+| 4 mark_define_dirty | scan only_if_moved after dirty | #1494 |
+| 5 Tests | `tests/test_issue_1494.cpp` | #1494 |
+
 ## Call graph
 
 ```
@@ -33,9 +43,18 @@ typed_mutate / typed_mutate_atomic (success)
   │     └─ post_mutation_invariant_check per MutationRecord
   │           └─ OwnershipEnv::validate_ownership on dirty Linear bindings
   │
-  └─► apply_linear_post_mutate_pipeline_  (#1538)
-        └─ Evaluator::linear_post_mutate_enforce_all
-              └─ linear_post_mutate_enforce(env_id) for each live frame
+  └─► apply_linear_post_mutate_pipeline_  (#1538 / #1494)
+        ├─ Evaluator::linear_post_mutate_enforce_all
+        │     └─ linear_post_mutate_enforce(env_id) for each live frame
+        └─ scan_live_closures_for_linear_captures(mark, only_if_moved)
+              └─ bridge_epoch=0 on Moved captures → safe_fallback
+
+invalidate_function (#1494)
+  ├─ scan_live_closures_for_linear_captures(mark_invalid)  // all linear
+  └─ linear_post_mutate_enforce_all
+
+mark_define_dirty (#1494)
+  └─ scan_live_closures_for_linear_captures(mark, only_if_moved)
 ```
 
 ## MutationResult fields (#1538)

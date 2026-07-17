@@ -823,14 +823,17 @@ void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
         fn(id, cl);
 }
 
-// Issue #1545 / #1486: scan live closures for linear captures.
+// Issue #1545 / #1486 / #1494: scan live closures for linear captures.
 // A capture is "linear" if the EnvFrame SoA has any state != Untracked.
 // mark_invalid → stamp Closure::bridge_epoch = 0 so apply_closure /
 // closure_needs_safe_fallback takes the safe path (is_bridge_stale).
 // only_if_moved: restrict mark to closures with at least one Moved
 // binding (mutation-boundary closed-loop; invalidate uses false).
+// filter_env_id: when not NULL_ENV_ID, only closures whose env_id
+// matches are considered (#1494 env-scoped scan on enforce path).
 Evaluator::LinearLiveClosureScanResult
-Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_if_moved) noexcept {
+Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_if_moved,
+                                                  EnvId filter_env_id) noexcept {
     LinearLiveClosureScanResult out;
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
@@ -843,6 +846,8 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
         (void)id;
         ++out.examined;
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+            continue;
+        if (filter_env_id != NULL_ENV_ID && cl.env_id != filter_env_id)
             continue;
         const EnvFrame& fr = env_frames_[cl.env_id];
         bool has_linear = false;
@@ -870,6 +875,10 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
                 // Also surface on the safe-fallback family so agents
                 // correlating #1475 / #1545 see the invalidate path.
                 m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1494 AC1: mark-invalid on Moved is a prevented
+                // use-after-move (align with linear_post_mutate_enforce).
+                if (has_moved)
+                    m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
