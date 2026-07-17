@@ -26,6 +26,7 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
+import aura.compiler.optimization_passes;
 
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
@@ -80,6 +81,80 @@ using types::make_void;
 
 // Issue #909 part 104 (orig lines 11638-11700)
 void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
+
+    // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
+    // concrete optimization_passes registry + contract/pipeline counters.
+    ObservabilityPrims::register_stats_impl(
+        "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::opt_registry;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const auto load = [](std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"phase", make_int(kOptimizationPassesPhase)},
+                {"pass-runs", make_int(load(opt_pass_runs_total))},
+                {"pass-errors", make_int(load(opt_pass_errors_total))},
+                {"contracts-pre-checks", make_int(load(opt_contracts_pre_checks_total))},
+                {"contracts-post-checks", make_int(load(opt_contracts_post_checks_total))},
+                {"contract-violations-soft", make_int(load(opt_contract_violations_soft_total))},
+                {"pipeline-factory-runs", make_int(load(opt_pipeline_factory_runs_total))},
+                {"default-table-count", make_int(static_cast<std::int64_t>(default_pass_count()))},
+                {"constant-fold-runs",
+                 make_int(load(
+                     opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::ConstantFold)]))},
+                {"type-propagation-runs",
+                 make_int(load(
+                     opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::TypePropagation)]))},
+                {"compute-kind-runs",
+                 make_int(
+                     load(opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::ComputeKind)]))},
+                {"shape-aware-fold-runs",
+                 make_int(load(
+                     opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::ShapeAwareFold)]))},
+                {"define-dirty-skips",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::optimization_passes_skipped_by_define_dirty.load(
+                         std::memory_order_relaxed)))},
+                {"schema", make_int(1576)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // (query:closure-epoch-concurrency-stats) — Issue #739:
     // atomic epoch visibility under fiber steal + invalidate.
