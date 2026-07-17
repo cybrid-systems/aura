@@ -8,6 +8,7 @@ Usage:
   ./build.py check            # gate + ci（与 CI 相同）
   ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry
   ./build.py gate --fix       # 同上，但 auto-regen docs/registry + lint/format --fix（#1572）
+  ./build.py gate --scripts-only  # 跨平台：跳过 clang-format（#1573 Windows 脚本门栅）
   ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
@@ -64,10 +65,21 @@ from smoke_cases import load_smoke_cases
 from typecheck_cases import load_typecheck_cases
 
 ROOT = Path(__file__).resolve().parent
-BUILD = ROOT / "build"
+BENCH = ROOT / "tests" / "benchmark.py"
+
+
+def _default_build_dir() -> Path:
+    """Resolve build directory (Issue #1573: AURA_BUILD_DIR for macOS build-mac etc.)."""
+    raw = os.environ.get("AURA_BUILD_DIR", "").strip()
+    if raw:
+        p = Path(raw)
+        return p if p.is_absolute() else ROOT / p
+    return ROOT / "build"
+
+
+BUILD = _default_build_dir()
 AURA = BUILD / "aura"
 TEST_BIN = BUILD / "test_ir"
-BENCH = ROOT / "tests" / "benchmark.py"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -104,7 +116,7 @@ def _apply_sanitizer(name: str) -> None:
     """Rebind BUILD/AURA/TEST_BIN to a sanitizer-specific build dir.
 
     Called from main() after parsing --sanitizer=NAME from sys.argv.
-    Idempotent: empty name restores the default build/ tree.
+    Idempotent: empty name restores the default build/ tree (or AURA_BUILD_DIR).
     """
     global BUILD, AURA, TEST_BIN
     if name:
@@ -113,7 +125,7 @@ def _apply_sanitizer(name: str) -> None:
             sys.exit(2)
         BUILD = ROOT / f"build_{name}"
     else:
-        BUILD = ROOT / "build"
+        BUILD = _default_build_dir()
     AURA = BUILD / "aura"
     TEST_BIN = BUILD / "test_ir"
 
@@ -1536,18 +1548,32 @@ def cmd_gate():
     Issue #1572: pass --fix to auto-regen docs + test-registry and to run
     lint/format in fix mode (those subcommands already read --fix from argv).
     CI always runs without --fix (check-only).
+
+    Issue #1573: pass --scripts-only (or AURA_GATE_SCRIPTS_ONLY=1) to skip
+    clang-format — used by the Windows platform-gate job where the C++
+    toolchain is not yet production-supported.
     """
     fix = "--fix" in sys.argv[2:]
-    print(f"{B}═══ Gate {'(fix)' if fix else '(check)'} ═══{N}")
-    return (
-        cmd_docs(check=not fix)
-        or cmd_lint()
-        or cmd_format()
-        or cmd_fixtures()
-        or cmd_primitive_surface()
-        or cmd_test_registry()
-        or cmd_test_binding()
+    scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
+        "1",
+        "true",
+        "yes",
     )
+    mode = "fix" if fix else "check"
+    if scripts_only:
+        mode += "+scripts-only"
+    print(f"{B}═══ Gate ({mode}) ═══{N}")
+    # Short-circuit with `or` (do not eagerly build a list of call results).
+    rc = cmd_docs(check=not fix) or cmd_lint()
+    if rc:
+        return rc
+    if scripts_only:
+        info("scripts-only: skipping clang-format (cross-platform gate)")
+    else:
+        rc = cmd_format()
+        if rc:
+            return rc
+    return cmd_fixtures() or cmd_primitive_surface() or cmd_test_registry() or cmd_test_binding()
 
 
 def cmd_ci():
