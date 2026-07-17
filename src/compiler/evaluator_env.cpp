@@ -1414,6 +1414,12 @@ std::size_t Evaluator::compact_env_frames() {
     // only needs closures_mtx_; avoid holding exclusive while auditing).
     env_lock.unlock();
     (void)run_linear_gc_root_audit(kLinearGcRootAuditCompact);
+    // Issue #1598 AC3: post-compact EnvFrame + linear pin refresh (same
+    // helpers as Fiber::resume post-steal). Remap/restamp above already
+    // fixed env_id/bridge; this walk repairs any residual version_ drift
+    // and re-pins StableNodeRef/linear under the new dual-epoch.
+    (void)refresh_stale_frames_after_steal(/*hint_env_id=*/0, /*expected_epoch=*/0);
+    probe_and_repin_linear_on_steal();
     return reclaimed;
 }
 

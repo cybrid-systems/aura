@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 520,
-  "frozen_count": 439,
+  "frozen_count": 440,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -153,6 +153,7 @@
     "query:envframe-dualpath-stats",
     "query:envframe-production-safety-stats",
     "query:envframe-stale-stats",
+    "query:epoch-apply-hotpath-stats",
     "query:epoch-stats",
     "query:error-handling-policy-stats",
     "query:extension-kit-stats",
@@ -976,7 +977,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 416,
+  "stats_count": 417,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1111,6 +1112,7 @@
     "query:envframe-dualpath-stats",
     "query:envframe-production-safety-stats",
     "query:envframe-stale-stats",
+    "query:epoch-apply-hotpath-stats",
     "query:epoch-stats",
     "query:error-handling-policy-stats",
     "query:extension-kit-stats",
