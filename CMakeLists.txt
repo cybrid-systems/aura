@@ -5139,6 +5139,9 @@ aura_issue_test_link_llvm_jit(test_concept_constraints)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
+# Issue #1579: dedicated ResourceQuota module + process fiber enforcement.
+aura_add_issue_test(test_resource_quota_module)
+aura_issue_test_link_llvm_jit(test_resource_quota_module)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)

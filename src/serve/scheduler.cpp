@@ -3,6 +3,7 @@
 #include "gc_coordinator.h"
 #include "aura_platform.h"
 #include "core/gc_hooks.h"
+#include "core/resource_quota.hh"
 #include <unistd.h>
 
 import std;
@@ -110,6 +111,16 @@ Scheduler::~Scheduler() {
 // Creates the fiber and assigns it to a worker (round-robin).
 
 Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
+    // Issue #1579: process-wide fiber quota before spawn (misbehaving agent isolation).
+    // Returns nullptr when ResourceQuota fibers dimension is exceeded.
+    // Paired release in on_fiber_done.
+    using aura::core::resource_quota::Dimension;
+    using aura::core::resource_quota::process_resource_quota;
+    if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
+        (void)err;
+        return nullptr;
+    }
+
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
 
@@ -156,6 +167,14 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
 }
 
 Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t stack_size) {
+    // Issue #1579: same process-wide fiber quota as spawn().
+    using aura::core::resource_quota::Dimension;
+    using aura::core::resource_quota::process_resource_quota;
+    if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
+        (void)err;
+        return nullptr;
+    }
+
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
     if (worker_id >= 0 && worker_id < static_cast<int>(workers_.size())) {
@@ -229,6 +248,10 @@ void Scheduler::unregister_fiber(int eventfd) {
 void Scheduler::on_fiber_done(Fiber* fiber) {
     if (!fiber)
         return;
+    // Issue #1579: release process fiber quota reserved at spawn.
+    aura::core::resource_quota::process_resource_quota().release(
+        aura::core::resource_quota::Dimension::Fibers, 1);
+
     int evfd = fiber->eventfd();
     if (evfd >= 0) {
 #if AURA_HAVE_EPOLL
