@@ -9,6 +9,7 @@ module;
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
+#include "core/gc_hooks.h" // #1593 safepoint wait linkage
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "hash_meta.h" // FNV constants (#901)
@@ -731,14 +732,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1470 / #1499: query:ai-closedloop-readiness-stats —
+    // Issue #1470 / #1499 / #1593: query:ai-closedloop-readiness-stats —
     // consolidated health for AI editing loops.
     //
     // #1470: wraps / invalidations / batch-commits / hygiene-skips /
     // dirty-prunes + recommendation [0..4].
-    // #1499: production breakdown (linear post-mutate, cascade depth,
-    // steal auto-refresh, epoch invalidation, quota rejects, relower,
-    // per-fiber depth) + health-score 0..100 + action + schema 1499.
+    // #1499: production breakdown + health-score 0..100 + action.
+    // #1593: SLO breach, health-trend, sibling linkage (#1591/#1592),
+    // adaptive-safepoint recommendation + soft adapt signal, schema 1593.
     //
     // Recommendation priority (most severe first, #1470 contract):
     //   0 = healthy  1 = wraps  2 = high invalidations  3 = hygiene
@@ -751,6 +752,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             (void)pairs;
+            // Process-wide trend / SLO (Agent samples this primitive repeatedly).
+            static std::atomic<std::int64_t> s_prev_health{100};
+            static std::atomic<std::uint64_t> s_samples{0};
+            static std::atomic<std::uint64_t> s_slo_breach_total{0};
+            static std::atomic<std::uint64_t> s_adaptive_soft_triggers{0};
+
             std::uint64_t wraps = 0;
             std::uint64_t invalidations = 0;
             std::uint64_t batch_commits = 0;
@@ -809,6 +816,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::uint64_t>(Evaluator::mutation_boundary_depth());
             const std::uint64_t bridge_bumps = load(&CompilerMetrics::bridge_epoch_bumps_total);
 
+            // #1593 sibling linkage (#1591 fairness / #1592 post-steal).
+            const std::uint64_t safepoint_wait_us =
+                aura::gc_hooks::safepoint_wait_while_mutation_held_us();
+            const std::uint64_t safe_yield_skip = ev.get_safe_yield_skipped_held_total();
+            const std::uint64_t post_steal_refresh = ev.get_post_steal_refresh_count();
+            auto& steal_s = ::aura::serve::metrics::adaptive_steal_stats();
+            const std::uint64_t steal_mitigated =
+                steal_s.steal_inner_deferred_starvation_mitigated_count.load(
+                    std::memory_order_relaxed);
+            const std::uint64_t hold_total =
+                load(&CompilerMetrics::mutation_boundary_hold_time_total_us);
+            const std::uint64_t hold_samples =
+                load(&CompilerMetrics::mutation_boundary_holds_total);
+            const std::int64_t avg_hold_us =
+                hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
+
             // Cascade avg (bp for integer: total*100 / protocol when >0).
             std::int64_t cascade_avg_x100 = 0;
             if (protocol > 0)
@@ -846,6 +869,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 penalize(10);
             if (dirty_prunes >= 50)
                 penalize(5);
+            // #1593: long holds / safepoint wait under mutation pressure.
+            if (avg_hold_us >= 5000)
+                penalize(std::min<std::int64_t>(10, avg_hold_us / 5000));
+            if (safepoint_wait_us >= 100000)
+                penalize(5);
+            if (safe_yield_skip >= 50)
+                penalize(5);
 
             // Orchestration action (independent of #1470 recommendation).
             std::int64_t action = 0;
@@ -858,7 +888,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50)
                 action = 1; // investigate-refs
 
-            auto* ht = FlatHashTable::create(64);
+            // #1593 SLO: health < threshold OR severe action.
+            constexpr std::int64_t kSloThreshold = 70;
+            const bool slo_breach = (health < kSloThreshold) || (action >= 3);
+            if (slo_breach)
+                s_slo_breach_total.fetch_add(1, std::memory_order_relaxed);
+
+            // Health trend vs previous sample (positive = improving).
+            const std::int64_t prev = s_prev_health.exchange(health, std::memory_order_relaxed);
+            const std::int64_t health_trend = health - prev;
+            s_samples.fetch_add(1, std::memory_order_relaxed);
+
+            // Adaptive safepoint soft linkage: on hard breach, nudge threshold
+            // (orchestrators also read adaptive-safepoint-recommended).
+            std::int64_t adaptive_recommended = 0;
+            if (slo_breach || live_depth > 0 || avg_hold_us >= 2000 || safe_yield_skip >= 20)
+                adaptive_recommended = 1;
+            if (slo_breach && health < 50) {
+                s_adaptive_soft_triggers.fetch_add(1, std::memory_order_relaxed);
+                // Soft adapt: one exponential backoff step (capped in helper).
+                ev.bump_safepoint_adaptive_threshold();
+            }
+
+            auto* ht = FlatHashTable::create(96);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
@@ -913,7 +965,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("relower-partial-bp", relower_partial_bp);
             insert_kv("fiber-depth-max", static_cast<std::int64_t>(fiber_depth_max));
             insert_kv("live-mutation-depth", static_cast<std::int64_t>(live_depth));
-            insert_kv("schema", 1499);
+            // #1593: SLO + trend + sibling linkage + adaptive
+            insert_kv("slo-breach", slo_breach ? 1 : 0);
+            insert_kv("slo-threshold", kSloThreshold);
+            insert_kv("slo-breach-total", static_cast<std::int64_t>(
+                                              s_slo_breach_total.load(std::memory_order_relaxed)));
+            insert_kv("health-trend", health_trend);
+            insert_kv("health-prev", prev);
+            insert_kv("samples-total",
+                      static_cast<std::int64_t>(s_samples.load(std::memory_order_relaxed)));
+            insert_kv("avg-hold-time-us", avg_hold_us);
+            insert_kv("safepoint-wait-while-mutation-held-us",
+                      static_cast<std::int64_t>(safepoint_wait_us));
+            insert_kv("safe-yield-skipped-held", static_cast<std::int64_t>(safe_yield_skip));
+            insert_kv("post-steal-refresh-count", static_cast<std::int64_t>(post_steal_refresh));
+            insert_kv("steal-inner-deferred-starvation-mitigated-count",
+                      static_cast<std::int64_t>(steal_mitigated));
+            insert_kv("adaptive-safepoint-recommended", adaptive_recommended);
+            insert_kv("adaptive-soft-triggers",
+                      static_cast<std::int64_t>(
+                          s_adaptive_soft_triggers.load(std::memory_order_relaxed)));
+            insert_kv("adaptive-safepoint-threshold",
+                      static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold()));
+            insert_kv("issue", 1593);
+            insert_kv("schema", 1593); // Agents may still accept 1499
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
