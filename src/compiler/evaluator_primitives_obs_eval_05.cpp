@@ -737,7 +737,8 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
                   : 0;
-            // Issue #1601: production consumer metrics (eval/eval_ir prefer partial).
+            // Issue #1601 / #1605: production consumer metrics
+            // (eval/eval_ir/define_function prefer partial re-lower).
             const std::int64_t incr_blocks =
                 m ? static_cast<std::int64_t>(
                         m->incremental_relower_blocks_total.load(std::memory_order_relaxed))
@@ -771,17 +772,21 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relowers", make_int(partial_relowers)},
                 {"full-fallbacks", make_int(full_fallbacks)},
                 {"time-saved-us", make_int(time_saved_us)},
-                // #1601 AC4 names (underscore form for agents)
+                // #1601 / #1605 AC names (underscore form for agents)
                 {"incremental_relower_blocks", make_int(incr_blocks)},
                 {"relower_per_function_called_count", make_int(per_fn)},
                 {"relower_skipped_entirely_count", make_int(skipped)},
                 {"relower_full_called_count", make_int(full_called)},
+                // #1605 AC3 alias (snapshot field name)
+                {"full_relower_count", make_int(full_called)},
                 {"dirty_block_ratio", make_int(dirty_ratio_bp)}, // basis points
                 {"dirty_block_ratio_bp", make_int(dirty_ratio_bp)},
                 {"eval-prefer-partial-wired", make_int(1)},
+                {"eval-ir-prefer-partial-wired", make_int(1)},
                 {"relower-only-dirty-blocks-wired", make_int(1)},
-                {"issue", make_int(1601)},
-                {"schema", make_int(1601)}, // lineage 718
+                {"relower-define-blocks-wired", make_int(1)},
+                {"issue", make_int(1605)},
+                {"schema", make_int(1605)}, // lineage 1601 / 718
             };
             return build_hash(kv);
         });

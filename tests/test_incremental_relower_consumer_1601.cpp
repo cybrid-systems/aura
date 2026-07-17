@@ -186,7 +186,8 @@ static void ac4_query_schema() {
 
     auto h = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1601 || href(cs, "schema") == 718, "schema 1601|718");
+    CHECK(href(cs, "schema") == 1605 || href(cs, "schema") == 1601 || href(cs, "schema") == 718,
+          "schema 1605|1601|718");
     CHECK(href(cs, "incremental_relower_blocks") >= 0, "incremental_relower_blocks");
     CHECK(href(cs, "relower_per_function_called_count") >= 0, "per_function count");
     CHECK(href(cs, "relower_skipped_entirely_count") >= 0, "skipped count");

@@ -28,22 +28,24 @@ define_function            → cache_define_prefer_partial  (#1601)
 (set-code) workspace       → relower_dirty_defines_from_workspace (#1495)
 ```
 
-## Metrics (`query:incremental-relower-stats`, schema **1601**)
+## Metrics (`query:incremental-relower-stats`, schema **1605** lineage 1601/718)
 
 | Key | Meaning |
 |-----|---------|
 | `incremental_relower_blocks` | Blocks replaced on partial path |
 | `relower_per_function_called_count` | Per-function re-lower entries |
 | `relower_skipped_entirely_count` | Clean-hit skips |
-| `relower_full_called_count` | Full-bundle re-lower |
+| `relower_full_called_count` / `full_relower_count` | Full-bundle re-lower (#1605 alias) |
 | `dirty_block_ratio` / `_bp` | hits/(hits+saved) × 10000 |
 | `eval-prefer-partial-wired` | constant 1 |
 
 ## Tests
 
+- `tests/test_incremental_relower.cpp` — **#1605** named AC
 - `tests/test_incremental_relower_consumer_1601.cpp` — 1000× set-body + metrics
 - Prior: `test_issue_1506`, `test_issue_1555`, `test_issue_1474`, `test_issue_1505`
 
 ## Related
 
+- `docs/design/incremental-relower-1605.md`
 - `docs/design/apply-closure-epoch-safety.md` (orthogonal safety)

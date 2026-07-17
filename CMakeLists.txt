@@ -5211,6 +5211,9 @@ aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
 # Issue #1601: eval/eval_ir prefer partial re-lower consumer wiring.
 aura_add_issue_test(test_incremental_relower_consumer_1601)
 aura_issue_test_link_llvm_jit(test_incremental_relower_consumer_1601)
+# Issue #1605: per-block dirty → partial re-lower (named test_incremental_relower).
+aura_add_issue_test(test_incremental_relower)
+aura_issue_test_link_llvm_jit(test_incremental_relower)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
