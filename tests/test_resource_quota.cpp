@@ -37,7 +37,9 @@
 #include <string>
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
+import aura.core.error;
 import aura.compiler.evaluator;
 
 namespace aura_issue_1481_detail {

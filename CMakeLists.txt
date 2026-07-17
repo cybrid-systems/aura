@@ -5839,6 +5839,12 @@ aura_add_issue_test(test_incremental_aot_closure_deps)
 # allowlist.txt in case the link hits the system 5-min build timeout
 # (per invariant #29). Verification deferred to #1538 batch.
 aura_add_issue_test(test_resource_quota)
+aura_issue_test_link_llvm_jit(test_resource_quota)
+# Issue #1548: Aura-side query:resource-quota-stats + quota edge cases.
+aura_add_issue_test(test_primitive_resource_quota_stats)
+aura_issue_test_link_llvm_jit(test_primitive_resource_quota_stats)
+aura_add_issue_test(test_quota_edge_cases)
+aura_issue_test_link_llvm_jit(test_quota_edge_cases)
 # Issue #1482: Env::bind_symid PRIMARY storage + lazy bindings_with_names()
 # derive + alloc_env_frame_from_env drops legacy bindings_ mirror (SymId-
 # mirror only). 8 ACs covering the post-Commit 1/2/3 invariants: bind_symid
