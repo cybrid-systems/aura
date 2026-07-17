@@ -20,9 +20,16 @@
 ; 用 mutate:rebind 改为 new。
 ;
 ; Returns: 被修改的节点数，或 #f（无 workspace）
+;
+; query:node-type 返回 (no-workspace no workspace AST loaded) sentinel
+; 当 no workspace, 而不是 #f 或 ()。守卫检查 IDs 是 numbers,
+; 这样 sentinel (car 是 symbol) 被正确识别为 no-workspace。
+(define (refactor:ids? x)
+  (or (null? x) (and (pair? x) (number? (car x)))))
+
 (define (refactor:rename-var old new)
   (define defs (try (query:node-type "Define") (catch #f)))
-  (if (not (pair? defs)) #f
+  (if (not (refactor:ids? defs)) #f
     (let ((count 0))
       ; 1. Rename Define nodes
       (define (rename-defs ids)
@@ -79,7 +86,7 @@
 ; Returns: 被替换的调用数，或 #f
 (define (refactor:inline-function fn-name)
   (define defs (try (query:node-type "Define") (catch #f)))
-  (if (not (pair? defs)) #f
+  (if (not (refactor:ids? defs)) #f
     (let ((found #f) (count 0))
       ; 找到 Define 节点
       (define (find-def ids)
