@@ -122,7 +122,7 @@ static void run_matrix(CompilerService& cs) {
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto rps = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     auto tms = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
-    CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
+    CHECK(phs && (is_int(*phs) || is_hash(*phs)), "pattern-hygiene-stats regression");
     CHECK(rps && is_hash(*rps), "reflect-postmutate-stats regression");
     CHECK(reflect_postmutate_total(cs) >= 0, "reflect-postmutate-total non-negative");
     CHECK(tms && is_int(*tms), "typed-mutation-stats regression");

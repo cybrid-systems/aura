@@ -30,20 +30,22 @@ Matcher still applies root + recursive MacroIntroduced filters as defense in dep
 ## Stats
 
 ```
-(engine:metrics "query:pattern-hygiene-stats")   ; int: root-skips + violations (#547)
-(engine:metrics "query:macro-hygiene-stats")     ; hash schema 1501
+(engine:metrics "query:pattern-hygiene-stats")   ; hash schema 1609 (authoritative, #1609)
+(engine:metrics "query:macro-hygiene-stats")     ; hash schema 1609 (lineage 1501)
 ```
 
-| Field (macro-hygiene-stats) | Meaning |
-|----------------------------|---------|
+| Field | Meaning |
+|-------|---------|
 | `root-skips` | MacroIntroduced skipped at root walk |
 | `recursive-skips` | Recursive matcher skips |
 | `hygiene-violations` | Violation counter |
+| `total` | root-skips + violations (#547 sum) |
 | `macro-markers` | Workspace MacroIntroduced tally |
 | `hygiene-index-served` | User-only tag_arity snapshot serves (#1501) |
-| `schema` | **1501** |
+| `schema` | **1609** |
 
 ## Tests
 
+- `tests/test_query_pattern_hygiene_1609.cpp` — **#1609** AC
 - `tests/test_issue_1501.cpp` — index hygiene + flags + stats
 - `tests/test_query_pattern_hygiene_macrointroduced.cpp` — closed-loop matrix

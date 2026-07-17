@@ -125,7 +125,8 @@ int aura_issue_528_observability_run() {
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         auto pish = cs.eval("(engine:metrics \"query:pattern-index-stats-hash\")");
         CHECK(pis && aura::compiler::types::is_int(*pis), "pattern-index-stats int regression");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats int regression");
+        CHECK(phs && (aura::compiler::types::is_int(*phs) || aura::compiler::types::is_hash(*phs)),
+              "pattern-hygiene-stats regression");
         CHECK(pish && aura::compiler::types::is_hash(*pish),
               "pattern-index-stats-hash hash regression");
     }

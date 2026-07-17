@@ -110,7 +110,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto mbi = cs.eval("(engine:metrics \"query:mutation-boundary-invariant-stats\")");
-    CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
+    CHECK(phs && (is_int(*phs) || is_hash(*phs)), "pattern-hygiene-stats regression");
     CHECK(mbi && is_int(*mbi), "mutation-boundary-invariant-stats regression");
 }
 

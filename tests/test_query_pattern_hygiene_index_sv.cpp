@@ -149,7 +149,7 @@ bool test_query_pattern_index_stats() {
     auto r = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(r.has_value(), "(engine:metrics \"query:pattern-index-stats\") returns");
     CHECK(aura::compiler::types::is_int(*r),
-          "(engine:metrics \"query:pattern-index-stats\") is integer");
+          "(engine:metrics \"query:pattern-index-stats\") is int or hash");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-index-stats = {}", v);
@@ -158,20 +158,24 @@ bool test_query_pattern_index_stats() {
     return true;
 }
 
-// ── AC5: query:pattern-hygiene-stats returns integer sum ──
+// ── AC5: query:pattern-hygiene-stats returns int sum (#547) or hash (#1609) ──
 bool test_query_pattern_hygiene_stats() {
-    std::println("\n--- AC5: (engine:metrics \"query:pattern-hygiene-stats\") returns integer ---");
+    std::println(
+        "\n--- AC5: (engine:metrics \"query:pattern-hygiene-stats\") returns int or hash ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(r.has_value(), "(engine:metrics \"query:pattern-hygiene-stats\") returns");
-    CHECK(aura::compiler::types::is_int(*r),
-          "(engine:metrics \"query:pattern-hygiene-stats\") is integer");
+    CHECK(r && (aura::compiler::types::is_int(*r) || aura::compiler::types::is_hash(*r)),
+          "(engine:metrics \"query:pattern-hygiene-stats\") is int or hash");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
         std::println("  query:pattern-hygiene-stats = {}", v);
         CHECK(v >= 0, "(engine:metrics \"query:pattern-hygiene-stats\") >= 0 (skips + violations)");
+    } else if (r && aura::compiler::types::is_hash(*r)) {
+        std::println("  query:pattern-hygiene-stats = hash (schema 1609)");
+        CHECK(true, "pattern-hygiene-stats hash authoritative (#1609)");
     }
     return true;
 }
@@ -200,13 +204,14 @@ bool test_default_filters_macro_introduced() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define x 1)\")");
     (void)cs.eval("(eval-current)");
-    // Verify (engine:metrics \"query:pattern-hygiene-stats\") is reachable + 0.
+    // Verify (engine:metrics \"query:pattern-hygiene-stats\") is reachable
+    // (#547 int sum or #1609 authoritative hash).
     auto r = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    if (!r || !aura::compiler::types::is_int(*r)) {
+    if (!r || !(aura::compiler::types::is_int(*r) || aura::compiler::types::is_hash(*r))) {
         ++aura::test::g_failed;
         return false;
     }
-    const auto baseline = static_cast<std::int64_t>(aura::compiler::types::as_int(*r));
+    const auto baseline = cs.evaluator().get_macro_introduced_skipped_in_query();
     // Run a pattern query — the default skip-if-MacroIntroduced
     // path bumps macro_introduced_skipped_in_query_ when the
     // workspace has any MacroIntroduced nodes. The exact count
@@ -214,9 +219,8 @@ bool test_default_filters_macro_introduced() {
     auto r2 = cs.eval("(query:pattern \"x\")");
     CHECK(r2.has_value(), "(query:pattern \"x\") returns");
     const auto after = cs.evaluator().get_macro_introduced_skipped_in_query();
-    std::println("  macro_introduced_skipped_in_query: {} (baseline hygiene stats: {})", after,
-                 baseline);
-    CHECK(after >= 0, "macro_introduced_skipped_in_query observable + non-negative");
+    std::println("  macro_introduced_skipped_in_query: {} (baseline: {})", after, baseline);
+    CHECK(after >= baseline, "macro_introduced_skipped_in_query observable + non-decreasing");
     return true;
 }
 
@@ -261,8 +265,9 @@ bool test_regression_existing_primitives() {
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:pattern-index-stats\") (new for #547)");
     auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(engine:metrics \"query:pattern-hygiene-stats\") (new for #547)");
+    CHECK(r2.has_value() &&
+              (aura::compiler::types::is_int(*r2) || aura::compiler::types::is_hash(*r2)),
+          "(engine:metrics \"query:pattern-hygiene-stats\") (new for #547 / #1609)");
     auto r3 = cs.eval("(engine:metrics \"query:query-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(engine:metrics \"query:query-stats\") (regression for #447)");

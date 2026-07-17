@@ -124,7 +124,8 @@ int aura_issue_486_run() {
         auto hys = cs.eval("(engine:metrics \"query:hygiene-stats\")");
         CHECK(macro_n && aura::compiler::types::is_int(*macro_n), "macro-introduced reachable");
         CHECK(by_marker && aura::compiler::types::is_int(*by_marker), "by-marker reachable");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
+        CHECK(phs && (aura::compiler::types::is_int(*phs) || aura::compiler::types::is_hash(*phs)),
+              "pattern-hygiene-stats regression");
         CHECK(hys && aura::compiler::types::is_int(*hys), "hygiene-stats regression");
         if (macro_n && by_marker && aura::compiler::types::is_int(*macro_n) &&
             aura::compiler::types::is_int(*by_marker)) {

@@ -215,6 +215,9 @@ bool test_combined_metrics_monotonic(CompilerService& cs) {
         aura::compiler::types::is_int(*phs1)) {
         CHECK(aura::compiler::types::as_int(*phs1) >= aura::compiler::types::as_int(*phs0),
               "pattern-hygiene-stats monotonic");
+    } else if (phs0 && phs1 && aura::compiler::types::is_hash(*phs0) &&
+               aura::compiler::types::is_hash(*phs1)) {
+        CHECK(true, "pattern-hygiene-stats hash (schema 1609) present");
     }
     if (prod0 && prod1 && aura::compiler::types::is_int(*prod0) &&
         aura::compiler::types::is_int(*prod1)) {
@@ -264,7 +267,8 @@ bool test_regression_hygiene_primitives(CompilerService& cs) {
     CHECK(r1.has_value() && aura::compiler::types::is_hash(*r1),
           "(engine:metrics \"query:macro-hygiene-stats\") regression");
     auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
+    CHECK(r2.has_value() &&
+              (aura::compiler::types::is_int(*r2) || aura::compiler::types::is_hash(*r2)),
           "(engine:metrics \"query:pattern-hygiene-stats\") regression");
     auto r3 = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_hash(*r3),

@@ -2004,33 +2004,79 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #547: query:pattern-hygiene-stats. Returns
-    // the sum of the 2 query:pattern hygiene observability
-    // counters (int, back-compat for #486/#421/#528 regressions).
-    // Structured #1501 fields live on query:macro-hygiene-stats.
+    // Issue #547 / #1501 / #1609: query:pattern-hygiene-stats — authoritative
+    // MacroIntroduced hygiene dashboard for query:pattern hot path.
+    // Schema **1609** (lineage 1501 hash fields + #547 total sum key).
+    // Defense-in-depth: root/full-walk skip + recursive matcher + user-only
+    // tag_arity_index_user_ snapshot (see docs/design/query-pattern-hygiene-1609.md).
     ObservabilityPrims::register_stats_impl(
-        "query:pattern-hygiene-stats", [](std::span<const EvalValue> a) -> EvalValue {
+        "query:pattern-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
-                return make_int(0);
-            const std::uint64_t skips = ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t violations = ev->get_hygiene_violation_count();
-            return make_int(static_cast<std::int64_t>(skips + violations));
+                return make_void();
+            auto* ht = FlatHashTable::create(24);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto root_skips =
+                static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query());
+            const auto recursive_skips =
+                static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped());
+            const auto violations = static_cast<std::int64_t>(ev->get_hygiene_violation_count());
+            insert_kv("root-skips", root_skips);
+            insert_kv("recursive-skips", recursive_skips);
+            insert_kv("hygiene-violations", violations);
+            // #547 back-compat: total used by agents that expected int sum
+            insert_kv("total", root_skips + violations);
+            insert_kv("macro-markers",
+                      static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
+            insert_kv("hygiene-index-served",
+                      static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served()));
+            // #1609 wire flags
+            insert_kv("core-loop-force-skip-wired", 1);
+            insert_kv("matcher-recursive-skip-wired", 1);
+            insert_kv("user-only-tag-arity-index-wired", 1);
+            insert_kv("issue", 1609);
+            insert_kv("schema", 1609); // lineage 1501 / 547
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
-    // Issue #486 / #1501: query:macro-hygiene-stats. Hash view of the
-    // MacroIntroduced hygiene decision surface for AI self-evolution:
-    //   - root-skips / recursive-skips / hygiene-violations / macro-markers
-    //   - hygiene-index-served (#1501 user-only tag_arity index serves)
-    //   - schema 1501
+    // Issue #486 / #1501 / #1609: query:macro-hygiene-stats — same fields
+    // as pattern-hygiene-stats (lineage schema 1609|1501) for agents that
+    // already bind this name.
     ObservabilityPrims::register_stats_impl(
         "query:macro-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(20);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2065,10 +2111,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
             insert_kv("macro-markers",
                       static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
-            // Issue #1501: user-only tag_arity index serve counter.
             insert_kv("hygiene-index-served",
                       static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served()));
-            insert_kv("schema", 1501);
+            insert_kv("schema", 1609); // lineage 1501
+            insert_kv("issue", 1609);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

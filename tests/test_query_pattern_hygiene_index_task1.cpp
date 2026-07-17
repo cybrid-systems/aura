@@ -277,8 +277,9 @@ bool test_regression_existing_primitives() {
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:pattern-index-stats\") (extended for #554)");
     auto r2 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
-    CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547)");
+    CHECK(r2.has_value() &&
+              (aura::compiler::types::is_int(*r2) || aura::compiler::types::is_hash(*r2)),
+          "(engine:metrics \"query:pattern-hygiene-stats\") (regression for #547 / #1609)");
     auto r3 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(engine:metrics \"query:mutation-log-stats\") (regression for #553)");

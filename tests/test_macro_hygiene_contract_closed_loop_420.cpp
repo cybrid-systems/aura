@@ -107,7 +107,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: query regression ---");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     auto ihs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
-    CHECK(phs && is_int(*phs), "pattern-hygiene-stats regression");
+    CHECK(phs && (is_int(*phs) || is_hash(*phs)), "pattern-hygiene-stats regression");
     CHECK(ihs && is_hash(*ihs), "ir-hygiene-stats regression");
 }
 
