@@ -42,17 +42,36 @@
                 (core:zip-with f (cdr a) (cdr b))))))
 
 ; ── (core:group-by keyfn lst) ──
-; Group consecutive elements by keyfn; returns association
-; list of (key . (group-of-elements)).
+; Group elements by (keyfn x). Returns alist of (key group-list)
+; where groups appear in first-seen key order and elements within
+; each group preserve list order.
+;
+; Production note (#1550): single-pass hash accumulation O(n).
+; Previous double-filter loop was O(n²) worst-case (all keys equal
+; or highly repeated) — unsuitable for large AI data pipelines.
+; Prefer this for large lists; for tiny lists either is fine.
 (define (core:group-by keyfn lst)
-  (let loop ((rest lst) (acc (list)))
-    (cond
-      ((null? rest) (reverse acc))
-      (else
-        (let* ((k (keyfn (car rest)))
-               (matching (filter (lambda (x) (equal? (keyfn x) k)) rest))
-               (other (filter (lambda (x) (not (equal? (keyfn x) k))) rest)))
-          (loop other (cons (list k matching) acc))))))
+  (let loop ((xs lst) (groups (hash)) (order (list)))
+    (if (null? xs)
+        ; Build ((k g) ...) with first-seen key order; reverse each group
+        ; because we cons'd elements front-to-back while scanning.
+        (let build ((ks (reverse order)) (acc (list)))
+          (if (null? ks)
+              (reverse acc)
+              (build (cdr ks)
+                     (cons (list (car ks)
+                                 (reverse (hash-ref groups (car ks) (list))))
+                           acc))))
+        (let* ((x (car xs))
+               (k (keyfn x))
+               (prev (hash-ref groups k (list))))
+          (if (null? prev)
+              (begin
+                (hash-set! groups k (list x))
+                (loop (cdr xs) groups (cons k order)))
+              (begin
+                (hash-set! groups k (cons x prev))
+                (loop (cdr xs) groups order)))))))
 
 ; ── (core:chunk n lst) ──
 ; Split lst into chunks of size n. Last chunk may be shorter.
