@@ -8,6 +8,12 @@
 ;
 ; 全部纯 Aura，零 C++ 依赖（stdin 模式友好）。
 ; 在 serve 模式下自动使用 cross-session send/recv。
+;
+; #1551: LLM-backed roles should use std/llm (llm:chat / templates /
+; sanitize / llm:call-stats) rather than raw http-post. Example:
+;   (require "std/llm" all:)
+;   (llm:register-template "role" (lambda (task) ...))
+;   (agent:spawn "analyst" (lambda (in) (llm:chat "..." (llm:apply-template "role" in))))
 
 (require "std/list" all:)
 (require "std/string" all:)

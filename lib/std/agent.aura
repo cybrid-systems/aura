@@ -20,6 +20,8 @@
 (require std/json)
 (require std/string)
 (require "std/mutate" all:)
+; #1551: sanitize + structured parse for production LLM path
+(require "std/llm" all:)
 
 ; ── Configuration ──────────────────────────────────────────────
 (define api-key (getenv "LLM_API_KEY"))
@@ -85,36 +87,36 @@
       (cdr (car lst))
       (agent-alist-ref key (cdr lst) default))))
 
-; ── LLM API call ───────────────────────────────────────────────
+; ── LLM API call (#1551: sanitize user prompt; json-encode body) ──
 (define (llm-ask prompt)
-  (let* ((body (string-append
-          "{\"model\":\"" llm-model "\",\"messages\":["
-          "{\"role\":\"system\",\"content\":\"You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation.\"},"
-          "{\"role\":\"user\",\"content\":\"" prompt "\"}]}"))
-         (resp (http-post api-url body api-key)))
-    resp))
+  (if (llm:injection-risk? (if (string? prompt) prompt ""))
+    "injection-blocked"
+    (let* ((clean (llm:sanitize-prompt (if (string? prompt) prompt "")))
+           (body (json-encode
+                   (hash "model" llm-model
+                         "messages"
+                         (list
+                           (hash "role" "system"
+                                 "content"
+                                 "You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation.")
+                           (hash "role" "user" "content" clean)))))
+           (resp (aura-llm-call body)))
+      resp)))
 
-; ── Extract code from LLM response ─────────────────────────────
+; ── Extract code from LLM response (#1551: llm:extract-content) ──
 (define (extract-code response)
-  (let* ((data (json-parse response))
-         (choices (hash-ref data "choices")))
-    (if (pair? choices)
-      (let* ((first (car choices))
-             (msg (hash-ref first "message"))
-             (content (hash-ref msg "content")))
-        (if (string? content)
-          (begin
-            (define parts (string-split content "```"))
-            (if (> (length parts) 1)
-              (let* ((after (list-ref parts 1))
-                     (nl-pos (string-find after "\n")))
-                (if (>= nl-pos 0)
-                  (substring after (+ nl-pos 1) (string-length after))
-                  after))
-              content))
-          ""))
-      "")))
-
+  (let ((content (llm:extract-content response)))
+    (if (not (string? content))
+      ""
+      (begin
+        (define parts (string-split content "```"))
+        (if (> (length parts) 1)
+          (let* ((after (list-ref parts 1))
+                 (nl-pos (string-find after "\n")))
+            (if (>= nl-pos 0)
+              (substring after (+ nl-pos 1) (string-length after))
+              after))
+          content)))))
 ; ── Safe eval with error handling ─────────────────────────────
 (define (safe-eval code)
   (try

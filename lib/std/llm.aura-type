@@ -1,2 +1,15 @@
 aura-llm-call: Any -> Any
 aura-verify: Any -> String
+llm:rate-limit-set!: Any -> Any
+llm:rate-limit-remaining: -> Any
+llm:call-sandboxed: Any -> Any
+llm:register-template: Any Any -> Any
+llm:list-templates: -> Any
+llm:apply-template: Any Any -> Any
+llm:parse-response: Any -> Any
+llm:extract-content: Any -> Any
+llm:sanitize-prompt: Any -> Any
+llm:injection-risk?: Any -> Any
+llm:call-stats: -> Any
+llm:call-stats-reset!: -> Any
+llm:chat: Any Any -> Any
