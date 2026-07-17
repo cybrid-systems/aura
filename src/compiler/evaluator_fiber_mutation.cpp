@@ -1233,8 +1233,10 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     return true;
 }
 
-// Issue #1580: full post-resume steal closed loop used by Fiber::resume
+// Issue #1580 / #1592: full post-resume steal closed loop used by Fiber::resume
 // and fiber_resume_validate_impl.
+// AC (#1592): refresh_stale_frames_after_steal + linear repin + StableNodeRef
+// auto-restamp + linear ownership enforce on steal/resume main path.
 void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
     std::uint64_t hint_env = 0;
     std::uint64_t expected_epoch = 0;
@@ -1245,10 +1247,23 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
         expected_epoch = fiber->resume_bridge_epoch_hint();
     }
 
-    (void)refresh_stale_frames_after_steal(hint_env, expected_epoch);
+    const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
     probe_and_repin_linear_on_steal();
     // Explicit Steal-site StableNodeRef auto-restamp (beyond probe_and_repin).
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
+
+    // Issue #1592 AC3: linear ownership closed-loop after steal/resume.
+    // Prefer hinted env when available; full sweep when drift was repaired
+    // (refreshed > 0) so MoveOp / linear captures cannot dangle across steal.
+    if (hint_env != 0 && hint_env != static_cast<std::uint64_t>(NULL_ENV_ID)) {
+        (void)linear_post_mutate_enforce(static_cast<EnvId>(hint_env));
+    } else if (refreshed > 0) {
+        (void)linear_post_mutate_enforce_all();
+    } else {
+        // Still bump once so dashboards see resume-path liveness even when
+        // no frames were stale (pairs with Guard-exit enforcement).
+        bump_linear_post_mutate_enforcement();
+    }
 
     if (pending_panic_checkpoint())
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);

@@ -354,9 +354,10 @@ void Fiber::resume() {
         aura::messaging::g_transfer_panic_checkpoint();
     }
 
-    // Issue #1490: force EnvFrame / bridge_epoch refresh + linear
-    // re-pin after resume validate (pairs with pre-swap migration
-    // refresh in aura_evaluator_resume_fiber_migration).
+    // Issue #1490 / #1580 / #1592: force EnvFrame / bridge_epoch refresh +
+    // linear re-pin + StableNodeRef auto-restamp + linear ownership enforce
+    // after resume validate (pairs with pre-swap migration refresh in
+    // aura_evaluator_resume_fiber_migration → complete_post_resume_steal_refresh).
     aura_evaluator_post_resume_refresh();
 
     if (g_fiber_setter_)
