@@ -27,6 +27,7 @@ import aura.core.arena;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.optimization_passes;
+import aura.core.concept_constraints;
 
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferred_total();
@@ -81,6 +82,62 @@ using types::make_void;
 
 // Issue #909 part 104 (orig lines 11638-11700)
 void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
+
+    // (engine:metrics "query:pass-concepts-stats") — Issue #1577:
+    // centralized concept_constraints inventory + import hits.
+    ObservabilityPrims::register_stats_impl(
+        "query:pass-concepts-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::pass_concepts;
+            note_concept_constraints_import();
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const auto mod_kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back("aura.core.concept_constraints");
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"phase", make_int(kConceptConstraintsPhase)},
+                {"concept-count", make_int(kPassConceptCount)},
+                {"import-hits",
+                 make_int(static_cast<std::int64_t>(
+                     concept_constraints_import_hits.load(std::memory_order_relaxed)))},
+                {"module", make_string(mod_kidx)},
+                {"schema", make_int(1577)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
     // concrete optimization_passes registry + contract/pipeline counters.

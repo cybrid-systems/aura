@@ -169,6 +169,7 @@ If `bench --strict` fails after intentional work: update baseline with rationale
 |---------|--------|
 | CI workflow | `.github/workflows/ci.yml` |
 | Platforms (Win/macOS) | [ci-platforms.md](ci-platforms.md) (#1573 `platform-gates` matrix) |
+| Pass concepts (#1577) | `src/core/concept_constraints.ixx` (`import aura.core.concept_constraints`) |
 | Build / test matrix | `build.py` (`cmd_gate`, `cmd_ci`, `cmd_bench`, `SUITES`) |
 | Issue runner | `tests/run_issue_tests.py`, `tests/issue_tier.py` |
 | C++ harness | `tests/test_harness.hpp` |
