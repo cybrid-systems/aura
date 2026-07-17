@@ -1,0 +1,170 @@
+;; tests/commercial_readiness_stdlib_surface_2026_07_17.aura
+;;
+;; Surface audit test for stdlib modules with no .aura-level coverage.
+;;
+;; Run: ./build/aura < tests/commercial_readiness_stdlib_surface_2026_07_17.aura
+;;
+;; === Audit findings as of 2026-07-17 ===
+;;   - lib/std/hash.aura: self-recursive shadow of hash-ref → FIXED this commit
+;;   - evaluator_eval_flat.cpp: (set! var val) fails inside function bodies
+;;     with "unbound variable: set!:" — works at top-level. Affects every
+;;     stdlib helper that uses local mutation (counters, accumulators, etc.).
+;;   - evaluator_eval_flat.cpp: anonymous lambda passed as arg fails with
+;;     "invalid closure: eval_flat: invalid closure" → blocks map/foldr/
+;;     filter that take lambdas.
+;;   - Named recursive function body: if's else-branch runs even when cond
+;;     is true (count 0 → returns () + "REC" side effect instead of 999 +
+;;     "BASE"). Likely related to set!-in-body bug.
+;;
+;; This test avoids set! inside function bodies (the expect helper is pure:
+;; it only prints). Failed checks surface as FAIL: lines; count externally
+;; with `grep -c "^FAIL:"`.
+;;
+;; When fixes land, just remove the blocker comments above and re-run.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Pure-print expect — no mutation, no closures.
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display "  expected=") (display expected)
+        (display "  actual=") (display actual)
+        (newline))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/hash — primitives work after the shadow fix.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/hash")
+(let ((h (hash)))
+  (hash-set! h "a" 1)
+  (hash-set! h "b" 2)
+  (expect "hash-ref a" (hash-ref h "a") 1)
+  (expect "hash-ref b" (hash-ref h "b") 2)
+  (expect "hash-get a" (hash-get h "a") 1)
+  (expect "hash-length" (hash-length h) 2))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/queue — FIFO.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/queue")
+(let ((q (make-queue)))
+  (enqueue q 1)
+  (enqueue q 2)
+  (enqueue q 3)
+  (expect "queue-front" (queue-front q) 1)
+  (expect "queue-length" (queue-length q) 3)
+  (expect "queue-empty? fresh" (queue-empty? (make-queue)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/stack — LIFO.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/stack")
+(let ((s (make-stack)))
+  (stack-push s 10)
+  (stack-push s 20)
+  (expect "stack-top" (stack-top s) 20)
+  (expect "stack-length" (stack-length s) 2)
+  (expect "stack-empty? fresh" (stack-empty? (make-stack)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/set — built on hash; the hash-ref shadow fix unblocks this.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/set")
+(let ((s (set 1 2 3 4 5)))
+  (expect "set-member? yes" (set-member? s 3) #t)
+  (expect "set-member? no" (set-member? s 99) #f)
+  (expect "set-size" (set-size s) 5)
+  (expect "set-empty? fresh" (set-empty? (set)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/data — trie on top of hash.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/data")
+(let ((t (make-trie)))
+  (trie-insert t "hello")
+  (trie-insert t "help")
+  (trie-insert t "world")
+  (expect "trie-search hit" (trie-search t "hello") #t)
+  (expect "trie-search miss" (trie-search t "hell") #f)
+  (expect "trie-prefix hit" (trie-prefix? t "hel") #t)
+  (expect "trie-prefix miss" (trie-prefix? t "xyz") #f))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/csv — parsing a 3-row CSV with header.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/csv")
+(let ((rows (csv-parse "a,b,c\n1,2,3\n4,5,6\n")))
+  (expect "csv-rows length" (length rows) 3)
+  (expect "csv-header a" (car (csv-header rows)) "a,b,c"))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/datetime — current-time + decomposition.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/datetime")
+(let ((t (current-time)))
+  (expect "datetime-year >= 2026" (>= (timestamp->year t) 2026) #t)
+  (expect "datetime-year int?" (integer? (timestamp->year t)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/random — make-random + next.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/random")
+(let ((g (make-random)))
+  (let ((v (random-next g)))
+    (expect "random-next number?" (number? v) #t)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/stats — registry read-only ops.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/stats")
+(let ((all (stats:list)))
+  (expect "stats:list is list" (list? all) #t)
+  (expect "stats:count integer?" (integer? (stats:count)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/vector-math — basic vector arithmetic.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/vector-math")
+(expect "vec:sum" (vec:sum (list 1 2 3 4 5)) 15)
+(expect "vec:prod" (vec:prod (list 1 2 3 4)) 24)
+(expect "vec:mean" (vec:mean (list 2 4 6)) 4)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/combinators — pure Scheme; identity/const.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/combinators")
+(expect "identity" (identity 42) 42)
+(expect "const" ((const 99) "anything") 99)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/validate — schema validation primitives.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/validate")
+(let ((errs '()))
+  (expect "validate valid?" (valid? errs) #t)
+  (expect "validate error-count" (error-count errs) 0))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/extract — extract-code returns the code block from a fenced snippet.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/extract")
+(expect "extract-code returns string"
+       (string? (extract-code "```scheme\n(+ 1 2)\n```"))
+       #t)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Sanity baseline — std/list primitives work.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/list")
+(expect "list length" (length (list 1 2 3)) 3)
+(expect "list car" (car (list 10 20 30)) 10)
+(expect "null? on empty" (null? '()) #t)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker — count FAIL: lines above with `grep -c "^FAIL:"`.
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
