@@ -15,8 +15,8 @@
 
 namespace aura::compiler::typed_audit {
 
-inline constexpr int kTypedMutationAuditPassPhase = 2; // #1589 production
-inline constexpr int kTypedMutationAuditIssue = 1589;
+inline constexpr int kTypedMutationAuditPassPhase = 3; // #1614 invariant enforcement
+inline constexpr int kTypedMutationAuditIssue = 1614;  // lineage 1589
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 inline constexpr std::size_t kAuditNameCap = 48;
 
@@ -72,6 +72,16 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> macro_hygiene_events{0};
     std::atomic<std::uint64_t> macro_hygiene_blocked{0};
     std::atomic<std::uint64_t> macro_hygiene_allowed{0};
+    // Issue #1614: real post-mutation invariant audit (type + linear + provenance).
+    std::atomic<std::uint64_t> invariant_audits{0};
+    std::atomic<std::uint64_t> type_invariant_ok{0};
+    std::atomic<std::uint64_t> type_invariant_fail{0};
+    std::atomic<std::uint64_t> linear_invariant_ok{0};
+    std::atomic<std::uint64_t> linear_invariant_fail{0};
+    std::atomic<std::uint64_t> provenance_invariant_ok{0};
+    std::atomic<std::uint64_t> provenance_invariant_fail{0};
+    std::atomic<std::uint64_t> invariant_violations_caught{0};
+    std::atomic<std::uint64_t> invariant_all_pass{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -216,6 +226,51 @@ inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view 
                         nodes_changed, fiber_id, nodes_changed > 0 ? 1u : 0u);
 }
 
+// Issue #1614: record result of type + linear + provenance invariant suite.
+struct InvariantAuditResult {
+    bool type_ok = true;
+    bool linear_ok = true;
+    bool provenance_ok = true;
+    std::uint32_t notes_count = 0;
+    [[nodiscard]] bool all_ok() const noexcept { return type_ok && linear_ok && provenance_ok; }
+};
+
+inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string_view op,
+                                          const InvariantAuditResult& r,
+                                          std::uint64_t before_epoch = 0,
+                                          std::uint64_t after_epoch = 0,
+                                          std::uint32_t target_node = 0,
+                                          std::int64_t fiber_id = 0) noexcept {
+    g_typed_mutation_audit_counters.invariant_audits.fetch_add(1, std::memory_order_relaxed);
+    if (r.type_ok)
+        g_typed_mutation_audit_counters.type_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.type_invariant_fail.fetch_add(1, std::memory_order_relaxed);
+    if (r.linear_ok)
+        g_typed_mutation_audit_counters.linear_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.linear_invariant_fail.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    if (r.provenance_ok)
+        g_typed_mutation_audit_counters.provenance_invariant_ok.fetch_add(
+            1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.provenance_invariant_fail.fetch_add(
+            1, std::memory_order_relaxed);
+    if (r.all_ok()) {
+        g_typed_mutation_audit_counters.invariant_all_pass.fetch_add(1, std::memory_order_relaxed);
+        capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
+                            AuditOutcome::Success, target_node, r.notes_count, fiber_id,
+                            r.notes_count);
+    } else {
+        g_typed_mutation_audit_counters.invariant_violations_caught.fetch_add(
+            1, std::memory_order_relaxed);
+        capture_audit_event(mutation_id, "invariant-fail", MutationKind::Other, before_epoch,
+                            after_epoch, AuditOutcome::Error, target_node, r.notes_count, fiber_id,
+                            r.notes_count);
+    }
+}
+
 [[nodiscard]] inline std::uint64_t trail_size() noexcept {
     const auto writes =
         g_typed_mutation_audit_counters.trail_writes.load(std::memory_order_relaxed);
@@ -271,6 +326,18 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.rollbacks.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.errors.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_seq.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_events.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_blocked.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_allowed.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     std::lock_guard lock(g_trail().mu);

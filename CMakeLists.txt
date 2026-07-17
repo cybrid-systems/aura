@@ -5238,6 +5238,9 @@ aura_issue_test_link_llvm_jit(test_fiber_macro_hygiene_refresh_1612)
 # Issue #1613: macro hygiene closed-loop health + audit trail.
 aura_add_issue_test(test_macro_hygiene_closedloop_health_1613)
 aura_issue_test_link_llvm_jit(test_macro_hygiene_closedloop_health_1613)
+# Issue #1614: TypedMutationAudit real type/linear/provenance checks.
+aura_add_issue_test(test_typed_mutation_invariant_audit_1614)
+aura_issue_test_link_llvm_jit(test_typed_mutation_invariant_audit_1614)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)

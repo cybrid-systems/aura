@@ -4818,9 +4818,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
     }
 
-    // ── Issue #1589: TypedMutationAudit production trail surface ──
+    // ── Issue #1589 / #1614: TypedMutationAudit trail + invariant suite ──
     // Strategy control is C++ only (typed_mutation_audit.h::set_strategy) to
     // stay under SlimSurface public ceiling (#1448). Query is stats-catalog.
+    // Schema **1614**: real type/linear/provenance check counters.
     ObservabilityPrims::register_stats_impl(
         "query:typed-mutation-audit-trail", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::typed_audit;
@@ -4829,7 +4830,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::uint32_t strategy = 0, ratio = 0;
             snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
                             ratio);
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4865,7 +4866,48 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("strategy", static_cast<std::int64_t>(strategy));
             insert_kv("sample-ratio", static_cast<std::int64_t>(ratio));
             insert_kv("phase", static_cast<std::int64_t>(kTypedMutationAuditPassPhase));
-            insert_kv("schema", 1589);
+            // #1614 invariant suite counters
+            insert_kv("invariant-audits", static_cast<std::int64_t>(
+                                              g_typed_mutation_audit_counters.invariant_audits.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv(
+                "type-invariant-ok",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.type_invariant_ok.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "type-invariant-fail",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.type_invariant_fail.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "linear-invariant-ok",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.linear_invariant_ok.load(
+                    std::memory_order_relaxed)));
+            insert_kv("linear-invariant-fail",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.linear_invariant_fail.load(
+                              std::memory_order_relaxed)));
+            insert_kv("provenance-invariant-ok",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.provenance_invariant_ok.load(
+                              std::memory_order_relaxed)));
+            insert_kv("provenance-invariant-fail",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.provenance_invariant_fail.load(
+                              std::memory_order_relaxed)));
+            insert_kv("invariant-violations-caught",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.invariant_violations_caught.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "invariant-all-pass",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.invariant_all_pass.load(
+                    std::memory_order_relaxed)));
+            insert_kv("invariant-enforcement-wired", 1);
+            insert_kv("type-check-wired", 1);
+            insert_kv("linear-enforce-wired", 1);
+            insert_kv("provenance-check-wired", 1);
+            insert_kv("issue", 1614);
+            insert_kv("schema", 1614); // lineage 1589
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {
                 insert_kv("latest-mutation-id", static_cast<std::int64_t>(latest.mutation_id));

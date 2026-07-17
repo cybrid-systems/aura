@@ -9,9 +9,10 @@ import std;
 
 export namespace aura::compiler::typed_audit {
 
-// Production phase (header: typed_mutation_audit.h).
-inline constexpr int kTypedMutationAuditPassPhase = 2;
-inline constexpr int kTypedMutationAuditIssue = 1589;
+// Production phase (header: typed_mutation_audit.h). Phase 3 = #1614
+// real invariant enforcement (type + linear + provenance).
+inline constexpr int kTypedMutationAuditPassPhase = 3;
+inline constexpr int kTypedMutationAuditIssue = 1614;
 
 // Scaffold types retained for module consumers / Phase-1 sweep.
 enum class AuditStrategy : std::uint8_t {
