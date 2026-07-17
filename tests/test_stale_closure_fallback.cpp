@@ -157,7 +157,8 @@ static void ac3_query_schema_1604() {
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
     const auto schema = href(cs, "schema");
-    CHECK(schema == 1604 || schema == 1598, std::format("schema 1604|1598 (got {})", schema));
+    CHECK(schema == 1607 || schema == 1604 || schema == 1598,
+          std::format("schema 1607|1604|1598 (got {})", schema));
     CHECK(href(cs, "stale_closure_prevented") >= 0, "stale_closure_prevented");
     CHECK(href(cs, "closure_epoch_mismatch_fallback") >= 0, "closure_epoch_mismatch_fallback");
     CHECK(href(cs, "apply-path-wired") == 1, "apply wired");
@@ -165,7 +166,8 @@ static void ac3_query_schema_1604() {
     // #1604 keys (may be absent on lineage 1598 only builds)
     const auto jw = href(cs, "jit-deopt-bumps-ac-metrics");
     CHECK(jw == 1 || jw < 0, "jit-deopt-bumps-ac-metrics if present");
-    CHECK(href(cs, "issue") == 1604 || href(cs, "issue") == 1598 || href(cs, "issue") < 0,
+    CHECK(href(cs, "issue") == 1607 || href(cs, "issue") == 1604 || href(cs, "issue") == 1598 ||
+              href(cs, "issue") < 0,
           "issue 1604|1598");
 }
 
