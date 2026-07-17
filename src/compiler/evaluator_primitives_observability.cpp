@@ -678,6 +678,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:longrunning-infra-stats",
     // Issue #1583 / #1207 — recovery latency stall budget + p50/p99 SLO
     "query:longrunning-recovery-stats",
+    // Issue #1585 — MultiFiberMailbox production stats
+    "query:mf-mailbox-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats
