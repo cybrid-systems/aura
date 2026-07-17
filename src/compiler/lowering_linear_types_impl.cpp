@@ -51,36 +51,42 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             return slot;
         }
         case aura::ast::NodeTag::Move: {
-            // (move e): move ownership (Moved=4)
+            // (move e): consume Owned source. Stamp linear_ownership_state
+            // with the PRECONDITION (Owned=1), matching
+            // ir_executor enforce_linear_ownership_state (Move requires
+            // state==1). Stamping Moved=4 was wrong — that is the post
+            // state after a successful move, and caused m4-linear-move
+            // to always fail the state-machine gate.
             // #1339: do not elide MoveOp based on narrow_evidence (type
             // narrowing ≠ escape analysis). Keep MoveOp for ownership IR.
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;
-            state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 4, 0, narrow, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::MoveOp, 0, 1, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Borrow: {
-            // (& e): immutable borrow (Borrowed=2)
+            // (& e): immutable borrow — precondition Owned or Borrowed.
+            // Stamp Owned=1 (canonical source state); enforce also accepts 2.
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;
-            state.emit_with_metadata(aura::ir::IROpcode::BorrowOp, 0, 2, 0, narrow, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::BorrowOp, 0, 1, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::MutBorrow: {
-            // (&mut e): mutable borrow (MutBorrowed=3)
+            // (&mut e): exclusive mut-borrow requires Owned=1 precondition.
             auto inner = lower_inner(v.child(0));
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;
-            state.emit_with_metadata(aura::ir::IROpcode::MutBorrowOp, 0, 3, 0, narrow, slot, inner);
+            state.emit_with_metadata(aura::ir::IROpcode::MutBorrowOp, 0, 1, 0, narrow, slot, inner);
             return slot;
         }
         case aura::ast::NodeTag::Drop: {
-            // (drop e): explicit destruct (Moved=4 on drop site)
+            // (drop e): requires Owned=1 precondition (enforce Drop gate).
             auto inner = lower_inner(v.child(0));
             const auto narrow = state.current_narrowing_evidence;
-            state.emit_with_metadata(aura::ir::IROpcode::DropOp, 0, 4, 0, narrow, inner, 0, 0);
+            state.emit_with_metadata(aura::ir::IROpcode::DropOp, 0, 1, 0, narrow, inner, 0, 0);
             auto slot = state.alloc_local();
             state.emit(aura::ir::IROpcode::ConstVoid, slot);
             return slot;

@@ -407,11 +407,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         // (eval_env.owner()->bump_primitive_call_count()) has a valid this.
         ne.set_owner(this);
 
-        // Issue #145: set the pool so bind_symid can mirror
-        // lambda params into the string-keyed bindings_ array
-        // (so body code's lookup(name) still finds them).
+        // Issue #145 / #1482 restore: set the pool so bind_symid can
+        // mirror lambda params into the string-keyed bindings_ array
+        // (so body code's lookup(name) still finds them). Prefer the
+        // closure-captured pool; fall back to canonical_pool().
         if (cl_copy.pool)
             ne.set_pool(cl_copy.pool);
+        else if (auto* cp = canonical_pool())
+            ne.set_pool(cp);
         if (cl_copy.dotted) {
             // Dotted rest param: bind named params, collect rest into list
             std::size_t named_count = cl_copy.params.size() - 1;
@@ -3175,6 +3178,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // binding)
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
+                        // Issue #1482 restore: pool is required so bind_symid (and
+                        // bind-with-pool) populate bindings_symid_ — the PRIMARY array
+                        // copied by alloc_env_frame_from_env into the lambda capture.
+                        // Without it, recursive names (e.g. fact in letrec fact) only
+                        // land in string bindings_ and are dropped at capture time,
+                        // yielding "unbound variable: fact" on recursive apply
+                        // (gradual fact_5 / suite letrec).
+                        if (p)
+                            tail_env->set_pool(p);
 
                         // Issue #232 fix: register eval_env in env_frames_
                         // (always, not just when parent_id_ is NULL), then
@@ -3211,7 +3223,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                         std::size_t ci = cells_.size();
                         cells_.push_back(make_void());
-                        tail_env->bind(std::string(name), make_cell(ci));
+                        // SymId primary (captured by alloc_env_frame_from_env) +
+                        // string mirror via bind_symid when pool_ is set. Parity
+                        // with the Let path below.
+                        if (v.sym_id != aura::ast::INVALID_SYM)
+                            tail_env->bind_symid(v.sym_id, make_cell(ci));
+                        else
+                            tail_env->bind(std::string(name), make_cell(ci));
                         // Evaluate value in *tail_env (has cell binding for self-reference)
                         auto vv = eval_flat(*f, *p, val_id, *tail_env);
                         if (!vv)
@@ -3312,9 +3330,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             lin_state = linear_rt::Owned;
                         }
                         me.set_pool(p);
+                        // bind_symid_with_linear_state mirrors into string bindings_
+                        // when pool_ is set. Do NOT also call bind() — that would
+                        // dual-write a second Untracked entry and shadow Owned
+                        // linear state for (let ((x (Linear ...))) ...).
                         me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
-                        // Keep string-keyed view for legacy lookup paths.
-                        me.bind(std::string(name), make_cell(ci));
                         if (body_id != aura::ast::NULL_NODE)
                             return eval_flat(*f, *p, body_id, eval_env);
                         return make_void();
@@ -3392,12 +3412,22 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto name = p->resolve(v.sym_id);
                     auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     Env& me = const_cast<Env&>(eval_env);
-
+                    // Issue #1482 restore: pool so bind dual-writes bindings_symid_
+                    // (closure capture PRIMARY) + string mirror for set!/lookup.
+                    if (p)
+                        me.set_pool(p);
 
                     // Check if already bound as a cell — update existing cell to maintain
                     // sequential define chains across multiple eval calls
                     // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
                     auto existing = eval_env.lookup_binding(std::string(name));
+                    if (!existing && v.sym_id != aura::ast::INVALID_SYM) {
+                        // SymId path: re-define after capture/materialize may only
+                        // have the cell on bindings_symid_.
+                        if (auto by_sym = eval_env.lookup_by_symid(v.sym_id);
+                            by_sym && is_cell(*by_sym))
+                            existing = by_sym;
+                    }
                     if (existing && is_cell(*existing)) {
                         auto ci = as_cell_id(*existing);
                         auto vv = eval_flat(*f, *p, val_id, eval_env);
@@ -3407,9 +3437,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return *vv;
                     }
 
-                    // Create new cell binding
+                    // Create new cell binding (SymId primary when available)
                     auto ci = alloc_cell(make_void());
-                    me.bind(std::string(name), make_cell(ci));
+                    if (v.sym_id != aura::ast::INVALID_SYM)
+                        me.bind_symid(v.sym_id, make_cell(ci));
+                    else
+                        me.bind(std::string(name), make_cell(ci));
                     auto vv = eval_flat(*f, *p, val_id, eval_env);
                     if (!vv)
                         return vv;
@@ -3483,6 +3516,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         std::vector<std::size_t> cell_ids;
                         {
                             auto& mutable_env = const_cast<Env&>(eval_env);
+                            // Issue #1482 restore: pool so multi-define cells land on
+                            // bindings_symid_ and survive lambda capture (nested
+                            // recursive helpers like seen? in std/ast-viz).
+                            if (p)
+                                mutable_env.set_pool(p);
 
                             for (auto& d : letrec_defs) {
                                 auto ci = alloc_cell(make_void());
