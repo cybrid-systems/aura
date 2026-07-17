@@ -2156,6 +2156,13 @@ public:
             }
         }
 
+        // Issue #1506: before define / call IR path, partially re-lower
+        // any dirty ir_cache_v2_ entries (body-only bitmasks from
+        // mark_define_dirty after set-body / rebind). Mirrors
+        // eval-current's relower_dirty_defines_fn_ hook so eval("(f 5)")
+        // after mutate consumes partial re-lower, not only full lower.
+        (void)relower_dirty_defines_from_workspace();
+
         // Check for top-level (define ...) — cache IR + eval tree-walker for env persistence
         auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
         if (def) {
@@ -2165,9 +2172,9 @@ public:
             auto body_node =
                 body_id < flat_ptr->size() ? flat_ptr->get(body_id) : aura::ast::NodeView{};
             if (body_node.tag == aura::ast::NodeTag::Lambda) {
-                // Function define: cache IR + eval tree-walker for env persistence
-                auto result =
-                    cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
+                // Issue #1506: prefer partial re-lower when already cached+dirty.
+                auto result = cache_define_prefer_partial(input, *flat_ptr, *pool_ptr,
+                                                          expanded_root, std::string(name));
                 if (!result)
                     return result;
                 user_bindings_.insert(std::string(name));
@@ -2553,12 +2560,17 @@ public:
             }
         }
 
+        // Issue #1506: partial re-lower dirty defines before define/call
+        // paths (parity with eval() + eval-current).
+        (void)relower_dirty_defines_from_workspace();
+
         // === Phase 1: Define separation (IR caching) ===
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
             auto& [name, _body_id] = *def;
-            auto result =
-                cache_define(input, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
+            // Issue #1506: prefer partial re-lower when already cached+dirty.
+            auto result = cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, flat_ptr->root,
+                                                      std::string(name));
             if (!result)
                 return result;
             return EvalResult(types::make_void());
@@ -4405,23 +4417,28 @@ public:
         if (it != ir_cache_v2_.end()) {
             auto& primary = it->second;
             primary.dirty = true;
-            // Issue #1495 / #1505: typical define shape is irs[0]=__top__
-            // + irs[1]=body Lambda. Prefer body-only dirty so partial
-            // re-lower wins on set-body. Nested lambdas (irs[2..N]) are
-            // marked only when free_vars free-ref `name` (self-recursion
-            // / capture), not full-entry dirty (#1261 full is fallback).
+            // Issue #1495 / #1505 / #1506: prefer body-only dirty so partial
+            // re-lower wins on set-body.
+            // Shapes:
+            //   - synthetic / dual: irs[0]=__top__, irs[1]=body
+            //   - real lower bundle: only non-entry funcs → body at irs[0]
+            // Nested (irs[2..N] or >1 with free-ref self): free-var scan.
             const bool nested_primary = primary.irs.size() > 2;
-            if (primary.irs.size() >= 2 && primary.block_dirty_per_func_.size() >= 2 &&
-                !primary.block_dirty_per_func_[1].empty()) {
+            // body_idx: dual-shape uses 1; single-function bundle uses 0.
+            const std::size_t body_idx = primary.irs.size() >= 2 ? 1 : 0;
+            if (!primary.irs.empty() && primary.block_dirty_per_func_.size() > body_idx &&
+                !primary.block_dirty_per_func_[body_idx].empty()) {
                 if (primary.block_dirty_per_func_.size() < primary.irs.size())
                     primary.block_dirty_per_func_.resize(primary.irs.size());
-                // Keep __top__ (func 0) clean; mark all body blocks dirty.
-                for (auto& b : primary.block_dirty_per_func_[0])
-                    b = 0;
-                for (std::uint32_t bi = 0;
-                     bi < static_cast<std::uint32_t>(primary.block_dirty_per_func_[1].size());
+                // Keep __top__ clean when dual-shape.
+                if (body_idx == 1) {
+                    for (auto& b : primary.block_dirty_per_func_[0])
+                        b = 0;
+                }
+                for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(
+                                                    primary.block_dirty_per_func_[body_idx].size());
                      ++bi) {
-                    primary.mark_block_dirty(/*func_idx=*/1, bi);
+                    primary.mark_block_dirty(/*func_idx=*/body_idx, bi);
                 }
                 // Issue #1505: free-var scan of nested lambdas for self.
                 if (nested_primary) {
@@ -4799,7 +4816,11 @@ public:
         //     (we preserve it on replace), so callers
         //     that reference the old function keep
         //     working.
-        if (it->second.irs.size() >= 2) {
+        // Issue #1506: allow single-function bundles (irs.size()==1 —
+        // the common post-store_define_v2 shape that drops __top__).
+        // Previously required irs.size()>=2 which forced full re-lower
+        // for every set-body on a real-lowered define.
+        if (!it->second.irs.empty()) {
             std::size_t dirty_func_idx = static_cast<std::size_t>(-1);
             std::size_t dirty_func_count = 0;
             for (std::size_t fi = 0; fi < it->second.block_dirty_per_func_.size(); ++fi) {
@@ -4815,11 +4836,11 @@ public:
                     dirty_func_idx = fi;
                 }
             }
-            // Issue #1514: any single dirty function (body idx 1 OR a
-            // nested lambda idx >= 2) can take per-function re-lower
-            // when we have a source node. Nested-lambda-only dirty
-            // previously fell through to full bundle re-lower.
-            if (dirty_func_count == 1 && dirty_func_idx >= 1 &&
+            // Issue #1514 / #1506: any single dirty function can take
+            // per-function re-lower when we have a source node.
+            // Body may be at idx 0 (real lower: non-entry-only bundle)
+            // or idx >= 1 (synthetic __top__ + body / nested).
+            if (dirty_func_count == 1 && dirty_func_idx != static_cast<std::size_t>(-1) &&
                 expanded_root != aura::ast::NULL_NODE) {
                 // Snapshot dirty block ids BEFORE re-lower clears them.
                 std::vector<std::uint32_t> dirty_ids;
@@ -5991,6 +6012,55 @@ public:
     }
 
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
+
+    // Issue #1506: prefer partial re-lower when ir_cache_v2_ already
+    // has this define and it is dirty with the same source hash
+    // (body-only bitmasks from mark_define_dirty / set-body). Falls
+    // through to full cache_define on first time, source change, or
+    // partial failure. Used by eval() + eval_ir() define paths so
+    // the production pipeline actually consumes relower_define_blocks
+    // (not only tests / eval-current).
+    EvalResult cache_define_prefer_partial(std::string_view source, aura::ast::FlatAST& flat,
+                                           aura::ast::StringPool& pool,
+                                           aura::ast::NodeId expanded_root,
+                                           const std::string& name_str, bool bind_in_env = true,
+                                           const std::string& module_name = "__repl__") {
+        const std::string src(source);
+        const auto hash = fnv1a_64(src);
+        const int st = lookup_define_v2(name_str, hash);
+        if (st == 1) {
+            auto it = ir_cache_v2_.find(name_str);
+            if (it != ir_cache_v2_.end() && !it->second.irs.empty() &&
+                it->second.source_hash == hash &&
+                (it->second.dirty || it->second.dirty_block_count() > 0)) {
+                // Prefer Lambda body node for per-function re-lower.
+                aura::ast::NodeId expanded = expanded_root;
+                if (expanded_root < flat.size()) {
+                    auto dv = flat.get(expanded_root);
+                    if (dv.tag == aura::ast::NodeTag::Define && !dv.children.empty()) {
+                        auto body = dv.child(0);
+                        if (body < flat.size() && flat.get(body).tag == aura::ast::NodeTag::Lambda)
+                            expanded = body;
+                    }
+                }
+                if (relower_define_blocks(name_str, source, flat, pool, expanded)) {
+                    // Partial path updated IR; still ensure env binding
+                    // when requested (first define may not have bound).
+                    if (bind_in_env) {
+                        auto bound = evaluator_.top_env().lookup_binding(name_str);
+                        if (!bound) {
+                            // No env binding yet — full cache_define for bind.
+                            return cache_define(source, flat, pool, expanded_root, name_str,
+                                                bind_in_env, module_name);
+                        }
+                    }
+                    return EvalResult(types::make_void());
+                }
+            }
+            // Source changed, no IR, or partial failed → full path.
+        }
+        return cache_define(source, flat, pool, expanded_root, name_str, bind_in_env, module_name);
+    }
 
     // Lower a define expression to IR, cache it, and bind env via IR when possible.
     // Falls back to eval_flat on skip_ir_cache or IR bind failure.
