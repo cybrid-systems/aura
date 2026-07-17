@@ -5103,6 +5103,9 @@ aura_issue_test_link_llvm_jit(test_issue_1488)
 # Issue #1489: PanicCheckpoint ↔ scheduler GC defer closed-loop.
 aura_add_issue_test(test_issue_1489)
 aura_issue_test_link_llvm_jit(test_issue_1489)
+# Issue #1490: post-steal EnvFrame/bridge_epoch refresh + linear re-pin.
+aura_add_issue_test(test_issue_1490)
+aura_issue_test_link_llvm_jit(test_issue_1490)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)

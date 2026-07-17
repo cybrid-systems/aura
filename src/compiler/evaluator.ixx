@@ -1956,6 +1956,20 @@ public:
                                     std::uint64_t current_bridge_epoch) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
+    // Issue #1490: post-steal / post-resume EnvFrame + bridge_epoch
+    // consistency. Walks live closures (and optional hint env_id),
+    // refreshes stale frame.version_ vs defuse_version_, detects
+    // bridge_epoch drift, repairs dual-path when needed, bumps
+    // post-steal metrics. hint_env_id / expected_epoch may be 0
+    // (full scan / current epoch). Returns # frames refreshed.
+    std::size_t refresh_stale_frames_after_steal(std::uint64_t hint_env_id = 0,
+                                                 std::uint64_t expected_epoch = 0) noexcept;
+    // Issue #1490: linear ownership probe + COW/StableNodeRef re-pin
+    // after fiber steal/resume (wraps probe_linear + re_pin).
+    void probe_and_repin_linear_on_steal() noexcept;
+    [[nodiscard]] std::uint64_t get_post_steal_refresh_count() const noexcept {
+        return post_steal_refresh_count_.load(std::memory_order_relaxed);
+    }
     // Issue #740: re-snapshot compiler-managed GC roots after
     // invalidate when linear metadata may have changed in JIT L2.
     void resync_linear_jit_gc_roots_after_invalidate() noexcept;
@@ -3198,6 +3212,9 @@ private:
     std::atomic<std::uint64_t> gc_safepoint_requests_total_{0};
     std::atomic<std::uint64_t> gc_safepoint_waits_total_{0};
     std::atomic<std::uint64_t> gc_safepoint_deferred_total_{0};
+    // Issue #1490: lifetime # of post-steal EnvFrame refresh passes
+    // (Fiber::resume migration + post-yield validate path).
+    std::atomic<std::uint64_t> post_steal_refresh_count_{0};
     // Issue #439: safepoint wait time (sum of all
     // wait_for_safepoint call durations, in ns). P0
     // returns 0; the follow-up adds the actual
@@ -4427,10 +4444,11 @@ public:
     void transfer_mutation_stack_to_current_fiber() noexcept {
         sync_per_fiber_mutation_stack(nullptr);
         bump_mutation_steal_attempt();
-        // Issue #683: linear ownership enforcement on fiber steal.
-        probe_linear_ownership_on_fiber_steal();
-        // Issue #1500: auto-refresh pinned StableNodeRefs on steal.
-        restamp_pinned_stable_refs();
+        // Issue #1490: force EnvFrame / bridge_epoch refresh before
+        // the stolen fiber continues (also called post-yield validate).
+        (void)refresh_stale_frames_after_steal(/*hint_env_id=*/0, /*expected_epoch=*/0);
+        // Issue #683 / #1490: linear ownership + re-pin on fiber steal.
+        probe_and_repin_linear_on_steal();
     }
 
     // Issue #1500: batch refresh_if_stale over atomic_batch_pinned_refs_

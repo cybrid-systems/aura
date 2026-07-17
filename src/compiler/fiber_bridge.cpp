@@ -46,6 +46,9 @@ __attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
 __attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}
 __attribute__((weak)) void aura_evaluator_resume_fiber_migration() {}
+// Issue #1490: post-yield EnvFrame/bridge_epoch refresh (strong def in
+// evaluator_fiber_mutation.cpp).
+__attribute__((weak, used)) void aura_evaluator_post_resume_refresh() {}
 
 // Issue #812: steal + arena/GC safepoint coordination (worker.cpp).
 // Strong defs live in evaluator_fiber_mutation.cpp; weak no-ops keep
