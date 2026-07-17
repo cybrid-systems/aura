@@ -10447,24 +10447,37 @@ public:
             ev.request_fine_rollback_for_next_boundary();
         }
 
-        // Issue #1547: typed-error factory — check_mutation_quota then construct.
-        // Replaces panic/throw paths with AuraResult. On pass, bumps
-        // mutation_quota_used_ by pending_count.
+        // Issue #1547 / #1556: typed-error factory — check_mutation_quota then
+        // construct. Replaces panic/throw paths with AuraResult. On pass, bumps
+        // mutation_quota_used_ by pending_count. Prefer this over the legacy ctor.
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                     bool fine_rollback = false) noexcept {
             if (auto err = ev.check_mutation_quota(pending_count))
                 return std::unexpected(std::move(*err));
             ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
-            return std::make_unique<MutationBoundaryGuard>(ev, success_flag, fine_rollback);
+            // Construct via private AcquireTag path (not the deprecated public ctor).
+            return std::unique_ptr<MutationBoundaryGuard>(
+                new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{}));
         }
 
-        // Issue #1547: legacy RAII ctor retained for backward compat.
-        // Prefer try_acquire() for typed ResourceQuotaExceeded (new code /
-        // typed_mutate / eval_on_current). Not marked [[deprecated]] because
-        // -Werror=deprecated-declarations would force a mass call-site rewrite.
+        // Issue #1547 / #1556: legacy RAII ctor — does NOT enforce mutation quota.
+        // Prefer try_acquire() for typed ResourceQuotaExceeded (typed_mutate,
+        // eval_on_current, mutate:rebind / set-body hot paths).
+        // Marked [[deprecated]] per #1556 AC2; project uses
+        // -Wno-deprecated-declarations so remaining call-sites still compile
+        // while agents / new code are steered to try_acquire.
+        [[deprecated("use MutationBoundaryGuard::try_acquire for typed ResourceQuotaExceeded "
+                     "(#1547/#1556)")]]
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                               bool fine_rollback = false) noexcept
+            : MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{}) {}
+
+    private:
+        struct AcquireTag {};
+        // Shared implementation for try_acquire + legacy ctor.
+        MutationBoundaryGuard(Evaluator& ev, bool* success_flag, bool fine_rollback,
+                              AcquireTag) noexcept
             : fine_rollback_(fine_rollback)
             , ev_(&ev)
             , flag_(success_flag)
@@ -10547,6 +10560,8 @@ public:
                     ev_->bump_guard_panic_checkpoint_aura_result();
             }
         }
+
+    public:
         ~MutationBoundaryGuard() {
             if (!ev_)
                 return;

@@ -1367,7 +1367,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // panic_checkpoint restores the source).
     add_mutate("mutate:rebind", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #1556: typed try_acquire so mutation quota rejects as
+        // resource-quota-exceeded (Agents can back-off) instead of silent
+        // unlimited legacy Guard ctor.
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         if (ev.workspace_read_only_) {
             ok = false;
             return mev("read-only", "workspace is read-only");
@@ -1736,7 +1744,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // complementary, not redundant.
     add_mutate("mutate:set-body", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        // Issue #1556: typed try_acquire (parity with rebind / typed_mutate).
+        auto guard_r =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
+            return mev("resource-quota-exceeded", guard_r.error().message);
+        }
+        auto guard = std::move(*guard_r);
         if (ev.workspace_read_only_) {
             ok = false;
             return mev("read-only", "workspace is read-only");

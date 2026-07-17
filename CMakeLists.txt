@@ -5160,6 +5160,9 @@ aura_issue_test_link_llvm_jit(test_arena_quota_wired)
 # Issue #1547: MutationBoundaryGuard::try_acquire typed ResourceQuotaExceeded.
 aura_add_issue_test(test_mutation_guard_typed_error)
 aura_issue_test_link_llvm_jit(test_mutation_guard_typed_error)
+# Issue #1556: try_acquire refine — deprecated legacy ctor + rebind/set-body quota.
+aura_add_issue_test(test_issue_1556)
+aura_issue_test_link_llvm_jit(test_issue_1556)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
