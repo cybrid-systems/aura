@@ -41,6 +41,7 @@ Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`
 | `aura.compiler.cache` | `cache.*` | EDSL V2 source-hash cache |
 | JIT | `aura_jit.*` | LLVM ORC、hot-swap、prim bridge |
 | Serve | `src/serve/` | fiber、scheduler、mailbox、GC 协调 |
+| Orch | `src/orch/` | unified agent_spawn / parallel_orch facade (#1588) |
 
 ## Evaluator 分区（`aura.compiler.evaluator`）
 

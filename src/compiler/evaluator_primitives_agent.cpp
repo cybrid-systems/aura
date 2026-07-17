@@ -16,9 +16,11 @@ module;
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "serve/parallel_orch.h"
+#include "orch/orch.h"
 #include <atomic>
 #include <cstdio>
 #include <algorithm>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -2352,6 +2354,213 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         };
         return build_hash(kv);
     });
+
+    // ── Issue #1588: unified src/orch/ Aura surface ─────────────────
+    //
+    // (orch:spawn-agent name [thunk]) → hash {ok, id, name, schema=1588}
+    // (orch:agent-join name-or-id [:timeout-ms n]) → hash {status, wait-us, ok}
+    // (orch:parallel-intend …) → alias of (parallel-intend …)
+    // (query:orch-module-stats) → module counters
+
+    auto build_orch_hash =
+        [&ev](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+        auto* ht = FlatHashTable::create(std::max<std::size_t>(16, kv.size() * 2));
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (char c : k)
+                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            auto kidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto slot = ((h >> 1) + at) & (hcap - 1);
+                if (meta[slot] == 0xFF) {
+                    meta[slot] = fp;
+                    keys[slot] = key_ev.val;
+                    vals[slot] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+
+    // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
+    // Lazy-init: shared across calls in-process; stopped on process exit.
+    struct OrchSchedHolder {
+        std::unique_ptr<aura::serve::Scheduler> sched;
+        std::thread runner;
+        std::mutex mu;
+        void ensure(int workers = 2) {
+            std::lock_guard lock(mu);
+            if (sched)
+                return;
+            sched = std::make_unique<aura::serve::Scheduler>(workers);
+            runner = std::thread([this] { sched->run(); });
+        }
+        ~OrchSchedHolder() {
+            if (sched)
+                sched->stop();
+            if (runner.joinable())
+                runner.join();
+        }
+    };
+    static OrchSchedHolder orch_sched;
+
+    add("orch:spawn-agent", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:spawn-agent: usage (orch:spawn-agent name [thunk])",
+                                        ev.primitive_error_counter_ptr());
+        }
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        std::optional<std::uint64_t> cid;
+        if (a.size() >= 2 && types::is_closure(a[1]))
+            cid = types::as_closure_id(a[1]);
+
+        orch_sched.ensure(2);
+        auto body = [&ev, cid]() {
+            if (!cid)
+                return;
+            try {
+                static std::mutex orch_eval_mu;
+                std::lock_guard lock(orch_eval_mu);
+                (void)ev.apply_closure(*cid, {});
+            } catch (...) {
+                // swallow: agent body errors surface via join/status only
+            }
+        };
+        auto handle = aura::orch::spawn_agent_with_mailbox(
+            *orch_sched.sched, aura::orch::AgentSpec{.name = name, .body = std::move(body)});
+        if (handle.ok)
+            aura::orch::global_agent_registry().put(handle);
+
+        auto nidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(handle.name.empty() ? name : handle.name);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(handle.ok)},
+            {"id", make_int(static_cast<std::int64_t>(handle.id))},
+            {"name", make_string(nidx)},
+            {"schema", make_int(1588)},
+        };
+        return build_orch_hash(kv);
+    });
+
+    add("orch:agent-join", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty()) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:agent-join: need name or id",
+                                        ev.primitive_error_counter_ptr());
+        }
+        std::optional<std::uint64_t> timeout_ms;
+        for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+            std::string k;
+            if (types::is_string(a[i]))
+                k = heap_str_from(ev.string_heap_, a[i]);
+            else if (types::is_keyword(a[i])) {
+                auto ki = types::as_keyword_idx(a[i]);
+                if (ki < ev.keyword_table_.size())
+                    k = ev.keyword_table_[ki];
+            }
+            while (!k.empty() && k[0] == ':')
+                k = k.substr(1);
+            if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
+                timeout_ms =
+                    static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+        }
+
+        aura::orch::AgentHandle* hp = nullptr;
+        if (types::is_string(a[0])) {
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            hp = aura::orch::global_agent_registry().find(name);
+        }
+        // Join-by-id is intentionally not supported (registry is name-keyed).
+        if (!hp) {
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(false)},
+                {"status",
+                 [&] {
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back("invalid");
+                     return make_string(s);
+                 }()},
+                {"wait-us", make_int(0)},
+                {"schema", make_int(1588)},
+            };
+            return build_orch_hash(kv);
+        }
+
+        auto jr = aura::orch::join_agent(*hp, timeout_ms);
+        const char* st = "ok";
+        switch (jr.status) {
+            case aura::serve::JoinStatus::Ok:
+                st = "ok";
+                break;
+            case aura::serve::JoinStatus::Timeout:
+                st = "timeout";
+                break;
+            case aura::serve::JoinStatus::Cancelled:
+                st = "cancelled";
+                break;
+            case aura::serve::JoinStatus::Invalid:
+                st = "invalid";
+                break;
+        }
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(st);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+            {"status", make_string(sidx)},
+            {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
+            {"schema", make_int(1588)},
+        };
+        return build_orch_hash(kv);
+    });
+
+    add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto prim = ev.primitives_.lookup("parallel-intend");
+        if (!prim) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "orch:parallel-intend: parallel-intend not registered",
+                                        ev.primitive_error_counter_ptr());
+        }
+        return (*prim)(a);
+    });
+
+    ObservabilityPrims::register_stats_impl(
+        "query:orch-module-stats", [&ev, build_orch_hash](const auto&) -> EvalValue {
+            std::uint64_t spawned = 0, joined = 0, sends = 0, recvs = 0, failures = 0, batches = 0;
+            aura::orch::snapshot_orch_stats(spawned, joined, sends, recvs, failures, batches);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"agents-spawned", make_int(static_cast<std::int64_t>(spawned))},
+                {"agents-joined", make_int(static_cast<std::int64_t>(joined))},
+                {"agents-send", make_int(static_cast<std::int64_t>(sends))},
+                {"agents-recv", make_int(static_cast<std::int64_t>(recvs))},
+                {"spawn-failures", make_int(static_cast<std::int64_t>(failures))},
+                {"parallel-batches", make_int(static_cast<std::int64_t>(batches))},
+                {"phase", make_int(aura::orch::kOrchModulePhase)},
+                {"schema", make_int(1588)},
+            };
+            return build_orch_hash(kv);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

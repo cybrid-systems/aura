@@ -397,7 +397,8 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 | `service.ixx` | CompilerService、增量 cache |
 | `ir_executor.*` | IR 解释器 |
 | `aura_jit.*` | LLVM JIT |
-| `src/serve/*` | fiber、scheduler、serve-async |
+| `src/serve/*` | fiber、scheduler、serve-async、mailbox、parallel_orch |
+| `src/orch/*` | unified agent orchestration facade (#1588): `agent_spawn`、`orch.h`；Aura `orch:spawn-agent` / `orch:parallel-intend` |
 | `main.cpp` | CLI、`--serve` JSON 分发 |
 
 ## 维护规则（3 条）

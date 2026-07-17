@@ -682,6 +682,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:mf-mailbox-stats",
     // Issue #1586 — parallel_orch / parallel_intend stats
     "query:parallel-orch-stats",
+    // Issue #1588 — unified src/orch module stats
+    "query:orch-module-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats
