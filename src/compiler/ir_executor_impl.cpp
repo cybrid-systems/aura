@@ -479,15 +479,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
     while (current < func.blocks.size()) {
         auto& block = func.blocks[current];
 
-        // Issue #1485-followup: only honor resume_instr when it
-        // was set for THIS block (resume_block_id == current).
-        // PendingCall sets both fields together; if current moved
-        // to a different block via Jump/Branch, the resume is
-        // stale and must not skip instructions in the new block.
-        std::size_t resume_pos = 0;
-        if (!call_stack_.empty() && call_stack_.back().resume_block_id == current) {
-            resume_pos = call_stack_.back().resume_instr;
-        }
+        std::size_t resume_pos = call_stack_.empty() ? 0 : call_stack_.back().resume_instr;
         std::size_t start_idx = (resume_pos < block.instructions.size()) ? resume_pos : 0;
         for (std::size_t ii = start_idx; ii < block.instructions.size(); ++ii) {
             auto& instr = block.instructions[ii];
@@ -1214,10 +1206,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         for (auto& a : call_args)
                             all_args.push_back(a);
 
-                        if (!call_stack_.empty()) {
+                        if (!call_stack_.empty())
                             call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
-                            call_stack_.back().resume_block_id = current;
-                        }
                         return PendingCall{&callee_func, std::move(all_args), ops[3]};
                     } else if (is_primitive(callee_val)) {
                         // Primitive function call — look up and invoke
@@ -1348,10 +1338,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         for (auto& a : apply_args)
                             all_args.push_back(a);
 
-                        if (!call_stack_.empty()) {
+                        if (!call_stack_.empty())
                             call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
-                            call_stack_.back().resume_block_id = current;
-                        }
                         return PendingCall{&callee_func, std::move(all_args), ops[2]};
                     } else {
                         locals[ops[2]] = closure_val;
