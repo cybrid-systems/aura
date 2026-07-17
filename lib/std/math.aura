@@ -101,6 +101,8 @@
 (define (positive? n) (> n 0))
 (define (negative? n) (< n 0))
 (define (zero? n) (= n 0))
+(define (even? n) (= 0 (modulo n 2)))
+(define (odd? n) (not (even? n)))
 
 (define (gcd a b)
   (if (= b 0) (abs a) (gcd b (modulo a b))))
