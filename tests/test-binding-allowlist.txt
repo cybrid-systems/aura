@@ -52,3 +52,12 @@ tests/test_env_symid_primary_path.cpp
 # provenance reads (negative + beyond table), and C-side bridge wire
 # roundtrip. If link fails: verification deferred to follow-up #1538 batch.
 tests/test_issue_1485.cpp
+# Issue #2026-07-17: EDSL SIGSEGV surgical fix in CompilerService. The
+# change in mark_all_defines_dirty (clears ir_define_closure_owner_ on
+# set-code to prevent use-after-free SIGSEGV at dispatch_ir_define_closure+24)
+# is pinned by tests/commercial_readiness_edsl.aura (EDSL test, not C++
+# test file). Per #1453 the binding gate expects a C++ test under tests/;
+# for EDSL-only fixes the allowlist mechanism applies. Verify link/build
+# deferred to follow-up #1538 batch. Removed in same commit when a
+# proper C++ regression test is added.
+src/compiler/service.ixx
