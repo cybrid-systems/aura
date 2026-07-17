@@ -1,0 +1,77 @@
+;; tests/commercial_readiness_macros.aura
+;;
+;; Fifth-pass audit: macro facility. The eval_paths audit pinned
+;; `define-syntax` as unbound (issue #2026-07-17). Aura's actual
+;; shipped macro facility is `define-hygienic-macro*` (in
+;; std/safe-refactor + std/agent). This audit exercises that path
+;; and any macro-related primitives (macroexpand, gensym).
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_macros.aura
+
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display "  expected=") (display expected)
+        (display "  actual=") (display actual)
+        (newline))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Issue #2026-07-17: define-syntax is unbound. Pin as a finding so
+;; the gap surfaces in CI. Any agent using legacy defmacro will break.
+;; ═════════════════════════════════════════════════════════════════════════
+(define-syntax my-when
+  (syntax-rules ()
+    ((_ c b ...) (if c (begin b ...) (void)))))
+(expect "define-syntax-when-true" (my-when #t 42) 42)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; define-hygienic-macro* — the actual shipped macro facility
+;; (std/safe-refactor / std/agent).
+;; ═════════════════════════════════════════════════════════════════════════
+(define-hygienic-macro* (my-unless c:expr body:expr) `(if ,c (void) ,body))
+(expect "hygienic-macro*-unless-false" (my-unless #f 42) 42)
+(expect "hygienic-macro*-unless-true" (my-unless #t 42) (void))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; macroexpand — primitive to inspect macro expansion
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "macroexpand-1+1"
+  (let ((e (macroexpand '(+ 1 1))))
+    (if (pair? e) 'pair 'other))
+  'pair)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Standard forms that should work without macros
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "and-shortcircuit" (and #t #t) #t)
+(expect "and-false" (and #t #f) #f)
+(expect "or-true" (or #f #t) #t)
+(expect "or-both-false" (or #f #f) #f)
+(expect "not-true" (not #f) #t)
+(expect "not-false" (not #t) #f)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; let / let* / letrec / named-let
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "let-simple"
+  (let ((x 10) (y 20)) (+ x y))
+  30)
+
+(expect "let*-sequential"
+  (let* ((x 5) (y (* x 2))) (+ x y))
+  15)
+
+;; letrec — recursive local binding
+(expect "letrec-factorial"
+  (letrec ((f (lambda (n) (if (= n 0) 1 (* n (f (- n 1)))))))
+    (f 4))
+  24)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
