@@ -26,12 +26,13 @@ Usage:
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
   ./build.py security          # 依赖/文件系统漏洞扫描（#675）
+  ./build.py bench [--strict]  # Benchmark 基线 + 回归检测（#1569 SLO gate）
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
   integ       端到端管线测试 (.aura)
   typecheck   类型检查测试
-  bench       Benchmark 基线 + 回归检测
+  bench       Benchmark 基线 + 回归检测（strict 时 hard fail）
   smoke       快速冒烟测试
   all         全部测试 (默认)
   core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
@@ -699,13 +700,39 @@ def test_typecheck():
 
 
 def test_bench():
-    """Benchmark 基线 + 回归检测"""
+    """Benchmark 基线 + 回归检测（#1569: strict SLO gate）"""
     print(f"{B}═══ Benchmark ═══{N}")
     if not AURA.exists():
         fail(f"{AURA} not found")
         return 1
     env = {**os.environ, "AURA_BIN": str(AURA)}
-    return run([sys.executable, str(BENCH)], env=env)
+    args = [sys.executable, str(BENCH)]
+    # Issue #1569: hard SLO gate when AURA_CI_STRICT_BENCH=1 or --strict.
+    strict = (
+        os.environ.get("AURA_CI_STRICT_BENCH", "0").strip()
+        in (
+            "1",
+            "true",
+            "TRUE",
+            "yes",
+            "YES",
+        )
+        or "--strict" in sys.argv
+    )
+    if strict:
+        args.append("--strict")
+        print("  mode: STRICT SLO gate (AURA_CI_STRICT_BENCH / --strict)")
+    else:
+        # Soft: default run prints regression warnings; hard-fail only
+        # functional FAIL cases. Use --strict / AURA_CI_STRICT_BENCH=1
+        # for CI hard exit on performance regression.
+        print("  mode: soft (warn on regression; AURA_CI_STRICT_BENCH=1 for hard fail)")
+    return run(args, env=env)
+
+
+def cmd_bench():
+    """Issue #1569: ./build.py bench [--strict] — run benchmark SLO gate."""
+    return test_bench()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1878,6 +1905,7 @@ def main():
         "demo": test_demo,
         "regression": lambda: cmd_test(["regression"]),
         "fuzz": lambda: cmd_test(["fuzz-equiv", "fuzz-corpus"]),
+        "bench": cmd_bench,
         "bench-llm": run_bench_llm,
         "pgo": cmd_pgo,
         "repro": cmd_repro,

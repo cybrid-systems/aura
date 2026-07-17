@@ -32,6 +32,8 @@ env:
   AURA_USE_MOLD: "1"
   AURA_LINK_JOBS: "4"
   NINJA_STATUS: "[%f/%t %es] "
+  # Issue #1569: hard benchmark SLO gate (regression → job fail)
+  AURA_CI_STRICT_BENCH: "1"
 
 jobs:
   gate:
@@ -142,6 +144,15 @@ jobs:
         # See docs/contributing.md §X "Runtime.c 查找策略".
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
+
+    # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
+    # Requires AURA_CI_STRICT_BENCH=1 (workflow env). Fails the job when
+    # any case exceeds ratio+absolute delta vs tests/benchmark_baseline.json.
+    - name: Benchmark SLO gate (#1569)
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_CI_STRICT_BENCH: "1"
+      run: python3 build.py bench --strict
 
   # P4: S0 surface smoke — parallel with build-test (runtime gate AURA_PRIMITIVES=s0).
   # Validates metrics facade + curated suite without bulk query:*-stats / eda / security.

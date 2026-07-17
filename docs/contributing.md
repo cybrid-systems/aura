@@ -12,7 +12,23 @@
 ./build.py check          # CI 默认
 ./build.py test unit      # test_ir
 ./build.py test integ     # .aura 端到端
+./build.py bench --strict # #1569：编译器流水线 benchmark SLO 硬门栅
 ```
+
+### Benchmark SLO 硬门栅（Issue #1569）
+
+`tests/benchmark.py` 对比 `tests/benchmark_baseline.json`：
+
+| 模式 | 触发 | 回归时 |
+|------|------|--------|
+| 默认 `python3 tests/benchmark.py` | — | 打印 ⚠️，仅功能 FAIL 时 exit 1 |
+| `--check` / `--strict` | 显式 | **exit 1**（SLO VIOLATION） |
+| `AURA_CI_STRICT_BENCH=1` | CI workflow env | 同上 hard fail |
+| `./build.py bench --strict` | 本地/CI 入口 | 同上 |
+
+**判定（抗噪声）**：同时满足 `ratio > 1.2` 且 `Δt > 20ms`，**或** `ratio ≥ 3.0`（灾难性回归，忽略绝对下限）。  
+更新基线（故意接受新性能面）：`python3 tests/benchmark.py --update` 并在 PR 说明原因。  
+门栅单元测试（无需 `aura` 二进制）：`python3 tests/test_benchmark_gate.py`。
 
 **Git hooks**：`.githooks/` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。
 

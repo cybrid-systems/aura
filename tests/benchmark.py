@@ -6,11 +6,17 @@ Establishes baselines for the AI mutation loop.
 Measures parse time, IR pipeline time, execution time, and memory.
 
 Usage:
-    python3 tests/benchmark.py                  # Run all, print report
+    python3 tests/benchmark.py                  # Run all, print report (warn on regression)
     python3 tests/benchmark.py --json           # JSON output (AI-friendly)
-    python3 tests/benchmark.py --check          # Compare with stored baseline
+    python3 tests/benchmark.py --check          # Compare with stored baseline (exit 1 on regression)
+    python3 tests/benchmark.py --strict         # Same as --check; also set by AURA_CI_STRICT_BENCH=1
     python3 tests/benchmark.py --update         # Update stored baseline
+
+Issue #1569: hard SLO gate for CI. When strict mode is on, any regression
+beyond ratio + absolute-delta thresholds exits with code 1.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -28,12 +34,31 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 AURA = os.environ.get("AURA_BIN") or str(_SCRIPT_DIR.parent / "build" / "aura")
 BASELINE_FILE = _SCRIPT_DIR / "benchmark_baseline.json"
 
-# Benchmark definitions: tests/fixtures/benchmark_tests.json
+# ── SLO thresholds (Issue #1569) ──────────────────────────────
+# Ratio-only is too noisy for sub-10ms cold-start cases; require BOTH
+# ratio and absolute delta, OR a catastrophic ratio alone.
+DEFAULT_REGRESSION_RATIO = 1.2  # issue AC: 1.2×
+DEFAULT_REGRESSION_MIN_DELTA_S = 0.020  # 20ms absolute floor
+DEFAULT_CATASTROPHIC_RATIO = 3.0  # always fail if ≥3× regardless of delta
+DEFAULT_IMPROVEMENT_RATIO = 0.7
+
+
+def env_flag_true(name: str) -> bool:
+    return os.environ.get(name, "0").strip() in ("1", "true", "TRUE", "yes", "YES")
+
+
+def is_strict_mode(argv: list[str] | None = None) -> bool:
+    """True when --strict / --check or AURA_CI_STRICT_BENCH=1."""
+    av = argv if argv is not None else sys.argv
+    if env_flag_true("AURA_CI_STRICT_BENCH"):
+        return True
+    return "--strict" in av or "--check" in av
+
 
 # ── Measurement helpers ───────────────────────────────────────
 
 
-def run_aura(code: str, args: list[str] = None) -> tuple[str, str, float]:
+def run_aura(code: str, args: list[str] | None = None) -> tuple[str, str, float]:
     """Run aura and return (stdout, stderr, elapsed_seconds)."""
     cmd = [AURA]
     if args:
@@ -85,11 +110,9 @@ def check_typecheck_result(bench: BenchCase, result: dict) -> bool:
     if "parse error:" in out:
         return False
     if "type:" in out:
-        # Extract type from "type: <typename>"
         m = re.search(r"type:\s*(.+)", out)
         if m:
             inferred = m.group(1)
-            # Allow partial matching for function types
             if bench.expected_type and bench.expected_type in inferred:
                 return True
     return False
@@ -99,16 +122,14 @@ def check_eval_result(bench: BenchCase, result: dict) -> bool:
     """Check eval/ir output against expected numeric value."""
     out = result.get("stdout", "")
     if "error:" in result.get("stderr", ""):
-        # Check if it's a coercion note (not an actual error)
         if "coercion" in result.get("stderr", ""):
-            pass  # coercion notes are OK
+            pass
         else:
             return False
     if "parse error" in out:
         return False
-    # Try to parse output as number
     if bench.expected_val is None:
-        return len(out) > 0  # any non-empty output
+        return len(out) > 0
     out_lines = out.strip().split("\n")
     for line in out_lines:
         line = line.strip()
@@ -136,6 +157,20 @@ class BenchSuiteResult:
     cases: list[dict] = field(default_factory=list)
 
 
+@dataclass
+class RegressionHit:
+    name: str
+    base_time_s: float
+    cur_time_s: float
+    ratio: float
+    delta_s: float
+    catastrophic: bool = False
+
+    def as_tuple(self) -> tuple:
+        """Legacy (name, base, cur, ratio) for callers."""
+        return (self.name, self.base_time_s, self.cur_time_s, self.ratio)
+
+
 def get_timestamp() -> str:
     import datetime
 
@@ -153,7 +188,6 @@ def run_all() -> BenchSuiteResult:
     for i, bench in enumerate(load_benchmark_cases(), 1):
         result = measure_pipeline(bench.name, bench.code, bench.pipeline)
 
-        # Check pass/fail
         if bench.pipeline in ("eval", "ir"):
             passed = check_eval_result(bench, result)
         elif bench.pipeline == "typecheck":
@@ -235,35 +269,125 @@ def validate_baseline_names(suite: BenchSuiteResult) -> bool:
     return ok
 
 
-def check_regression(suite: BenchSuiteResult) -> bool:
-    """Compare current results against stored baseline."""
-    if not validate_baseline_names(suite):
-        return False
+def classify_regression(
+    base_time_s: float,
+    cur_time_s: float,
+    *,
+    ratio_threshold: float = DEFAULT_REGRESSION_RATIO,
+    min_delta_s: float = DEFAULT_REGRESSION_MIN_DELTA_S,
+    catastrophic_ratio: float = DEFAULT_CATASTROPHIC_RATIO,
+) -> RegressionHit | None:
+    """Pure classifier for unit tests + gate.
 
-    baseline = load_baseline()
+    A case is a regression when:
+      - ratio > catastrophic_ratio  (always), OR
+      - ratio > ratio_threshold AND absolute delta > min_delta_s
+
+    Absolute floor avoids flaky sub-10ms cold-start noise while still
+    catching real SLO hits (e.g. 20ms → 400ms orchestration cases).
+    """
+    if base_time_s <= 0:
+        return None
+    ratio = cur_time_s / base_time_s
+    delta = cur_time_s - base_time_s
+    catastrophic = ratio >= catastrophic_ratio
+    if catastrophic or (ratio > ratio_threshold and delta > min_delta_s):
+        return RegressionHit(
+            name="",
+            base_time_s=base_time_s,
+            cur_time_s=cur_time_s,
+            ratio=ratio,
+            delta_s=delta,
+            catastrophic=catastrophic,
+        )
+    return None
+
+
+def collect_regressions(
+    suite: BenchSuiteResult,
+    baseline: BenchSuiteResult | None = None,
+    *,
+    ratio_threshold: float = DEFAULT_REGRESSION_RATIO,
+    min_delta_s: float = DEFAULT_REGRESSION_MIN_DELTA_S,
+    catastrophic_ratio: float = DEFAULT_CATASTROPHIC_RATIO,
+    improvement_ratio: float = DEFAULT_IMPROVEMENT_RATIO,
+) -> tuple[list[RegressionHit], list[tuple[str, float, float, float]]]:
+    """Compare suite vs baseline; return (regressions, improvements)."""
+    if baseline is None:
+        baseline = load_baseline()
     bmap = {c["name"]: c for c in baseline.cases}
     cmap = {c["name"]: c for c in suite.cases}
 
-    regressions = []
-    improvements = []
+    regressions: list[RegressionHit] = []
+    improvements: list[tuple[str, float, float, float]] = []
 
     for name, cur in cmap.items():
         if name not in bmap:
             continue
         base = bmap[name]
-        base_time = base["time_s"]
+        base_time = float(base["time_s"])
+        cur_time = float(cur["time_s"])
         if base_time <= 0:
             continue
-        ratio = cur["time_s"] / base_time
-        if ratio > 1.3:
-            regressions.append((name, base_time, cur["time_s"], ratio))
-        elif ratio < 0.7:
-            improvements.append((name, base_time, cur["time_s"], ratio))
+        hit = classify_regression(
+            base_time,
+            cur_time,
+            ratio_threshold=ratio_threshold,
+            min_delta_s=min_delta_s,
+            catastrophic_ratio=catastrophic_ratio,
+        )
+        if hit is not None:
+            hit.name = name
+            regressions.append(hit)
+        else:
+            ratio = cur_time / base_time
+            if ratio < improvement_ratio:
+                improvements.append((name, base_time, cur_time, ratio))
+
+    return regressions, improvements
+
+
+def check_regression(
+    suite: BenchSuiteResult,
+    *,
+    strict: bool = False,
+    ratio_threshold: float | None = None,
+    min_delta_s: float = DEFAULT_REGRESSION_MIN_DELTA_S,
+    catastrophic_ratio: float = DEFAULT_CATASTROPHIC_RATIO,
+) -> bool:
+    """Compare current results against stored baseline.
+
+    Returns True when no SLO violations. In non-strict mode, still
+    prints warnings but returns True if only soft regressions exist
+    (caller may ignore). In strict mode, any regression → False.
+
+    Actually: always returns False when regressions found (for --check).
+    `strict` only changes messaging (SLO VIOLATION vs warn).
+    """
+    if not validate_baseline_names(suite):
+        return False
+
+    thr = ratio_threshold if ratio_threshold is not None else DEFAULT_REGRESSION_RATIO
+    regressions, improvements = collect_regressions(
+        suite,
+        ratio_threshold=thr,
+        min_delta_s=min_delta_s,
+        catastrophic_ratio=catastrophic_ratio,
+    )
 
     if regressions:
-        print("⚠️  REGRESSIONS (>1.3× slower):")
-        for name, base, cur, ratio in regressions:
-            print(f"  {name:30s} {base * 1000:.1f}ms → {cur * 1000:.1f}ms ({ratio:.1f}×)")
+        label = "SLO VIOLATION" if strict else "REGRESSIONS"
+        print(
+            f"{'❌' if strict else '⚠️ '}  {label} (>{thr}× and >{min_delta_s * 1000:.0f}ms, or ≥{catastrophic_ratio}×):"
+        )
+        for hit in regressions:
+            tag = " CATASTROPHIC" if hit.catastrophic else ""
+            print(
+                f"  {hit.name:30s} {hit.base_time_s * 1000:.1f}ms → "
+                f"{hit.cur_time_s * 1000:.1f}ms ({hit.ratio:.1f}× Δ={hit.delta_s * 1000:.1f}ms){tag}"
+            )
+            if strict:
+                print(f"SLO VIOLATION: {hit.name} regression {hit.ratio:.2f}x (delta={hit.delta_s * 1000:.1f}ms)")
     if improvements:
         print("✅ IMPROVEMENTS (<0.7× faster):")
         for name, base, cur, ratio in improvements:
@@ -275,29 +399,45 @@ def check_regression(suite: BenchSuiteResult) -> bool:
 # ── CLI entry point ───────────────────────────────────────────
 
 
-def main():
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv if argv is None else argv)
     mode = "run"
-    if "--json" in sys.argv:
+    if "--json" in argv:
         mode = "json"
-    elif "--check" in sys.argv:
-        mode = "check"
-    elif "--update" in sys.argv:
+    elif "--update" in argv:
         mode = "update"
+    elif "--check" in argv or "--strict" in argv or env_flag_true("AURA_CI_STRICT_BENCH"):
+        mode = "check"
+
+    strict = is_strict_mode(argv)
 
     suite = run_all()
 
     if mode == "json":
         print(json.dumps(asdict(suite), indent=2))
+        return 0 if suite.failed == 0 else 1
 
-    elif mode == "check":
-        ok = check_regression(suite)
-        sys.exit(0 if ok else 1)
-
-    elif mode == "update":
+    if mode == "update":
         save_baseline(suite)
+        return 0 if suite.failed == 0 else 1
 
-    sys.exit(0 if suite.failed == 0 else 1)
+    if mode == "check":
+        ok_reg = check_regression(suite, strict=True)
+        if not ok_reg:
+            if strict:
+                print("\n❌ Benchmark SLO gate FAILED (AURA_CI_STRICT_BENCH / --strict / --check).")
+            return 1
+        if suite.failed > 0:
+            print(f"\n❌ {suite.failed} functional benchmark case(s) failed.")
+            return 1
+        print("\n✅ Benchmark SLO gate clean.")
+        return 0
+
+    # Default run: warn on regression, do not hard-fail performance
+    # unless strict env is set (already handled as mode=check above).
+    check_regression(suite, strict=False)
+    return 0 if suite.failed == 0 else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
