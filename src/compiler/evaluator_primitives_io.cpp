@@ -1233,13 +1233,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Mark engine registrar as wired (AC3).
     aura::renderer::render_engine_counters().registered = 1;
 
-    // ── Issue #1316: render JIT stability probe + stats ──
+    // ── Issue #1316/#1563: render JIT stability probe + stats ──
     add_render(
         "render-jit-deopt-probe",
         [&ev](std::span<const EvalValue>) -> EvalValue {
             // Agent/test hook: simulate deopt under render hot path (throttled).
             ev.enter_render_hotpath();
-            ev.bump_render_jit_deopt_throttled();
+            (void)ev.bump_render_jit_deopt_throttled();
             ev.exit_render_hotpath();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 return make_int(static_cast<std::int64_t>(
@@ -1249,6 +1249,28 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(0, "Probe throttled render JIT deopt (returns applied count).",
                               "() -> int"));
 
+    // Issue #1563: (render-critical-deopt-probe name?) → applied count
+    // Forces render-critical throttle even outside hotpath (closure mutate storm).
+    add_render(
+        "render-critical-deopt-probe",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            ev.set_prefer_render_critical_deopt_throttle(true);
+            std::string_view name = "terminal-present-batch";
+            if (!a.empty() && is_string(a[0])) {
+                auto sidx = as_string_idx(a[0]);
+                if (sidx < ev.string_heap_.size())
+                    name = ev.string_heap_[sidx];
+            }
+            (void)ev.bump_deopt_for_prim_name(name);
+            ev.set_prefer_render_critical_deopt_throttle(false);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                return make_int(static_cast<std::int64_t>(
+                    m->render_jit_deopt_applied.load(std::memory_order_relaxed)));
+            return make_int(0);
+        },
+        RENDER_PRIMITIVE_META(0, "Probe render-critical deopt throttle (#1563).",
+                              "([string]) -> int"));
+
     ObservabilityPrims::register_stats_impl(
         "query:render-jit-stability-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -1257,15 +1279,63 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto load = [](const std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            // Return compact string for Phase 1 (hash via production-sweep for structured).
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(
-                std::format("deopt_applied={} throttled={} aot_prefer={} window_ms={} schema=1316",
-                            m ? load(m->render_jit_deopt_applied) : 0,
-                            m ? load(m->render_jit_deopt_throttled) : 0,
-                            m ? load(m->render_jit_aot_prefer_hits) : 0,
-                            m ? load(m->render_deopt_throttle_window_ms) : 500));
-            return types::make_string(sidx);
+            // Sync process-wide throttle counters into metrics.
+            if (m) {
+                m->render_jit_deopt_applied.store(
+                    std::max(m->render_jit_deopt_applied.load(std::memory_order_relaxed),
+                             aura::core::arena_policy::render_jit_deopt_applied_total.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+                m->render_jit_deopt_throttled.store(
+                    std::max(m->render_jit_deopt_throttled.load(std::memory_order_relaxed),
+                             aura::core::arena_policy::render_jit_deopt_throttled_total.load(
+                                 std::memory_order_relaxed)),
+                    std::memory_order_relaxed);
+            }
+            const auto applied = m ? load(m->render_jit_deopt_applied) : 0;
+            const auto throttled = m ? load(m->render_jit_deopt_throttled) : 0;
+            const auto aot = m ? load(m->render_jit_aot_prefer_hits) : 0;
+            const auto window = m ? load(m->render_deopt_throttle_window_ms) : 500;
+            const auto fallback = m ? load(m->jit_fallback_to_interpreter_total) : 0;
+            // AOT hit rate in basis points: aot / (aot + applied) * 10000
+            const auto denom = aot + applied;
+            const std::int64_t aot_hit_rate_bp =
+                denom > 0 ? (aot * 10000) / denom : (aot > 0 ? 10000 : 0);
+            if (m)
+                m->render_aot_hit_rate_bp.store(static_cast<std::uint64_t>(aot_hit_rate_bp),
+                                                std::memory_order_relaxed);
+            const auto rc_count =
+                static_cast<std::int64_t>(ev.primitives().render_critical_meta_count());
+            const auto hot_r =
+                static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits_render());
+            const auto cold_r = static_cast<std::int64_t>(ev.primitives().cold_dispatch_fallback());
+
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
+            };
+            insert_kv("schema", 1563);
+            insert_kv("active", 1);
+            insert_kv("stable-hot-path", 1);
+            insert_kv("deopt-applied", applied);
+            insert_kv("deopt-throttled", throttled);
+            insert_kv("aot-prefer-hits", aot);
+            insert_kv("aot-hit-rate-bp", aot_hit_rate_bp);
+            insert_kv("window-ms", window);
+            insert_kv("fallback-to-interpreter", fallback);
+            insert_kv("render-critical-meta-count", rc_count);
+            insert_kv("hot-dispatch-hits-render", hot_r);
+            insert_kv("cold-dispatch-fallback", cold_r);
+            insert_kv("process-throttled-total",
+                      static_cast<std::int64_t>(
+                          aura::core::arena_policy::render_jit_deopt_throttled_total.load(
+                              std::memory_order_relaxed)));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // ── Issue #1562: query:render-dirty-delta-stats ──

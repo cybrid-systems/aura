@@ -135,10 +135,21 @@ export struct PrimMeta {
     std::uint8_t security_level = 0;
     // Issue #1434 / P1b: prefer (engine:metrics …) over direct query:*-stats.
     bool deprecated = false;
+    // Issue #1563: render-critical / stable_hot_path — stronger deopt throttle
+    // under high-frequency AI mutation of draw/present closures.
+    bool render_critical = false;
+    bool stable_hot_path = false;
     std::string doc;
-    std::string category; // eda | sva | verification | general | deprecated
+    std::string category; // eda | sva | verification | general | deprecated | rendering
     std::string schema;   // e.g. "(int string) -> bool"
 };
+
+// Issue #1563: treat rendering hot-tier + explicit flags as render-critical.
+[[nodiscard]] inline bool is_render_critical_meta(const PrimMeta& m) noexcept {
+    if (m.render_critical || m.stable_hot_path)
+        return true;
+    return m.category == "rendering" && m.perf_tier == kPrimPerfHot;
+}
 
 export class Primitives {
 public:
@@ -290,6 +301,22 @@ public:
             if (m.perf_tier == kPrimPerfHot)
                 ++n;
         return n;
+    }
+    // Issue #1563: count render-critical / stable_hot_path registrations.
+    [[nodiscard]] std::size_t render_critical_meta_count() const noexcept {
+        std::size_t n = 0;
+        for (const auto& m : meta_)
+            if (is_render_critical_meta(m))
+                ++n;
+        return n;
+    }
+    [[nodiscard]] bool is_render_critical_name(std::string_view name) const noexcept {
+        if (name.empty())
+            return false;
+        const auto slot = slot_for_name(name);
+        if (slot >= meta_.size())
+            return false;
+        return is_render_critical_meta(meta_[slot]);
     }
 
 public:
@@ -2693,6 +2720,9 @@ private:
     // disabled (Evaluator constructed without service
     // orchestration; e.g. legacy standalone usage).
     void* compiler_metrics_ = nullptr;
+    // Issue #1563: when true, bump_jit_deopt_on_mutate uses render throttle
+    // even outside an active render hotpath frame (render-critical mutate).
+    mutable std::atomic<bool> prefer_render_critical_deopt_throttle_{false};
     // Issue #1357: per-slot render prim latency + frame mark.
     // unique_ptr: PrimLatencyStats holds atomics (not movable for vector reallocation).
     std::vector<std::unique_ptr<aura::compiler::render_telemetry::PrimLatencyStats>> prim_latency_;
@@ -5041,8 +5071,10 @@ public:
         }
     }
     void bump_jit_deopt_on_mutate() const noexcept {
-        // Issue #1316: under render hot path, throttle deopt storms (≤1 / 500ms).
-        if (aura::core::arena_policy::in_render_hotpath()) {
+        // Issue #1316/#1563: under render hot path OR when prefer_render_critical
+        // throttle is set, cap deopt storms (default ≤1 / 500ms).
+        if (aura::core::arena_policy::in_render_hotpath() ||
+            prefer_render_critical_deopt_throttle_.load(std::memory_order_relaxed)) {
             bump_render_jit_deopt_throttled();
             return;
         }
@@ -5051,8 +5083,14 @@ public:
             m->jit_deopt_on_mutate_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1316: render-stable deopt throttle (AC1: never more than once per 500ms).
-    void bump_render_jit_deopt_throttled() const noexcept {
+    // Issue #1563: force next deopt-on-mutate through render-critical throttle
+    // (e.g. set-body of a draw/present closure outside an active hotpath frame).
+    void set_prefer_render_critical_deopt_throttle(bool on) const noexcept {
+        prefer_render_critical_deopt_throttle_.store(on, std::memory_order_relaxed);
+    }
+    // Issue #1316/#1563: render-stable deopt throttle (never more than once per window_ms).
+    // Returns true if deopt was applied, false if throttled (keep previous JIT).
+    [[nodiscard]] bool bump_render_jit_deopt_throttled() const noexcept {
         const auto window_ms =
             compiler_metrics_
                 ? static_cast<CompilerMetrics*>(compiler_metrics_)
@@ -5067,7 +5105,19 @@ public:
             } else {
                 m->render_jit_deopt_throttled.fetch_add(1, std::memory_order_relaxed);
             }
+            // Keep stable_hot_path flag visible.
+            m->render_stable_hot_path_active.store(1, std::memory_order_relaxed);
         }
+        return apply;
+    }
+    // Issue #1563: deopt path for a named prim — render-critical always throttled.
+    [[nodiscard]] bool bump_deopt_for_prim_name(std::string_view name) const noexcept {
+        if (primitives().is_render_critical_name(name) ||
+            aura::core::arena_policy::in_render_hotpath()) {
+            return bump_render_jit_deopt_throttled();
+        }
+        bump_jit_deopt_on_mutate();
+        return true;
     }
     void enter_render_hotpath() const noexcept {
         aura::core::arena_policy::enter_render_hotpath();
