@@ -4630,6 +4630,26 @@ public:
     // workspace (which can change any define's body).
     // Issue #196: also flips every block in every entry to dirty.
     void mark_all_defines_dirty() {
+        // Issue #2026-07-17 (EDSL SIGSEGV audit, surgical fix):
+        // Clear the cid→name map only. Reasoning:
+        // - ir_define_closure_owner_ (cid→name) holds ClosureIds from
+        //   the PREVIOUS workspace. After (set-code ...) replaces
+        //   workspace, those cids point at closures backed by the OLD
+        //   flat/pool (alive in arena but logically detached).
+        //   dispatch_ir_define_closure(cid) finding a stale cid →
+        //   use-after-free → SIGSEGV at +24.
+        // - ir_define_env_bindings_ (name→binding) KEEPS bindings
+        //   (with their interpreter, module, context) tied to the OLD
+        //   workspace. When eval-current later re-caches defines,
+        //   it re-uses or replaces these bindings via
+        //   install_ir_define_env_binding, and adds fresh cid→name
+        //   entries for the NEW workspace closures.
+        // Earlier attempts (reverted): clearing BOTH maps removed
+        // SIGSEGV but broke normal dispatch (new closures not found);
+        // adding stale-check via binding->interpreter->flat/pool failed
+        // to compile because IRInterpreter doesn't expose flat/pool.
+        // Minimal surgical change: only ir_define_closure_owner_.clear().
+        ir_define_closure_owner_.clear();
         for (auto& [_, entry] : ir_cache_v2_) {
             entry.dirty = true;
             entry.mark_all_blocks_dirty();
@@ -5963,6 +5983,13 @@ public:
         auto bind_it = ir_define_env_bindings_.find(name);
         if (bind_it == ir_define_env_bindings_.end() || !bind_it->second->interpreter)
             return std::nullopt;
+        // Note: the stale-entry detection that lived here previously
+        // (binding->interpreter->flat.get() compare against current
+        // workspace) was REMOVED because IRInterpreter doesn't expose
+        // flat/pool directly — the targeted fix failed to compile.
+        // The SIGSEGV is fixed by the surgical fix in
+        // mark_all_defines_dirty (clears ir_define_closure_owner_
+        // on set-code, the cid→name map that holds stale ClosureIds).
 
         // Higher-order cached defines (bridge:cached-fn): TW lambda args
         // are not in the IR interpreter's runtime_closures_. Run the cached
