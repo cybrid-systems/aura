@@ -1,7 +1,8 @@
-# apply_closure + JIT dual-epoch safety (#1491)
+# apply_closure + JIT dual-epoch safety (#1491 / #1598)
 
 **Parent closed-loop** over #1475 (EnvFrame version helper), #1477 (JIT dual-epoch fence),
-#1508 (aura_closure_call dual check), #1511 (bridge entry dual check), #1525 (multi-fiber).
+#1508 (aura_closure_call dual check), #1511 (bridge entry dual check), #1525 (multi-fiber).  
+**Refine map:** `docs/design/epoch-apply-hotpath-1598.md` (schema 1598 dashboard).
 
 ## Contract
 

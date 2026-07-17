@@ -300,6 +300,64 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #1598: apply_closure / JIT / post-steal / invalidate dual-epoch
+    // hotpath closed-loop dashboard (refine #1475–#1496 / #1558).
+    ObservabilityPrims::register_stats_impl(
+        "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(24);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto L = [&](const std::atomic<std::uint64_t>* f) -> std::int64_t {
+                return f ? static_cast<std::int64_t>(f->load(std::memory_order_relaxed)) : 0;
+            };
+            insert_kv("stale_closure_prevented", m ? L(&m->stale_closure_prevented) : 0);
+            insert_kv("closure_epoch_mismatch_fallback",
+                      m ? L(&m->closure_epoch_mismatch_fallback) : 0);
+            insert_kv("post_steal_refresh_count",
+                      static_cast<std::int64_t>(ev.get_post_steal_refresh_count()));
+            insert_kv("bridge_epoch_bumps", m ? L(&m->bridge_epoch_bumps_total) : 0);
+            insert_kv("invalidate_cascade_depth", m ? L(&m->invalidate_cascade_depth_total) : 0);
+            insert_kv("invalidate_cascade_depth_max", m ? L(&m->invalidate_cascade_depth_max) : 0);
+            insert_kv("unified_invalidation_protocol_total",
+                      m ? L(&m->unified_invalidation_protocol_total) : 0);
+            insert_kv("compiler_closure_safe_fallbacks",
+                      m ? L(&m->compiler_closure_safe_fallbacks) : 0);
+            insert_kv("apply-path-wired", 1);
+            insert_kv("jit-path-wired", 1);
+            insert_kv("post-steal-path-wired", 1);
+            insert_kv("compact-refresh-wired", 1);
+            insert_kv("issue", 1598);
+            insert_kv("schema", 1598);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #1595: Fiber::join / MultiFiberMailbox / parallel_intend linear
     // ownership + StableNodeRef enforcement dashboard.
     ObservabilityPrims::register_stats_impl(

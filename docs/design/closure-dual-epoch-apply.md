@@ -1,7 +1,8 @@
 # Closure dual-epoch apply enforcement
 
-**Issues:** #1475, #1490, #1491, **#1558**, #1485, #1508  
-**Related:** #1557 (walk_active_closures), linear post-mutate (#1478)
+**Issues:** #1475, #1490, #1491, **#1558**, #1485, #1508, **#1598**  
+**Related:** #1557 (walk_active_closures), linear post-mutate (#1478)  
+**Hotpath dashboard:** `query:epoch-apply-hotpath-stats` schema **1598**
 
 ## Problem
 
