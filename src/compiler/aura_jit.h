@@ -30,11 +30,13 @@ struct FlatInstruction {
     uint8_t linear_ownership_state = 0;
     // Issue #684: instruction_dirty_ bit from SoA — non-zero triggers deopt.
     uint8_t dirty = 0;
-    // Issue #1610: SyntaxMarker from IRInstruction::source_marker
+    // Issue #1610 / #1616: SyntaxMarker from IRInstruction::source_marker
     // (0=User, 1=MacroIntroduced, 2=BoolLiteral). JIT lower() applies
     // conservative hygiene policy (no L2 shape specialization; deopt
     // when combined with dirty).
     uint8_t source_marker = 0;
+    // Issue #1616: AST provenance id mirrored from IRInstruction.
+    uint32_t provenance = 0;
 };
 
 // Issue #60 Iter 3: shape encoding constants. Must match the

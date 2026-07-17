@@ -2190,6 +2190,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_coercion_sites_total{0};
     std::atomic<std::uint64_t> narrow_evidence_propagated_total{0};
 
+    // Issue #1616: IRClosure / ClosureBridge MacroIntroduced + provenance.
+    std::atomic<std::uint64_t> ir_provenance_stamped_total{0};
+    std::atomic<std::uint64_t> ir_closure_macro_stamped_total{0};
+    std::atomic<std::uint64_t> ir_closure_macro_marker_consults_total{0};
+    std::atomic<std::uint64_t> macro_introduced_ignored_in_ir_total{0};
+
     // Issue #756: EnvFrame dual-path consistency enforcement +
     // desync panic policy + GCEnvWalkFn stale handling under
     // concurrent mutation/steal counters backing the

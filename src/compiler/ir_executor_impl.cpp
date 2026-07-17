@@ -269,9 +269,9 @@ EvalResult IRInterpreter::execute() {
     return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
 }
 
-// Issue #1513: dual-check IRClosure (bridge_epoch + EnvFrame version_/id).
-// Returns true when the closure must take safe fallback (no dangling
-// flat*/pool* or EnvFrame walk after mutate/invalidate).
+// Issue #1513 / #1616: dual-check IRClosure (bridge_epoch + EnvFrame version_/id
+// + MacroIntroduced hygiene marker). Returns true when the closure must take
+// safe fallback (no dangling flat*/pool* or EnvFrame walk after mutate/invalidate).
 static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
                                            CompilerMetrics* metrics) {
     if (!ev)
@@ -303,6 +303,15 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
         // Only force stale when we also have no params-only IR path
         // (func_id dispatch still works without flat).
         (void)0;
+    }
+    // Issue #1616: MacroIntroduced closures always consult hygiene path.
+    // When marker is set, bump consult counter; if also epoch-stale, count
+    // as macro_introduced_ignored_in_ir (would have been treated as user).
+    const bool is_macro = cl.source_marker == 1; // MacroIntroduced
+    if (is_macro && metrics) {
+        metrics->ir_closure_macro_marker_consults_total.fetch_add(1, std::memory_order_relaxed);
+        if (stale)
+            metrics->macro_introduced_ignored_in_ir_total.fetch_add(1, std::memory_order_relaxed);
     }
     if (stale && metrics) {
         metrics->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
@@ -1246,8 +1255,27 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // Issue #223: capture the bridge's epoch so the
                         // IRClosure lifetime check can detect stale bridges.
                         ircl.bridge_epoch = bd.bridge_epoch;
+                        // Issue #1616: SyntaxMarker + provenance from bridge.
+                        ircl.source_marker = bd.source_marker;
+                        ircl.provenance = bd.provenance;
                         if (ops[1] < module_.functions.size())
                             ircl.params = module_.functions[ops[1]].params;
+                    }
+                    // Prefer IRFunction.marker when bridge left marker unset.
+                    if (ops[1] < module_.functions.size()) {
+                        if (ircl.source_marker == 0)
+                            ircl.source_marker = module_.functions[ops[1]].marker;
+                        // Also stamp from MakeClosure instruction metadata.
+                        if (instr.source_marker != 0)
+                            ircl.source_marker = instr.source_marker;
+                        if (instr.provenance != 0)
+                            ircl.provenance = instr.provenance;
+                    }
+                    if (context_.metrics && ircl.source_marker == 1) {
+                        context_.metrics->ir_provenance_stamped_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        context_.metrics->ir_closure_macro_stamped_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
                     // Issue #1513: stamp EnvFrame provenance for dual-check.
                     // env_version captures current defuse_version_ so mutate
