@@ -6154,6 +6154,15 @@ aura_add_issue_test(test_issue_470_stable_ref_sv_scale)
 aura_issue_test_link_llvm_jit(test_issue_470_stable_ref_sv_scale)
 aura_add_issue_test(test_issue_471_dirty_sv_scale)
 aura_issue_test_link_llvm_jit(test_issue_471_dirty_sv_scale)
+# Issue #1485: stale-closure defense in depth — 2 new atomics on
+# CompilerMetrics (stale_closure_prevented, closure_epoch_mismatch_fallback)
+# + Evaluator accessor / bump helpers + per-closure provenance accessors
+# (aura_get_closure_bridge_epoch, aura_get_closure_defuse_version) +
+# C-side bridge wire (service.ixx::bump_bridge_epoch now also calls
+# aura_set_current_bridge_epoch). Pure C-linkage + Evaluator helpers,
+# no LLVM JIT. Test file linked via allowlist per #1453/#1478/#1480
+# precedent (build verify defers to #1538 per invariant #29).
+aura_add_issue_test(test_issue_1485)
 add_dependencies(all_test_issue_targets test_issue_219)
 add_dependencies(all_test_issue_targets test_issue_220)
 add_dependencies(all_test_issue_targets test_issue_221)
