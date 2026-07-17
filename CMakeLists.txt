@@ -5166,6 +5166,9 @@ aura_issue_test_link_llvm_jit(test_issue_1556)
 # Issue #1557: walk_active_closures + linear scan on steal/invalidate/compact/JIT.
 aura_add_issue_test(test_issue_1557)
 aura_issue_test_link_llvm_jit(test_issue_1557)
+# Issue #1558: dual-epoch apply_closure + JIT aura_closure_call + post-steal refresh.
+aura_add_issue_test(test_issue_1558)
+aura_issue_test_link_llvm_jit(test_issue_1558)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.
