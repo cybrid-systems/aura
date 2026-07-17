@@ -1681,7 +1681,12 @@ void register_workspace_query_primitives(
             const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
             const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
                                           static_cast<std::uint64_t>(pat_child_count);
-            const auto bucket = ev.snapshot_tag_arity_bucket(pat_key);
+            // Issue #1501: hygiene default uses user-only tag_arity index
+            // (MacroIntroduced roots excluded at bucket serve time).
+            // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
+            const auto bucket =
+                ev.snapshot_tag_arity_bucket(pat_key, /*trigger=*/0,
+                                             /*skip_macro_introduced=*/!include_macro_introduced);
             if (bucket.empty()) {
                 // No nodes match the pattern's (tag, arity).
                 // Skip the full walk.

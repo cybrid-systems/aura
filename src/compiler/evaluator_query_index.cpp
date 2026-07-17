@@ -88,6 +88,9 @@ void Evaluator::tag_arity_index_insert_node(const aura::ast::FlatAST& flat,
     const auto node = flat.get(id);
     const auto key = tag_arity_key(node.tag, node.children.size());
     tag_arity_index_[key].push_back(id);
+    // Issue #1501: parallel user-only index for default hygiene path.
+    if (!flat.is_macro_introduced(id))
+        tag_arity_index_user_[key].push_back(id);
     if (id >= tag_arity_indexed_key_.size())
         tag_arity_indexed_key_.resize(static_cast<std::size_t>(id) + 1, kTagArityKeyNone);
     tag_arity_indexed_key_[id] = key;
@@ -99,22 +102,28 @@ void Evaluator::tag_arity_index_remove_node(aura::ast::NodeId id) const {
     const auto key = tag_arity_indexed_key_[id];
     if (key == kTagArityKeyNone)
         return;
-    auto it = tag_arity_index_.find(key);
-    if (it != tag_arity_index_.end()) {
-        auto& bucket = it->second;
-        bucket.erase(std::remove(bucket.begin(), bucket.end(), id), bucket.end());
-        if (bucket.empty())
-            tag_arity_index_.erase(it);
-    }
+    auto erase_from = [&](auto& map) {
+        auto it = map.find(key);
+        if (it != map.end()) {
+            auto& bucket = it->second;
+            bucket.erase(std::remove(bucket.begin(), bucket.end(), id), bucket.end());
+            if (bucket.empty())
+                map.erase(it);
+        }
+    };
+    erase_from(tag_arity_index_);
+    erase_from(tag_arity_index_user_);
     tag_arity_indexed_key_[id] = kTagArityKeyNone;
 }
 
 void Evaluator::tag_arity_index_rebuild_full(const aura::ast::FlatAST& flat) const {
     tag_arity_index_.clear();
+    tag_arity_index_user_.clear();
     tag_arity_indexed_key_.clear();
     tag_arity_index_workspace_ = workspace_flat_;
     const std::size_t n = flat.size();
     tag_arity_index_.reserve(n);
+    tag_arity_index_user_.reserve(n);
     tag_arity_indexed_key_.resize(n, kTagArityKeyNone);
     for (aura::ast::NodeId id = 0; id < n; ++id)
         tag_arity_index_insert_node(flat, id);
@@ -136,29 +145,32 @@ void Evaluator::tag_arity_index_append_nodes(const aura::ast::FlatAST& flat,
 
 void Evaluator::tag_arity_index_prune_stale_entries(const aura::ast::FlatAST& flat) const {
     const auto root = flat.root;
-    for (auto it = tag_arity_index_.begin(); it != tag_arity_index_.end();) {
-        auto& bucket = it->second;
-        bucket.erase(std::remove_if(bucket.begin(), bucket.end(),
-                                    [&](aura::ast::NodeId id) {
-                                        if (id >= flat.size()) {
-                                            if (id < tag_arity_indexed_key_.size())
-                                                tag_arity_indexed_key_[id] = kTagArityKeyNone;
-                                            return true;
-                                        }
-                                        if (id != root &&
-                                            flat.parent_of(id) == aura::ast::NULL_NODE) {
-                                            if (id < tag_arity_indexed_key_.size())
-                                                tag_arity_indexed_key_[id] = kTagArityKeyNone;
-                                            return true;
-                                        }
-                                        return false;
-                                    }),
-                     bucket.end());
-        if (bucket.empty())
-            it = tag_arity_index_.erase(it);
-        else
-            ++it;
-    }
+    auto is_stale = [&](aura::ast::NodeId id) {
+        if (id >= flat.size()) {
+            if (id < tag_arity_indexed_key_.size())
+                tag_arity_indexed_key_[id] = kTagArityKeyNone;
+            return true;
+        }
+        if (id != root && flat.parent_of(id) == aura::ast::NULL_NODE) {
+            if (id < tag_arity_indexed_key_.size())
+                tag_arity_indexed_key_[id] = kTagArityKeyNone;
+            return true;
+        }
+        return false;
+    };
+    auto prune_map = [&](auto& map) {
+        for (auto it = map.begin(); it != map.end();) {
+            auto& bucket = it->second;
+            bucket.erase(std::remove_if(bucket.begin(), bucket.end(), is_stale), bucket.end());
+            if (bucket.empty())
+                it = map.erase(it);
+            else
+                ++it;
+        }
+    };
+    prune_map(tag_arity_index_);
+    // Issue #1501: keep user-only hygiene index in sync.
+    prune_map(tag_arity_index_user_);
 }
 
 void Evaluator::tag_arity_index_sync_after_mutation(const aura::ast::FlatAST& flat) const {
@@ -203,6 +215,7 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
     // lock-free under that umbrella.
     if (!workspace_flat_) {
         tag_arity_index_.clear();
+        tag_arity_index_user_.clear();
         tag_arity_indexed_key_.clear();
         tag_arity_index_workspace_ = nullptr;
         tag_arity_index_synced_size_ = 0;
@@ -245,17 +258,21 @@ void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
     build_tag_arity_index_unlocked(trigger);
 }
 
-std::vector<aura::ast::NodeId> Evaluator::snapshot_tag_arity_bucket(std::uint64_t key,
-                                                                    std::uint8_t trigger) const {
-    // Issue #1372: single unique_lock covers build + bucket copy.
-    // Closes the #371 race window (build release → shared find).
-    // Matchers iterate the returned snapshot outside the lock so
-    // reader parallelism is preserved for the expensive match work.
+std::vector<aura::ast::NodeId>
+Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
+                                     bool skip_macro_introduced) const {
+    // Issue #1372 / #1501: single unique_lock covers build + bucket
+    // copy. When skip_macro_introduced, serve user-only index so the
+    // default hygienic query:pattern path never iterates MacroIntroduced
+    // roots from the hot (tag,arity) bucket.
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
     const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
-    auto it = tag_arity_index_.find(key);
-    if (it == tag_arity_index_.end())
+    const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
+    if (skip_macro_introduced)
+        tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
+    auto it = map.find(key);
+    if (it == map.end())
         return {};
     std::vector<aura::ast::NodeId> out = it->second;
     // Defensive: under unique_lock epoch cannot change; if it
