@@ -41,10 +41,18 @@
   (iter 0 (list) (list)))
 
 ; Join list of strings with separator
+; B8a fix (2026-07-18): let-bind the recursive result before
+; string-append. The previous (string-append X sep (string-join ...))
+; form places the recursive call in a non-tail position (3rd arg of
+; string-append with two non-recursive args already inlined), so the
+; engine doesn't tail-call-optimize and the recursion returns ""
+; instead of the accumulated string. Binding via let restores the
+; expected behavior; pattern confirmed by surface test B8 header.
 (define (string-join strs sep)
   (if (null? strs) ""
     (if (null? (cdr strs)) (car strs)
-      (string-append (car strs) sep (string-join (cdr strs) sep)))))
+      (let ((rest (string-join (cdr strs) sep)))
+        (string-append (car strs) sep rest)))))
 
 ; Trim whitespace from both ends
 (define (string-trim s)
