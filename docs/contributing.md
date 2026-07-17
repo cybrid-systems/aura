@@ -322,6 +322,7 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 - [ ] `workspace_read_only_` 快速路径
 - [ ] mutation boundary yield
 - [ ] multi-step Agent loops: yield only via `query:mutation-boundary-safe-yield` /
+- [ ] fairness probe: `query:mutation-boundary-fairness-stats` (#1591) /
       `ast:yield-at-boundary` when depth is 0 (Issue #1504; never yield under Guard)
 - [ ] `add_mutation_with_rollback` + `mark_dirty_upward`
 - [ ] fuzz：`fuzz_defuse.py --quick`、`fuzz_workspace.py --quick`、`fuzz_snapshot.py --quick`

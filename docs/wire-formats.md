@@ -516,3 +516,22 @@ logs serialized in §3):
 
 Contributor checklist for adding a primitive (registration + meta +
 docs): [contributing.md](contributing.md) §Discoverability (#1552).
+
+---
+
+## 5. Mutation-boundary / fiber orchestration metrics (Issue #1591)
+
+These are **not** binary wire formats; they are the Agent-facing
+`engine:metrics` JSON/hash contracts for multi-fiber fair scheduling.
+Stable keys; unknown keys must be ignored by Agents.
+
+| Surface | Schema | Notes |
+|---------|--------|-------|
+| `query:mutation-boundary-safe-yield` | 1591 | Side-effect: yield iff depth==0 |
+| `query:mutation-boundary-safe-yield-stats` | 1591 | Counters + avg-hold-time-us |
+| `query:per-fiber-mutation-depth-stats` | 1591 | Per-fiber depth + histogram |
+| `query:mutation-boundary-fairness-stats` | 1591 | Unified fairness dashboard |
+| `query:orchestration-steal-stats` | 1492 | Steal defer + starvation mitigation |
+
+See `docs/design/mutation-boundary-fairness.md` and
+`docs/design/mutation-boundary-safe-yield.md`.

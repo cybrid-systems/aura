@@ -391,7 +391,67 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("hist-b2-plus", 0);
             }
             insert_kv("hist-samples", hist_total);
-            insert_kv("schema", 1493);
+            insert_kv("issue", 1591);
+            insert_kv("schema", 1493); // keep 1493; #1591 alias below
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1591 AC name: query:per-fiber-mutation-depth-stats
+    // Alias of query:per-fiber-mutation-stack-stats (same fields + schema 1591).
+    ObservabilityPrims::register_stats_impl(
+        "query:per-fiber-mutation-depth-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t lifetime_max =
+                static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max());
+            const std::int64_t current_max =
+                static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_current_max());
+            const std::int64_t live_depth =
+                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("lifetime-max", lifetime_max);
+            insert_kv("current-max", current_max);
+            insert_kv("live-depth", live_depth);
+            std::int64_t hist_total = 0;
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
+                    hist_total += static_cast<std::int64_t>(
+                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed));
+            }
+            insert_kv("hist-samples", hist_total);
+            insert_kv("mutation-stack-depth-histogram-samples", hist_total);
+            insert_kv(
+                "safepoint-wait-while-mutation-held-us",
+                static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
+            insert_kv("issue", 1591);
+            insert_kv("schema", 1591);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

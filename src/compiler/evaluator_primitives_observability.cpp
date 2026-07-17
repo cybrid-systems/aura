@@ -309,6 +309,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:mutation-boundary-depth",
     "query:mutation-boundary-safe-yield",
     "query:mutation-boundary-safe-yield-stats",
+    // Issue #1591 — fairness dashboard + per-fiber depth alias
+    "query:mutation-boundary-fairness-stats",
+    "query:per-fiber-mutation-depth-stats",
     "ast:yield-at-boundary",
     // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
     "query:self-evolution-loop-stats",
