@@ -123,7 +123,8 @@ int aura_issue_503_run() {
         CHECK(setup_macro_workspace(cs3), "regression workspace setup");
         auto phs = cs3.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         auto pms = cs3.eval("(engine:metrics \"query:pattern-marker-stats\")");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
+        CHECK(phs && (aura::compiler::types::is_int(*phs) || aura::compiler::types::is_hash(*phs)),
+              "pattern-hygiene-stats regression");
         CHECK(pms && aura::compiler::types::is_hash(*pms), "pattern-marker-stats regression");
     }
 

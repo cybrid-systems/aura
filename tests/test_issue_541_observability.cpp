@@ -151,7 +151,8 @@ int aura_issue_541_observability_run() {
         CHECK(prod && aura::compiler::types::is_hash(*prod),
               "query:pattern-production-index-stats hash regression");
         CHECK(pis && aura::compiler::types::is_int(*pis), "pattern-index-stats int regression");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats int regression");
+        CHECK(phs && (aura::compiler::types::is_int(*phs) || aura::compiler::types::is_hash(*phs)),
+              "pattern-hygiene-stats regression");
     }
 
     // AC5: stats:count

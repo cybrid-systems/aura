@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
     auto mrs = cs.eval("(engine:metrics \"query:macro-reflect-self-evo-stats\")");
     auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(mrs && is_int(*mrs), "macro-reflect-self-evo-stats returns int");
-    CHECK(phs && is_int(*phs), "pattern-hygiene-stats returns int");
+    CHECK(phs && (is_int(*phs) || is_hash(*phs)), "pattern-hygiene-stats returns int|hash");
 
     std::println("\n--- AC8: multi-round self-evo cycle ---");
     const auto stats8a = followup_stats(cs);

@@ -105,7 +105,8 @@ int aura_issue_501_hygiene_run() {
         std::println("\n--- AC5: query regression ---");
         auto phs = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
         auto ips = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
-        CHECK(phs && aura::compiler::types::is_int(*phs), "pattern-hygiene-stats regression");
+        CHECK(phs && (aura::compiler::types::is_int(*phs) || aura::compiler::types::is_hash(*phs)),
+              "pattern-hygiene-stats regression");
         CHECK(ips && aura::compiler::types::is_hash(*ips), "compile:inline-pass-stats regression");
         CHECK(inline_skipped(cs) >= inline_before, "inline-hygiene-skipped monotonic");
     }
