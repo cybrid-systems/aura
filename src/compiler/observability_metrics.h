@@ -5402,6 +5402,14 @@ struct CompilerMetrics {
     //     mismatch triggered deopt or hard error
     std::atomic<std::uint64_t> linear_post_mutate_enforcements_total{0};
     std::atomic<std::uint64_t> linear_deopt_on_mismatch_total{0};
+    // Issue #1595: Fiber::join / MultiFiberMailbox / parallel_intend
+    // linear + StableNodeRef enforcement (query:join-linear-enforcement-stats).
+    //   - linear_join_enforcement_total: join / post-task refresh probes
+    //   - mailbox_linear_violation_count: recv/push rejected for linear claim
+    //   - stable_ref_post_join_repin_total: StableNodeRef restamps on join path
+    std::atomic<std::uint64_t> linear_join_enforcement_total{0};
+    std::atomic<std::uint64_t> mailbox_linear_violation_count{0};
+    std::atomic<std::uint64_t> stable_ref_post_join_repin_total{0};
     // Issue #740: linear ownership safety in JIT L2 hot paths
     // post-invalidate (Arena/DropOp/GC root re-sync).
     // Exposed via (query:linear-jit-safety-stats).

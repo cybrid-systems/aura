@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 520,
-  "frozen_count": 438,
+  "frozen_count": 439,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -195,6 +195,7 @@
     "query:jit-rendering-coverage-stats",
     "query:jit-stats-hash",
     "query:jit-typed-mutation-stats",
+    "query:join-linear-enforcement-stats",
     "query:l2-specialization-deopt-stats",
     "query:large-sv-pattern-defuse-stats",
     "query:linear-boundary-consistency-stats",
@@ -975,7 +976,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 415,
+  "stats_count": 416,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1152,6 +1153,7 @@
     "query:jit-rendering-coverage-stats",
     "query:jit-stats-hash",
     "query:jit-typed-mutation-stats",
+    "query:join-linear-enforcement-stats",
     "query:l2-specialization-deopt-stats",
     "query:large-sv-pattern-defuse-stats",
     "query:linear-boundary-consistency-stats",

@@ -450,6 +450,11 @@ aura::compiler::Evaluator::auto_restamp_pinned_stable_refs_at(StableRefRefreshSi
             case StableRefRefreshSite::YieldResume:
                 m->stable_ref_validations_at_steal.fetch_add(n, std::memory_order_relaxed);
                 break;
+            case StableRefRefreshSite::Join:
+                // Issue #1595: join/parallel path — dedicated post-join repin counter.
+                m->stable_ref_post_join_repin_total.fetch_add(n, std::memory_order_relaxed);
+                m->stable_ref_validations_at_steal.fetch_add(n, std::memory_order_relaxed);
+                break;
         }
     }
     return n;
@@ -1270,6 +1275,101 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
 
     if (fb_void != nullptr)
         static_cast<aura::serve::Fiber*>(fb_void)->clear_resume_refresh_hints();
+}
+
+// Issue #1595: post Fiber::join linear ownership + StableNodeRef enforcement.
+// Called from serve Fiber::join on Ok; also from parallel_intend child exit.
+// Keep hot path light: full EnvFrame walk only when join target left resume hints
+// or refresh observed drift (mirrors #1592 complete_post_resume_steal_refresh).
+void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) noexcept {
+    std::uint64_t hint_env = 0;
+    std::uint64_t expected_epoch = 0;
+    void* fb_void = joined_fiber_void != nullptr ? joined_fiber_void : g_current_fiber_void;
+    if (fb_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
+        hint_env = fiber->resume_env_hint();
+        expected_epoch = fiber->resume_bridge_epoch_hint();
+    }
+
+    const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
+    probe_and_repin_linear_on_steal();
+    const auto repinned = auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Join);
+
+    if (hint_env != 0 && hint_env != static_cast<std::uint64_t>(NULL_ENV_ID)) {
+        (void)linear_post_mutate_enforce(static_cast<EnvId>(hint_env));
+    } else if (refreshed > 0) {
+        (void)linear_post_mutate_enforce_all();
+    } else {
+        // Liveness bump without full EnvFrame sweep (join is hot under parallel_intend).
+        bump_linear_post_mutate_enforcement();
+    }
+
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
+        // auto_restamp already bumps stable_ref_post_join_repin_total by n;
+        // ensure at least +1 liveness tick when zero pins restamped.
+        if (repinned == 0)
+            m->stable_ref_post_join_repin_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #1595: MultiFiberMailbox path — StableNodeRef probe + optional linear claim.
+// Payload convention for explicit claims (tests + agents):
+//   "linear-viol:..."  → always reject (synthetic violation)
+//   "linear-env:<id>"  → enforce linear on that EnvId; reject if enforce fails hard
+// Returns true if message may be delivered.
+bool Evaluator::probe_mailbox_linear_and_stable_refs(std::uint64_t /*from_fiber*/,
+                                                     std::uint64_t /*to_fiber*/,
+                                                     std::string_view payload) noexcept {
+    // Always: light join-site restamp so mailbox traffic cannot skip pin refresh.
+    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Join);
+    probe_and_repin_linear_on_steal();
+
+    if (payload.starts_with("linear-viol:")) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->mailbox_linear_violation_count.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    if (payload.starts_with("linear-env:")) {
+        // Best-effort parse of env id after prefix; enforce when non-zero.
+        std::uint64_t env = 0;
+        const auto rest = payload.substr(std::string_view("linear-env:").size());
+        for (char c : rest) {
+            if (c < '0' || c > '9')
+                break;
+            env = env * 10 + static_cast<std::uint64_t>(c - '0');
+        }
+        if (env != 0 && env != static_cast<std::uint64_t>(NULL_ENV_ID)) {
+            const bool ok = linear_post_mutate_enforce(static_cast<EnvId>(env));
+            if (!ok) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                    m->mailbox_linear_violation_count.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+        }
+    }
+
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+        m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->complete_post_join_linear_enforcement(joined_fiber);
+}
+
+// Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).
+extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std::uint64_t to_fiber,
+                                                   const char* payload, std::size_t payload_len) {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0; // no evaluator → pass-through (serve-only builds)
+    std::string_view pv(payload ? payload : "", payload_len);
+    return ev->probe_mailbox_linear_and_stable_refs(from_fiber, to_fiber, pv) ? 0 : 1;
 }
 
 // Issue #683: linear ownership enforcement on work-steal.

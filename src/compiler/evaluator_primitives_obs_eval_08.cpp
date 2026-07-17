@@ -36,6 +36,7 @@ extern "C" std::uint64_t aura_fiber_init_aura_result_err_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
+extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total(); // #1595
 
 namespace aura::compiler::primitives_detail {
 
@@ -294,6 +295,63 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("resume-path-wired", 1); // Fiber::resume → complete_post_resume_steal_refresh
             insert_kv("issue", 1592);
             insert_kv("schema", 1592);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1595: Fiber::join / MultiFiberMailbox / parallel_intend linear
+    // ownership + StableNodeRef enforcement dashboard.
+    ObservabilityPrims::register_stats_impl(
+        "query:join-linear-enforcement-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(24);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("linear_join_enforcement_total",
+                      m ? static_cast<std::int64_t>(
+                              m->linear_join_enforcement_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mailbox_linear_violation_count",
+                      m ? static_cast<std::int64_t>(
+                              m->mailbox_linear_violation_count.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("stable_ref_post_join_repin_total",
+                      m ? static_cast<std::int64_t>(
+                              m->stable_ref_post_join_repin_total.load(std::memory_order_relaxed))
+                        : 0);
+            // Process-wide join path (serve Fiber) — always available.
+            insert_kv("fiber_join_linear_enforcement_total",
+                      static_cast<std::int64_t>(aura_fiber_join_linear_enforcement_total()));
+            insert_kv("join-path-wired", 1);
+            insert_kv("mailbox-path-wired", 1);
+            insert_kv("parallel-intend-path-wired", 1);
+            insert_kv("issue", 1595);
+            insert_kv("schema", 1595);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

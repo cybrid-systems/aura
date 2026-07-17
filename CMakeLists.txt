@@ -5187,6 +5187,9 @@ aura_issue_test_link_llvm_jit(test_ai_closedloop_readiness_1593)
 # Issue #1594: ResourceQuota Arena + Guard wired refine (inventory + closed-loop AC).
 aura_add_issue_test(test_resource_quota_wired)
 aura_issue_test_link_llvm_jit(test_resource_quota_wired)
+# Issue #1595: join/mailbox/parallel linear ownership + StableNodeRef enforcement.
+aura_add_issue_test(test_fiber_join_linear)
+aura_issue_test_link_llvm_jit(test_fiber_join_linear)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

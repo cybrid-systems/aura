@@ -314,6 +314,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:per-fiber-mutation-depth-stats",
     // Issue #1592 — post-steal EnvFrame/StableNodeRef/linear closed loop
     "query:post-steal-closed-loop-stats",
+    // Issue #1595 — join / mailbox / parallel_intend linear + StableNodeRef
+    "query:join-linear-enforcement-stats",
     "ast:yield-at-boundary",
     // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
     "query:self-evolution-loop-stats",

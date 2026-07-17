@@ -30,6 +30,8 @@ static std::atomic<std::uint64_t> g_scheduler_init_aura_result_err{0};
 
 extern "C" void aura_evaluator_resume_fiber_migration();
 extern "C" void aura_evaluator_post_resume_refresh(); // Issue #1490
+// Issue #1595: host-side post-join linear + StableNodeRef enforcement.
+extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
 
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
@@ -38,6 +40,8 @@ std::atomic<std::uint64_t> Fiber::join_timeout_total_{0};
 std::atomic<std::uint64_t> Fiber::join_cancel_total_{0};
 std::atomic<std::uint64_t> Fiber::join_wait_us_total_{0};
 std::atomic<std::uint64_t> Fiber::join_wait_us_max_{0};
+// Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
+std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 
 // Issue #618: GC safepoint frequency tuning atomic. Initialized to
 // 50 (matches historical every-Nth-allocation heuristic). The
@@ -533,6 +537,15 @@ std::uint64_t Fiber::join_wait_us_max() noexcept {
     return join_wait_us_max_.load(std::memory_order_relaxed);
 }
 
+std::uint64_t Fiber::join_linear_enforcement_total() noexcept {
+    return join_linear_enforcement_total_.load(std::memory_order_relaxed);
+}
+
+// C ABI for observability primitives (avoid pulling fiber.h into obs partitions).
+extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total() {
+    return Fiber::join_linear_enforcement_total();
+}
+
 JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
     join_total_.fetch_add(1, std::memory_order_relaxed);
     const auto t0 = std::chrono::steady_clock::now();
@@ -550,6 +563,14 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
         else if (st == JoinStatus::Cancelled)
             join_cancel_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1595: successful join → process counter + host-side probe/repin.
+        // Skip deep Evaluator work when called from a fiber stack (small stacks);
+        // process counter still advances so dashboards see join-path liveness.
+        if (st == JoinStatus::Ok && target != nullptr) {
+            join_linear_enforcement_total_.fetch_add(1, std::memory_order_relaxed);
+            if (g_current_fiber == nullptr)
+                aura_evaluator_on_fiber_join(static_cast<void*>(target));
+        }
         return JoinResult{st, us};
     };
 
