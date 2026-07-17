@@ -336,16 +336,17 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 }
 
 
-// Issue #1500: batch refresh_if_stale over atomic-batch + COW-boundary
-// pinned StableNodeRefs. Restamps full provenance (gen/wrap/cow/
-// mutation_id/subtree_gen) while preserving fiber_id, workspace_id,
-// and boundary_pinned. Called from fiber steal, Guard dtor, and
-// re_pin_cow_children_from_snapshot.
+// Issue #1500 / #1497: batch refresh_if_stale over atomic-batch +
+// COW-boundary pinned StableNodeRefs. Restamps full provenance
+// (gen/wrap/cow/mutation_id/subtree_gen) while preserving fiber_id,
+// workspace_id, and boundary_pinned. Called from fiber steal, Guard
+// dtor, re_pin, GC safepoint, and yield-resume (#1497 unified hooks).
 std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     auto* ws = workspace_flat();
     if (!ws)
         return 0;
     std::size_t refreshed = 0;
+    std::size_t boundary_refreshed = 0;
     for (auto& ref : atomic_batch_pinned_refs_) {
         if (ref.refresh_if_stale(*ws))
             ++refreshed;
@@ -354,12 +355,17 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
         for (auto& ref : cow_boundary_pinned_refs_) {
             const bool was_pinned = ref.boundary_pinned;
+            // Count boundary_pinned_refresh only when the pin was stale
+            // and restamped (not when already valid).
+            const bool was_valid = ref.is_valid_in(*ws);
             if (ref.refresh_if_stale(*ws)) {
                 // refresh_if_stale preserves boundary_pinned; re-assert
                 // so COW survival semantics stay intact after restamp.
                 if (was_pinned)
                     ref.boundary_pinned = true;
                 ++refreshed;
+                if (was_pinned && !was_valid)
+                    ++boundary_refreshed;
             }
         }
     }
@@ -367,7 +373,37 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         bump_stable_ref_steal_auto_refresh(refreshed);
         bump_stable_ref_cross_cow_refresh(refreshed);
     }
+    if (boundary_refreshed > 0)
+        bump_boundary_pinned_refresh(boundary_refreshed);
     return refreshed;
+}
+
+// Issue #1497: single auto-restamp entry for GC/steal/compact/resume.
+// Ensures every production path runs the same restamp + site metrics
+// so boundary_pinned refs cannot skip refresh under AI multi-round load.
+std::size_t
+aura::compiler::Evaluator::auto_restamp_pinned_stable_refs_at(StableRefRefreshSite site) noexcept {
+    const auto n = restamp_pinned_stable_refs();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        switch (site) {
+            case StableRefRefreshSite::Steal:
+                m->stable_ref_validations_at_steal.fetch_add(n, std::memory_order_relaxed);
+                break;
+            case StableRefRefreshSite::GcSafepoint:
+                m->stable_ref_validations_at_gc_safepoint.fetch_add(n, std::memory_order_relaxed);
+                break;
+            case StableRefRefreshSite::CompactOrRepin:
+                // Compact/repin shares steal validation surface historically
+                // (#1473 re_pin path) + cow_repin_on_steal.
+                m->stable_ref_validations_at_steal.fetch_add(n, std::memory_order_relaxed);
+                m->cow_repin_on_steal.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case StableRefRefreshSite::YieldResume:
+                m->stable_ref_validations_at_steal.fetch_add(n, std::memory_order_relaxed);
+                break;
+        }
+    }
+    return n;
 }
 
 // Issue #1446: re_pin_cow_children_from_snapshot — walk the
@@ -380,35 +416,19 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
 // Issue #1500: actually batch-restamp pinned refs (no longer a
 // metrics-only stub).
 bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
-    int* slot = mutation_boundary_depth_slot(this);
-    if (!slot || *slot == 0) {
-        // No active Guard — still restamp any lingering pins (steal
-        // / compact can leave refs without a live Guard).
-        (void)restamp_pinned_stable_refs();
-        return true;
-    }
     auto* m = static_cast<aura::compiler::CompilerMetrics*>(compiler_metrics());
-    // Walk pinned StableNodeRef registries and refresh full provenance.
     auto* ws = workspace_flat();
     if (!ws) {
         if (m)
             m->checkpoint_lost_on_compact.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    // Issue #1473: walk cow_boundary_pinned_refs_ and validate_or_refresh.
-    std::size_t validated = 0;
-    {
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-        for (auto& pinned : cow_boundary_pinned_refs_) {
-            if (pinned.validate_or_refresh(*ws))
-                ++validated;
-        }
-    }
-    if (m) {
-        m->cow_repin_on_steal.fetch_add(1, std::memory_order_relaxed);
-        m->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
+    // Issue #1497: unified auto-restamp (atomic-batch + cow-boundary
+    // pins) for compact / post-steal re-pin — replaces the cow-only
+    // validate_or_refresh walk so no registry is skipped.
+    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::CompactOrRepin);
+    if (m)
         m->panic_transfer_nested_success.fetch_add(1, std::memory_order_relaxed);
-    }
     return true;
 }
 
@@ -473,6 +493,9 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
             [[maybe_unused]] const bool yc_mismatch =
                 fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
         }
+        // Issue #1497: yield-resume desync → auto-restamp pinned StableNodeRefs
+        // so boundary_pinned / atomic-batch handles stay valid across steal.
+        (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::YieldResume);
         thread_migrated = false;
         size_mismatch = false;
         depth_mismatch = false;

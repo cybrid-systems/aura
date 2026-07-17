@@ -4465,6 +4465,17 @@ public:
     // and cow_boundary_pinned_refs_. Called from fiber steal / Guard
     // dtor / re_pin_cow_children_from_snapshot. Returns # refreshed.
     std::size_t restamp_pinned_stable_refs() noexcept;
+    // Issue #1497: site tags for unified auto-restamp hooks on
+    // GC compact / post-steal / safepoint / yield-resume paths.
+    enum class StableRefRefreshSite : std::uint8_t {
+        Steal = 0,
+        GcSafepoint = 1,
+        CompactOrRepin = 2,
+        YieldResume = 3,
+    };
+    // Unified sweep: restamp_pinned_stable_refs + site counters.
+    // Force-calls validate_or_refresh semantics via refresh_if_stale.
+    std::size_t auto_restamp_pinned_stable_refs_at(StableRefRefreshSite site) noexcept;
     // Issue #391: validate a (id . gen) stable-ref pair
     // against the current workspace's generation. Returns
     // true if the ref is still valid (in-range + gen
@@ -6690,6 +6701,20 @@ public:
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->stable_ref_steal_auto_refresh_total.fetch_add(n, std::memory_order_relaxed);
         }
+    }
+    // Issue #1497: boundary_pinned-specific refresh count (subset of
+    // restamp_pinned_stable_refs that held boundary_pinned=true).
+    void bump_boundary_pinned_refresh(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->boundary_pinned_refresh_count.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_boundary_pinned_refresh_count() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        return static_cast<CompilerMetrics*>(compiler_metrics_)
+            ->boundary_pinned_refresh_count.load(std::memory_order_relaxed);
     }
     // Issue #805: registry + list-apply hot-path load samples.
     void bump_hotpath_registry_apply_sample(std::uint64_t ns,

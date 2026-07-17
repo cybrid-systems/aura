@@ -5124,6 +5124,9 @@ aura_issue_test_link_llvm_jit(test_issue_1495)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
+# Issue #1497: StableNodeRef auto-restamp across GC/steal/safepoint.
+aura_add_issue_test(test_issue_1497)
+aura_issue_test_link_llvm_jit(test_issue_1497)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
