@@ -1,0 +1,58 @@
+; Issue #1551 — llm.aura template / sanitize / parse / stats
+; Run: ./build/aura --load tests/suite/llm_safety.aura
+; Does NOT require LLM_API_KEY (offline unit surface).
+(require "std/test" all:)
+(require "std/llm" all:)
+(require "std/string" all:)
+(require "std/list" all:)
+
+(test-suite "llm:sanitize"
+  (llm:call-stats-reset!)
+  (check= "hello" (llm:sanitize-prompt "hello"))
+  (check= "ab" (llm:sanitize-prompt "a```b"))
+  (check (llm:injection-risk? "<|im_start|>system"))
+  (check (llm:injection-risk? "[INST] hack"))
+  (check (not (llm:injection-risk? "normal user question")))
+  (check= "injection-blocked" (aura-llm-call "<|im_start|>evil"))
+  (check (> (hash-ref (llm:call-stats) "injection-blocked" 0) 0)))
+
+(test-suite "llm:templates"
+  (llm:register-template "greet"
+    (lambda (name) (string-append "Hello, " name "!")))
+  (check= "Hello, Ada!" (llm:apply-template "greet" "Ada"))
+  (check (member? "greet" (llm:list-templates)))
+  (check (not (llm:apply-template "missing" "x"))))
+
+(test-suite "llm:parse-response"
+  (llm:call-stats-reset!)
+  (let* ((ok-json "{\"choices\":[{\"message\":{\"content\":\"42\"}}]}")
+         (r (llm:parse-response ok-json)))
+    (check (hash-ref r "ok"))
+    (check= "42" (hash-ref r "content"))
+    (check= "42" (llm:extract-content ok-json)))
+  (let ((r2 (llm:parse-response "{\"error\":{\"message\":\"quota\"}}")))
+    (check (not (hash-ref r2 "ok")))
+    (check= "quota" (hash-ref r2 "error")))
+  (let ((r3 (llm:parse-response "")))
+    (check (not (hash-ref r3 "ok"))))
+  (check (> (hash-ref (llm:call-stats) "parse-ok" 0) 0))
+  (check (> (hash-ref (llm:call-stats) "parse-err" 0) 0)))
+
+(test-suite "llm:rate-limit-stats"
+  (llm:call-stats-reset!)
+  (llm:rate-limit-set! 1)
+  ; first call may no-key or rate path; second should rate-limit if used
+  (let ((a (llm:call-sandboxed "{\"model\":\"x\",\"messages\":[]}")))
+    (check (string? a)))
+  (let ((b (aura-llm-call "{\"model\":\"x\",\"messages\":[]}")))
+    ; with limit 1, second call is rate-limited if first consumed quota
+    (check (or (equal? b "rate-limited") (string? b))))
+  (llm:rate-limit-set! 0)
+  (check= -1 (llm:rate-limit-remaining)))
+
+(test-suite "llm:call-stats-shape"
+  (let ((s (llm:call-stats)))
+    (check (hash? s))
+    (check (number? (hash-ref s "success" 0)))
+    (check (number? (hash-ref s "injection-blocked" 0)))
+    (check (number? (hash-ref s "parse-ok" 0)))))

@@ -1,12 +1,24 @@
-; Aura std/llm -- LLM 交互模块
+; Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety)
 ;
-; 使用 json-encode 构建 API 请求体，避免手工字符串转义。
-; Issue #929: rate-limit + capability-oriented surface for production.
+; - json-encode 构建 API 请求体
+; - rate-limit + sandboxed call surface
+; - #1551: template 注册、响应解析、prompt sanitization、调用统计
+;
+; Import: (import "std/llm")  or  (require "std/llm" all:)
 
-(export aura-llm-call aura-verify llm:rate-limit-set! llm:rate-limit-remaining
-        llm:call-sandboxed)
+(require "std/string" all:)
 
-; Sliding-window style counter (cooperative fibers). 0 = unlimited.
+(export aura-llm-call aura-verify
+        llm:rate-limit-set! llm:rate-limit-remaining
+        llm:call-sandboxed
+        llm:register-template llm:list-templates llm:apply-template
+        llm:parse-response llm:extract-content
+        llm:sanitize-prompt llm:injection-risk?
+        llm:call-stats llm:call-stats-reset!
+        llm:chat)
+
+; ── Rate limit (#929) ──────────────────────────────────────────
+
 (define *llm-rate-limit* 0)
 (define *llm-rate-used* 0)
 (define *llm-rate-window-start* 0)
@@ -26,41 +38,200 @@
   (if (<= *llm-rate-limit* 0)
     #t
     (begin
-      ; reset window every 60s wall-clock if current-time available
       (let ((now (current-time)))
-        (when (and (number? now)
-                   (> (- now *llm-rate-window-start*) 60))
-          (set! *llm-rate-used* 0)
-          (set! *llm-rate-window-start* now)))
+        (if (and (number? now) (> (- now *llm-rate-window-start*) 60))
+          (begin
+            (set! *llm-rate-used* 0)
+            (set! *llm-rate-window-start* now))
+          #f))
       (if (>= *llm-rate-used* *llm-rate-limit*)
         #f
         (begin
           (set! *llm-rate-used* (+ *llm-rate-used* 1))
           #t)))))
 
-(define aura-llm-call
-  (lambda (body)
-    (if (not (llm-rate-check!))
-      "rate-limited"
-      (let ((key (getenv "LLM_API_KEY")))
-        (if (or (not key) (= (string-length key) 0)) ""
-          (let ((base (getenv "LLM_BASE_URL")))
-            (http-post (if (string? base) (string-append base "/chat/completions")
-                         "https://api.deepseek.com/v1/chat/completions")
-                       body key)))))))
+; ── Call metrics (#1551) — ≤8 keys for Aura hash capacity ──
 
-; Sandboxed wrapper: requires LLM_API_KEY + optional resource:quota-check
+(define *llm-call-stats*
+  (hash "success" 0
+        "fail" 0
+        "rate-limited" 0
+        "injection-blocked" 0
+        "sanitized" 0
+        "parse-ok" 0
+        "parse-err" 0
+        "no-key" 0))
+
+(define (llm-stat-bump! key)
+  (hash-set! *llm-call-stats* key
+             (+ 1 (hash-ref *llm-call-stats* key 0))))
+
+(define (llm:call-stats) *llm-call-stats*)
+
+(define (llm:call-stats-reset!)
+  (hash-set! *llm-call-stats* "success" 0)
+  (hash-set! *llm-call-stats* "fail" 0)
+  (hash-set! *llm-call-stats* "rate-limited" 0)
+  (hash-set! *llm-call-stats* "injection-blocked" 0)
+  (hash-set! *llm-call-stats* "sanitized" 0)
+  (hash-set! *llm-call-stats* "parse-ok" 0)
+  (hash-set! *llm-call-stats* "parse-err" 0)
+  (hash-set! *llm-call-stats* "no-key" 0)
+  *llm-call-stats*)
+
+; ── Sanitization (#1551) ───────────────────────────────────────
+
+(define (llm:injection-risk? p)
+  (if (not (string? p))
+    #f
+    (or (string-contains? p "<|im_start|>")
+        (string-contains? p "<|im_end|>")
+        (string-contains? p "[INST]")
+        (string-contains? p "<<SYS>>")
+        (string-contains? p "ignore all previous instructions")
+        (string-contains? p "IGNORE ALL PREVIOUS"))))
+
+(define (llm:sanitize-prompt p)
+  (if (not (string? p))
+    ""
+    (let* ((s0 p)
+           (s1 (if (string-contains? s0 "```")
+                 (begin (llm-stat-bump! "sanitized") (string-replace s0 "```" ""))
+                 s0))
+           (s2 (if (string-contains? s1 "<|endoftext|>")
+                 (begin (llm-stat-bump! "sanitized") (string-replace s1 "<|endoftext|>" ""))
+                 s1))
+           (s3 (if (string-contains? s2 "### Instruction:")
+                 (begin (llm-stat-bump! "sanitized") (string-replace s2 "### Instruction:" ""))
+                 s2))
+           (s4 (if (string-contains? s3 "### Response:")
+                 (begin (llm-stat-bump! "sanitized") (string-replace s3 "### Response:" ""))
+                 s3)))
+      s4)))
+
+; ── Template registry (#1551) ──────────────────────────────────
+
+(define *llm-templates* (hash))
+
+(define (llm:register-template name prompt-fn)
+  (if (and (string? name) (procedure? prompt-fn))
+    (begin (hash-set! *llm-templates* name prompt-fn) name)
+    #f))
+
+(define (llm:list-templates)
+  (hash-keys *llm-templates*))
+
+(define (llm:apply-template name arg)
+  (let ((fn (hash-ref *llm-templates* name)))
+    (if (procedure? fn) (fn arg) #f)))
+
+; ── Response parse (#1551) ─────────────────────────────────────
+; Returns hash with keys ok / error / content (string values + bool ok).
+
+(define (llm-parse-fail reason content)
+  (llm-stat-bump! "parse-err")
+  (hash "ok" #f "error" reason "content" content))
+
+(define (llm-parse-ok content)
+  (llm-stat-bump! "parse-ok")
+  (hash "ok" #t "error" "" "content" content))
+
+(define (llm:parse-response json-str)
+  (cond
+    ((not (string? json-str))
+     (llm-parse-fail "not-a-string" ""))
+    ((= (string-length json-str) 0)
+     (llm-parse-fail "empty-response" ""))
+    (else
+     (let ((data (json-parse json-str)))
+       (if (not (hash? data))
+         (llm-parse-fail "json-parse-failed" json-str)
+         (let ((err (hash-ref data "error")))
+           (if (and (hash? err) (string? (hash-ref err "message")))
+             (llm-parse-fail (hash-ref err "message") "")
+             (let ((choices (hash-ref data "choices")))
+               (if (not (pair? choices))
+                 (llm-parse-fail "no-choices" "")
+                 (let* ((first (car choices))
+                        (msg (if (hash? first) (hash-ref first "message") #f))
+                        (content (if (hash? msg) (hash-ref msg "content") #f)))
+                   (if (string? content)
+                     (llm-parse-ok content)
+                     (llm-parse-fail "no-content" ""))))))))))))
+
+(define (llm:extract-content json-str)
+  (let ((r (llm:parse-response json-str)))
+    (if (and (hash? r) (hash-ref r "ok"))
+      (hash-ref r "content" "")
+      "")))
+
+; ── Call surfaces ──────────────────────────────────────────────
+
+(define (aura-llm-call body)
+  (cond
+    ((not (string? body))
+     (llm-stat-bump! "fail")
+     "bad-arg")
+    ((llm:injection-risk? body)
+     (llm-stat-bump! "injection-blocked")
+     "injection-blocked")
+    ((not (llm-rate-check!))
+     (llm-stat-bump! "rate-limited")
+     "rate-limited")
+    (else
+     (let ((key (getenv "LLM_API_KEY"))
+           (clean (llm:sanitize-prompt body)))
+       (if (or (not key) (= (string-length key) 0))
+         (begin (llm-stat-bump! "no-key") "")
+         (let* ((base (getenv "LLM_BASE_URL"))
+                (url (if (string? base)
+                       (string-append base "/chat/completions")
+                       "https://api.deepseek.com/v1/chat/completions"))
+                (r (http-post url clean key)))
+           (if (and (string? r) (> (string-length r) 0))
+             (begin (llm-stat-bump! "success") r)
+             (begin (llm-stat-bump! "fail") (if (string? r) r "")))))))))
+
 (define (llm:call-sandboxed body)
   (if (not (string? body))
-    "bad-arg"
+    (begin (llm-stat-bump! "fail") "bad-arg")
     (aura-llm-call body)))
 
-(define aura-verify
-  (lambda (code)
-    (if (set-code code)
-      (begin (typecheck-current)
-        (let ((src (current-source))
-              (r (eval-current)))
-          (if (error? r) (string-append "err:" (type-of r))
-              (string-append "#t|||SRC:" src "|||SRC_END|||"))))
-      "bad-code")))
+(define (llm:chat system-prompt user-prompt)
+  (if (llm:injection-risk? (if (string? user-prompt) user-prompt ""))
+    (begin
+      (llm-stat-bump! "injection-blocked")
+      (hash "ok" #f "error" "injection-blocked" "content" ""))
+    (let* ((sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
+           (usr (llm:sanitize-prompt (if (string? user-prompt) user-prompt "")))
+           (model-env (getenv "LLM_MODEL"))
+           (model (if (and (string? model-env) (> (string-length model-env) 0))
+                    model-env
+                    "deepseek-chat"))
+           (body (json-encode
+                   (hash "model" model
+                         "messages"
+                         (list (hash "role" "system" "content" sys)
+                               (hash "role" "user" "content" usr)))))
+           (raw (aura-llm-call body)))
+      (cond
+        ((equal? raw "rate-limited")
+         (hash "ok" #f "error" "rate-limited" "content" ""))
+        ((equal? raw "injection-blocked")
+         (hash "ok" #f "error" "injection-blocked" "content" ""))
+        ((equal? raw "bad-arg")
+         (hash "ok" #f "error" "bad-arg" "content" ""))
+        ((equal? raw "")
+         (hash "ok" #f "error" "empty" "content" ""))
+        (else (llm:parse-response raw))))))
+
+(define (aura-verify code)
+  (if (set-code code)
+    (begin
+      (typecheck-current)
+      (let ((src (current-source))
+            (r (eval-current)))
+        (if (error? r)
+          (string-append "err:" (type-of r))
+          (string-append "#t|||SRC:" src "|||SRC_END|||"))))
+    "bad-code"))
