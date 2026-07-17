@@ -5,6 +5,7 @@
 ;   - agent:ask   = 指挥给提示（发送任务 + 等结果）
 ;   - orch:conduct = 读总谱 + 按步骤推进管线
 ;   - orch:parallel = 多声部同时演奏
+;   - orch:parallel-with-yield / orch:conduct 集成 safe yield (#1553)
 ;
 ; 全部纯 Aura，零 C++ 依赖（stdin 模式友好）。
 ; 在 serve 模式下自动使用 cross-session send/recv。
@@ -14,12 +15,18 @@
 ;   (require "std/llm" all:)
 ;   (llm:register-template "role" (lambda (task) ...))
 ;   (agent:spawn "analyst" (lambda (in) (llm:chat "..." (llm:apply-template "role" in))))
+;
+; #1553: fiber spawn paths call (mutate:safe-yield) / ast:yield-at-boundary
+; before and after work so long mutation holds do not starve peer fibers
+; (aligns #1504 safe yield + #1547 MutationBoundaryGuard).
 
 (require "std/list" all:)
 (require "std/string" all:)
+(require "std/mutate" all:)
 
 (export orch:define-role orch:step orch:pipeline orch:conduct
-        orch:parallel agent:spawn agent:ask agent:list
+        orch:parallel orch:parallel-with-yield
+        agent:spawn agent:ask agent:list
         agent:status agent:stop agent:restart
         orch:role orch:step* orch:if orch:retry
         orch:registry-epoch)
@@ -298,10 +305,25 @@
 (define (orch:retry step . max)
   (list 'retry step (if (pair? max) (car max) 3)))
 
+; ── orch-yield-safe — cooperative yield helper (#1553 / #1504) ──
+; Never yields under MutationBoundaryGuard (engine skips when held).
+(define (orch-yield-safe)
+  (try (mutate:safe-yield) (catch (e) #f)))
+
+; Wrap a worker so each fiber yields at entry (and after work) before
+; joining — multi-agent mutation loops must not hold peer fibers hostage.
+(define (orch-wrap-with-yield f)
+  (lambda (input)
+    (orch-yield-safe)
+    (let ((r (f input)))
+      (orch-yield-safe)
+      r)))
+
 ; ── orch:parallel — 并行执行 ──
 ;
 ; 交响乐指挥说："现在大家一起演奏"。
 ; 通过 fiber:spawn 并行执行，支持超时和错误隔离。
+; #1553: each fiber body yields at safe boundary before/after work.
 ;
 ; fns:  (fn1 fn2 ...) — 函数列表
 ; input: 输入值
@@ -311,10 +333,13 @@
   (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
   (if (null? fns) (quote ())
     (let ((fiber-ids (quote ())))
-      ; 并行 spawn 所有 fiber
+      ; Cooperative yield on the conductor before spawning workers.
+      (orch-yield-safe)
+      ; 并行 spawn 所有 fiber（worker 已包 yield）
       (define (try-fiber remaining)
         (when (pair? remaining)
-          (define fid (try (fiber:spawn (lambda () ((car remaining) input)))
+          (define worker (orch-wrap-with-yield (car remaining)))
+          (define fid (try (fiber:spawn (lambda () (worker input)))
                            (catch (e) 0)))
           (if (not (= fid 0))
             (set! fiber-ids (cons fid fiber-ids)))
@@ -352,10 +377,21 @@
                   (set! results (cons r results))
                   (collect-all (cdr ids))))))
           (collect-all (reverse all-ids))
+          (orch-yield-safe)
           ; If timeout fired, the first result is 'timeout, discard it
           (if timeout-fid
             (cdr (reverse results))
             (reverse results)))))))
+
+; ── orch:parallel-with-yield — explicit #1553 surface ──
+;
+; Same as orch:parallel (which already yields). Kept as a named entry
+; point for Agents / docs that look for "with-yield" in the API surface.
+; Extra timeout arg supported identically.
+(define (orch:parallel-with-yield fns input . timeout-arg)
+  (if (pair? timeout-arg)
+    (orch:parallel fns input (car timeout-arg))
+    (orch:parallel fns input)))
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Section 5: conduct — 总谱指挥
@@ -375,6 +411,8 @@
 ; → 最终输出
 
 (define (orch:conduct steps input)
+  ; #1553: yield between score steps so long mutate roles release peers.
+  (orch-yield-safe)
   (define (exec-step step)
     (cond
       ; 角色字符串 — 必须先检查（防止 and 原语求值 car 导致类型错误）
@@ -401,7 +439,9 @@
            (define result (try (exec-step inner) (catch (e) #f)))
            (if (or (not (pair? result)) (>= attempt n))
              result
-             (try (+ attempt 1))))))
+             (begin
+               (orch-yield-safe)
+               (try (+ attempt 1)))))))
       
       ; 配置对: (action . strategy)
       ((pair? step) (orch:step step input))

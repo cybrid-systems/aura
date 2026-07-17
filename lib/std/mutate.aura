@@ -1,7 +1,9 @@
-; ── std/mutate.aura — mutation observability wrappers (Issue #278) ──
+; ── std/mutate.aura — mutation observability + safety bridge ──
 ;
-; 高层 mutation 观察 / 诊断 helpers。
-; 全部纯 Aura，调用 (mutation-log:summary) 等 C++ observability primitives。
+; Issue #278: 高层 mutation 观察 / 诊断 helpers。
+; Issue #1553: 桥接 engine MutationBoundaryGuard / safe-yield / quota
+;   (#1547 try_acquire+quota, #1504 safe yield, #1546 arena quota)
+;   到 stdlib Agent 面。
 ;
 ; API:
 ;   (mutate:summary)              → alist 摘要 (:total :committed :rolled-back ...)
@@ -10,13 +12,23 @@
 ;   (mutate:operator-count name)  → 某 operator 的 mutation 次数
 ;   (mutate:rolled-back?)         → 是否存在已 rollback 的 mutation
 ;   (mutate:rollback-rate)        → ratio: rolled-back / total (返回 0..100 整数 pct)
+;   (mutate:boundary-depth)       → Guard nesting depth (0 = yield/steal safe)
+;   (mutate:boundary-safe?)       → #t when depth==0 and not held
+;   (mutate:safe-yield)           → hash (ast:yield-at-boundary / #1504)
+;   (mutate:quota-ok?)            → soft resource:quota-check (fibers/memory)
+;   (mutate:safety-snapshot)      → alist of boundary/yield/fiber/quota signals
+;   (mutate:atomic-batch-safe ops [summary])
+;                                 → refuse if not boundary-safe; else yield + batch
 ;
 ; 全部 helper 失败时返回安全默认值（不抛错），适合 AI Agent 在
 ; 长 eval loop 里调用而不会因为无 workspace 而 crash。
 
 (export mutate:summary mutate:by-operator mutate:last-info
         mutate:operator-count mutate:rolled-back?
-        mutate:rollback-rate)
+        mutate:rollback-rate
+        mutate:boundary-depth mutate:boundary-safe?
+        mutate:safe-yield mutate:quota-ok?
+        mutate:safety-snapshot mutate:atomic-batch-safe)
 
 ; ── mutate:summary — 完整 mutation log 摘要 ──
 ;
@@ -127,3 +139,121 @@
             (if (> pct 100) 100
               pct)))))
     (catch (e) 0)))
+
+; ═══════════════════════════════════════════════════════════════
+; #1553 — Boundary / safe-yield / quota bridge (engine P0 → stdlib)
+; ═══════════════════════════════════════════════════════════════
+
+(define (mutate-num v default)
+  (if (number? v) v default))
+
+; (mutate:boundary-depth) — current MutationBoundaryGuard nesting.
+; 0 = steal-safe / yield-safe (#1504).
+(define (mutate:boundary-depth)
+  (try
+    (mutate-num (stats:get "query:mutation-boundary-depth") 0)
+    (catch (e) 0)))
+
+; (mutate:boundary-safe?) — true when depth==0 and Guard not held.
+(define (mutate:boundary-safe?)
+  (try
+    (let* ((d (mutate:boundary-depth))
+           (sy (stats:get "query:mutation-boundary-safe-yield-stats"))
+           (held (if (hash? sy) (mutate-num (hash-ref sy "held-now" 0) 0) 0)))
+      (and (= d 0) (= held 0)))
+    (catch (e) #t)))
+
+; (mutate:safe-yield) — cooperative yield only at safe boundary.
+; Wraps engine (ast:yield-at-boundary) / query:mutation-boundary-safe-yield
+; via stats:get facade. Returns hash with yielded / skipped-held / depth
+; (schema 1504), or empty hash on failure.
+(define (mutate:safe-yield)
+  (try
+    (let ((h (stats:get "ast:yield-at-boundary")))
+      (if (hash? h) h (hash)))
+    (catch (e) (hash))))
+
+; (mutate:quota-ok?) — soft quota probe for multi-agent loops.
+; Uses resource:quota-check when available; unlimited (0 limit) → #t.
+; Does not hard-fail mutations; agents use this for back-off decisions.
+(define (mutate:quota-ok?)
+  (try
+    (let ((fib (try (resource:quota-check "fibers" 0) (catch (e) #t)))
+          (mem (try (resource:quota-check "memory" 0) (catch (e) #t))))
+      (and (not (eq? fib #f)) (not (eq? mem #f))))
+    (catch (e) #t)))
+
+; (mutate:safety-snapshot) — Agent-facing alist of live safety signals.
+; Prefer over inventing new query:*-stats. Keys are strings for equal?.
+(define (mutate:safety-snapshot)
+  (try
+    (let* ((depth (mutate:boundary-depth))
+           (safe? (mutate:boundary-safe?))
+           (sy (try (stats:get "query:mutation-boundary-safe-yield-stats")
+                    (catch (e) (hash))))
+           (hold (try (stats:get "query:mutation-boundary-hold-stats")
+                      (catch (e) (hash))))
+           (fiber (try (stats:get "query:fiber-boundary-violation-stats")
+                       (catch (e) (hash))))
+           (lr (try (stats:get "query:longrunning-infra-stats")
+                    (catch (e) (hash))))
+           (held (if (hash? sy) (mutate-num (hash-ref sy "held-now" 0) 0) 0))
+           (sy-ok (if (hash? sy) (mutate-num (hash-ref sy "safe-yield-ok-total" 0) 0) 0))
+           (sy-skip (if (hash? sy)
+                      (mutate-num (hash-ref sy "safe-yield-skipped-held-total" 0) 0)
+                      0))
+           (long-hold (if (hash? hold)
+                        (mutate-num (hash-ref hold "holds-over-1ms" 0) 0)
+                        0))
+           (rec-fail (if (hash? fiber)
+                       (mutate-num (hash-ref fiber "recovery-failures" 0) 0)
+                       0))
+           (fiber-rb (if (hash? fiber)
+                       (mutate-num (hash-ref fiber "rollbacks" 0) 0)
+                       0))
+           (quota-v (if (hash? lr)
+                      (mutate-num (hash-ref lr "quota-violations" 0) 0)
+                      0)))
+      (list (cons ":boundary-depth" depth)
+            (cons ":boundary-safe?" safe?)
+            (cons ":held-now" held)
+            (cons ":safe-yield-ok" sy-ok)
+            (cons ":safe-yield-skipped-held" sy-skip)
+            (cons ":long-hold-count" long-hold)
+            (cons ":fiber-recovery-failures" rec-fail)
+            (cons ":fiber-rollbacks" fiber-rb)
+            (cons ":quota-violations" quota-v)
+            (cons ":quota-ok?" (mutate:quota-ok?))))
+    (catch (e)
+      (list (cons ":boundary-depth" 0)
+            (cons ":boundary-safe?" #t)
+            (cons ":held-now" 0)
+            (cons ":safe-yield-ok" 0)
+            (cons ":safe-yield-skipped-held" 0)
+            (cons ":long-hold-count" 0)
+            (cons ":fiber-recovery-failures" 0)
+            (cons ":fiber-rollbacks" 0)
+            (cons ":quota-violations" 0)
+            (cons ":quota-ok?" #t)))))
+
+; (mutate:atomic-batch-safe ops [summary])
+; Guarded wrapper around engine (mutate:atomic-batch):
+;   1) refuse when boundary not safe (depth>0 / held) → #f
+;   2) soft yield at boundary before long batch (#1504)
+;   3) run atomic-batch; return its result (#t / #f)
+;
+; Agents / orchestrator SHOULD prefer this over raw atomic-batch
+; for multi-fiber closed loops.
+(define (mutate:atomic-batch-safe ops . summary-args)
+  (let ((summary (if (pair? summary-args) (car summary-args) "atomic-batch-safe")))
+    (if (not (mutate:boundary-safe?))
+      #f
+      (begin
+        ; Cooperative yield so concurrent fibers can steal / make progress
+        ; before we enter MutationBoundaryGuard for the batch.
+        (mutate:safe-yield)
+        (try
+          (if (null? ops)
+            #f
+            (mutate:atomic-batch ops summary))
+          (catch (e) #f))))))

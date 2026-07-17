@@ -4,11 +4,15 @@
 ;   set-code / workspace
 ;     → query (root / find / def-use)
 ;     → agent:decision-metrics (back-off / escalate / commit)
-;     → mutate:atomic-batch (or :rebind convenience)
+;     → mutate:atomic-batch-safe (or :rebind convenience)  ; #1553
 ;     → eval-current
 ;     → observe metrics → commit / restore / escalate
+;     → mutate:safe-yield between rounds                  ; #1553
 ;
 ; Pure LLM prompt path is opt-in via :prompt-only (compat).
+;
+; #1553 bridges engine MutationBoundaryGuard / safe-yield / quota
+; (#1547 / #1504 / #1546) into decision-metrics + closed-loop.
 ;
 ; Import: (require "std/agent" all:)
 ;         (require std/agent)
@@ -37,6 +41,10 @@
 (define *agent-rollback-rate-max* 50)   ; percent; ≥ → back-off
 (define *agent-panic-max* 1)            ; absolute; ≥ → escalate
 (define *agent-long-hold-max* 50)       ; holds-over-1ms; > → back-off
+; #1553: extra thresholds for yield-skip / quota / boundary depth
+(define *agent-yield-skip-max* 20)      ; safe-yield skipped-held; > → back-off
+(define *agent-quota-violation-max* 1)  ; longrunning quota-violations; ≥ → escalate
+(define *agent-fiber-rollback-max* 50)  ; fiber Guard rollbacks; > → back-off
 
 ; Loop telemetry for tests / dashboards (does not depend on engine).
 ; Note: Aura (hash ...) tables are capacity-8 — keep ≤8 keys.
@@ -143,6 +151,12 @@
                       (catch (e) (void))))
            (fiber (try (stats:get "query:fiber-boundary-violation-stats")
                        (catch (e) (void))))
+           ; #1553: safe-yield + quota + boundary depth (live engine surfaces)
+           (sy (try (stats:get "query:mutation-boundary-safe-yield-stats")
+                    (catch (e) (void))))
+           (lr (try (stats:get "query:longrunning-infra-stats")
+                    (catch (e) (void))))
+           (bdepth (try (mutate:boundary-depth) (catch (e) 0)))
            (total (agent-hash-num ml "total" 0))
            (rolled (agent-hash-num ml "rolled-back" 0))
            ; Integer division: compute (* 100 n)/d so rates are not truncated to 0.
@@ -159,23 +173,41 @@
                         (if (< pct 0) 0 (if (> pct 100) 100 pct)))))
            (rb-rate (if (> ab-rate ml-rate) ab-rate ml-rate))
            ; panic-count ← recovery-failures (fiber resume / Guard recovery)
-           (panic-n (agent-hash-num fiber "recovery-failures" 0))
+           ; #1553: also fold longrunning quota-violations into escalate path
+           (rec-fail (agent-hash-num fiber "recovery-failures" 0))
+           (quota-v (agent-hash-num lr "quota-violations" 0))
+           (panic-n (if (>= quota-v *agent-quota-violation-max*)
+                      (+ rec-fail quota-v)
+                      rec-fail))
            (hold-us (agent-hash-num hold "hold-time-us-total" 0))
            (long-hold (agent-hash-num hold "holds-over-1ms" 0))
+           (sy-skip (agent-hash-num sy "safe-yield-skipped-held-total" 0))
+           (fiber-rb (agent-hash-num fiber "rollbacks" 0))
+           ; Fold boundary/yield pressure into long-hold signal so schema
+           ; stays 8 keys (Aura hash capacity) while #1553 gates fire.
+           (pressure-hold
+             (+ long-hold
+                (if (> bdepth 0) 1 0)
+                (if (> sy-skip *agent-yield-skip-max*)
+                  *agent-long-hold-max* 0)
+                (if (> fiber-rb *agent-fiber-rollback-max*)
+                  *agent-long-hold-max* 0)))
            (rec
              (cond
                ((>= panic-n *agent-panic-max*) "escalate")
                ((>= rb-rate *agent-rollback-rate-max*) "back-off")
-               ((> long-hold *agent-long-hold-max*) "back-off")
+               ((> pressure-hold *agent-long-hold-max*) "back-off")
+               ((> bdepth 0) "back-off")  ; never commit under nested Guard
                (else "commit"))))
       ; Exactly 8 keys (Aura hash capacity). recommendation first so
       ; it is never dropped if the table fills under collision pressure.
+      ; long-hold-count reports pressure-hold so dashboards see #1553 fold-ins.
       (hash "recommendation" rec
             "schema" 1461
             "panic-count" panic-n
             "rollback-rate" rb-rate
             "hold-time-us" hold-us
-            "long-hold-count" long-hold
+            "long-hold-count" pressure-hold
             "atomic-batch-commits" ab-ok
             "atomic-batch-rollbacks" ab-rb))
     (catch (e)
@@ -216,14 +248,16 @@
             (cons ":find" '())
             (cons ":def-use" '())))))
 
-; ── Apply atomic mutations ────────────────────────────────────
+; ── Apply atomic mutations (#1553: prefer safe batch wrapper) ─
 ; ops: list of (list "mutate:rebind" name body summary) etc.
+; Uses mutate:atomic-batch-safe so boundary depth / held Guard refuse
+; the batch and a cooperative yield runs before MutationBoundaryGuard.
 (define (agent-atomic-mutate! ops summary)
   (agent-bump! "atomic-batch-calls")
   (try
     (if (null? ops)
       #f
-      (mutate:atomic-batch ops summary))
+      (mutate:atomic-batch-safe ops summary))
     (catch (e) #f)))
 
 ; Build a single rebind op list for convenience
@@ -255,6 +289,10 @@
     (begin (set-code source) (try (eval-current) (catch (e) #f)))
     #f)
 
+  ; #1553: yield at safe boundary before deciding / mutating so concurrent
+  ; fibers (orchestrator parallel) are not starved by long self-mod holds.
+  (try (mutate:safe-yield) (catch (e) #f))
+
   (let* ((pre-src (try (current-source) (catch (e) source)))
          (_q (agent-query-workspace rebind-name))
          (pre-metrics (agent:decision-metrics))
@@ -281,6 +319,8 @@
                        '())))
               (mut-ok (agent-atomic-mutate! ops summary))
               (eval-res (try (begin (eval-current) #t) (catch (e) #f)))
+              ; #1553: post-mutate cooperative yield before post metrics
+              (_y (try (mutate:safe-yield) (catch (e) #f)))
               (post-metrics (agent:decision-metrics))
               (post-rec (hash-ref post-metrics "recommendation" "commit")))
          (cond

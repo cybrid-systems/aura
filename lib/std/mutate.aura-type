@@ -1,6 +1,12 @@
-mutate:summary:  -> Any
-mutate:by-operator:  -> Any
-mutate:last-info:  -> Any
+mutate:summary: -> Any
+mutate:by-operator: -> Any
+mutate:last-info: -> Any
 mutate:operator-count: Any -> Any
-mutate:rolled-back?:  -> Any
-mutate:rollback-rate:  -> Any
+mutate:rolled-back?: -> Any
+mutate:rollback-rate: -> Any
+mutate:boundary-depth: -> Any
+mutate:boundary-safe?: -> Any
+mutate:safe-yield: -> Any
+mutate:quota-ok?: -> Any
+mutate:safety-snapshot: -> Any
+mutate:atomic-batch-safe: Any -> Any

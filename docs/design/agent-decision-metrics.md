@@ -52,6 +52,28 @@ Atomic-batch outcomes are **always live** after any batch attempt; mutation-log 
 | `*agent-panic-max*` | 1 | `panic-count ≥ 1` → **escalate** |
 | `*agent-rollback-rate-max*` | 50 | `rollback-rate ≥ 50` → **back-off** |
 | `*agent-long-hold-max*` | 50 | `long-hold-count > 50` → **back-off** (noise floor; counters are cumulative) |
+| `*agent-yield-skip-max*` | 20 | `#1553` safe-yield `skipped-held` pressure → folds into long-hold |
+| `*agent-quota-violation-max*` | 1 | `#1553` longrunning `quota-violations` → folded into panic-count |
+| `*agent-fiber-rollback-max*` | 50 | `#1553` fiber Guard rollbacks → long-hold pressure |
+
+### #1553 fold-ins (schema stays 1461 / 8 keys)
+
+Live sources additionally read:
+
+- `stats:get "query:mutation-boundary-safe-yield-stats"` (`skipped-held`, depth)
+- `stats:get "query:longrunning-infra-stats"` (`quota-violations`)
+- `(mutate:boundary-depth)` — nested Guard → **back-off** (never commit under Guard)
+- fiber `rollbacks` from `query:fiber-boundary-violation-stats`
+
+These are **folded** into existing `panic-count` / `long-hold-count` fields
+so the public hash shape remains schema `1461`. For the full signal set
+as an alist, call `(mutate:safety-snapshot)`.
+
+Closed-loop path:
+
+1. `(mutate:safe-yield)` before decide / mutate
+2. `(mutate:atomic-batch-safe …)` instead of raw atomic-batch
+3. `(mutate:safe-yield)` again after eval before post metrics
 
 ## Liveness guarantees (engine)
 
@@ -89,12 +111,16 @@ Atomic-batch outcomes are **always live** after any batch attempt; mutation-log 
 1. Call `(agent:decision-metrics)` (or `(agent:decide)`) **before** accepting a commit.
 2. On `"escalate"` / `'escalate`: do not blind-retry LLM; surface to human.
 3. On `"back-off"` / `'back-off`: stop or slow down; do not thrash mutate.
-4. Prefer `(mutate:atomic-batch …)` / `(mutate :atomic …)` over free `eval` of LLM text.
-5. Do **not** invent new `*-stats` primitives — use this contract + `(stats:get)` / `(engine:metrics)`.
+4. Prefer `(mutate:atomic-batch-safe …)` / `(mutate:atomic-batch …)` / `(mutate :atomic …)` over free `eval` of LLM text. Multi-fiber loops should use the **safe** wrapper (#1553).
+5. Yield only via `(mutate:safe-yield)` / `(ast:yield-at-boundary)` when boundary depth is 0 (#1504); never yield under Guard.
+6. Do **not** invent new `*-stats` primitives — use this contract + `(stats:get)` / `(engine:metrics)` / `(mutate:safety-snapshot)`.
 
 ## Related
 
 - #1460 — `std/agent` EDSL closed-loop rewrite (primary consumer; done)
 - #1461 — this contract + engine liveness + injection tests
 - #1463 — Self-Evolution reliability suite (reads this contract)
+- #1553 — stdlib bridge of Guard / safe-yield / quota into mutate+agent+orchestrator
+- #1504 / #1547 / #1546 — engine P0 surfaces
 - `docs/agent-prompt-template.md` — agent red lines
+- `docs/design/core/mutate_api.md` — atomic-batch + #1553 safety table

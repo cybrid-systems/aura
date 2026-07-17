@@ -39,9 +39,9 @@
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
-| `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` | — |
+| `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
-| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+8) | — |
+| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `agent:spawn` `agent:ask` … (+9) | — |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
