@@ -5190,6 +5190,9 @@ aura_issue_test_link_llvm_jit(test_resource_quota_wired)
 # Issue #1595: join/mailbox/parallel linear ownership + StableNodeRef enforcement.
 aura_add_issue_test(test_fiber_join_linear)
 aura_issue_test_link_llvm_jit(test_fiber_join_linear)
+# Issue #1596: runtime linear ownership + live-closure scan refine.
+aura_add_issue_test(test_linear_ownership_post_mutate)
+aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

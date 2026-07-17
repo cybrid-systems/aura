@@ -4818,10 +4818,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1568: query:linear-boundary-consistency-stats — unified
-    // mutation/compact/JIT/fiber boundary enforce closed-loop.
-    // Metrics: linear_post_mutate_enforcements, linear_ownership_violation_prevented,
-    // linear_gc_root_audit_checks_total + boundary/epoch-fence/force-drop.
+    // Issue #1568 / #1596: query:linear-boundary-consistency-stats — unified
+    // mutation/compact/JIT/fiber boundary enforce closed-loop (live-closure scan
+    // + force Drop + GC root audit). Schema **1596** (agents accept 1568 lineage).
+    // Metrics: linear_post_mutate_enforcements, linear_live_closure_scans_total,
+    // linear_ownership_violation_prevented, linear_gc_root_audit_checks_total.
     ObservabilityPrims::register_stats_impl(
         "query:linear-boundary-consistency-stats",
         [&ev, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
@@ -4853,7 +4854,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 pairs.push_back({make_string(sidx), viol_log});
                 viol_log = make_pair(pid);
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(24);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4881,20 +4882,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
-            insert_kv("schema", make_int(1568));
+            insert_kv("schema", make_int(1596)); // #1596 refine (lineage 1568)
+            insert_kv("issue", make_int(1596));
             insert_kv("active", make_int(1));
             insert_kv("phase", make_int(2));
             insert_kv("linear-post-mutate-enforcements",
                       make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
+            // #1596 AC5 alias (underscore form) + hyphen form for agents.
+            insert_kv("linear_post_mutate_enforcements",
+                      make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
+            insert_kv("linear_live_closure_scans_total",
+                      make_int(L(m ? &m->linear_live_closure_scans_total : nullptr)));
+            insert_kv("linear-live-closure-scans-total",
+                      make_int(L(m ? &m->linear_live_closure_scans_total : nullptr)));
             insert_kv("linear-ownership-violation-prevented",
                       make_int(L(m ? &m->linear_ownership_violation_prevented : nullptr)));
+            insert_kv("linear_ownership_violation_prevented",
+                      make_int(L(m ? &m->linear_ownership_violation_prevented : nullptr)));
             insert_kv("linear-gc-root-audit-checks",
+                      make_int(L(m ? &m->linear_gc_root_audit_checks_total : nullptr)));
+            insert_kv("linear_gc_root_audit_checks_total",
                       make_int(L(m ? &m->linear_gc_root_audit_checks_total : nullptr)));
             insert_kv("boundary-consistency-total",
                       make_int(L(m ? &m->linear_boundary_consistency_total : nullptr)));
             insert_kv("epoch-fence-enforce-total",
                       make_int(L(m ? &m->linear_epoch_fence_enforce_total : nullptr)));
             insert_kv("force-drop-total", make_int(L(m ? &m->linear_force_drop_total : nullptr)));
+            insert_kv("walk-active-closures-wired", make_int(1));
+            insert_kv("force-drop-wired", make_int(1));
             insert_kv("violation-audit-total",
                       make_int(static_cast<std::int64_t>(ev.linear_violation_audit_total())));
             insert_kv("violation-log", viol_log);

@@ -1,7 +1,8 @@
 # Linear GC Root Registration Contract
 
-**Issue:** #1543 (parent #1478 AC #3) · **#1568** boundary consistency closed-loop  
-**Related:** #763 (counters + `query:linear-ownership-gc-compiler-stats`), #1515 (unified sync), #740 (JIT L2 resync), #1510/#1526 (compact dual-epoch), #1545/#1557 (live-closure scan)
+**Issue:** #1543 (parent #1478 AC #3) · **#1568** boundary consistency · **#1596** runtime refine  
+**Related:** #763 (counters + `query:linear-ownership-gc-compiler-stats`), #1515 (unified sync), #740 (JIT L2 resync), #1510/#1526 (compact dual-epoch), #1545/#1557 (live-closure scan)  
+**Refine map:** `docs/design/linear-ownership-runtime-1596.md`
 
 ## Summary
 
