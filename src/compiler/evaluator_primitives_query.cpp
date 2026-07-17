@@ -4743,6 +4743,91 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #1568: query:linear-boundary-consistency-stats — unified
+    // mutation/compact/JIT/fiber boundary enforce closed-loop.
+    // Metrics: linear_post_mutate_enforcements, linear_ownership_violation_prevented,
+    // linear_gc_root_audit_checks_total + boundary/epoch-fence/force-drop.
+    ObservabilityPrims::register_stats_impl(
+        "query:linear-boundary-consistency-stats",
+        [&ev, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto L = [&](const std::atomic<std::uint64_t>* field) -> std::int64_t {
+                return field ? static_cast<std::int64_t>(field->load(std::memory_order_relaxed))
+                             : 0;
+            };
+            // Optional log lines of linear violation provenance.
+            EvalValue viol_log = make_void();
+            std::size_t limit = 0;
+            if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
+                limit = static_cast<std::size_t>(as_int(a[0]));
+            const auto vseq = ev.linear_violation_audit_seq();
+            for (std::size_t i = 0; i < limit && i < Evaluator::kLinearViolationAuditRingSize;
+                 ++i) {
+                if (vseq <= i)
+                    break;
+                const auto& e = ev.linear_violation_audit_entry_at(vseq - 1 - i);
+                if (e.seq == 0 && e.reason == 0)
+                    continue;
+                auto line =
+                    std::format("seq={} path={} reason={} epoch={} defuse={} env={} closure={}",
+                                e.seq, Evaluator::linear_gc_root_audit_path_name(e.path), e.reason,
+                                e.epoch, e.defuse_version, e.env_id, e.closure_id);
+                auto sidx = string_heap.size();
+                string_heap.push_back(std::move(line));
+                auto pid = pairs.size();
+                pairs.push_back({make_string(sidx), viol_log});
+                viol_log = make_pair(pid);
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const std::string& k_str, EvalValue v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k_str)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = string_heap.size();
+                string_heap.push_back(k_str);
+                EvalValue key_ev = make_string(kidx);
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = key_ev.val;
+                        vals[slot] = v.val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", make_int(1568));
+            insert_kv("active", make_int(1));
+            insert_kv("phase", make_int(2));
+            insert_kv("linear-post-mutate-enforcements",
+                      make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
+            insert_kv("linear-ownership-violation-prevented",
+                      make_int(L(m ? &m->linear_ownership_violation_prevented : nullptr)));
+            insert_kv("linear-gc-root-audit-checks",
+                      make_int(L(m ? &m->linear_gc_root_audit_checks_total : nullptr)));
+            insert_kv("boundary-consistency-total",
+                      make_int(L(m ? &m->linear_boundary_consistency_total : nullptr)));
+            insert_kv("epoch-fence-enforce-total",
+                      make_int(L(m ? &m->linear_epoch_fence_enforce_total : nullptr)));
+            insert_kv("force-drop-total", make_int(L(m ? &m->linear_force_drop_total : nullptr)));
+            insert_kv("violation-audit-total",
+                      make_int(static_cast<std::int64_t>(ev.linear_violation_audit_total())));
+            insert_kv("violation-log", viol_log);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #800: query:linear-postmutate-fidelity-stats — linear ownership
     // post-mutate / rollback / steal / EnvFrame fidelity dashboard
     // (refines #793/#792/#784/#791; non-duplicative with #763 gc-compiler

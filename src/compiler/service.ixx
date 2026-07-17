@@ -10089,16 +10089,13 @@ public:
     // and stamps MutationResult + per-mutation_id linear status map for
     // mutation_log JSON exposure.
     void apply_linear_post_mutate_pipeline_(MutationResult& res, std::uint64_t mutation_id) {
-        const auto sweep = evaluator_.linear_post_mutate_enforce_all();
-        // Issue #1494: after EnvFrame Moved scan, actively mark live
-        // closures that capture Moved linear state so apply_closure
-        // takes safe_fallback (bridge_epoch=0) without waiting for
-        // a later invalidate_function.
-        const auto scan = evaluator_.scan_live_closures_for_linear_captures(
-            /*mark_invalid=*/true, /*only_if_moved=*/true);
+        // Issue #1568: unified scan + enforce_all + epoch fence + GC root audit.
+        // mark_all_linear=false → only Moved captures force-dropped (typed_mutate).
+        const auto bound = evaluator_.enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
         res.linear_post_mutate_enforced = true;
-        res.linear_post_mutate_frames_checked = sweep.frames_checked;
-        res.linear_post_mutate_safe = sweep.all_safe && scan.with_moved_capture == 0;
+        res.linear_post_mutate_frames_checked = bound.frames_checked;
+        res.linear_post_mutate_safe = bound.all_safe;
         res.linear_post_mutate_status = res.linear_post_mutate_safe ? "Ok" : "Unsafe";
         if (mutation_id > 0) {
             mutation_linear_status_[mutation_id] = res.linear_post_mutate_status;
@@ -10128,8 +10125,7 @@ public:
             metrics_.linear_post_mutate_pipeline_unsafe_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         }
-        // Issue #1543: typed_mutate path audit (after enforce + scan).
-        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditTypedMutate);
+        // GC root audit already run inside enforce_linear_boundary_consistency.
     }
 
     // Issue #1522: notify AuraJIT fn_trackers_ (name + name#*).

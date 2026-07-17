@@ -207,6 +207,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #1567 — mutation audit WAL persist + crash recovery
     "query:audit-wal-stats",
     "query:mutation-audit-log",
+    // Issue #1568 — linear boundary consistency closed-loop
+    "query:linear-boundary-consistency-stats",
     // Issues #809–#817 Phase 1 unified production/error/macro surfaces
     "query:error-handling-policy-stats",
     "query:fiber-scheduler-init-stats",

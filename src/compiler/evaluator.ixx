@@ -2096,6 +2096,47 @@ public:
     }
     [[nodiscard]] static std::string_view
     linear_gc_root_audit_path_name(std::uint8_t path) noexcept;
+    // Issue #1568: unified linear boundary consistency closed-loop.
+    // Runs scan_live_closures_for_linear_captures + linear_post_mutate_enforce_all
+    // + epoch-fence force-drop + run_linear_gc_root_audit. mark_all_linear:
+    //   true  → mark every linear-capturing closure invalid (invalidate/compact/steal)
+    //   false → only Moved captures (Guard exit / typed_mutate)
+    struct LinearBoundaryEnforceResult {
+        std::size_t frames_checked = 0;
+        std::size_t closures_scanned = 0;
+        std::size_t marked_invalid = 0;
+        std::size_t epoch_fence_hits = 0;
+        std::size_t moved_violations = 0;
+        bool all_safe = true;
+    };
+    LinearBoundaryEnforceResult
+    enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_linear = true) noexcept;
+    // Force Drop / logical invalid: Closure.bridge_epoch = 0 → safe_fallback.
+    void force_drop_or_mark_invalid(ClosureId id) noexcept;
+    // Linear violation provenance audit ring (#1568).
+    static constexpr std::uint8_t kLinearViolReasonMoved = 1;
+    static constexpr std::uint8_t kLinearViolReasonEpochStale = 2;
+    static constexpr std::uint8_t kLinearViolReasonForceDrop = 3;
+    static constexpr std::size_t kLinearViolationAuditRingSize = 64;
+    struct LinearViolationAuditEntry {
+        std::uint64_t seq = 0;
+        std::uint8_t path = 0;
+        std::uint8_t reason = 0;
+        std::uint64_t epoch = 0;
+        std::uint64_t defuse_version = 0;
+        std::uint32_t env_id = 0;
+        std::uint64_t closure_id = 0;
+    };
+    [[nodiscard]] std::uint64_t linear_violation_audit_total() const noexcept {
+        return linear_violation_audit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t linear_violation_audit_seq() const noexcept {
+        return linear_violation_audit_seq_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] const LinearViolationAuditEntry&
+    linear_violation_audit_entry_at(std::uint64_t seq) const noexcept {
+        return linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+    }
     // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
     // After the GC collector has marked live objects, this method
     // reclaims the unmarked ones. Called from the GC coordinator's
@@ -3704,6 +3745,13 @@ private:
     std::uint64_t linear_gc_root_audit_prev_stale_{0};
     std::uint64_t linear_gc_root_audit_prev_viol_{0};
     std::uint64_t linear_gc_root_audit_prev_resync_{0};
+    // Issue #1568: linear violation provenance audit ring.
+    std::array<LinearViolationAuditEntry, kLinearViolationAuditRingSize>
+        linear_violation_audit_ring_{};
+    std::atomic<std::uint64_t> linear_violation_audit_seq_{0};
+    std::atomic<std::uint64_t> linear_violation_audit_total_{0};
+    void record_linear_violation_audit(std::uint8_t path, std::uint8_t reason, std::uint32_t env_id,
+                                       std::uint64_t closure_id) noexcept;
     std::atomic<std::uint64_t> capability_denial_count_{0};
     // Issue #1448: PrimMeta.deprecated dispatch-site hits (compat still runs).
     std::atomic<std::uint64_t> deprecated_prim_dispatch_total_{0};
@@ -10778,13 +10826,12 @@ public:
             if (outermost && !success)
                 ev_->bump_mutation_boundary_rollback();
             ev_->exit_mutation_boundary(success);
-            // Issue #1486 / #1545: post-boundary linear closed-loop.
-            // Scan live closures; mark invalid only when a capture is
-            // already Moved (use-after-move). Full mark-all stays on
-            // invalidate_function / compact / JIT ResourceTracker.
+            // Issue #1486 / #1545 / #1568: post-boundary linear closed-loop.
+            // Unified consistency: scan Moved captures + enforce_all +
+            // epoch fence + GC root audit (only_if_moved for Guard exit).
             if (outermost) {
-                (void)ev_->scan_live_closures_for_linear_captures(
-                    /*mark_invalid=*/true, /*only_if_moved=*/true);
+                (void)ev_->enforce_linear_boundary_consistency(
+                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
             }
             // Issue #1500: after restamp_all_node_generations inside
             // exit_mutation_boundary, pinned StableNodeRefs still hold

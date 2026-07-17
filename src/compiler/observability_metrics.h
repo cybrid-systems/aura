@@ -3257,6 +3257,11 @@ struct CompilerMetrics {
     // (typed_mutate, invalidate_function, compact_env_frames, JIT hot-swap,
     // fiber steal, GC safepoint). See docs/design/linear-gc-roots.md.
     std::atomic<std::uint64_t> linear_gc_root_audit_checks_total{0};
+    // Issue #1568: unified boundary consistency closed-loop
+    std::atomic<std::uint64_t> linear_boundary_consistency_total{0};
+    std::atomic<std::uint64_t> linear_epoch_fence_enforce_total{0};
+    std::atomic<std::uint64_t> linear_force_drop_total{0};
+    std::atomic<std::uint64_t> linear_violation_audit_total{0};
     // Issue #1545: live-closure linear capture scans (invalidate / compact /
     // JIT ResourceTracker pre-evict). One bump per
     // scan_live_closures_for_linear_captures invocation.

@@ -269,6 +269,11 @@ aura_add_issue_test(test_mutation_audit_wal)
 aura_issue_test_link_llvm_jit(test_mutation_audit_wal)
 add_dependencies(all_test_issue_targets test_mutation_audit_wal)
 
+# Issue #1568: linear boundary consistency closed-loop
+aura_add_issue_test(test_linear_boundary_consistency_1568)
+aura_issue_test_link_llvm_jit(test_linear_boundary_consistency_1568)
+add_dependencies(all_test_issue_targets test_linear_boundary_consistency_1568)
+
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)
