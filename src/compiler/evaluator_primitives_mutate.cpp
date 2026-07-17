@@ -8,6 +8,8 @@ module;
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
 #include "observability_metrics.h"
+#include "hash_meta.h"            // FNV constants for stats hash
+#include "typed_mutation_audit.h" // Issue #1589
 
 module aura.compiler.evaluator;
 
@@ -4810,6 +4812,65 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
     }
+
+    // ── Issue #1589: TypedMutationAudit production trail surface ──
+    // Strategy control is C++ only (typed_mutation_audit.h::set_strategy) to
+    // stay under SlimSurface public ceiling (#1448). Query is stats-catalog.
+    ObservabilityPrims::register_stats_impl(
+        "query:typed-mutation-audit-trail", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::typed_audit;
+            std::uint64_t considered = 0, skipped = 0, contextual = 0, trail_sz = 0, rollbacks = 0,
+                          errors = 0;
+            std::uint32_t strategy = 0, ratio = 0;
+            snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
+                            ratio);
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("audits-considered", static_cast<std::int64_t>(considered));
+            insert_kv("samples-skipped", static_cast<std::int64_t>(skipped));
+            insert_kv("contextual-total", static_cast<std::int64_t>(contextual));
+            insert_kv("trail-size", static_cast<std::int64_t>(trail_sz));
+            insert_kv("rollbacks", static_cast<std::int64_t>(rollbacks));
+            insert_kv("errors", static_cast<std::int64_t>(errors));
+            insert_kv("strategy", static_cast<std::int64_t>(strategy));
+            insert_kv("sample-ratio", static_cast<std::int64_t>(ratio));
+            insert_kv("phase", static_cast<std::int64_t>(kTypedMutationAuditPassPhase));
+            insert_kv("schema", 1589);
+            TypedMutationAuditEvent latest{};
+            if (trail_latest(latest)) {
+                insert_kv("latest-mutation-id", static_cast<std::int64_t>(latest.mutation_id));
+                insert_kv("latest-outcome", static_cast<std::int64_t>(latest.outcome));
+                insert_kv("latest-nodes-changed", static_cast<std::int64_t>(latest.nodes_changed));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

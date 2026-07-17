@@ -1,4 +1,5 @@
-// typed_mutation_audit_pass.ixx — Issue #1216 Phase 1: TypedMutationAuditPass scaffold.
+// typed_mutation_audit_pass.ixx — Issue #1589 / #1216: TypedMutationAuditPass inventory.
+// Production API lives in typed_mutation_audit.h (thread-safe trail + capture).
 
 module;
 
@@ -8,8 +9,11 @@ import std;
 
 export namespace aura::compiler::typed_audit {
 
-inline constexpr int kTypedMutationAuditPassPhase = 1;
+// Production phase (header: typed_mutation_audit.h).
+inline constexpr int kTypedMutationAuditPassPhase = 2;
+inline constexpr int kTypedMutationAuditIssue = 1589;
 
+// Scaffold types retained for module consumers / Phase-1 sweep.
 enum class AuditStrategy : std::uint8_t {
     Off = 0,
     Sampled = 1,
@@ -22,18 +26,17 @@ struct TypedMutationAuditStats {
     AuditStrategy strategy = AuditStrategy::Sampled;
 };
 
-inline TypedMutationAuditStats g_typed_mutation_audit_stats{};
+inline TypedMutationAuditStats g_typed_mutation_audit_stats_module{};
 
-// Phase 1 strategy gate; full Pass concept peel wires into pass_manager.
-[[nodiscard]] inline bool should_audit(std::uint64_t mutation_id) noexcept {
-    ++g_typed_mutation_audit_stats.audits;
-    if (g_typed_mutation_audit_stats.strategy == AuditStrategy::Off)
+// Thin module-side gate (non-atomic scaffold). Prefer typed_mutation_audit.h.
+[[nodiscard]] inline bool should_audit_scaffold(std::uint64_t mutation_id) noexcept {
+    ++g_typed_mutation_audit_stats_module.audits;
+    if (g_typed_mutation_audit_stats_module.strategy == AuditStrategy::Off)
         return false;
-    if (g_typed_mutation_audit_stats.strategy == AuditStrategy::Full)
+    if (g_typed_mutation_audit_stats_module.strategy == AuditStrategy::Full)
         return true;
-    // Sampled: every 4th mutation
     if ((mutation_id & 3u) != 0) {
-        ++g_typed_mutation_audit_stats.samples_skipped;
+        ++g_typed_mutation_audit_stats_module.samples_skipped;
         return false;
     }
     return true;

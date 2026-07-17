@@ -15,6 +15,7 @@ module;
 // restriction on .h).
 #include "observability_metrics.h"
 #include "lock_order_audit.h"
+#include "typed_mutation_audit.h" // Issue #1589
 #include "primitives_meta.h"
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
@@ -10026,8 +10027,24 @@ public:
             }
             emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                                 static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
+            // Issue #1589: TypedMutationAudit contextual trail (success path).
+            {
+                const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+            }
             // Issue #488: post-mutate reflect validation + snapshot fields.
             (void)post_mutation_reflect_validate();
+        } else if (!success) {
+            // Issue #1589: TypedMutationAudit rollback trail.
+            const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
+            const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+            const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+            typed_audit::record_boundary_outcome(mid, "rollback", cp.version, epoch_after,
+                                                 /*success=*/false, 0, 0, fid);
         }
         return cp;
     }
