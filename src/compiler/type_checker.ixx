@@ -1341,6 +1341,9 @@ export struct TypeChecker {
             DeadCoercionAstStats dce_stats;
             apply_coercion_map(flat, cm, &dce_stats, &cm);
             (void)dce_stats;
+            // Issue #1615: post-coercion linear reval is invoked from
+            // check_before_lowering / Evaluator typecheck paths (declaration
+            // lives after this class body).
         }
         return tid;
     }
@@ -1644,6 +1647,19 @@ post_mutation_invariant_check(aura::ast::FlatAST& flat, const aura::ast::StringP
 // counters (revalidation, violations, leaks) into CompilerMetrics.
 export void record_linear_ownership_mutation_metrics(
     void* metrics, bool revalidated, const std::vector<OwnershipNote>& ownership_notes, bool pass);
+
+// Issue #1615: post-coercion linear ownership revalidation.
+// Walks CoercionMap entries (and already-applied Coercion nodes) that
+// touch Linear-typed bindings; re-runs OwnershipEnv::validate_ownership
+// on the affected dirty set; stamps metrics for linear_coercion_reval
+// and narrow_evidence propagation. Call after apply_coercion_map.
+// Returns notes generated (0 = clean).
+export std::size_t revalidate_linear_after_coercion(aura::ast::FlatAST& flat,
+                                                    const aura::ast::StringPool& pool,
+                                                    aura::core::TypeRegistry& reg,
+                                                    const CoercionMap& map,
+                                                    std::vector<OwnershipNote>* notes_out = nullptr,
+                                                    void* metrics = nullptr);
 
 // Issue #612: re-sync TypeRegistry ADT constructor lists from
 // DefineType nodes in the dirty scope and invalidate cached

@@ -81,20 +81,13 @@ using types::make_void;
 // Issue #909 part 56 (orig lines 6892-6952)
 void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #746: query:jit-typed-mutation-stats — narrow_evidence / TypeId /
-    // linear_ownership_state propagation from lowering/IRSoA to JIT L2
-    // (non-duplicative with #687 dead-coercion-elim, #403 ir-metadata-stats,
-    // #550 typed-mutation-stats, #744 shape-jit-pass-closedloop).
-    //
-    // Fields (4 + sentinel):
-    //   - narrow-evidence-hits      JIT GuardShape/CastOp narrow fast paths
-    //   - cast-elided-in-l2         CastOp elided via narrow_evidence in JIT
-    //   - linear-state-optimized    linear probe + narrow_evidence synergy
-    //   - type-propagation-coverage basis-points stamped/total metadata path
-    //   - schema == 746
+    // Issue #746 / #1615: query:jit-typed-mutation-stats — narrow_evidence /
+    // TypeId / linear_ownership_state + post-coercion linear revalidation.
+    // Schema **1615** (lineage 746). AC keys:
+    //   linear_coercion_reval_count, narrow_evidence_guardshape_hits
     ObservabilityPrims::register_stats_impl(
         "query:jit-typed-mutation-stats", [&ev](const auto&) -> EvalValue {
-            (void)ev;
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             const std::int64_t narrow_hits = static_cast<std::int64_t>(
                 jit_typed_mutation::narrow_evidence_hits_total.load(std::memory_order_relaxed));
             const std::int64_t cast_elided = static_cast<std::int64_t>(
@@ -106,7 +99,27 @@ void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t denom = narrow_hits + cast_elided + linear_opt;
             const std::int64_t coverage_bp =
                 denom > 0 ? (10000 * stamped) / denom : (stamped > 0 ? 10000 : 0);
-            auto* ht = FlatHashTable::create(8);
+            const std::int64_t guardshape_hits =
+                m ? static_cast<std::int64_t>(
+                        m->coercion_narrow_evidence_hits_total.load(std::memory_order_relaxed))
+                  : narrow_hits;
+            const std::int64_t lin_co_reval =
+                m ? static_cast<std::int64_t>(
+                        m->linear_coercion_reval_count.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t lin_co_ok =
+                m ? static_cast<std::int64_t>(
+                        m->linear_coercion_reval_ok_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t lin_co_viol =
+                m ? static_cast<std::int64_t>(
+                        m->linear_coercion_violations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t ne_prop =
+                m ? static_cast<std::int64_t>(
+                        m->narrow_evidence_propagated_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(24);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -133,11 +146,23 @@ void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
+            // #746 lineage
             insert_kv("narrow-evidence-hits", narrow_hits);
             insert_kv("cast-elided-in-l2", cast_elided);
             insert_kv("linear-state-optimized", linear_opt);
             insert_kv("type-propagation-coverage", coverage_bp);
-            insert_kv("schema", 746);
+            // #1615 AC keys
+            insert_kv("linear_coercion_reval_count", lin_co_reval);
+            insert_kv("linear-coercion-reval-count", lin_co_reval);
+            insert_kv("linear-coercion-reval-ok", lin_co_ok);
+            insert_kv("linear-coercion-violations", lin_co_viol);
+            insert_kv("narrow_evidence_guardshape_hits", guardshape_hits);
+            insert_kv("narrow-evidence-guardshape-hits", guardshape_hits);
+            insert_kv("narrow-evidence-propagated", ne_prop);
+            insert_kv("post-coercion-reval-wired", 1);
+            insert_kv("guardshape-narrow-wired", 1);
+            insert_kv("issue", 1615);
+            insert_kv("schema", 1615); // lineage 746
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

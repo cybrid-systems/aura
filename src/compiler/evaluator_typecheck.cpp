@@ -130,6 +130,12 @@ bool Evaluator::run_typecheck_no_lock_bool() {
             // Issue #1425: identity elision at CoercionMap apply.
             aura::compiler::DeadCoercionAstStats dce_stats;
             aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
+            // Issue #1615: post-coercion linear revalidation.
+            if (compiler_metrics_) {
+                auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                (void)aura::compiler::revalidate_linear_after_coercion(
+                    *workspace_flat_, *workspace_pool_, treg, cm, nullptr, compiler_metrics_);
+            }
             if (compiler_metrics_ && dce_stats.eliminated > 0) {
                 auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
                 m->dead_coercion_eliminated_total.fetch_add(dce_stats.eliminated,
@@ -204,6 +210,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // (AST-level dead-coercion win before IR lowering).
             aura::compiler::DeadCoercionAstStats dce_stats;
             aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
+            // Issue #1615: post-coercion linear revalidation on typed-mutation path.
+            if (compiler_metrics_) {
+                auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                (void)aura::compiler::revalidate_linear_after_coercion(
+                    *workspace_flat_, *workspace_pool_, treg, cm, nullptr, compiler_metrics_);
+            }
             // Issue #659: post-mutate CoercionMap application counts as an
             // incremental coercion win on the typed-mutation path.
             if (compiler_metrics_) {

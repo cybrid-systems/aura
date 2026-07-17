@@ -1,6 +1,6 @@
 # Linear Validation Pipeline (Post-Mutation)
 
-**Issues:** #1494 / #1486 (closed-loop parents), #1458, #1478, #1538–#1545
+**Issues:** #1494 / #1486 (closed-loop parents), #1458, #1478, #1538–#1545, **#1615** (coercion synergy)
 
 ## Summary
 
@@ -78,6 +78,11 @@ JIT ResourceTracker / hot-swap (#1545 / #1536)
 | `linear_ownership_violation_prevented` | Moved / use-after-move prevented |
 | `linear_post_mutate_enforcements` | Per-env apply-time enforce |
 | `jit_walk_active_closures_total` | JIT bulk stale-fn walks |
+| `linear_coercion_reval_count` | Post-`apply_coercion_map` ownership reval (#1615) |
+| `narrow_evidence_propagated_total` | Coercion sites carrying narrow_evidence (#1615) |
+
+See also `docs/design/linear-coercion-synergy-1615.md` and
+`query:jit-typed-mutation-stats` schema **1615**.
 
 See also `docs/design/linear-gc-roots.md` and `(engine:metrics "query:linear-ownership-gc-compiler-stats")`.
 

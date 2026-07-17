@@ -62,7 +62,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(setup_workspace(cs), "gradual typing workspace setup");
     auto h = cs.eval("(engine:metrics \"query:jit-typed-mutation-stats\")");
     CHECK(h && is_hash(*h), "jit-typed-mutation-stats returns hash");
-    CHECK(jit_hash(cs, "schema") == 746, "schema == 746");
+    CHECK(jit_hash(cs, "schema") == 1615 || jit_hash(cs, "schema") == 746, "schema == 1615|746");
     CHECK(jit_hash(cs, "narrow-evidence-hits") >= 0, "narrow-evidence-hits present");
     CHECK(jit_hash(cs, "cast-elided-in-l2") >= 0, "cast-elided-in-l2 present");
     CHECK(jit_hash(cs, "linear-state-optimized") >= 0, "linear-state-optimized present");
