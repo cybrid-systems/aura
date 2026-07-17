@@ -4,7 +4,8 @@
 module;
 
 #include "observability_metrics.h"
-
+#include "typed_mutation_audit.h"  // Issue #1614 invariant audit
+#include "security_capabilities.h" // aura_fiber_current_id
 
 module aura.compiler.evaluator;
 
@@ -314,6 +315,67 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         err += " " + d.format() + ";";
     last_mutate_error_ = err;
     return false;
+}
+
+// Issue #1614: TypedMutationAudit real post-mutation invariant suite.
+// Type (post_mutation_invariant_check), linear (linear_post_mutate_enforce_all),
+// provenance (post_mutation_reflect_validate). Records trail + counters.
+bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
+                                                   std::string_view op_name,
+                                                   std::uint32_t target_node,
+                                                   std::uint64_t before_epoch,
+                                                   std::uint64_t after_epoch) noexcept {
+    typed_audit::InvariantAuditResult r;
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    auto* reg = type_registry_ ? static_cast<aura::core::TypeRegistry*>(type_registry_) : nullptr;
+
+    // ── Type revalidation (post_mutation_invariant_check) ──
+    if (flat && pool && reg) {
+        try {
+            PostMutationInvariantVisitor visitor(*pool, *reg, compiler_metrics());
+            for (const auto& rec : flat->all_mutations()) {
+                if (rec.invariant_status == aura::ast::InvariantStatus::NotChecked)
+                    visitor.visit_mutation(*flat, rec);
+            }
+            visitor.apply_status_updates(*flat);
+            r.notes_count = static_cast<std::uint32_t>(visitor.notes().size());
+            // Ok / NotChecked with zero notes = type_ok; Warnings with notes = fail.
+            r.type_ok = visitor.worst_status() != aura::ast::InvariantStatus::Warnings ||
+                        visitor.notes().empty();
+        } catch (...) {
+            r.type_ok = false;
+        }
+    }
+    // No registry/pool: treat as not-applicable (pass).
+
+    // ── Linear ownership (runtime env-frame half of #1538) ──
+    {
+        const auto sweep = linear_post_mutate_enforce_all();
+        r.linear_ok = sweep.all_safe;
+        if (sweep.frames_checked == 0)
+            r.linear_ok = true; // no frames → N/A pass
+    }
+
+    // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
+    r.provenance_ok = post_mutation_reflect_validate();
+
+    const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+    typed_audit::record_invariant_audit_result(mutation_id, op_name, r, before_epoch, after_epoch,
+                                               target_node, fid);
+
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->typed_mutation_invariant_audits_total.fetch_add(1, std::memory_order_relaxed);
+        if (!r.all_ok())
+            m->typed_mutation_invariant_violations_total.fetch_add(1, std::memory_order_relaxed);
+        if (r.type_ok)
+            m->typed_mutation_type_ok_total.fetch_add(1, std::memory_order_relaxed);
+        if (r.linear_ok)
+            m->typed_mutation_linear_ok_total.fetch_add(1, std::memory_order_relaxed);
+        if (r.provenance_ok)
+            m->typed_mutation_prov_ok_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return r.all_ok();
 }
 
 } // namespace aura::compiler

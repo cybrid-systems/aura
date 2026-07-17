@@ -130,7 +130,8 @@ static void ac5_query() {
     CHECK(h && is_hash(*h), "trail query is hash");
     auto schema =
         cs.eval("(hash-ref (engine:metrics \"query:typed-mutation-audit-trail\") \"schema\")");
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1589, "schema 1589");
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1614 || as_int(*schema) == 1589),
+          "schema 1614|1589");
     auto phase =
         cs.eval("(hash-ref (engine:metrics \"query:typed-mutation-audit-trail\") \"phase\")");
     CHECK(phase && is_int(*phase) && as_int(*phase) >= 2, "phase >= 2");

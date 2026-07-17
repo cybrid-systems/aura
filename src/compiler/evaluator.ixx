@@ -2046,6 +2046,15 @@ public:
     // ownership probe + StableNodeRef restamp (joiner-side enforcement).
     // joined_fiber_void may be null (uses current fiber / full scan).
     void complete_post_join_linear_enforcement(void* joined_fiber_void = nullptr) noexcept;
+    // Issue #1614: TypedMutationAudit real invariant suite (type reval +
+    // linear_post_mutate_enforce_all + provenance/reflect). Gated by
+    // typed_audit::should_audit. Records trail + counters; returns true
+    // if all three checks passed (or checks were not applicable).
+    [[nodiscard]] bool run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
+                                                          std::string_view op_name,
+                                                          std::uint32_t target_node,
+                                                          std::uint64_t before_epoch,
+                                                          std::uint64_t after_epoch) noexcept;
     // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
     // Returns false when a linear claim in payload fails ownership checks
     // (caller must not deliver). Always runs light StableNodeRef probe.
@@ -10078,16 +10087,25 @@ public:
             }
             emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                                 static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
-            // Issue #1589: TypedMutationAudit contextual trail (success path).
+            // Issue #1589 / #1614: TypedMutationAudit trail + real invariant suite.
             {
                 const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-                typed_audit::record_boundary_outcome(
-                    mid, audit_op, cp.version, epoch_after, /*success=*/true,
-                    static_cast<std::uint32_t>(audit_target),
-                    static_cast<std::uint32_t>(nodes_changed), fid);
+                // #1614: when should_audit, run type + linear + provenance checks
+                // and record a single trail event with pass/fail outcome.
+                if (nodes_changed > 0 && typed_audit::should_audit(mid)) {
+                    (void)run_typed_mutation_invariant_audit(
+                        mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
+                        epoch_after);
+                } else {
+                    typed_audit::record_boundary_outcome(
+                        mid, audit_op, cp.version, epoch_after, /*success=*/true,
+                        static_cast<std::uint32_t>(audit_target),
+                        static_cast<std::uint32_t>(nodes_changed), fid);
+                }
             }
             // Issue #488: post-mutate reflect validation + snapshot fields.
+            // (Also covered as provenance leg of #1614 invariant audit when sampled.)
             (void)post_mutation_reflect_validate();
         } else if (!success) {
             // Issue #1589: TypedMutationAudit rollback trail.

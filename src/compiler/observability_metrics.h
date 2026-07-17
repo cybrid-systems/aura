@@ -2176,6 +2176,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 
+    // Issue #1614: TypedMutationAudit real invariant suite metrics.
+    std::atomic<std::uint64_t> typed_mutation_invariant_audits_total{0};
+    std::atomic<std::uint64_t> typed_mutation_invariant_violations_total{0};
+    std::atomic<std::uint64_t> typed_mutation_type_ok_total{0};
+    std::atomic<std::uint64_t> typed_mutation_linear_ok_total{0};
+    std::atomic<std::uint64_t> typed_mutation_prov_ok_total{0};
+
     // Issue #756: EnvFrame dual-path consistency enforcement +
     // desync panic policy + GCEnvWalkFn stale handling under
     // concurrent mutation/steal counters backing the
