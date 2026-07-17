@@ -5184,6 +5184,9 @@ aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
 # Issue #1593: AI closed-loop readiness health-score + SLO + adaptive.
 aura_add_issue_test(test_ai_closedloop_readiness_1593)
 aura_issue_test_link_llvm_jit(test_ai_closedloop_readiness_1593)
+# Issue #1594: ResourceQuota Arena + Guard wired refine (inventory + closed-loop AC).
+aura_add_issue_test(test_resource_quota_wired)
+aura_issue_test_link_llvm_jit(test_resource_quota_wired)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

@@ -1,6 +1,6 @@
 # ResourceQuota hot-path enforcement (#1590)
 
-**Issues:** #1590 (hot-path closed-loop), builds on #1481 / #1498 / #1546 / #1547 / #1554 / #1579
+**Issues:** #1590 (hot-path closed-loop), builds on #1481 / #1498 / #1546 / #1547 / #1554 / #1579; refined by **#1594** (`resource-quota-wired-1594.md`)
 
 ## AC surface
 
@@ -27,3 +27,4 @@
 - `tests/test_quota_edge_cases.cpp` (#1548)
 - `tests/test_resource_quota_module.cpp` (#1579)
 - `tests/test_resource_quota_hotpath.cpp` (#1590 closed-loop)
+- `tests/test_resource_quota_wired.cpp` (#1594 AC consolidation)

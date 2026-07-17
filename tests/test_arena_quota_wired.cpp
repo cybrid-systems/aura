@@ -1,5 +1,5 @@
 // @category: unit
-// @reason: Issue #1546 / #1554 — Arena::allocate_raw ↔ check_arena_quota wiring
+// @reason: Issue #1546 / #1554 / #1594 — Arena::allocate_raw ↔ check_arena_quota wiring
 //
 //   AC1: set_arena installs arena_owner_ + quota callback
 //   AC2: allocate_checked over limit → ResourceQuotaExceeded; rejects+1; no used bump
