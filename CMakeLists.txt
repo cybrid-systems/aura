@@ -5202,6 +5202,9 @@ aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
 aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
 aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)
+# Issue #1600: ResourceQuota on agent_spawn / parallel_intend / join orch paths.
+aura_add_issue_test(test_orch_resource_quota_1600)
+aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

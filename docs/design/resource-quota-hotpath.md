@@ -1,6 +1,6 @@
 # ResourceQuota hot-path enforcement (#1590)
 
-**Issues:** #1590 (hot-path closed-loop), builds on #1481 / #1498 / #1546 / #1547 / #1554 / #1579; refined by **#1594** (`resource-quota-wired-1594.md`)
+**Issues:** #1590 (hot-path closed-loop), builds on #1481 / #1498 / #1546 / #1547 / #1554 / #1579; refined by **#1594** (`resource-quota-wired-1594.md`), **#1600** orch spawn (`orch-resource-quota-1600.md`)
 
 ## AC surface
 
@@ -12,7 +12,8 @@
 | `MutationBoundaryGuard::try_acquire` | Typed `AuraResult` + `check_mutation_quota` |
 | Legacy Guard ctor (#1590) | Soft-fail: `is_inert()`, `success_flag=false` |
 | Scheduler spawn | Process `ResourceQuota` fibers dimension (#1579) |
-| `query:resource-quota-stats` | schema **1590** (legacy 1579/… still accepted by agents) |
+| `query:resource-quota-stats` | schema **1600** (legacy 1590/1579/… still accepted by agents) |
+| Scheduler / parallel_intend / agent_spawn | Fiber dim reject + typed `ResourceQuotaExceeded` (#1600) |
 
 ## Query keys (schema 1590)
 

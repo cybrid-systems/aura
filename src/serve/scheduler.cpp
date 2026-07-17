@@ -118,6 +118,10 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     using aura::core::resource_quota::process_resource_quota;
     if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
         (void)err;
+        // Issue #1600: orchestration spawn reject metrics (typed error at caller).
+        process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
+        process_resource_quota().orchestration_quota_exceeded_total.fetch_add(
+            1, std::memory_order_relaxed);
         return nullptr;
     }
 
@@ -172,6 +176,10 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
     using aura::core::resource_quota::process_resource_quota;
     if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
         (void)err;
+        // Issue #1600
+        process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
+        process_resource_quota().orchestration_quota_exceeded_total.fetch_add(
+            1, std::memory_order_relaxed);
         return nullptr;
     }
 

@@ -2314,6 +2314,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             case BatchStatus::Invalid:
                 status_str = "invalid";
                 break;
+            case BatchStatus::QuotaExceeded: // #1600
+                status_str = "quota-exceeded";
+                break;
         }
 
         std::vector<EvalValue> result_elems;
