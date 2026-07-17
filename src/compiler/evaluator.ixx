@@ -2012,7 +2012,7 @@ public:
                                     std::uint64_t current_bridge_epoch) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
-    // Issue #1490: post-steal / post-resume EnvFrame + bridge_epoch
+    // Issue #1490 / #1580: post-steal / post-resume EnvFrame + bridge_epoch
     // consistency. Walks live closures (and optional hint env_id),
     // refreshes stale frame.version_ vs defuse_version_, detects
     // bridge_epoch drift, repairs dual-path when needed, bumps
@@ -2023,8 +2023,21 @@ public:
     // Issue #1490: linear ownership probe + COW/StableNodeRef re-pin
     // after fiber steal/resume (wraps probe_linear + re_pin).
     void probe_and_repin_linear_on_steal() noexcept;
+    // Issue #1580: transfer pending PanicCheckpoint across steal/resume
+    // and revalidate defuse/bridge versions (unified entry for Fiber::resume).
+    // fiber_void may be null (uses g_current_fiber_void). Returns true if a
+    // pending checkpoint was transferred/revalidated.
+    bool transfer_and_revalidate_panic_checkpoint(void* fiber_void = nullptr) noexcept;
+    // Issue #1580: full post-resume closed loop — refresh frames, repin
+    // linear/StableNodeRef, transfer panic checkpoint. Uses fiber resume
+    // hints when fiber_void is a Fiber*.
+    void complete_post_resume_steal_refresh(void* fiber_void = nullptr) noexcept;
     [[nodiscard]] std::uint64_t get_post_steal_refresh_count() const noexcept {
         return post_steal_refresh_count_.load(std::memory_order_relaxed);
+    }
+    // Alias of get_panic_checkpoint_transfer_count for #1580 AC naming.
+    [[nodiscard]] std::uint64_t get_panic_transfer_on_steal_count() const noexcept {
+        return get_panic_checkpoint_transfer_count();
     }
     // Issue #740: re-snapshot compiler-managed GC roots after
     // invalidate when linear metadata may have changed in JIT L2.
@@ -4634,11 +4647,9 @@ public:
     void transfer_mutation_stack_to_current_fiber() noexcept {
         sync_per_fiber_mutation_stack(nullptr);
         bump_mutation_steal_attempt();
-        // Issue #1490: force EnvFrame / bridge_epoch refresh before
-        // the stolen fiber continues (also called post-yield validate).
-        (void)refresh_stale_frames_after_steal(/*hint_env_id=*/0, /*expected_epoch=*/0);
-        // Issue #683 / #1490: linear ownership + re-pin on fiber steal.
-        probe_and_repin_linear_on_steal();
+        // Issue #1490 / #1580: full closed-loop refresh using fiber hints
+        // (EnvFrame + linear/StableNodeRef re-pin + panic transfer).
+        complete_post_resume_steal_refresh(g_current_fiber_void);
     }
 
     // Issue #1500: batch refresh_if_stale over atomic_batch_pinned_refs_

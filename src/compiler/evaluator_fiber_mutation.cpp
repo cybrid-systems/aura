@@ -643,6 +643,14 @@ namespace {
         bool at_boundary =
             reason == static_cast<uint8_t>(aura::serve::YieldReason::MutationBoundary);
         ev->checkpoint_yield_boundary(at_boundary);
+        // Issue #1580: stamp resume-refresh hints onto the current fiber so
+        // post-steal EnvFrame refresh can target the active frame/epoch.
+        if (Evaluator::g_current_fiber_void != nullptr) {
+            auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
+            const auto frames = ev->env_frames_size();
+            const std::uint64_t env_hint = frames > 0 ? static_cast<std::uint64_t>(frames - 1) : 0;
+            fiber->set_resume_refresh_hints(env_hint, ev->current_bridge_epoch());
+        }
     }
     void fiber_resume_validate_impl() {
         // Issue #1403: read top of thread-local stack instead
@@ -656,6 +664,9 @@ namespace {
             aura_aot_record_deopt_on_steal();
         (void)ev->restore_post_yield_or_rollback();
         ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
+        // Issue #1580: closed-loop refresh after yield validate (pairs with
+        // post-swap complete_post_resume_steal_refresh in Fiber::resume).
+        ev->complete_post_resume_steal_refresh(Evaluator::g_current_fiber_void);
     }
     void fiber_sync_mutation_stack_impl(void* per_fiber_stack) {
         Evaluator::sync_per_fiber_mutation_stack(per_fiber_stack);
@@ -975,32 +986,15 @@ namespace {
         return ev ? ev->pending_panic_checkpoint() : false;
     }
 
-    // (2) g_transfer_panic_checkpoint: bumps transfer count and
-    // re-stamps any per-fiber storage. Called by Fiber::resume()
-    // after the swapcontext return. No-op when no pending checkpoint.
+    // (2) g_transfer_panic_checkpoint: Issue #1580 routes through
+    // transfer_and_revalidate_panic_checkpoint (transfer + dual-epoch
+    // revalidate + yield restamp). Called by Fiber::resume() after
+    // swapcontext return. No-op when no pending checkpoint.
     void transfer_panic_checkpoint_trampoline() {
         auto* ev = Evaluator::yield_hook_evaluator();
         if (!ev)
             return;
-        if (!ev->pending_panic_checkpoint())
-            return;
-        ev->bump_panic_checkpoint_transfer_count();
-        if (Evaluator::g_current_fiber_void != nullptr) {
-            auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
-            // Issue #1404 Option 1: capture mismatch flag.
-            [[maybe_unused]] const bool yc_mismatch =
-                fiber_stack_pool_detail::restamp_yield_checkpoint_top(ev, fiber);
-        }
-        // Issue #1127: snapshot both counters under one acquire fence so
-        // probe sees a consistent side of concurrent AOT/mutate updates.
-        std::atomic_thread_fence(std::memory_order_acquire);
-        const auto defuse_v = ev->defuse_version_snapshot();
-        const auto bridge_e = ev->current_bridge_epoch();
-        if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
-            aura_aot_record_deopt_on_steal();
-            ev->bump_concurrent_safety_aot_reload_at_guard();
-        }
-        ev->bump_macro_hygiene_panic_restamp_from_workspace();
+        (void)ev->transfer_and_revalidate_panic_checkpoint(Evaluator::g_current_fiber_void);
     }
 
     // (3) g_block_gc_for_pending_checkpoint: Issue #1489 / #651 AC1.
@@ -1187,16 +1181,70 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
     ev->bump_stable_ref_steal_auto_refresh();
 }
 
-// Issue #1490: post-yield / post-resume refresh (called from Fiber::resume
-// after g_fiber_resume_validate_). Ensures EnvFrame/bridge_epoch stay
-// consistent after a slice even when the pre-swap migration path ran
-// under a different worker.
+// Issue #1490 / #1580: post-yield / post-resume refresh (called from
+// Fiber::resume after g_fiber_resume_validate_). Full closed loop:
+// EnvFrame refresh (with fiber hints) + linear/StableNodeRef re-pin +
+// panic checkpoint transfer/revalidate.
 extern "C" void aura_evaluator_post_resume_refresh() {
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return;
-    (void)ev->refresh_stale_frames_after_steal(/*hint_env_id=*/0, /*expected_epoch=*/0);
-    ev->probe_and_repin_linear_on_steal();
+    ev->complete_post_resume_steal_refresh(Evaluator::g_current_fiber_void);
+}
+
+// Issue #1580: transfer pending PanicCheckpoint across steal/resume and
+// revalidate dual-epoch (defuse + bridge). Fiber-aware restamp of yield
+// checkpoint top when fiber_void is non-null.
+bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexcept {
+    if (!pending_panic_checkpoint())
+        return false;
+    bump_panic_checkpoint_transfer_count();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+        m->panic_transfer_on_steal.fetch_add(1, std::memory_order_relaxed);
+
+    void* fb_void = fiber_void != nullptr ? fiber_void : g_current_fiber_void;
+    if (fb_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
+        [[maybe_unused]] const bool yc_mismatch =
+            fiber_stack_pool_detail::restamp_yield_checkpoint_top(this, fiber);
+    }
+
+    // Dual-epoch revalidation under acquire fence (consistent probe).
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const auto defuse_v = defuse_version_snapshot();
+    const auto bridge_e = current_bridge_epoch();
+    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
+        aura_aot_record_deopt_on_steal();
+        bump_concurrent_safety_aot_reload_at_guard();
+    }
+    bump_macro_hygiene_panic_restamp_from_workspace();
+    // Ensure pending panic still defers GC reclaim until commit/restore.
+    arm_gc_defer_for_pending_panic();
+    return true;
+}
+
+// Issue #1580: full post-resume steal closed loop used by Fiber::resume
+// and fiber_resume_validate_impl.
+void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
+    std::uint64_t hint_env = 0;
+    std::uint64_t expected_epoch = 0;
+    void* fb_void = fiber_void != nullptr ? fiber_void : g_current_fiber_void;
+    if (fb_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(fb_void);
+        hint_env = fiber->resume_env_hint();
+        expected_epoch = fiber->resume_bridge_epoch_hint();
+    }
+
+    (void)refresh_stale_frames_after_steal(hint_env, expected_epoch);
+    probe_and_repin_linear_on_steal();
+    // Explicit Steal-site StableNodeRef auto-restamp (beyond probe_and_repin).
+    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
+
+    if (pending_panic_checkpoint())
+        (void)transfer_and_revalidate_panic_checkpoint(fb_void);
+
+    if (fb_void != nullptr)
+        static_cast<aura::serve::Fiber*>(fb_void)->clear_resume_refresh_hints();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.

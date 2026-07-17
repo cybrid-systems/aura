@@ -345,6 +345,22 @@ public:
     void* yield_checkpoint_ptr() { return yield_checkpoint_storage_; }
     void set_yield_checkpoint_ptr(void* p) { yield_checkpoint_storage_ = p; }
 
+    // Issue #1580: steal/resume provenance hints captured at yield so
+    // post-resume refresh_stale_frames_after_steal can target the
+    // fiber's active EnvFrame / bridge_epoch without a full scan.
+    void set_resume_refresh_hints(std::uint64_t env_id, std::uint64_t bridge_epoch) noexcept {
+        resume_env_hint_ = env_id;
+        resume_bridge_epoch_hint_ = bridge_epoch;
+    }
+    [[nodiscard]] std::uint64_t resume_env_hint() const noexcept { return resume_env_hint_; }
+    [[nodiscard]] std::uint64_t resume_bridge_epoch_hint() const noexcept {
+        return resume_bridge_epoch_hint_;
+    }
+    void clear_resume_refresh_hints() noexcept {
+        resume_env_hint_ = 0;
+        resume_bridge_epoch_hint_ = 0;
+    }
+
 private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
@@ -422,6 +438,9 @@ private:
     // Opaque void* — see mutation_stack_ptr() / set_mutation_stack_ptr().
     void* mutation_stack_storage_ = nullptr;
     void* yield_checkpoint_storage_ = nullptr;
+    // Issue #1580: captured at MutationBoundary yield for post-resume refresh.
+    std::uint64_t resume_env_hint_ = 0;
+    std::uint64_t resume_bridge_epoch_hint_ = 0;
 };
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
