@@ -9,13 +9,14 @@
 | macOS 开发 | [../README.md — Platform Notes](../README.md#platform-notes) |
 | CI 多平台 (Win/macOS) | [ci-platforms.md](ci-platforms.md) (#1573) |
 | 快速上手 | [tutorial.md](tutorial.md) |
+| **并行 / multi-fiber 编排** | [orchestration-tutorial.md](orchestration-tutorial.md)（#1603） |
 | 有哪些原语 | `(api-reference)` 或 [generated/primitives.md](generated/primitives.md) |
 | 新 primitive vs stdlib? | [design/primitive-governance-policy.md](design/primitive-governance-policy.md) · [decision-framework](design/primitive-vs-stdlib-decision-framework.md) |
 | Agent 提示词 / 红线 | [agent-prompt-template.md](agent-prompt-template.md) |
 | 模块 / 管线 | [architecture.md](architecture.md) |
 | 改 evaluator | [contributing.md](contributing.md) |
 | **写 issue 测试 / 跑 gate·bench** | [test_harness_pattern.md](test_harness_pattern.md)（#1570 路径图 + 模板） |
-| Agent JSON 协议 | [wire-formats.md](wire-formats.md) |
+| Agent JSON 协议 | [wire-formats.md](wire-formats.md)（含 §10 并行编排） |
 | 自修改示例 | `tests/suite/mutate-structured.aura` |
 | 标准库 | [generated/stdlib-index.md](generated/stdlib-index.md) · `lib/std/*.aura` |
 | 构建测试 | `./build.py gate` · `./build.py check` |
@@ -27,13 +28,14 @@
 | 文件 | 说明 |
 |------|------|
 | [tutorial.md](tutorial.md) | 可运行示例 |
+| [orchestration-tutorial.md](orchestration-tutorial.md) | multi-fiber / parallel-intend 实践（#1603） |
 | [api-reference.md](api-reference.md) | 如何查原语 |
 | [generated/](generated/) | 从源码生成：primitives / modules / stdlib |
-| [architecture.md](architecture.md) | 模块地图与数据流 |
-| [contributing.md](contributing.md) | FlatAST 不变式、加 primitive |
+| [architecture.md](architecture.md) | 模块地图与数据流（含 src/orch 管线） |
+| [contributing.md](contributing.md) | FlatAST 不变式、加 primitive、orch 扩展指南 |
 | [test_harness_pattern.md](test_harness_pattern.md) | CI/bench/issue-test 真实路径 + 模板（#1570） |
 | [design/testing-framework-v1.md](design/testing-framework-v1.md) | 分层测试 / binding / pets |
-| [wire-formats.md](wire-formats.md) | `--serve` / `--serve-async` |
+| [wire-formats.md](wire-formats.md) | `--serve` / `--serve-async` + 并行编排 hash 协议 |
 | [roadmap.md](roadmap.md) | P 系列规划 |
 | [benchmark.md](benchmark.md) | EDSL benchmark（源：`tests/benchmark.py`） |
 | [ci-performance.md](ci-performance.md) | CI 墙钟与 mold/link pool |

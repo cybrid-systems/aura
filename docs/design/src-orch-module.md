@@ -54,3 +54,11 @@ BatchResult conduct_parallel(...); // → parallel_intend
 ## Tests
 
 `tests/test_orch_agent_spawn.cpp` — C++ agent_spawn + Aura orch:* + stats.
+
+## Docs (#1603)
+
+- Tutorial: [`docs/orchestration-tutorial.md`](../orchestration-tutorial.md)
+- Architecture: [`docs/architecture.md`](../architecture.md) §Agent 编排
+- Wire contracts: [`docs/wire-formats.md`](../wire-formats.md) §10
+- Contributing: [`docs/contributing.md`](../contributing.md) §Orch 新原语
+- Module README: [`src/orch/README.md`](../../src/orch/README.md)

@@ -25,12 +25,14 @@
 
 Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`（可走 JIT）。JSON 入口：`--serve-async`（见 [wire-formats.md](wire-formats.md)）。
 
+并行 Agent 路径：`parallel-intend` / `orch:spawn-agent` → Scheduler fibers → `Fiber::join` + MultiFiberMailbox → 结果 hash（见 [orchestration-tutorial.md](orchestration-tutorial.md)）。
+
 ## C++ 模块（`export module`）
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
 | `aura.parser.*` | `src/parser/` | 词法、语法 → FlatAST |
-| `aura.core.*` | `src/core/` | AST 节点、Arena、类型基础设施 |
+| `aura.core.*` | `src/core/` | AST 节点、Arena、类型基础设施、ResourceQuota |
 | `aura.compiler.evaluator` | `evaluator.ixx` + 44 分区 `.cpp` | 运行时中枢、原语、eval_flat（见下节） |
 | `aura.compiler.query` | `query.*` | QueryEngine、DefUseIndex |
 | `aura.compiler.type_checker` | `type_checker.*` | 渐进类型、Let-Poly、线性 |
@@ -40,7 +42,7 @@ Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`
 | `aura.compiler.service` | `service.ixx` | 编译服务、增量 cache、脏标记 |
 | `aura.compiler.cache` | `cache.*` | EDSL V2 source-hash cache |
 | JIT | `aura_jit.*` | LLVM ORC、hot-swap、prim bridge |
-| Serve | `src/serve/` | fiber、scheduler、mailbox、GC 协调 |
+| Serve | `src/serve/` | fiber、scheduler、mailbox、parallel_orch、GC 协调 |
 | Orch | `src/orch/` | unified agent_spawn / parallel_orch facade (#1588) |
 
 ## Evaluator 分区（`aura.compiler.evaluator`）
@@ -108,10 +110,58 @@ Aura 层 helper：`lib/std/query.aura`（3 个）、`lib/std/refactor.aura`、`l
 
 ## Agent 编排
 
-- C++：`fiber:*`, `send`/`recv`, `session:*`（`src/serve/`）
-- Aura：`lib/std/orchestrator.aura`（`orch:*`, `agent:*`）
-- 测试：`tests/suite/orchestrator.aura`
-- 跨 eval/mutate 持有节点引用：`docs/design/core/stable_ref_best_practices.md`（StableNodeRef + generation_ 模式）
+分层（低 → 高）：
+
+| 层 | 路径 | 职责 |
+|----|------|------|
+| Fiber runtime | `src/serve/fiber.h`, `scheduler.h` | M:N 调度、`Fiber::join` / `join(span)` (#1584) |
+| Mailbox | `src/serve/multi_fiber_mailbox.h` | multi-attach、broadcast、背压 (#1585) |
+| Parallel batch | `src/serve/parallel_orch.h` | `parallel_intend` 并发 cap / timeout / fail-fast (#1586) |
+| Composition | **`src/orch/`** | `agent_spawn` + mailbox + join + `conduct_parallel` (#1588) |
+| Aura primitives | `evaluator_primitives_agent.cpp` | `(parallel-intend)`、`orch:spawn-agent`、… (#1587/#1588) |
+| Stdlib | `lib/std/orchestrator.aura` | 纯 Aura 角色 / pipeline / agent registry |
+
+```
+                    ┌─────────────────────────────┐
+  Aura Agent code   │ parallel-intend / orch:*    │
+                    └──────────────┬──────────────┘
+                                   ▼
+                    ┌─────────────────────────────┐
+  src/orch/         │ agent_spawn · conduct_      │
+  (composition)     │ parallel · join_agent       │
+                    └──────────────┬──────────────┘
+                                   ▼
+        ┌──────────────────────────┼──────────────────────────┐
+        ▼                          ▼                          ▼
+  Scheduler/Fiber           MultiFiberMailbox           ResourceQuota
+  (join / steal)            (backpressure)              (#1600)
+        │                          │                          │
+        └──────────────────────────┴──────────────────────────┘
+                                   ▼
+                    query:parallel-orch-stats · closedloop orch-health
+```
+
+**并行编排管线（典型）：**
+
+1. 构造 N 个 0-arg thunk（或 C++ `TaskSpec`）
+2. `parallel_intend(sched, tasks, ParallelPolicy{max_concurrency, timeout_ms, fail_fast})`
+3. 内部：permit gate 限流 → `Scheduler::spawn` → 完成时可选 mailbox `push`
+4. `Fiber::join(span, timeout)` 聚合 → `BatchResult` / Aura hash
+5. 观测：`query:parallel-orch-stats`、`query:ai-closedloop-readiness-stats`（orch 字段）
+
+**线程安全要点：**
+
+- Aura `(parallel-intend)` 对 Evaluator 调用 **mutex 串行化**（闭包 body 不跨线程 eval）；并发收益来自 spawn/join/gate。
+- 跨 fiber 共享 AST 节点须 `StableNodeRef`；mutation 须 `MutationBoundaryGuard`。
+- Fiber 配额：`process_resource_quota` Fibers 维 → `BatchStatus::QuotaExceeded` / `AgentHandle.quota_exceeded` (#1600)。
+
+**文档与测试：**
+
+- 教程：[orchestration-tutorial.md](orchestration-tutorial.md)（#1603）
+- 设计：`docs/design/parallel-orch.md` · `docs/design/src-orch-module.md` · `src/orch/README.md`
+- 协议字段：[wire-formats.md §10](wire-formats.md#10-parallel-orchestration-contracts-1584--1600)
+- 测试：`tests/suite/orchestrator.aura` · `tests/suite/concurrent.aura` · `tests/suite/parallel_orchestration_stress.aura` (#1602) · `tests/test_parallel_orch.cpp` · `tests/test_orch_agent_spawn.cpp`
+- 跨 eval/mutate 持有节点：`docs/design/core/stable_ref_best_practices.md`
 
 ## 标准库
 
