@@ -5938,7 +5938,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_prim_latency_total_ns{0};
     std::atomic<std::uint64_t> render_frame_time_samples{0};
     std::atomic<std::uint64_t> render_frame_time_total_ns{0};
-    std::atomic<std::uint64_t> tenant_principal_scaffold{1};         // #1183/#1191
+    std::atomic<std::uint64_t> tenant_principal_scaffold{1}; // #1183/#1191
+    // Issue #1566: multi-tenant workspace isolation enforcement mirrors
+    std::atomic<std::uint64_t> tenant_boundary_violation_prevented_total{0};
+    std::atomic<std::uint64_t> cross_tenant_provenance_deny_total{0};
+    std::atomic<std::uint64_t> tenant_boundary_checks_total{0};
+    std::atomic<std::uint64_t> cross_tenant_capability_grant_total{0};
     std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
     std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185
     std::atomic<std::uint64_t> capability_effects_scaffold{1};       // #1187/#1192

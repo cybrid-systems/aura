@@ -1,4 +1,4 @@
-// evaluator_security.cpp — Issue #676 sandbox + audit; #1565 capability effects.
+// evaluator_security.cpp — Issue #676 sandbox + audit; #1565 effects; #1566 isolation.
 
 module;
 
@@ -8,6 +8,7 @@ module;
 #include "security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/workspace_isolation.hh"
 
 module aura.compiler.evaluator;
 
@@ -156,16 +157,53 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
+    using namespace aura::core::workspace_isolation;
     if (mode > 2)
         mode = 2;
     g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
     set_mode(static_cast<SandboxMode>(mode));
     // Strict/Restricted also set evaluator sandbox_mode_ so legacy gates engage.
     sandbox_mode_ = (mode != 0);
+    // #1566: Strict sandbox links isolation enforcement.
+    g_workspace_isolation().set_strict_sandbox_linked(mode == 2);
 }
 
 std::uint8_t Evaluator::effect_sandbox_mode() const noexcept {
     return static_cast<std::uint8_t>(aura::core::capability::g_capability_registry().sandbox_mode);
+}
+
+// Issue #1566: multi-tenant workspace isolation bridge.
+void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view name,
+                                     bool allow_cross) noexcept {
+    using namespace aura::core::workspace_isolation;
+    capability_tenant_id_ = tenant_id;
+    g_workspace_isolation().set_current_tenant(tenant_id, name, allow_cross);
+}
+
+void Evaluator::grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
+                                          std::uint16_t effect_bits) noexcept {
+    using namespace aura::core::workspace_isolation;
+    g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, effect_bits);
+}
+
+bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,
+                                          std::uint16_t required_effects,
+                                          std::string_view op) noexcept {
+    using namespace aura::core::workspace_isolation;
+    using namespace aura::core::sandbox;
+    const auto target = target_tenant != 0 ? target_tenant : capability_tenant_id_;
+    const bool strict =
+        effect_sandbox_mode() == 2 || is_strict() || g_workspace_isolation().strict_sandbox_linked;
+    IsolationRefProvenance prov{};
+    prov.tenant_id = ref_tenant;
+    const bool ok = check_boundary(target, &prov, required_effects, strict, op);
+    if (!ok)
+        bump_capability_denial();
+    return ok;
+}
+
+void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept {
+    ref.tenant_id = capability_tenant_id_;
 }
 
 } // namespace aura::compiler

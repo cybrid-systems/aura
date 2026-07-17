@@ -6032,6 +6032,11 @@ public:
         // Issue #738: set when pin_for_cow() records this ref
         // in the evaluator's boundary pin registry.
         bool boundary_pinned = false;
+        // Issue #1566: multi-tenant isolation stamp. Default 0 =
+        // unset / single-tenant (isolation check treats 0 as
+        // "no provenance tenant constraint"). Not part of the
+        // on-wire serialize_stable_ref blob (additive in-memory).
+        std::uint64_t tenant_id = 0;
 
         // Issue #738: mark this ref as pinned across a COW
         // boundary (no-op on the ref itself; Evaluator

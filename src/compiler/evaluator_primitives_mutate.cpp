@@ -349,6 +349,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                "mutate effect denied by capability effect model (#1565)");
                 }
             }
+            // Issue #1566: multi-tenant workspace isolation on every mutate path.
+            // target = current principal's tenant (0 = isolation off / single-tenant).
+            {
+                using aura::compiler::security::kEffectMutate;
+                if (!ev.check_workspace_isolation(/*target=*/0, /*ref_tenant=*/0, kEffectMutate,
+                                                  "mutate")) {
+                    return mev("tenant-isolation-denied",
+                               "cross-tenant mutate denied by WorkspaceIsolationPolicy (#1566)");
+                }
+            }
             std::uint64_t wraps_before = 0;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 wraps_before =

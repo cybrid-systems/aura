@@ -3801,6 +3801,19 @@ public:
     [[nodiscard]] std::uint64_t capability_tenant_id() const noexcept {
         return capability_tenant_id_;
     }
+    // Issue #1566: WorkspaceIsolationPolicy enforcement.
+    void set_tenant_principal(std::uint64_t tenant_id, std::string_view name = {},
+                              bool allow_cross = false) noexcept;
+    void grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
+                                   std::uint16_t effect_bits) noexcept;
+    // Returns true if allowed. target_tenant=0 → use capability_tenant_id_.
+    // ref_tenant=0 → no provenance stamp on ref.
+    [[nodiscard]] bool check_workspace_isolation(std::uint64_t target_tenant = 0,
+                                                 std::uint64_t ref_tenant = 0,
+                                                 std::uint16_t required_effects = 0,
+                                                 std::string_view op = "workspace") noexcept;
+    // Stamp FlatAST::StableNodeRef.tenant_id from current principal.
+    void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with

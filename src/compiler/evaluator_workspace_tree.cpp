@@ -1,11 +1,13 @@
 // evaluator_workspace_tree.cpp — P1-h: workspace tree lifecycle + policy hash
-// aura.compiler.evaluator module partition.
+// aura.compiler.evaluator module partition. #1566: tenant isolation gates.
 
 module;
 
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "core/workspace_isolation.hh"
+#include "security_capabilities.h"
 #include <cstdio>
 
 module aura.compiler.evaluator;
@@ -181,6 +183,14 @@ void Evaluator::destroy_workspace_tree(void* wt) {
 // mutation doesn't pollute the parent. No-op for root, already-
 // cloned, or read-only workspaces (those return false).
 bool Evaluator::trigger_lazy_cow(void* wt) {
+    // Issue #1566: COW clone is a mutate-side effect — enforce isolation.
+    {
+        using aura::compiler::security::kEffectMutate;
+        if (!check_workspace_isolation(capability_tenant_id(), capability_tenant_id(),
+                                       kEffectMutate, "workspace:cow")) {
+            return false;
+        }
+    }
     if (!wt)
         return true; // no tree yet, nothing to clone
     auto* tree = static_cast<WorkspaceTree*>(wt);
@@ -418,6 +428,14 @@ void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
     // Issue #424: verify WorkspaceTree layer flat/pool pointers
     // stay aligned with the evaluator's active workspace after
     // COW clones, workspace:switch, and update_shared_tree_root.
+    // Issue #1566: also count isolation boundary checks (read-only).
+    {
+        using namespace aura::core::workspace_isolation;
+        // Const path: soft check only (does not deny), keeps metrics warm.
+        (void)g_workspace_isolation().check_boundary_ex(
+            capability_tenant_id_, /*ref_tenant=*/0, /*required_effects=*/0,
+            /*sandbox_strict=*/false, "workspace:consistency");
+    }
     if (!workspace_tree_)
         return;
 

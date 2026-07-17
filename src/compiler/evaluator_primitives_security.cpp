@@ -11,8 +11,9 @@ module;
 #include "security_capabilities.h"
 #include "serve/http_health.h"
 #include "serve/metrics.h"
-#include "hash_meta.h"              // FNV constants (#901)
-#include "core/capability_model.hh" // #1565: snapshot_capability_effect_stats
+#include "hash_meta.h"                 // FNV constants (#901)
+#include "core/capability_model.hh"    // #1565: snapshot_capability_effect_stats
+#include "core/workspace_isolation.hh" // #1566: snapshot_tenant_isolation_stats
 
 module aura.compiler.evaluator;
 
@@ -274,6 +275,113 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("audits", static_cast<std::int64_t>(snap.audits));
             insert_kv("sandbox-mode", snap.sandbox_mode);
             insert_kv("tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1566: (security:set-tenant-principal! id [allow-cross?])
+    add("security:set-tenant-principal!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            // Elevating tenant while sandboxed requires wildcard.
+            if (static_cast<std::uint64_t>(as_int(a[0])) != ev.capability_tenant_id()) {
+                ev.bump_capability_denial();
+                return make_bool(false);
+            }
+        }
+        const auto tid = static_cast<std::uint64_t>(as_int(a[0]));
+        const bool allow_cross = a.size() >= 2 && is_bool(a[1]) && as_bool(a[1]);
+        ev.set_tenant_principal(tid, {}, allow_cross);
+        return make_bool(true);
+    });
+
+    // Issue #1566: (security:grant-cross-tenant! from to effect-bits)
+    add("security:grant-cross-tenant!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]))
+            return make_bool(false);
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_bool(false);
+        }
+        ev.grant_cross_tenant_access(static_cast<std::uint64_t>(as_int(a[0])),
+                                     static_cast<std::uint64_t>(as_int(a[1])),
+                                     static_cast<std::uint16_t>(as_int(a[2])));
+        return make_bool(true);
+    });
+
+    // Issue #1566: (security:check-tenant-isolation target [ref-tenant] [effect-bits]) → #t/#f
+    add("security:check-tenant-isolation", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        const auto target = static_cast<std::uint64_t>(as_int(a[0]));
+        const auto ref_t =
+            a.size() >= 2 && is_int(a[1]) ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
+        const auto bits =
+            a.size() >= 3 && is_int(a[2]) ? static_cast<std::uint16_t>(as_int(a[2])) : 0;
+        return make_bool(ev.check_workspace_isolation(target, ref_t, bits, "security:check"));
+    });
+
+    // Issue #1566: query:tenant-isolation-stats
+    ObservabilityPrims::register_stats_impl(
+        "query:tenant-isolation-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::core::workspace_isolation;
+            const auto snap = snapshot_tenant_isolation_stats();
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->tenant_boundary_violation_prevented_total.store(
+                    snap.boundary_violations_prevented, std::memory_order_relaxed);
+                m->cross_tenant_provenance_deny_total.store(snap.cross_tenant_provenance_deny,
+                                                            std::memory_order_relaxed);
+                m->tenant_boundary_checks_total.store(snap.checks, std::memory_order_relaxed);
+                m->cross_tenant_capability_grant_total.store(snap.cross_tenant_capability_grants,
+                                                             std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1566);
+            insert_kv("active", 1);
+            insert_kv("phase", snap.phase);
+            insert_kv("checks", static_cast<std::int64_t>(snap.checks));
+            insert_kv("boundary-violations-prevented",
+                      static_cast<std::int64_t>(snap.boundary_violations_prevented));
+            insert_kv("cross-tenant-provenance-deny",
+                      static_cast<std::int64_t>(snap.cross_tenant_provenance_deny));
+            insert_kv("cross-tenant-capability-grants",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_grants));
+            insert_kv("cross-tenant-capability-deny",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_deny));
+            insert_kv("audits", static_cast<std::int64_t>(snap.audits));
+            insert_kv("strict-denials", static_cast<std::int64_t>(snap.strict_denials));
+            insert_kv("current-tenant", static_cast<std::int64_t>(snap.current_tenant));
+            insert_kv("isolation-enabled", snap.isolation_enabled);
+            insert_kv("allow-cross", snap.allow_cross);
+            insert_kv("strict-linked", snap.strict_linked);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

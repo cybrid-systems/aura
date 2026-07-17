@@ -169,6 +169,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (workspace:create name) → workspace ID (COW, no clone until mutate)
     add("workspace:create", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #1566: tenant isolation on workspace structural ops.
+        if (!ev.check_workspace_isolation(0, 0, 0, "workspace:create"))
+            return make_int(-1);
         // Ensure tree exists
         if (!ev.workspace_tree_) {
             auto* wtt = new WorkspaceTree();
@@ -209,6 +212,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     add("workspace:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
             !ev.workspace_tree_ || !ev.workspace_flat_)
+            return make_void();
+        // Issue #1566: cross-layer resolve is a tenant boundary; optional
+        // 5th arg = ref tenant_id for provenance check.
+        const auto ref_tenant =
+            a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
+        if (!ev.check_workspace_isolation(0, ref_tenant, 0, "workspace:resolve-stable-ref"))
             return make_void();
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto from_layer = static_cast<std::uint32_t>(as_int(a[0]));
@@ -303,6 +312,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // (workspace:switch id) → #t
     add("workspace:switch", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_bool(false);
+        // Issue #1566: tenant isolation before layer switch.
+        if (!ev.check_workspace_isolation(0, 0, 0, "workspace:switch"))
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto idx = static_cast<std::uint32_t>(as_int(a[0]));
