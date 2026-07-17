@@ -5,6 +5,7 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
 
 module aura.compiler.evaluator;
 
@@ -4160,7 +4161,9 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     return re_expanded;
 }
 
-// Issue #488: post-mutate reflect validation hook for Guard success path.
+// Issue #488 / #1611: post-mutate reflect validation hook for Guard success path.
+// Integrates reflect.hh hygiene-aware MutationReflectHealth (default rejects
+// MacroIntroduced schema evolution without allow_macro_mutate).
 bool Evaluator::post_mutation_reflect_validate() const noexcept {
     bump_guard_panic_reflect_validate_hook();
     auto* ws = workspace_flat_;
@@ -4171,12 +4174,14 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     using aura::ast::FlatAST;
     using aura::ast::NodeId;
 
-    struct ReflectHealth {
-        bool marker_consistent = true;
-        bool generation_healthy = true;
-        std::uint64_t dirty_nodes = 0;
-        std::uint64_t macro_markers = 0;
-    } health;
+    // Issue #1611: use reflect.hh MutationReflectHealth as the
+    // authoritative post-mutate hygiene probe.
+    aura::reflect::MutationReflectHealth health;
+    health.allow_macro_evolution = get_allow_macro_mutate();
+    // Soft default: expansion dirtiness alone does not hard-fail
+    // (preserve self-evo after hygienic expand). Hard reject when
+    // marker consistency fails OR enforce flag is set by agent.
+    health.enforce_macro_hygiene_reject = false;
     if (ws->root >= ws->size()) {
         bump_schema_validation_fail_count();
         return false;
@@ -4215,6 +4220,12 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
         if (parent != aura::ast::NULL_NODE && parent >= ws->size())
             health.marker_consistent = false;
     }
+    health.dirty_macro_nodes = macro_dirty;
+    // Issue #1611: hard-reject when MacroIntroduced markers lack
+    // expansion provenance (true hygiene leak) without allow flag —
+    // enforce via reflect.hh policy (marker_consistent already false).
+    if (macro_marker_mismatches > 0 && !health.allow_macro_evolution)
+        health.enforce_macro_hygiene_reject = true;
     // Subtree-level auto_validate call count: one bump per
     // post_mutation_reflect_validate() invocation that found at
     // least one MacroIntroduced node (i.e., a macro subtree was
@@ -4230,7 +4241,19 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     (void)called_macro_validate;
     set_dirty_nodes_in_snapshot(health.dirty_nodes);
     set_macro_markers_in_snapshot(health.macro_markers);
-    const bool ok = health.generation_healthy && health.marker_consistent;
+
+    // Issue #1611: single path through reflect.hh hygiene gate.
+    std::string reflect_err;
+    const bool ok = aura::reflect::validate_mutation_reflect_health(health, &reflect_err);
+    // Also count MacroIntroduced context checks for observability.
+    if (health.macro_markers > 0) {
+        if (auto* m =
+                compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr) {
+            m->reflect_macro_hygiene_checks_total.fetch_add(1, std::memory_order_relaxed);
+            if (!ok && !health.allow_macro_evolution)
+                m->reflect_macro_hygiene_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     set_last_schema_validation_ok(ok);
     if (ok) {
         bump_schema_validation_pass_count();
@@ -4260,6 +4283,7 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
             m->runtime_reflect_mutated_schema_checks.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    (void)reflect_err;
     return ok;
 }
 

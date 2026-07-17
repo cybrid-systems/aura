@@ -37,6 +37,11 @@
 #include <type_traits>
 #include <stdexcept>
 
+// Issue #1611: hygiene gates (no -freflection). Included before the
+// reflect namespace so HygieneMarker / MutationReflectHealth are in
+// aura::reflect:: (not nested).
+#include "reflect/hygiene_validate.hh"
+
 namespace aura::reflect {
 
 // ==============================================================
@@ -1145,30 +1150,15 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
     return ok;
 }
 
-// Issue #488: mutation-specific reflect health probe for Guard
-// dtor snapshots (marker consistency + generation sanity).
-struct MutationReflectHealth {
-    bool marker_consistent = true;
-    bool generation_healthy = true;
-    std::uint64_t dirty_nodes = 0;
-    std::uint64_t macro_markers = 0;
-};
-
-inline bool validate_mutation_reflect_health(const MutationReflectHealth& health,
-                                             std::string* error = nullptr) {
-    if (!health.generation_healthy) {
-        if (error)
-            *error = "generation health check failed";
+// ── Issue #1611: auto_validate + SyntaxMarker hygiene gate ──
+// HygieneMarker / hygiene_allows_evolution from hygiene_validate.hh.
+// Requires -freflection (same as auto_validate).
+template <typename T>
+bool auto_validate_with_marker(const T& obj, HygieneMarker context_marker,
+                               bool allow_macro_evolution = false, std::string* error = nullptr) {
+    if (!hygiene_allows_evolution(context_marker, allow_macro_evolution, error))
         return false;
-    }
-    if (!health.marker_consistent) {
-        if (error)
-            *error = "macro marker consistency check failed";
-        return false;
-    }
-    (void)health.dirty_nodes;
-    (void)health.macro_markers;
-    return true;
+    return auto_validate(obj, error);
 }
 
 // ═══════════════════════════════════════════════════════════════
