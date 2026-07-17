@@ -5128,6 +5128,9 @@ aura_issue_test_link_llvm_jit(test_issue_1495)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
+# Issue #1571: concurrent epoch safety stress for #1496 (mutate + steal + old closure).
+aura_add_issue_test(test_issue_1496_concurrent_epoch_safety)
+aura_issue_test_link_llvm_jit(test_issue_1496_concurrent_epoch_safety)
 # Issue #1497: StableNodeRef auto-restamp across GC/steal/safepoint.
 aura_add_issue_test(test_issue_1497)
 aura_issue_test_link_llvm_jit(test_issue_1497)
