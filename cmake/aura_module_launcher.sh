@@ -99,10 +99,18 @@ mkdir -p "$PRODUCER_CACHE"
 # producers only symlink into their own per-target dir.
 if [ "$producer_key" = "aura_test_objects.dir" ]; then
     # aura_test_objects is the canonical module producer for the
-    # benchmark / unit-test binaries (test_*, issue_*, cycle*).
+    # benchmark / unit-test binaries (test_issue_*, issue_*, cycle*,
+    # and most other test_* that link libaura_test_objects).
     # They all `import aura.compiler.X` (or aura.core.X) and rely
     # on the BMIs aura_test_objects produced. The launcher's symlinks
     # let their test_X.cpp find the BMIs at <their-cwd>/<name>.gcm.
+    #
+    # IMPORTANT: do NOT symlink into standalone module producers
+    # that compile their own .ixx tree with different flags
+    # (AURA_HAVE_LLVM, extra -I paths). That clobbering causes
+    # "import 'std' has CRC mismatch" when those targets rebuild
+    # (test_ir / test_gc_evaluator_integration after a recent
+    # aura_test_objects compile).
     consumers=()
     # NOTE: bash doesn't expand globs inside variable values
     # (e.g. "$BUILD_DIR/CMakeFiles/$pat"*.dir keeps the `*` from
@@ -110,6 +118,12 @@ if [ "$producer_key" = "aura_test_objects.dir" ]; then
     # wildcards in the pattern argument.
     while IFS= read -r d; do
         [ -d "$d" ] || continue
+        case "$(basename "$d")" in
+            # Full module re-producers (aura_target_cxx_modules of their own).
+            test_ir.dir|test_gc_evaluator_integration.dir)
+                continue
+                ;;
+        esac
         consumers+=("$d")
     done < <(find "$BUILD_DIR/CMakeFiles" -maxdepth 1 \
                   \( -name 'test_*.dir' -o -name 'issue_*.dir' \
