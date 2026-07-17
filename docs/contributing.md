@@ -33,6 +33,20 @@
 | `src/test/` | `tests/` · `tests/domain/` · `cmake/AuraDomainTests.cmake` |
 | Pass concepts 内联在 `pass_manager` | **`src/core/concept_constraints.ixx`**（#1577；`import aura.core.concept_constraints`） |
 
+### ResourceQuota（Issue #1579）
+
+多维度资源配额（memory / fibers / time_us / mutations）集中在：
+
+```cpp
+#include "core/resource_quota.hh"          // serve / tests
+import aura.core.resource_quota;          // 模块消费者
+// process_resource_quota() — scheduler spawn 前 check_and_consume(Fibers)
+// Evaluator::check_*_quota / allocate_checked — 既有 #1481 热路径
+// (engine:metrics "query:resource-quota-stats")  schema 1579
+```
+
+`set_resource_quota_fibers` 会镜像到 process quota，使 `Scheduler::spawn` 在超额时返回 `nullptr`。
+
 ### Pass concepts（Issue #1577）
 
 所有 Pass 流水线 concepts（`Pass` / `AnalysisPass` / `PureAnalysisPass` / `DirtyAwarePass` / `IncrementalPass` / `InstructionDirtyAwarePass` / `JITFriendlyPass` / `SoAViewAwarePass` / `LegacyPass` / `RequiresSoAViewPass` / `ShapeStableAwarePass`）集中在：

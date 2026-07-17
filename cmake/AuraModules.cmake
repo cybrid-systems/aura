@@ -6,6 +6,8 @@ set(AURA_CXX_MODULE_CORE
     src/core/concepts.ixx
     src/core/cxx26_invariants.ixx
     src/core/error.ixx
+    # Issue #1579: multi-dimension ResourceQuota (after error for AuraError bridge).
+    src/core/resource_quota.ixx
     src/core/mutation.ixx
     src/core/mutators.ixx
     src/core/ast.ixx

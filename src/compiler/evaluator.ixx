@@ -19,6 +19,7 @@ module;
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+#include "core/resource_quota.hh" // Issue #1579
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
@@ -8988,7 +8989,14 @@ public:
             return 0;
         return static_cast<std::uint64_t>(arena_->stats().used);
     }
-    void set_resource_quota_fibers(std::uint64_t limit) noexcept { resource_quota_fibers_ = limit; }
+    void set_resource_quota_fibers(std::uint64_t limit) noexcept {
+        resource_quota_fibers_ = limit;
+        // Issue #1579: mirror into process ResourceQuota so scheduler spawn enforces.
+        aura::core::resource_quota::process_resource_quota().set_limit(
+            aura::core::resource_quota::Dimension::Fibers, limit);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->resource_quota_max_fibers.store(limit, std::memory_order_relaxed);
+    }
     // Issue #1547: host-set mutation budget for try_acquire / check_mutation_quota.
     void set_resource_quota_mutations(std::uint64_t limit) noexcept {
         resource_quota_mutations_ = limit;
@@ -9086,11 +9094,33 @@ public:
                                          std::to_string(resource_quota_mutations_)};
     }
 
+    // Issue #1579: real fiber quota — uses process ResourceQuota fibers_used
+    // against resource_quota_fibers_ (Evaluator host limit). Also mirrors
+    // limit into process_resource_quota for scheduler spawn enforcement.
     [[nodiscard]] std::optional<aura::core::AuraError> check_fiber_quota() noexcept {
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
         if (m)
             m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
-        return std::nullopt;
+        // Mirror host limit → process quota (scheduler reads process quota).
+        if (resource_quota_fibers_ != 0) {
+            aura::core::resource_quota::process_resource_quota().set_limit(
+                aura::core::resource_quota::Dimension::Fibers, resource_quota_fibers_);
+            if (m)
+                m->resource_quota_max_fibers.store(resource_quota_fibers_,
+                                                   std::memory_order_relaxed);
+        }
+        if (resource_quota_fibers_ == 0)
+            return std::nullopt;
+        const auto used = aura::core::resource_quota::process_resource_quota().used(
+            aura::core::resource_quota::Dimension::Fibers);
+        if (used < resource_quota_fibers_)
+            return std::nullopt;
+        if (m)
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                     std::string("fiber quota exceeded: used ") +
+                                         std::to_string(used) + " >= limit " +
+                                         std::to_string(resource_quota_fibers_)};
     }
 
     [[nodiscard]] std::optional<aura::core::AuraError>
