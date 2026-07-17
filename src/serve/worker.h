@@ -121,20 +121,42 @@ struct StealBudget {
 
 // Issue #706: steal priority for LLM-bottleneck adaptive bias.
 // Higher = prefer stealing this yielded fiber.
+// Issue #1492: starvation-mitigation boost raises priority for fibers
+// that were repeatedly deferred at an inner MutationBoundary so that,
+// once they become outermost-safe, they win the next steal round.
 inline int fiber_steal_priority(Fiber* fiber) {
     if (!fiber || !fiber->is_stealable())
         return -1;
+    int base = 1;
     if (fiber->is_at_mutation_boundary_safe()) {
         const char* cls = fiber->yield_classification();
         if (std::strcmp(cls, "Explicit") == 0 || std::strcmp(cls, "OperationBoundary") == 0)
-            return 3;
-        if (std::strcmp(cls, "MutationBoundary/outermost") == 0)
-            return 2;
-        return 1;
+            base = 3;
+        else if (std::strcmp(cls, "MutationBoundary/outermost") == 0)
+            base = 2;
+        else
+            base = 1;
+    } else if (fiber->last_yield_reason() == YieldReason::MutationBoundary) {
+        base = 0; // not steal-safe (inner) — lowest
     }
-    if (fiber->last_yield_reason() == YieldReason::MutationBoundary)
-        return 0;
-    return 1;
+    if (fiber->has_steal_priority_boost() && base >= 1)
+        base = std::max(base, 3); // boost to LLM-tail tier once safe
+    return base;
+}
+
+// Issue #1492: apply starvation mitigation after deferring a steal of a
+// fiber at an inner MutationBoundary (depth > 0). Boosts fiber steal
+// priority, raises deferred-pressure budget signal, and bumps the
+// dedicated steal_inner_deferred_starvation_mitigated_count metric.
+inline void apply_starvation_mitigation(Fiber* fiber) noexcept {
+    if (!fiber)
+        return;
+    fiber->apply_steal_priority_boost();
+    auto& s = metrics::adaptive_steal_stats();
+    s.deferred_pressure_boosts.fetch_add(1, std::memory_order_relaxed);
+    s.starvation_priority_boosts.fetch_add(1, std::memory_order_relaxed);
+    s.steal_priority_boost_triggered.fetch_add(1, std::memory_order_relaxed);
+    s.steal_inner_deferred_starvation_mitigated_count.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ── WorkerThread — per-OS-thread fiber runner ──────────

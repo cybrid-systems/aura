@@ -348,6 +348,12 @@ struct AdaptiveStealStats {
     //   which tracks inner-defer boosts.
     std::atomic<std::uint64_t> steal_priority_boost_triggered{0};
     std::atomic<std::uint64_t> starvation_mitigated_count{0};
+    // Issue #1492: inner MutationBoundary (depth>0) steal defer +
+    // starvation mitigation applications (apply_starvation_mitigation).
+    // Distinct from steal_deferred_inner_boundary (raw defer count) —
+    // this counts times mitigation actually ran (priority boost +
+    // pressure) for fairness under nested long mutations.
+    std::atomic<std::uint64_t> steal_inner_deferred_starvation_mitigated_count{0};
 };
 
 inline AdaptiveStealStats& adaptive_steal_stats() {

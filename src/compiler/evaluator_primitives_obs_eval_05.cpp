@@ -1220,12 +1220,15 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"steal-priority-boost-triggered",
                  make_int(load(s.steal_priority_boost_triggered))},
                 {"starvation-mitigated-count", make_int(load(s.starvation_mitigated_count))},
+                // Issue #1492: inner-defer starvation mitigation applications.
+                {"steal-inner-deferred-starvation-mitigated-count",
+                 make_int(load(s.steal_inner_deferred_starvation_mitigated_count))},
                 {"ring-steal-attempts", make_int(load(s.ring_steal_attempts))},
                 {"ring-steal-successes", make_int(load(s.ring_steal_successes))},
                 {"steal-deferred-inner-boundary", make_int(load(s.steal_deferred_inner_boundary))},
                 {"global-deferred-mutation-total",
                  make_int(load(s.global_deferred_mutation_total))},
-                {"schema", make_int(1445)},
+                {"schema", make_int(1492)},
             };
             return build_hash(kv);
         });
