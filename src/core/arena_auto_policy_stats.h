@@ -54,6 +54,10 @@ inline void record_env_reval_success() noexcept {
 inline thread_local int g_render_hotpath_depth = 0;
 inline std::atomic<std::uint64_t> compact_soft_gated_render_total{0};
 inline std::atomic<std::uint64_t> render_hotpath_enter_total{0};
+// Issue #1559: dirty short-circuit skips + engine present/draw totals (process-wide).
+inline std::atomic<std::uint64_t> render_hotpath_skip_total{0};
+inline std::atomic<std::uint64_t> render_present_total{0};
+inline std::atomic<std::uint64_t> render_draw_batch_total{0};
 // Deopt throttle: last applied render deopt steady-clock ns (monotonic).
 inline std::atomic<std::uint64_t> last_render_deopt_ns{0};
 inline std::atomic<std::uint64_t> render_jit_deopt_applied_total{0};

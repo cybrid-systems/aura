@@ -1,22 +1,24 @@
-// render_pass.ixx — Issues #1179/#1186/#1559 Phase 1: DirtyAware render short-circuit scaffold.
+// render_pass.hh — Issues #1179/#1186/#1559: DirtyAware render short-circuit (header form).
+// Keep in sync with render_pass.ixx for module consumers.
 
-module;
+#ifndef AURA_RENDERER_RENDER_PASS_HH
+#define AURA_RENDERER_RENDER_PASS_HH
 
-export module aura.renderer.render_pass;
+#include <algorithm>
+#include <cstdint>
 
-import std;
-
-export namespace aura::renderer {
+namespace aura::renderer {
 
 inline constexpr int kRenderPassPhase = 1;
 
 struct DirtyRegion {
     bool clean = true;
     std::uint32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    // True after clear() until first mark_dirty / mark_all_dirty (disambiguates AABB seed).
     bool empty_aabb = true;
 
     [[nodiscard]] bool is_clean() const noexcept { return clean; }
-    // Issue #1559: AC alias used by present_batch short-circuit.
+    // Issue #1559: AC alias — short-circuit when !is_dirty().
     [[nodiscard]] bool is_dirty() const noexcept { return !clean; }
 
     void mark_dirty(std::uint32_t x, std::uint32_t y) noexcept {
@@ -65,7 +67,7 @@ struct RenderHotPathStats {
 inline RenderHotPathStats g_render_hot_path_stats{};
 inline DirtyRegion g_framebuffer_dirty{};
 
-// Phase 1 present_batch gate: short-circuit when dirty region is clean.
+// Phase 1 present gate: short-circuit when dirty region is clean.
 inline bool present_batch_if_dirty() {
     ++g_render_hot_path_stats.present_batch_total;
     if (g_framebuffer_dirty.is_clean()) {
@@ -76,3 +78,5 @@ inline bool present_batch_if_dirty() {
 }
 
 } // namespace aura::renderer
+
+#endif // AURA_RENDERER_RENDER_PASS_HH

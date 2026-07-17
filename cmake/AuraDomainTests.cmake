@@ -229,6 +229,11 @@ aura_add_issue_test(test_terminal_input)
 aura_issue_test_link_llvm_jit(test_terminal_input)
 add_dependencies(all_test_issue_targets test_terminal_input)
 
+# Issue #1559: present_batch / draw_batch engine + dirty short-circuit
+aura_add_issue_test(test_render_primitives)
+# Pure C++ engine test — no CompilerService / LLVM required.
+add_dependencies(all_test_issue_targets test_render_primitives)
+
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)

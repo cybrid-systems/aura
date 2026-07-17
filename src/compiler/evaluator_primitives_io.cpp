@@ -21,6 +21,7 @@ module;
 #include "git_ctx.h"
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
+#include "renderer/render_primitives.hh"
 #include "terminal_buffer_registry.hh"
 #include "hash_meta.h"
 
@@ -761,6 +762,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             buf->w = static_cast<std::int32_t>(w);
             buf->h = static_cast<std::int32_t>(h);
             buf->cells.assign(static_cast<std::size_t>(w * h), TermCell::space_palette());
+            // #1559: first present after create is full-frame dirty.
+            buf->dirty.mark_all_dirty(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
             std::int64_t id = -1;
             {
                 // Exclusive registry: mutate vector / freelist.
@@ -882,6 +885,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             cell.bg_r = bg;
             cell.mode = 0; // palette
             b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+            b.dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
             return make_bool(true);
@@ -923,6 +927,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+            b.dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_set_cell_rgb_total.fetch_add(1, std::memory_order_relaxed);
@@ -976,6 +981,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             b.cells[static_cast<std::size_t>(y * b.w + x)] = cell;
+            b.dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_set_cell_total.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_set_cell_unicode_total.fetch_add(1, std::memory_order_relaxed);
@@ -1033,48 +1039,55 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return aura::renderer::build_terminal_frame_ansi(out, b.w, b.h, b.cells.data());
     };
 
+    // Issue #1559: terminal-present-batch routes through render_primitives::present_batch
+    // (dirty short-circuit + hotpath + zero-copy + ANSI).
     add_render(
         "terminal-present-batch",
-        [&ev, build_present_frame](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #1314/#1316/#1349: (terminal-present-batch buf-id [fd]) → bytes-written
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #1314/#1316/#1349/#1559: (terminal-present-batch buf-id [fd]) → bytes-written
             if (a.empty() || !is_int(a[0]))
                 return make_int(-1);
             auto id = as_int(a[0]);
             int fd = 1; // stdout
             if (a.size() >= 2 && is_int(a[1]))
                 fd = static_cast<int>(as_int(a[1]));
-            ev.enter_render_hotpath();
-            std::string out;
-            std::uint64_t sgr_emits = 0;
+
+            std::int64_t n = -1;
             std::int32_t rows = 0;
+            std::uint64_t skips_before = aura::renderer::render_engine_counters().present_skips;
             {
                 std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
-                    !s_term_bufs[static_cast<std::size_t>(id)]) {
-                    ev.exit_render_hotpath();
+                    !s_term_bufs[static_cast<std::size_t>(id)])
                     return make_int(-1);
-                }
                 auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
-                std::shared_lock<std::shared_mutex> buf(b.rwlock);
+                std::unique_lock<std::shared_mutex> buf(b.rwlock); // exclusive: clear dirty
                 rows = b.h;
-                sgr_emits = build_present_frame(b, out);
+                aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
+                n = aura::renderer::present_batch(fb, b.dirty, fd);
             }
-            auto n = ::write(fd, out.data(), out.size());
+            const bool skipped =
+                aura::renderer::render_engine_counters().present_skips > skips_before;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_present_batch_total.fetch_add(1, std::memory_order_relaxed);
-                m->terminal_present_bytes_total.fetch_add(n > 0 ? static_cast<std::uint64_t>(n) : 0,
-                                                          std::memory_order_relaxed);
-                m->terminal_present_sgr_emits_total.fetch_add(sgr_emits, std::memory_order_relaxed);
-                m->terminal_present_csi_h_rows_total.fetch_add(
-                    static_cast<std::uint64_t>(rows > 0 ? rows : 0), std::memory_order_relaxed);
-                m->terminal_present_sync_frames_total.fetch_add(1, std::memory_order_relaxed);
-                m->render_hotpath_samples.fetch_add(1, std::memory_order_relaxed);
-                m->render_jit_aot_prefer_hits.fetch_add(1, std::memory_order_relaxed);
+                if (n > 0)
+                    m->terminal_present_bytes_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                              std::memory_order_relaxed);
+                if (!skipped) {
+                    m->terminal_present_csi_h_rows_total.fetch_add(
+                        static_cast<std::uint64_t>(rows > 0 ? rows : 0), std::memory_order_relaxed);
+                    m->terminal_present_sync_frames_total.fetch_add(1, std::memory_order_relaxed);
+                    m->render_hotpath_samples.fetch_add(1, std::memory_order_relaxed);
+                    m->render_jit_aot_prefer_hits.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    m->render_hotpath_skip_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                m->terminal_present_sgr_emits_total.store(
+                    aura::renderer::render_engine_counters().sgr_emits, std::memory_order_relaxed);
             }
-            ev.exit_render_hotpath();
-            return make_int(n > 0 ? static_cast<std::int64_t>(n) : 0);
+            return make_int(n);
         },
-        RENDER_PRIMITIVE_META(1, "Present terminal buffer as ANSI SGR/CSI frame (#1349).",
+        RENDER_PRIMITIVE_META(1, "Present terminal buffer as ANSI SGR/CSI frame (#1349/#1559).",
                               "(int [int]) -> int"));
 
     add_render(
@@ -1113,6 +1126,67 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         RENDER_PRIMITIVE_META(1, "Return ANSI frame string for buffer (no write) (#1349).",
                               "(int) -> string"));
+
+    // Issue #1559: (render-draw-batch buf-id x y ch [fg [bg]]) → cells-written
+    // Low-level draw primitive (RENDER_PRIMITIVE_META); marks dirty for present short-circuit.
+    add_render(
+        "render-draw-batch",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
+                return make_int(-1);
+            auto id = as_int(a[0]);
+            auto x = as_int(a[1]);
+            auto y = as_int(a[2]);
+            auto ch = static_cast<std::uint32_t>(as_int(a[3]));
+            if (ch > 0x10FFFFu)
+                ch = static_cast<std::uint32_t>(' ');
+            TermCell cell;
+            cell.ch = ch;
+            cell.fg_r = a.size() >= 5 && is_int(a[4])
+                            ? static_cast<std::uint8_t>(as_int(a[4]) & 0xFF)
+                            : static_cast<std::uint8_t>(7);
+            cell.bg_r = a.size() >= 6 && is_int(a[5])
+                            ? static_cast<std::uint8_t>(as_int(a[5]) & 0xFF)
+                            : static_cast<std::uint8_t>(0);
+            cell.mode = 0;
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_int(-1);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
+            aura::renderer::DrawOp op{static_cast<std::uint32_t>(x < 0 ? 0 : x),
+                                      static_cast<std::uint32_t>(y < 0 ? 0 : y), cell};
+            if (x < 0 || y < 0)
+                return make_int(0);
+            auto n = aura::renderer::draw_batch(fb, b.dirty,
+                                                std::span<const aura::renderer::DrawOp>(&op, 1));
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
+                m->terminal_set_cell_total.fetch_add(static_cast<std::uint64_t>(n > 0 ? n : 0),
+                                                     std::memory_order_relaxed);
+            }
+            return make_int(n);
+        },
+        RENDER_PRIMITIVE_META(4, "Draw one cell into terminal buffer + mark dirty (#1559).",
+                              "(int int int int [int [int]]) -> int"));
+
+    // Issue #1559: (render-present-batch buf-id [fd]) → bytes (alias of terminal-present-batch)
+    add_render(
+        "render-present-batch",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            auto r = ev.primitives().lookup("terminal-present-batch");
+            if (!r)
+                return make_int(-1);
+            return (*r)(a);
+        },
+        RENDER_PRIMITIVE_META(
+            1, "Engine present_batch entry (#1559); alias of terminal-present-batch.",
+            "(int [int]) -> int"));
+
+    // Mark engine registrar as wired (AC3).
+    aura::renderer::render_engine_counters().registered = 1;
 
     // ── Issue #1316: render JIT stability probe + stats ──
     add_render(
