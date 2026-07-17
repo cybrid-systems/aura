@@ -5154,6 +5154,10 @@ aura_issue_test_link_llvm_jit(test_self_heal_policy_engine)
 # Issue #1583: recovery latency stall budget + longrunning-recovery-stats.
 aura_add_issue_test(test_longrunning_recovery_latency)
 aura_issue_test_link_llvm_jit(test_longrunning_recovery_latency)
+# Issue #1584: Fiber::join structured multi-fiber coordination.
+aura_add_issue_test(test_fiber_join)
+aura_issue_test_link_llvm_jit(test_fiber_join)
+
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)

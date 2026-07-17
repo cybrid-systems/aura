@@ -8,6 +8,8 @@
 #include <functional>
 #include <memory>
 #include <atomic>
+#include <optional>
+#include <span>
 
 // Issue #438: C-linkage forward declaration of the
 // per-thread mutation boundary depth probe. Defined
@@ -58,6 +60,19 @@ enum class FiberState : uint8_t {
     Running, // currently executing on a worker
     Waiting, // waiting for eventfd
     Done,    // completed
+};
+
+// Issue #1584: structured Fiber::join result.
+enum class JoinStatus : uint8_t {
+    Ok = 0,        // target(s) completed
+    Timeout = 1,   // deadline elapsed before Done
+    Cancelled = 2, // joiner cancel requested
+    Invalid = 3,   // null / self-join / missing target
+};
+
+struct JoinResult {
+    JoinStatus status = JoinStatus::Ok;
+    std::uint64_t wait_us = 0; // wall time spent waiting
 };
 
 // ── Fiber — stackful coroutine with ucontext ───────────
@@ -329,6 +344,35 @@ public:
     int eventfd() const { return eventfd_; }
     bool is_done() const { return state_.load(std::memory_order_acquire) == FiberState::Done; }
 
+    // ── Issue #1584: structured join ───────────────────
+    // Block the current fiber (or host thread) until `target`
+    // reaches Done. Uses Scheduler joiner_map + eventfd when
+    // running under the fiber scheduler; host-thread join
+    // polls with short sleeps.
+    //
+    // timeout_ms: nullopt = wait indefinitely; 0 = poll once.
+    // Cancel: if the *joiner* has request_cancel(), returns Cancelled.
+    [[nodiscard]] static JoinResult join(Fiber* target,
+                                         std::optional<std::uint64_t> timeout_ms = std::nullopt);
+    // Wait until *all* targets are Done (or first timeout/cancel).
+    [[nodiscard]] static JoinResult join(std::span<Fiber* const> targets,
+                                         std::optional<std::uint64_t> timeout_ms = std::nullopt);
+
+    // Cooperative cancellation. Target fibers may poll this
+    // flag and exit early; joiners observe Cancelled when their
+    // own cancel is set during wait.
+    void request_cancel() noexcept { cancel_requested_.store(true, std::memory_order_release); }
+    [[nodiscard]] bool is_cancel_requested() const noexcept {
+        return cancel_requested_.load(std::memory_order_acquire);
+    }
+
+    // Process-wide join metrics (#1584).
+    [[nodiscard]] static std::uint64_t join_total() noexcept;
+    [[nodiscard]] static std::uint64_t join_timeout_total() noexcept;
+    [[nodiscard]] static std::uint64_t join_cancel_total() noexcept;
+    [[nodiscard]] static std::uint64_t join_wait_us_total() noexcept;
+    [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
+
     // Issue #213 Cycle 3: per-fiber mutation stack. The
     // Evaluator's enter/exit_mutation_boundary reads/writes
     // this stack (via active_mutation_stack()) instead of a
@@ -441,6 +485,15 @@ private:
     // Issue #1580: captured at MutationBoundary yield for post-resume refresh.
     std::uint64_t resume_env_hint_ = 0;
     std::uint64_t resume_bridge_epoch_hint_ = 0;
+    // Issue #1584: cooperative cancel flag.
+    std::atomic<bool> cancel_requested_{false};
+
+    // Issue #1584 join metrics (process-wide).
+    static std::atomic<std::uint64_t> join_total_;
+    static std::atomic<std::uint64_t> join_timeout_total_;
+    static std::atomic<std::uint64_t> join_cancel_total_;
+    static std::atomic<std::uint64_t> join_wait_us_total_;
+    static std::atomic<std::uint64_t> join_wait_us_max_;
 };
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
