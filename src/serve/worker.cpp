@@ -212,6 +212,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 }
             }
             stolen->bump_steal_success();
+            // Issue #1492: one-shot boost consumed on successful steal.
+            stolen->clear_steal_priority_boost();
             // Issue #783: refined split. Successful
             // steal at a MutationBoundary point with
             // depth==0 == "outermost safe steal" —
@@ -231,43 +233,38 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             return true;
         }
 
+        // Issue #1492 / #1254 / #783: defer steal when victim is at a
+        // MutationBoundary that is not outermost-safe (depth > 0 inner
+        // Guard, or other non-safe MB yield). Inner path always runs
+        // apply_starvation_mitigation so nested long mutations do not
+        // starve other agent fibers.
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
-            // Issue #783 + #1254: refine the deferral into
-            // "inner" (depth>0 — actual safety hazard,
-            // would risk deadlock / hygiene drift).
-            // Outermost (depth==0) defers are
-            // separately tracked via #754's bias
-            // feature (still deferred). Non-safe
-            // MutationBoundary defers with depth>0 are
-            // dedicated inner-boundary steals.
-            // Issue #783 + #1254: inner (depth>0) is the actual safety hazard.
-            if (stolen->is_at_inner_mutation_boundary()) {
-                stolen->bump_steal_inner_mutation_boundary_deferred();
-                metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(
-                    1, std::memory_order_relaxed);
-            } else {
-                stolen->bump_steal_inner_mutation_boundary_deferred();
-            }
             call_steal_deferred_violation();
             metrics::adaptive_steal_stats().global_deferred_mutation_total.fetch_add(
                 1, std::memory_order_relaxed);
             metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
                                                                          std::memory_order_relaxed);
-            // Issue #1270: starvation mitigation — after repeated
-            // MutationBoundary defers, boost deferred pressure so the
-            // adaptive budget prefers ring-neighbor / higher budget
-            // for the next steal round (reduces agent-fiber starvation).
-            const auto defers = stolen->steal_deferred_mutation_boundary_count();
-            if (defers > 3) {
-                metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(
+            if (stolen->is_at_inner_mutation_boundary()) {
+                // AC1: bump_deferred_inner + apply_starvation_mitigation + defer
+                stolen->bump_steal_inner_mutation_boundary_deferred();
+                metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(
                     1, std::memory_order_relaxed);
-                metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(
-                    1, std::memory_order_relaxed);
-                // Issue #1445 AC2: dedicated counter for telemetry dashboard.
-                metrics::adaptive_steal_stats().steal_priority_boost_triggered.fetch_add(
-                    1, std::memory_order_relaxed);
+                apply_starvation_mitigation(stolen);
+            } else {
+                // Non-inner but still not safe (edge): threshold boost
+                // after repeated defers (#1270 / #1445).
+                const auto defers = stolen->steal_deferred_mutation_boundary_count();
+                if (defers > 3) {
+                    metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(
+                        1, std::memory_order_relaxed);
+                    metrics::adaptive_steal_stats().steal_priority_boost_triggered.fetch_add(
+                        1, std::memory_order_relaxed);
+                    stolen->apply_steal_priority_boost();
+                }
             }
         }
 

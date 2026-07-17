@@ -5109,6 +5109,9 @@ aura_issue_test_link_llvm_jit(test_issue_1490)
 # Issue #1491: apply_closure + JIT dual-epoch force-check closed-loop.
 aura_add_issue_test(test_issue_1491)
 aura_issue_test_link_llvm_jit(test_issue_1491)
+# Issue #1492: nested MutationBoundary steal defer + starvation mitigation.
+aura_add_issue_test(test_issue_1492)
+aura_issue_test_link_llvm_jit(test_issue_1492)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)

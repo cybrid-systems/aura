@@ -335,7 +335,6 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
 // ── has_waiting_fibers — check epoll wait map ─────────
 
 void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us) {
-    (void)fiber_id;
     (void)duration_us;
     // Issue #1445 AC6: bump starvation_mitigated_count so observability
     // surfaces the long-holder event. Default impl is telemetry-only;
@@ -350,6 +349,20 @@ void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t dura
     // is handled by WorkerThread; this hook just signals.
     metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(1,
                                                                        std::memory_order_relaxed);
+    // Issue #1492: long-mutation held often coincides with nested
+    // MutationBoundary (inner Guard). Link the same starvation-
+    // mitigation signal used by the steal-defer path so agents can
+    // correlate long-holder events with inner-defer fairness.
+    metrics::adaptive_steal_stats().steal_inner_deferred_starvation_mitigated_count.fetch_add(
+        1, std::memory_order_relaxed);
+    metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    // Boost the long-holding fiber if we can resolve it (helps it
+    // finish outermost and release the nested guard sooner).
+    if (fiber_id != 0) {
+        if (Fiber* f = fiber_by_id(fiber_id))
+            f->apply_steal_priority_boost();
+    }
 }
 
 bool Scheduler::has_waiting_fibers() const {

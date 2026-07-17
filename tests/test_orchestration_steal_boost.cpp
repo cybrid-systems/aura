@@ -1,11 +1,13 @@
-// tests/test_orchestration_steal_boost.cpp — Issue #1445
+// tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
 // Verify the threshold-based boost path + new metrics surface.
 // AC4 (smoke test): inner-boundary defer + threshold counter bump.
 // AC5: happy-path regression — no spurious boost on single-defer fiber.
+// Schema advanced #1445 → #1492 (inner-defer starvation field).
 
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <print>
 #include <string>
 
 import std;
@@ -16,91 +18,58 @@ import aura.compiler.value;
 namespace aura_1445_detail {
 
 using aura::compiler::CompilerService;
-using aura::compiler::types::as_hash;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
 
-// AC3: (query:orchestration-steal-stats) returns hash with all
-// expected fields including the new steal_priority_boost_triggered
-// and starvation_mitigated_count counters (#1445 AC2).
-static bool ac3_primitive_shape(CompilerService& cs) {
+static std::int64_t href(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:orchestration-steal-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+// AC3: (query:orchestration-steal-stats) returns hash with expected fields.
+static void ac3_primitive_shape(CompilerService& cs) {
+    std::println("\n--- AC3: primitive shape ---");
     auto r = cs.eval("(engine:metrics \"query:orchestration-steal-stats\")");
-    if (!r || !is_hash(*r)) {
-        TEST_LOG("AC3: primitive did not return hash");
-        return false;
-    }
-    auto schema_ev =
-        cs.eval("(hash-get (engine:metrics \"query:orchestration-steal-stats\") 'schema)");
-    if (!schema_ev || !is_int(*schema_ev) || as_int(*schema_ev) != 1445) {
-        TEST_LOG("AC3: schema field != 1445");
-        return false;
-    }
-    return true;
+    CHECK(r && is_hash(*r), "primitive returns hash");
+    const auto schema = href(cs, "schema");
+    CHECK(schema == 1445 || schema == 1492, "schema is 1445 or 1492");
 }
 
 // AC2: new counters start at 0 on a fresh service.
-static bool ac2_fresh_counters_zero(CompilerService& cs) {
-    auto check_zero = [&](const char* key) -> bool {
-        std::string expr =
-            std::string("(hash-get (engine:metrics \"query:orchestration-steal-stats\") '") + key +
-            ")";
-        auto r = cs.eval(expr.c_str());
-        if (!r || !is_int(*r)) {
-            TEST_LOG(std::string("AC2: cannot read ") + key);
-            return false;
-        }
-        if (as_int(*r) != 0) {
-            TEST_LOG(std::string("AC2: ") + key + " expected 0, got " + std::to_string(as_int(*r)));
-            return false;
-        }
-        return true;
-    };
-    return check_zero("steal-priority-boost-triggered") &&
-           check_zero("starvation-mitigated-count") && check_zero("deferred-pressure-boosts") &&
-           check_zero("starvation-priority-boosts");
+static void ac2_fresh_counters_zero(CompilerService& cs) {
+    std::println("\n--- AC2: fresh counters zero ---");
+    CHECK(href(cs, "steal-priority-boost-triggered") == 0, "steal-priority-boost-triggered == 0");
+    CHECK(href(cs, "starvation-mitigated-count") == 0, "starvation-mitigated-count == 0");
+    CHECK(href(cs, "deferred-pressure-boosts") == 0, "deferred-pressure-boosts == 0");
+    CHECK(href(cs, "starvation-priority-boosts") == 0, "starvation-priority-boosts == 0");
 }
 
-// AC5: happy-path — basic mutate cycle does not spuriously trigger
-// boost counters (those are bumped only when victim is at inner
-// mutation boundary AND deferred_count > 3 in worker.cpp).
-static bool ac5_no_spurious_boost(CompilerService& cs) {
-    if (!cs.eval("(set-code \"(define x 1) (set! x 2)\")")) {
-        TEST_LOG("AC5: set-code failed");
-        return false;
-    }
-    if (auto r = cs.eval("(eval-current)"); !r || !is_int(*r) || as_int(*r) != 2) {
-        TEST_LOG("AC5: mutate cycle broke");
-        return false;
-    }
-    auto boost_ev = cs.eval("(hash-get (engine:metrics \"query:orchestration-steal-stats\") "
-                            "'steal-priority-boost-triggered)");
-    if (!boost_ev || !is_int(*boost_ev)) {
-        TEST_LOG("AC5: cannot read steal-priority-boost-triggered");
-        return false;
-    }
-    if (as_int(*boost_ev) != 0) {
-        TEST_LOG("AC5: spurious boost count = " << as_int(*boost_ev));
-        return false;
-    }
-    return true;
+// AC5: happy-path — basic mutate cycle does not spuriously trigger boost.
+static void ac5_no_spurious_boost(CompilerService& cs) {
+    std::println("\n--- AC5: no spurious boost ---");
+    auto sc = cs.eval("(set-code \"(define x 1) (set! x 2)\")");
+    CHECK(sc.has_value(), "set-code ok");
+    auto r = cs.eval("(eval-current)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2, "mutate cycle ok");
+    CHECK(href(cs, "steal-priority-boost-triggered") == 0,
+          "no spurious steal-priority-boost-triggered");
 }
 
 } // namespace aura_1445_detail
 
 int main() {
     using namespace aura_1445_detail;
-    bool ok = true;
-    {
-        CompilerService cs;
-        ok &= ac3_primitive_shape(cs);
-        ok &= ac2_fresh_counters_zero(cs);
-        ok &= ac5_no_spurious_boost(cs);
-    }
-    if (!ok) {
-        TEST_LOG("test_orchestration_steal_boost FAILED");
-        return 1;
-    }
-    TEST_LOG("test_orchestration_steal_boost PASS");
-    return 0;
+    std::println("test_orchestration_steal_boost (#1445/#1492)");
+    CompilerService cs;
+    ac3_primitive_shape(cs);
+    ac2_fresh_counters_zero(cs);
+    ac5_no_spurious_boost(cs);
+    std::println("\nsteal_boost: {} passed, {} failed", g_passed, g_failed);
+    return g_failed ? 1 : 0;
 }

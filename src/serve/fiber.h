@@ -229,6 +229,18 @@ public:
     [[nodiscard]] std::uint64_t steal_inner_mutation_boundary_deferred_count() const noexcept {
         return steal_inner_mutation_boundary_deferred_count_.load(std::memory_order_relaxed);
     }
+    // Issue #1492: temporary steal-priority boost after starvation
+    // mitigation (inner MutationBoundary defer path). Cleared on
+    // successful steal (outermost-safe) so boost is one-shot.
+    void apply_steal_priority_boost() noexcept {
+        steal_priority_boost_.store(1, std::memory_order_release);
+    }
+    [[nodiscard]] bool has_steal_priority_boost() const noexcept {
+        return steal_priority_boost_.load(std::memory_order_acquire) != 0;
+    }
+    void clear_steal_priority_boost() noexcept {
+        steal_priority_boost_.store(0, std::memory_order_release);
+    }
     [[nodiscard]] std::uint64_t cross_fiber_mutation_safe_steal_count() const noexcept {
         return cross_fiber_mutation_safe_steal_count_.load(std::memory_order_relaxed);
     }
@@ -377,6 +389,8 @@ private:
     std::atomic<std::uint64_t> steal_inner_mutation_boundary_deferred_count_{0};
     std::atomic<std::uint64_t> cross_fiber_mutation_safe_steal_count_{0};
     std::atomic<std::uint64_t> gc_pause_attributed_to_mutation_count_{0};
+    // Issue #1492: 1 when apply_starvation_mitigation raised steal priority.
+    std::atomic<std::uint32_t> steal_priority_boost_{0};
     int affinity_ = -1; // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
     void* stack_ = nullptr;
