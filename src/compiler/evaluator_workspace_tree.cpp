@@ -7,6 +7,7 @@ module;
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
 #include "core/workspace_isolation.hh"
+#include "core/self_healing_hooks.h"
 #include "security_capabilities.h"
 #include <cstdio>
 
@@ -310,6 +311,12 @@ bool Evaluator::restore_panic_checkpoint() {
         bump_longrunning_heal_triggers();
         bump_concurrent_safety_recovery_success();
         bump_linear_postmutate_post_rollback_revalidate();
+        // Issue #1582: recoverable panic restore feeds the self-heal engine.
+        if (aura::core::self_heal::run_self_heal_engine(
+                {.kind = "recoverable-panic",
+                 .message = "panic-restore",
+                 .code = static_cast<std::uint64_t>(panic_safe_cells_size_)}))
+            bump_runtime_self_heal();
     }
     if (ok) {
         // Issue #242 / #1360: truncate append-only arenas back to

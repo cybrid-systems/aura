@@ -5148,6 +5148,9 @@ aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_refresh)
 # Issue #1581: scheduler GC defer + pending PanicCheckpoint steal/GC stress.
 aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
 aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
+# Issue #1582: policy-driven SelfHealing engine + graceful drain + quota/panic.
+aura_add_issue_test(test_self_heal_policy_engine)
+aura_issue_test_link_llvm_jit(test_self_heal_policy_engine)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
