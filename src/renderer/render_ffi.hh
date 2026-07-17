@@ -17,7 +17,7 @@
 
 namespace aura::renderer::ffi {
 
-inline constexpr int kRenderFfiPhase = 2; // #1354: real registry
+inline constexpr int kRenderFfiPhase = 3; // #1560: batch hot-path dispatch
 
 inline constexpr std::string_view kBindDraw = "c-render-draw";
 inline constexpr std::string_view kBindPresentBatch = "c-present-batch";

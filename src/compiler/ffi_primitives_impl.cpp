@@ -10,17 +10,20 @@
 module;
 
 #include <dlfcn.h>
+#include "compiler/ffi_hot_path.hh"
 #include "renderer/render_ffi.hh"
+#include "stdlib/render_ffi.hh"
 
 module aura.compiler.ffi_primitives;
 
 import std;
 import aura.compiler.value;
 
-// (Issue #131 / #1354).
+// (Issue #131 / #1354 / #1560).
 //
 // The C FFI state is per-FFIRuntime. Issue #1354 wraps c-* with
 // FfiRenderHotpathGuard so render-loop FFI participates in deopt / arena soft-gate.
+// Issue #1560: real batch dispatch via ffi_hot_path + stdlib/render_ffi.
 
 namespace aura::compiler {
 using EvalValue = types::EvalValue;
@@ -324,32 +327,63 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         return make_bool(rc == 0);
     });
 
-    // Issue #1354: (c-render-call "binding-name") → #t/#f
-    // Records a hot-path dispatch (and optionally invokes nullary C functions later).
-    // Phase 1: validates resolve + increments dispatch metrics (call path for Agent backends).
+    // Issue #1354/#1560: (c-render-call "binding-name" [arg0 ...]) → #t/#f
+    // Real batch hot-path dispatch (ffi_hot_path + registry). MetricsOnly ABI still
+    // returns #t when binding exists (Agent backends that only need resolve/metrics).
     add("c-render-call", [sh](std::span<const EvalValue> a) -> EvalValue {
-        FfiRenderHotpathGuard hp;
         if (a.empty() || !types::is_string(a[0]) || !sh)
             return make_bool(false);
         const auto& name = (*sh)[types::as_string_idx(a[0])];
         auto& reg = render_ffi_registry();
-        void* fn = reg.resolve_binding(name);
-        // Always record dispatch attempt for registered names (even unresolved).
         {
             std::lock_guard<std::mutex> lock(reg.registry_mtx);
             if (reg.bindings.find(name) == reg.bindings.end())
                 return make_bool(false);
         }
-        reg.record_dispatch(name, 0);
-        // Optional nullary call when resolved (best-effort; void (*)() only).
-        if (fn) {
-            using Nullary = void (*)();
-            // Do not actually invoke arbitrary symbols in Phase 1 tests (safety).
-            // Call path is metrics + resolve verification only.
-            (void)static_cast<Nullary>(nullptr);
-            (void)fn;
+        // Collect optional int args for BatchArgs ABI.
+        std::vector<std::int64_t> args;
+        args.reserve(a.size() > 1 ? a.size() - 1 : 0);
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            if (types::is_int(a[i]))
+                args.push_back(types::as_int(a[i]));
         }
+        // dispatch_batch_c_render enters hotpath + records dispatch.
+        (void)aura::stdlib::render_ffi::dispatch_batch_c_render(name, args);
         return make_bool(true);
+    });
+
+    // Issue #1560: fixed-name render backends via hot path.
+    // (c-render-draw [arg...]) → int (batch result or -1 if unbound)
+    add("c-render-draw", [](std::span<const EvalValue> a) -> EvalValue {
+        std::vector<std::int64_t> args;
+        args.reserve(a.size());
+        for (const auto& v : a) {
+            if (types::is_int(v))
+                args.push_back(types::as_int(v));
+        }
+        return make_int(aura::stdlib::render_ffi::dispatch_c_render_draw(args));
+    });
+
+    // (c-present-batch [arg...]) → int
+    add("c-present-batch", [](std::span<const EvalValue> a) -> EvalValue {
+        std::vector<std::int64_t> args;
+        args.reserve(a.size());
+        for (const auto& v : a) {
+            if (types::is_int(v))
+                args.push_back(types::as_int(v));
+        }
+        return make_int(aura::stdlib::render_ffi::dispatch_c_present_batch(args));
+    });
+
+    // (c-ansi-emit [arg...]) → int
+    add("c-ansi-emit", [](std::span<const EvalValue> a) -> EvalValue {
+        std::vector<std::int64_t> args;
+        args.reserve(a.size());
+        for (const auto& v : a) {
+            if (types::is_int(v))
+                args.push_back(types::as_int(v));
+        }
+        return make_int(aura::stdlib::render_ffi::dispatch_c_ansi_emit(args));
     });
 
     // Issue #1354: (query:render-ffi-count) → registered binding count (int).

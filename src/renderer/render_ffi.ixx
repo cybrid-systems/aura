@@ -9,7 +9,7 @@ import std;
 
 export namespace aura::renderer::ffi {
 
-inline constexpr int kRenderFfiPhase = 2;
+inline constexpr int kRenderFfiPhase = 3; // #1560
 
 inline constexpr std::string_view kBindDraw = "c-render-draw";
 inline constexpr std::string_view kBindPresentBatch = "c-present-batch";
@@ -17,8 +17,9 @@ inline constexpr std::string_view kBindAnsiEmit = "c-ansi-emit";
 
 // Lightweight module-visible counters (full registry is in render_ffi.hh).
 struct RenderFfiModuleStats {
-    std::uint64_t phase = 2;
+    std::uint64_t phase = 3;
     std::uint64_t scaffold = 1;
+    std::uint64_t batch_dispatch = 1; // #1560
 };
 
 inline RenderFfiModuleStats g_render_ffi_module_stats{};

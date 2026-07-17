@@ -19,6 +19,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "git_ctx.h"
+#include "compiler/ffi_hot_path.hh"
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
 #include "renderer/render_primitives.hh"
@@ -1223,11 +1224,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return types::make_string(sidx);
         });
 
-    // ── Issue #1354: query:render-ffi-available ──
-    // Agent discovery: registered bindings + hot-path dispatch stats.
+    // ── Issue #1354/#1560: query:render-ffi-available ──
+    // Agent discovery: registered bindings + hot-path hit/miss dispatch stats.
     ObservabilityPrims::register_stats_impl(
         "query:render-ffi-available", [&ev](std::span<const EvalValue>) -> EvalValue {
             auto& reg = aura::renderer::ffi::render_ffi_registry();
+            const auto hot = aura::compiler::ffi_hot::snapshot_ffi_hot_path();
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             if (m) {
                 m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
@@ -1242,14 +1244,15 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->render_ffi_bind_success.store(reg.bind_success.load(std::memory_order_relaxed),
                                                  std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(32) /* #1141 */;
+            auto* ht = FlatHashTable::create(48) /* #1141 */;
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
                 (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
                                                                    make_string, make_int);
             };
-            insert_kv("schema", 1354);
+            // schema 1560 supersedes 1354 (same query name; fields are additive).
+            insert_kv("schema", 1560);
             insert_kv("active", 1);
             insert_kv("phase", static_cast<std::int64_t>(aura::renderer::ffi::kRenderFfiPhase));
             insert_kv("registered",
@@ -1265,6 +1268,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ffi-hotpath-enter",
                       static_cast<std::int64_t>(
                           reg.ffi_hotpath_enter_total.load(std::memory_order_relaxed)));
+            // #1560 batch hot-path counters
+            insert_kv("hot-path-hits", static_cast<std::int64_t>(hot.hit_total));
+            insert_kv("hot-path-misses", static_cast<std::int64_t>(hot.miss_total));
+            insert_kv("batch-dispatch-total", static_cast<std::int64_t>(hot.batch_dispatch_total));
+            insert_kv("invoke-total", static_cast<std::int64_t>(hot.invoke_total));
+            insert_kv("ffi-hot-path-phase", static_cast<std::int64_t>(hot.phase));
             // Per-binding call totals (sum of call_count)
             std::int64_t calls = 0;
             for (const auto& snap : reg.snapshot())

@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**511** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**514** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 96 primitives (19%)
+- **mutation-safety**: 99 primitives (19%)
 - **core**: 364 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
@@ -160,17 +160,20 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
 - `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
 
-## C FFI (12)
+## C FFI (15)
 
 - `c-alloc` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-ansi-emit` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-load` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque->int` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque?` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-present-batch` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-render-bind` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-render-call` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
+- `c-render-draw` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-ref` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
@@ -666,7 +669,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (96)
+### Mutation safety (must remain primitive) (99)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -685,14 +688,17 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `c-alloc` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-ansi-emit` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-load` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque->int` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-opaque?` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-present-batch` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-render-bind` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-render-call` — `src/compiler/ffi_primitives_impl.cpp`
+- `c-render-draw` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`

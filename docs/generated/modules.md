@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**63** `export module` declarations in `src/**/*.ixx`.
+**64** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -69,3 +69,4 @@
 | `aura.renderer.render_pass` | `src/renderer/render_pass.ixx` |
 | `aura.serve.multi_fiber_mailbox` | `src/serve/multi_fiber_mailbox.ixx` |
 | `aura.serve.parallel_orch` | `src/serve/parallel_orch.ixx` |
+| `aura.stdlib.render_ffi` | `src/stdlib/render_ffi.ixx` |
