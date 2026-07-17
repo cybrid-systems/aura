@@ -43,6 +43,15 @@ std::atomic<std::uint32_t>& gc_frequency_tune_ratio() noexcept {
     return g_gc_frequency_tune_ratio_;
 }
 
+// Issue #1493: C ABI for CompilerMetrics / evaluator hold-time adaptive
+// (avoids module GMF forward-declare of C++ namespace symbols).
+extern "C" std::uint32_t aura_gc_frequency_tune_ratio_load(void) {
+    return g_gc_frequency_tune_ratio_.load(std::memory_order_relaxed);
+}
+extern "C" void aura_gc_frequency_tune_ratio_store(std::uint32_t v) {
+    g_gc_frequency_tune_ratio_.store(v, std::memory_order_relaxed);
+}
+
 // TLS: current running fiber (nullptr = worker loop context)
 thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
@@ -152,10 +161,17 @@ void Fiber::check_gc_safepoint() {
         gc->wait_for_resume();
         const auto dt = std::chrono::steady_clock::now() - t0;
         const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dt).count();
-        gc->eventfd_wakeup_latency_us.fetch_add(us, std::memory_order_relaxed);
-        if (holding_mutation && us > 1'000) {
-            // >1ms wait while holding mutation → long-mutation GC block signal.
-            gc->safepoint_blocked_by_long_mutation.fetch_add(1, std::memory_order_relaxed);
+        const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
+        gc->eventfd_wakeup_latency_us.fetch_add(static_cast<std::int64_t>(uus),
+                                                std::memory_order_relaxed);
+        if (holding_mutation) {
+            // Issue #1493: export wait duration while mutation-held
+            // (process-wide + per-worker long-block signal).
+            aura::gc_hooks::note_safepoint_wait_while_mutation(uus);
+            if (uus > 1'000) {
+                // >1ms wait while holding mutation → long-mutation GC block signal.
+                gc->safepoint_blocked_by_long_mutation.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 }

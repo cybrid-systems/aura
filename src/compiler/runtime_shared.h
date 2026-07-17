@@ -127,6 +127,9 @@ struct CompilerMetrics;
 }
 extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m);
 extern "C" std::int64_t aura_top_cell_get(std::int64_t cell_index);
+// Issue #1493: hold-time adaptive GC safepoint frequency (fiber.cpp).
+extern "C" std::uint32_t aura_gc_frequency_tune_ratio_load(void);
+extern "C" void aura_gc_frequency_tune_ratio_store(std::uint32_t v);
 extern "C" std::size_t aura_jit_pool_size();
 extern "C" const char* aura_jit_pool_string(std::size_t idx);
 

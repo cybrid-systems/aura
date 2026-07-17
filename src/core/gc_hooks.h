@@ -113,13 +113,29 @@ private:
 // Process-wide: fiber waited at safepoint while holding a mutation boundary.
 // Bumped from Fiber::check_gc_safepoint (does not require CompilerMetrics).
 inline std::atomic<std::uint64_t> g_safepoint_yield_on_mutation_total{0};
+// Issue #1493: total wait time (µs) and event count while holding mutation.
+inline std::atomic<std::uint64_t> g_safepoint_wait_while_mutation_held_us{0};
+inline std::atomic<std::uint64_t> g_safepoint_wait_while_mutation_held_count{0};
 
 inline void note_safepoint_yield_on_mutation() noexcept {
     g_safepoint_yield_on_mutation_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+inline void note_safepoint_wait_while_mutation(std::uint64_t wait_us) noexcept {
+    g_safepoint_wait_while_mutation_held_count.fetch_add(1, std::memory_order_relaxed);
+    g_safepoint_wait_while_mutation_held_us.fetch_add(wait_us, std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline std::uint64_t safepoint_yield_on_mutation_total() noexcept {
     return g_safepoint_yield_on_mutation_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t safepoint_wait_while_mutation_held_us() noexcept {
+    return g_safepoint_wait_while_mutation_held_us.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t safepoint_wait_while_mutation_held_count() noexcept {
+    return g_safepoint_wait_while_mutation_held_count.load(std::memory_order_relaxed);
 }
 
 // ── Pending PanicCheckpoint GC defer (Issue #1489 / #651) ───

@@ -7403,6 +7403,54 @@ public:
                         cur, static_cast<std::uint64_t>(depth), std::memory_order_relaxed))
                     break;
             }
+            // Issue #1493: sample depth into histogram (every observation).
+            note_mutation_stack_depth_histogram(depth);
+        }
+    }
+    // Issue #1493: depth histogram buckets 0,1,2,3,4,5-7,8-15,16+.
+    void note_mutation_stack_depth_histogram(std::size_t depth) const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        std::size_t bucket = 7; // 16+
+        if (depth == 0)
+            bucket = 0;
+        else if (depth == 1)
+            bucket = 1;
+        else if (depth == 2)
+            bucket = 2;
+        else if (depth == 3)
+            bucket = 3;
+        else if (depth == 4)
+            bucket = 4;
+        else if (depth <= 7)
+            bucket = 5;
+        else if (depth <= 15)
+            bucket = 6;
+        m->mutation_stack_depth_histogram[bucket].fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #1493: avg mutation hold → gc_frequency_tune_ratio adaptive.
+    // Longer holds → raise ratio (more frequent safepoint checks).
+    // Short holds → decay ratio toward default 50.
+    void adapt_gc_frequency_from_hold_us(std::uint64_t hold_us) const noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        const auto thr = m->long_mutation_threshold_us.load(std::memory_order_relaxed);
+        auto cur = aura_gc_frequency_tune_ratio_load();
+        if (thr > 0 && hold_us > thr) {
+            // AC2: shorter safepoint interval under long mutation.
+            const auto next = cur >= 100 ? 100u : std::min(100u, cur + 10u);
+            if (next > cur) {
+                aura_gc_frequency_tune_ratio_store(next);
+                m->safepoint_frequency_adapt_up_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else if (thr > 0 && hold_us < thr / 10 && cur > 50) {
+            const auto next = cur <= 50 ? 50u : std::max(50u, cur - 5u);
+            if (next < cur) {
+                aura_gc_frequency_tune_ratio_store(next);
+                m->safepoint_frequency_adapt_down_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Issue #1483 C2: bump_per_fiber_mutation_stack_depth_current_max —
@@ -10401,6 +10449,8 @@ public:
                     m->mutation_boundary_hold_time_total_us.fetch_add(uus,
                                                                       std::memory_order_relaxed);
                     m->mutation_boundary_holds_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1493: adaptive safepoint frequency from hold time.
+                    ev_->adapt_gc_frequency_from_hold_us(uus);
                     if (uus > 1000)
                         m->mutation_boundary_holds_over_1ms_total.fetch_add(
                             1, std::memory_order_relaxed);

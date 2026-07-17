@@ -16,8 +16,11 @@ module;
 #include "primitives_meta.h"
 #include "primitives_detail.h"
 #include "serve/metrics.h"
+#include "core/gc_hooks.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+
+// aura_gc_frequency_tune_ratio_* declared in runtime_shared.h (#1493)
 
 module aura.compiler.evaluator;
 
@@ -287,7 +290,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max());
             const std::int64_t current_max =
                 static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_current_max());
-            auto* ht = FlatHashTable::create(8) /* #1141 */;
+            const std::int64_t live_depth =
+                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -316,7 +322,32 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             };
             insert_kv("lifetime-max", lifetime_max);
             insert_kv("current-max", current_max);
-            insert_kv("schema", 1483);
+            // Issue #1493: live mutation_boundary depth + histogram total samples.
+            insert_kv("live-depth", live_depth);
+            std::int64_t hist_total = 0;
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
+                    hist_total += static_cast<std::int64_t>(
+                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed));
+                insert_kv("hist-b0",
+                          static_cast<std::int64_t>(m->mutation_stack_depth_histogram[0].load(
+                              std::memory_order_relaxed)));
+                insert_kv("hist-b1",
+                          static_cast<std::int64_t>(m->mutation_stack_depth_histogram[1].load(
+                              std::memory_order_relaxed)));
+                insert_kv(
+                    "hist-b2-plus",
+                    hist_total -
+                        static_cast<std::int64_t>(
+                            m->mutation_stack_depth_histogram[0].load(std::memory_order_relaxed) +
+                            m->mutation_stack_depth_histogram[1].load(std::memory_order_relaxed)));
+            } else {
+                insert_kv("hist-b0", 0);
+                insert_kv("hist-b1", 0);
+                insert_kv("hist-b2-plus", 0);
+            }
+            insert_kv("hist-samples", hist_total);
+            insert_kv("schema", 1493);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -349,7 +380,31 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold());
             const std::int64_t defer_count =
                 static_cast<std::int64_t>(ev.get_safepoint_adaptive_defer_count());
-            auto* ht = FlatHashTable::create(8) /* #1141 */;
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const std::int64_t hold_total =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_hold_time_total_us.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t holds =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_holds_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t avg_hold = holds > 0 ? hold_total / holds : 0;
+            const std::int64_t wait_us =
+                static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us());
+            const std::int64_t wait_n = static_cast<std::int64_t>(
+                aura::gc_hooks::safepoint_wait_while_mutation_held_count());
+            const std::int64_t freq_ratio =
+                static_cast<std::int64_t>(aura_gc_frequency_tune_ratio_load());
+            const std::int64_t adapt_up =
+                m ? static_cast<std::int64_t>(
+                        m->safepoint_frequency_adapt_up_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t adapt_down =
+                m ? static_cast<std::int64_t>(
+                        m->safepoint_frequency_adapt_down_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(16) /* #1141 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -378,7 +433,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             };
             insert_kv("threshold", threshold);
             insert_kv("defer-count", defer_count);
-            insert_kv("schema", 1483);
+            // Issue #1493: hold-time adaptive + wait-while-mutation export.
+            insert_kv("avg-mutation-hold-us", avg_hold);
+            insert_kv("hold-samples", holds);
+            insert_kv("safepoint-wait-while-mutation-held-us", wait_us);
+            insert_kv("safepoint-wait-while-mutation-held-count", wait_n);
+            insert_kv("gc-frequency-tune-ratio", freq_ratio);
+            insert_kv("frequency-adapt-up", adapt_up);
+            insert_kv("frequency-adapt-down", adapt_down);
+            insert_kv("schema", 1493);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
