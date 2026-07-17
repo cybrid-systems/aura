@@ -346,7 +346,25 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_int(-1);
-        return make_int(::system(ev.string_heap_[idx].c_str()));
+        // Issue #1582: fork+exec via /bin/sh -c, then WEXITSTATUS.
+        // ::system() returns raw waitpid status (exit_code << 8 + signal),
+        // which made `sh` return 256/1280/32512 for exits 1/5/127 instead
+        // of the actual exit code. sh-ok? was masked (only checks == 0),
+        // but `sh` was unusable for exit-code arithmetic. Mirror the
+        // fork+execvp pattern from evaluator_primitives_io.cpp:381-413
+        // (git-commit, #473) for proper exit-code extraction.
+        pid_t pid = ::fork();
+        if (pid == 0) {
+            ::execl("/bin/sh", "sh", "-c", ev.string_heap_[idx].c_str(),
+                    static_cast<char*>(nullptr));
+            ::_exit(127);
+        }
+        if (pid > 0) {
+            int status = 0;
+            if (::waitpid(pid, &status, 0) != -1 && WIFEXITED(status))
+                return make_int(static_cast<std::int64_t>(WEXITSTATUS(status)));
+        }
+        return make_int(-1);
     });
 
     add("command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
