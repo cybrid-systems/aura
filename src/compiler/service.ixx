@@ -249,33 +249,43 @@ export struct EscapeAnalysisWrap {
         return block_dirty_fn_(block_id);
     }
 
+    // Issue #1574: IncrementalPass entry points for dirty pipeline.
+    void run(aura::ir::IRFunction& func) {
+        if (!g_use_arena)
+            return;
+        if (func.id >= maps.size())
+            maps.resize(func.id + 1);
+        std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(func.blocks.size());
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            for (auto& instr : func.blocks[bi].instructions) {
+                if (instr.linear_ownership_state != 0 && instr.narrow_evidence != 0)
+                    linear_occurrence_mutate::record_escape_violation_prevented();
+                flat_instrs[bi].push_back(
+                    {static_cast<std::uint32_t>(instr.opcode),
+                     {instr.operands[0], instr.operands[1], instr.operands[2], instr.operands[3]},
+                     0,
+                     instr.narrow_evidence,
+                     instr.type_id,
+                     instr.linear_ownership_state,
+                     0});
+            }
+        }
+        aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
+    }
+    void run(aura::ir::BasicBlock& /*block*/) {
+        // Escape analysis is whole-function; per-block is a no-op.
+    }
+
     void run(aura::ir::IRModule& module) {
         if (!g_use_arena) {
             maps.clear();
             return;
         }
         maps.resize(module.functions.size());
-        for (auto& func : module.functions) {
-            // Convert IR function to flat instructions for escape analysis
-            std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(func.blocks.size());
-            for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-                if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
-                    continue;
-                for (auto& instr : func.blocks[bi].instructions) {
-                    if (instr.linear_ownership_state != 0 && instr.narrow_evidence != 0)
-                        linear_occurrence_mutate::record_escape_violation_prevented();
-                    flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                               {instr.operands[0], instr.operands[1],
-                                                instr.operands[2], instr.operands[3]},
-                                               0,
-                                               instr.narrow_evidence,
-                                               instr.type_id,
-                                               instr.linear_ownership_state,
-                                               0});
-                }
-            }
-            aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
-        }
+        for (auto& func : module.functions)
+            run(func);
     }
 
     bool has_error() const { return false; }
@@ -301,6 +311,8 @@ export struct EscapeAnalysisWrap {
 
 static_assert(DirtyAwarePass<EscapeAnalysisWrap>,
               "EscapeAnalysisWrap exposes is_block_dirty for IRSoA wiring");
+static_assert(IncrementalPass<EscapeAnalysisWrap>,
+              "EscapeAnalysisWrap is IncrementalPass for dirty pipeline (#1574)");
 
 // CompilerService — owns a full compilation session's lifecycle.
 //
@@ -4917,46 +4929,42 @@ public:
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
             cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
         // Run per-function passes on the new bundle.
+        // Issue #1574: feed IRCacheEntry dirty bitmasks into
+        // run_incremental_dirty_pipeline so ConstantFolding /
+        // ComputeKind / TypePropagation / Shape / EscapeAnalysis only
+        // touch dirty blocks (or skip entirely when mask is clean).
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
+            aura::compiler::TypePropagationPass tp_pass;
+            aura::compiler::ShapeWrap shape_pass;
             EscapeAnalysisWrap escape_pass;
             const auto& entry = it->second;
+            aura::compiler::DefineDirtyMaskView define_mask;
             if (!entry.block_dirty_per_func_.empty()) {
-                const auto block_dirty_fn = [&entry](std::uint32_t block_id) -> bool {
-                    if (entry.block_dirty_per_func_.empty())
-                        return true;
-                    const auto& fb = entry.block_dirty_per_func_[0];
-                    if (block_id >= fb.size())
-                        return true;
-                    return fb[block_id] != 0;
-                };
-                cf_pass.set_block_dirty_fn(block_dirty_fn);
-                escape_pass.set_block_dirty_fn(block_dirty_fn);
+                define_mask.block_dirty_per_func = &entry.block_dirty_per_func_;
+                define_mask.instruction_dirty_per_func = &entry.instruction_dirty_per_func_;
             }
+            const aura::compiler::DefineDirtyMaskView* mask_ptr =
+                define_mask.block_dirty_per_func ? &define_mask : nullptr;
+
+            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
+
             std::size_t clean_blocks_skipped = 0;
             for (auto& func : ir_mod.functions) {
                 if (func.id == ir_mod.entry_function_id)
                     continue;
-                ck_pass.compute_function(func);
-                const auto folded_before = cf_pass.folded_count();
-                cf_pass.fold_function(func);
-                if (cf_pass.folded_count() == folded_before &&
-                    !entry.block_dirty_per_func_.empty()) {
-                    const bool fn_shape_stable = is_shape_stable(func.name);
-                    for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-                        if (!cf_pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
-                            ++clean_blocks_skipped;
-                            if (fn_shape_stable)
-                                aura::compiler::passes_skipped_shape_stable_blocks.fetch_add(
-                                    1, std::memory_order_relaxed);
-                        }
-                    }
-                }
                 // Issue #538: DCE after post-mutate re-lower.
                 run_coercion_elim_on_function(func);
             }
-            escape_pass.run(ir_mod);
+            if (mask_ptr) {
+                clean_blocks_skipped = static_cast<std::size_t>(mask_ptr->total_block_count() -
+                                                                mask_ptr->dirty_block_count());
+            }
             if (!entry.block_dirty_per_func_.empty()) {
                 metrics_.linear_post_mutate_enforcements_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -5068,11 +5076,32 @@ public:
             dirty_blocks = dirty_copy;
         }
         // Run per-function passes (mirrors cache_define).
+        // Issue #1574: define-level dirty mask drives incremental opt.
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
-            ck_pass.compute_function(new_func);
-            cf_pass.fold_function(new_func);
+            aura::compiler::TypePropagationPass tp_pass;
+            aura::compiler::ShapeWrap shape_pass;
+            aura::ir::IRModule one;
+            one.functions.push_back(std::move(new_func));
+            std::vector<std::vector<std::uint8_t>> single_mask;
+            std::vector<std::vector<std::uint8_t>> inst_mask;
+            aura::compiler::DefineDirtyMaskView define_mask;
+            if (!dirty_copy.empty()) {
+                single_mask.push_back(dirty_copy);
+                define_mask.block_dirty_per_func = &single_mask;
+                if (func_idx < entry.instruction_dirty_per_func_.size()) {
+                    inst_mask.push_back(entry.instruction_dirty_per_func_[func_idx]);
+                    define_mask.instruction_dirty_per_func = &inst_mask;
+                }
+            }
+            const aura::compiler::DefineDirtyMaskView* mask_ptr =
+                define_mask.block_dirty_per_func ? &define_mask : nullptr;
+            (void)aura::compiler::run_incremental_dirty_pipeline(one, ck_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(one, cf_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(one, tp_pass, mask_ptr);
+            (void)aura::compiler::run_incremental_dirty_pipeline(one, shape_pass, mask_ptr);
+            new_func = std::move(one.functions[0]);
             // Issue #538 / #611: DCE after per-function post-mutate
             // re-lower; scoped to dirty blocks when mask matches.
             run_coercion_elim_on_function(new_func, dirty_blocks);

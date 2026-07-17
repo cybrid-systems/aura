@@ -115,6 +115,95 @@ export inline std::atomic<std::uint64_t> pipeline_dirty_short_circuit_total{0};
 export inline std::atomic<std::uint64_t> pipeline_epoch_sync_total{0};
 export inline std::atomic<std::uint64_t> pipeline_hotpath_light_analysis_total{0};
 
+// ── Issue #1574: define-level dirty bitmask → optimization pipeline ──
+//
+// IRCacheEntry holds block_dirty_per_func_ / instruction_dirty_per_func_
+// but pass_manager must not depend on CompilerService. This view is the
+// ABI between service.ixx (producer) and run_incremental_dirty_pipeline
+// (consumer). Optional pointer — nullptr means "legacy: trust the pass".
+export struct DefineDirtyMaskView {
+    // Parallel to IRCacheEntry::block_dirty_per_func_ [func][block] = 1 dirty.
+    const std::vector<std::vector<std::uint8_t>>* block_dirty_per_func = nullptr;
+    // Parallel to IRCacheEntry::instruction_dirty_per_func_ [func][inst] = 1.
+    const std::vector<std::vector<std::uint8_t>>* instruction_dirty_per_func = nullptr;
+
+    // True if any block bit is set. Empty / null → treated as dirty (safe).
+    [[nodiscard]] bool any() const noexcept {
+        if (!block_dirty_per_func || block_dirty_per_func->empty())
+            return true;
+        for (const auto& fb : *block_dirty_per_func) {
+            for (auto b : fb) {
+                if (b)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool is_block_dirty(std::size_t func_idx, std::uint32_t block_id) const noexcept {
+        if (!block_dirty_per_func)
+            return true;
+        if (func_idx >= block_dirty_per_func->size())
+            return true;
+        const auto& fb = (*block_dirty_per_func)[func_idx];
+        if (block_id >= fb.size())
+            return true;
+        return fb[block_id] != 0;
+    }
+
+    // Instruction-level: prefer instruction mask when present; else block.
+    [[nodiscard]] bool is_instruction_dirty(std::size_t func_idx, std::uint32_t block_id,
+                                            std::uint32_t inst_id) const noexcept {
+        if (!is_block_dirty(func_idx, block_id))
+            return false;
+        if (!instruction_dirty_per_func || func_idx >= instruction_dirty_per_func->size())
+            return true;
+        const auto& idf = (*instruction_dirty_per_func)[func_idx];
+        if (inst_id >= idf.size())
+            return true;
+        return idf[inst_id] != 0;
+    }
+
+    // Observability helpers for dirty_block_relower_ratio.
+    [[nodiscard]] std::uint64_t dirty_block_count() const noexcept {
+        if (!block_dirty_per_func)
+            return 0;
+        std::uint64_t n = 0;
+        for (const auto& fb : *block_dirty_per_func)
+            for (auto b : fb)
+                if (b)
+                    ++n;
+        return n;
+    }
+    [[nodiscard]] std::uint64_t total_block_count() const noexcept {
+        if (!block_dirty_per_func)
+            return 0;
+        std::uint64_t n = 0;
+        for (const auto& fb : *block_dirty_per_func)
+            n += fb.size();
+        return n;
+    }
+};
+
+// Entire optimization pass skipped because define-level mask is clean.
+export inline std::atomic<std::uint64_t> optimization_passes_skipped_by_define_dirty{0};
+// Sum of dirty blocks / total blocks seen when define_cache is consulted
+// (basis points, updated on each pipeline entry with a non-null cache).
+export inline std::atomic<std::uint64_t> dirty_block_relower_ratio_bp{0};
+export inline std::atomic<std::uint64_t> define_dirty_blocks_seen_total{0};
+export inline std::atomic<std::uint64_t> define_total_blocks_seen_total{0};
+
+inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
+    const auto dirty = view.dirty_block_count();
+    const auto total = view.total_block_count();
+    define_dirty_blocks_seen_total.fetch_add(dirty, std::memory_order_relaxed);
+    define_total_blocks_seen_total.fetch_add(total, std::memory_order_relaxed);
+    if (total > 0) {
+        const auto bp = (dirty * 10000ull) / total;
+        dirty_block_relower_ratio_bp.store(bp, std::memory_order_relaxed);
+    }
+}
+
 namespace pass_pipeline_detail {
     inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
     // Issue #1322: execution context — fiber/render hot-path soft gate for run_one.
@@ -427,24 +516,70 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 // is_block_dirty().
 // Issue #1197: when InstructionDirtyAwarePass, also count clean
 // instruction slots (observability for instruction-level short-circuit).
+// Issue #1574: optional define_cache (IRCacheEntry dirty bitmasks via
+// DefineDirtyMaskView). When non-null and fully clean, the entire pass
+// is skipped (optimization_passes_skipped_by_define_dirty++). When
+// partially dirty, block dirtiness prefers the define mask over the
+// pass's own is_block_dirty, and set_block_dirty_fn is installed when
+// the pass supports it so fold/propagate only touch dirty blocks.
 export template <IncrementalPass P>
     requires DirtyAwarePass<P>
-bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
+bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
+                                    const DefineDirtyMaskView* define_cache = nullptr) {
     // Issue #1517: enforce DOD compliance at dirty-incremental entry.
     note_pass_soa_enforcement(pass);
-    for (auto& func : mod.functions) {
+
+    // AC3 (#1574): early-skip whole pass when define-level mask is clean.
+    if (define_cache && define_cache->block_dirty_per_func && !define_cache->any()) {
+        note_define_dirty_mask_stats(*define_cache);
+        optimization_passes_skipped_by_define_dirty.fetch_add(1, std::memory_order_relaxed);
+        passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
+        pipeline_dirty_short_circuit_total.fetch_add(1, std::memory_order_relaxed);
+        aura::core::cpp26::record_hotpath_invariant_hit();
+        return true;
+    }
+    if (define_cache && define_cache->block_dirty_per_func)
+        note_define_dirty_mask_stats(*define_cache);
+
+    for (std::size_t fi = 0; fi < mod.functions.size(); ++fi) {
+        auto& func = mod.functions[fi];
         const bool fn_shape_stable =
             g_fn_shape_stable_probe != nullptr && g_fn_shape_stable_probe(func.name);
+
+        // Issue #1574: wire define mask into pass when it supports
+        // set_block_dirty_fn (ConstantFoldingWrap / EscapeAnalysis / …).
+        if constexpr (requires(P& p, std::function<bool(std::uint32_t)> f) {
+                          p.set_block_dirty_fn(std::move(f));
+                      }) {
+            if (define_cache && define_cache->block_dirty_per_func) {
+                const auto* cache = define_cache;
+                const std::size_t func_idx = fi;
+                pass.set_block_dirty_fn([cache, func_idx](std::uint32_t block_id) -> bool {
+                    return cache->is_block_dirty(func_idx, block_id);
+                });
+            }
+        }
+
         bool any_dirty = false;
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-            if (pass.is_block_dirty(static_cast<std::uint32_t>(bi))) {
+            const auto bid = static_cast<std::uint32_t>(bi);
+            // Prefer define-level mask when present; else pass probe.
+            const bool block_dirty = (define_cache && define_cache->block_dirty_per_func)
+                                         ? define_cache->is_block_dirty(fi, bid)
+                                         : pass.is_block_dirty(bid);
+            if (block_dirty) {
                 any_dirty = true;
                 // Phase 1 instruction probe: if the pass is
                 // InstructionDirtyAwarePass, walk inst dirty bits for metrics.
                 if constexpr (InstructionDirtyAwarePass<P>) {
                     // Best-effort: probe inst 0..7; real peel uses block size.
                     for (std::uint32_t ii = 0; ii < 8; ++ii) {
-                        if (!pass.is_instruction_dirty(static_cast<std::uint32_t>(bi), ii))
+                        bool inst_dirty = true;
+                        if (define_cache && define_cache->instruction_dirty_per_func)
+                            inst_dirty = define_cache->is_instruction_dirty(fi, bid, ii);
+                        else
+                            inst_dirty = pass.is_instruction_dirty(bid, ii);
+                        if (!inst_dirty)
                             passes_skipped_instruction_dirty.fetch_add(1,
                                                                        std::memory_order_relaxed);
                     }
@@ -458,6 +593,8 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass) {
             passes_skipped_dirty_pipeline.fetch_add(1, std::memory_order_relaxed);
             // Issue #1322: unified dirty short-circuit counter for Agent dashboards.
             pipeline_dirty_short_circuit_total.fetch_add(1, std::memory_order_relaxed);
+            if (define_cache && define_cache->block_dirty_per_func)
+                optimization_passes_skipped_by_define_dirty.fetch_add(1, std::memory_order_relaxed);
             if (fn_shape_stable)
                 passes_skipped_shape_stable_blocks.fetch_add(
                     static_cast<std::uint64_t>(func.blocks.size()), std::memory_order_relaxed);
@@ -515,6 +652,36 @@ public:
         return aura::compiler::compute_kind(func);
     }
 
+    // Issue #1574: DirtyAware + IncrementalPass — skip clean blocks when
+    // define-level mask is wired via set_block_dirty_fn / define_cache.
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+    void run(aura::ir::IRFunction& func) {
+        // Analysis is whole-function (compute_kind needs all blocks);
+        // still honor dirty gate at the function granularity: if every
+        // block is clean, skip (pipeline already short-circuits; this
+        // is belt-and-suspenders when called directly).
+        bool any = false;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (is_block_dirty(static_cast<std::uint32_t>(bi))) {
+                any = true;
+                break;
+            }
+        }
+        if (!any && block_dirty_fn_)
+            return;
+        results_.push_back(aura::compiler::compute_kind(func));
+    }
+    void run(aura::ir::BasicBlock& /*block*/) {
+        // Per-block compute_kind is not defined; no-op for IncrementalPass.
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
     std::span<const ComputeKindResult> results() const { return results_; }
@@ -524,6 +691,7 @@ private:
     // the accumulator (pure-analysis observation, not a logical
     // mutation of the Pass instance from a caller's perspective).
     mutable std::vector<ComputeKindResult> results_;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
 };
 
 // ── ArityWrap — arity checking pass ────────────────────────────
@@ -577,6 +745,37 @@ public:
         pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #1574: DirtyAware + IncrementalPass for define-mask wiring.
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+    void run(aura::ir::IRFunction& func) {
+        bool any = false;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (is_block_dirty(static_cast<std::uint32_t>(bi))) {
+                any = true;
+                break;
+            }
+        }
+        if (!any && block_dirty_fn_)
+            return;
+        std::uint32_t sid = 0;
+        for (const auto& blk : func.blocks) {
+            if (!blk.instructions.empty()) {
+                sid = blk.instructions.front().shape_id;
+                break;
+            }
+        }
+        results_.push_back(sid);
+        pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void run(aura::ir::BasicBlock& /*block*/) {}
+
     bool has_error() const { return false; }
     std::string_view name() const { return "shape"; }
     std::span<const std::uint32_t> shape_ids() const { return results_; }
@@ -587,6 +786,7 @@ public:
 private:
     mutable std::vector<std::uint32_t> results_;
     static inline std::atomic<std::uint64_t> pure_delegation_hits_{0};
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
 };
 
 // ── Issue #606: LinearOwnershipWrap — pure read-only linear use-after-move probe ─
@@ -2331,17 +2531,30 @@ public:
         extended_ops_propagated_ = 0;
         if (module.functions.empty())
             return;
-        for (auto& func : module.functions) {
-            for (auto& block : func.blocks)
-                run_on_block(block);
-        }
+        for (auto& func : module.functions)
+            run(func);
     }
 
     // Issue #1457: per-function entry for incremental re-lower.
-    void run_function(aura::ir::IRFunction& func) {
-        for (auto& block : func.blocks)
-            run_on_block(block);
+    void run_function(aura::ir::IRFunction& func) { run(func); }
+
+    // Issue #1574: DirtyAware + IncrementalPass — only dirty blocks.
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
     }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+    void run(aura::ir::IRFunction& func) {
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            run_on_block(func.blocks[bi]);
+        }
+    }
+    void run(aura::ir::BasicBlock& block) { run_on_block(block); }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "type-propagation"; }
@@ -2557,10 +2770,20 @@ private:
     std::size_t cast_result_stamped_ = 0;
     std::size_t extended_ops_propagated_ = 0;
     std::uint64_t pipeline_epoch_ = 0;
+    std::function<bool(std::uint32_t)> block_dirty_fn_; // Issue #1574
 };
 
 static_assert(JITFriendlyPass<TypePropagationPass>,
               "TypePropagationPass exposes pipeline_epoch_hint");
+static_assert(DirtyAwarePass<TypePropagationPass>,
+              "TypePropagationPass is DirtyAware for define-mask wiring (#1574)");
+static_assert(IncrementalPass<TypePropagationPass>,
+              "TypePropagationPass is IncrementalPass (#1574)");
+static_assert(DirtyAwarePass<ComputeKindWrap>,
+              "ComputeKindWrap is DirtyAware for define-mask wiring (#1574)");
+static_assert(IncrementalPass<ComputeKindWrap>, "ComputeKindWrap is IncrementalPass (#1574)");
+static_assert(DirtyAwarePass<ShapeWrap>, "ShapeWrap is DirtyAware for define-mask wiring (#1574)");
+static_assert(IncrementalPass<ShapeWrap>, "ShapeWrap is IncrementalPass (#1574)");
 
 // Issue #160: Inline Expansion Pass (sub-item #6 minimal).
 //

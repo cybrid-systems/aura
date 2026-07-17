@@ -30,6 +30,8 @@ struct PassDescriptor {
 };
 
 // Phase 1 static table — factory hooks wire into pass_manager in follow-up.
+// Issue #1574: Shape + ComputeKind + ConstantFold are DirtyAware and
+// consume DefineDirtyMaskView via run_incremental_dirty_pipeline.
 inline constexpr PassDescriptor kDefaultPassTable[] = {
     {PassKind::ConstantFold, "constant-fold", true, true},
     {PassKind::Inline, "inline", false, false},
@@ -37,7 +39,7 @@ inline constexpr PassDescriptor kDefaultPassTable[] = {
     {PassKind::Arity, "arity", false, false},
     {PassKind::Shape, "shape", true, true},
     {PassKind::LinearOwnership, "linear-ownership", false, false},
-    {PassKind::ComputeKind, "compute-kind", false, false},
+    {PassKind::ComputeKind, "compute-kind", true, false}, // dirty-aware (#1574)
     {PassKind::Render, "render-present", true, true},
 };
 
