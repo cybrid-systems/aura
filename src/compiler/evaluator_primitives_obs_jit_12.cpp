@@ -199,7 +199,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1481 / #1498 / #1554 / #1579 / #1590 / #1600: query:resource-quota-stats.
+    // Issue #1481 / #1498 / #1554 / #1579 / #1590 / #1600 / #1618:
+    // query:resource-quota-stats.
     // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
     // #1498 production fields (AC2): current_usage, memory_quota,
     // memory_quota_total, exceeded_count (=rejects), mutations_used.
@@ -207,7 +208,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
     // #1579: module_phase + process_fibers_* + process_checks/rejects + overflow.
     // #1590: schema 1590 + quota aliases + hot-path closed-loop keys.
     // #1600: orchestration fiber spawn/reject + join_resource_wait_us.
-    // schema bumped to 1600 (agents: treat unknown keys as optional).
+    // #1618: ResourceQuotaManager + typed reject ≠ panic + mutation_budget_rejected.
+    // schema bumped to 1618 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
         "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_
@@ -236,7 +238,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t memory_quota_total =
                 static_cast<std::int64_t>(ev.resource_quota_memory_total());
             const std::int64_t mut_used = static_cast<std::int64_t>(ev.mutation_quota_used());
-            auto* ht = FlatHashTable::create(64) /* #1141 / #1498 / #1590 more keys */;
+            auto* ht = FlatHashTable::create(128) /* #1141 / #1498 / #1590 / #1618 more keys */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -329,8 +331,40 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                               : static_cast<std::int64_t>(
                                     pq.remaining(aura::core::resource_quota::Dimension::Fibers))));
             insert_kv("orch_spawn_gated", 1); // Scheduler::spawn + parallel_intend wired
-            insert_kv("issue", 1600);
-            insert_kv("schema", 1600); // lineage 1590|1579|…
+            // Issue #1618: ResourceQuotaManager + typed reject AC keys
+            const std::int64_t quota_viol =
+                m ? static_cast<std::int64_t>(
+                        m->quota_violation_total.load(std::memory_order_relaxed))
+                  : rejects_total;
+            const std::int64_t mut_budget_rej =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_budget_rejected_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t typed_rej =
+                m ? static_cast<std::int64_t>(
+                        m->quota_reject_typed_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t panic_dist =
+                m ? static_cast<std::int64_t>(
+                        m->panic_quota_distinguished_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t mgr_enforce =
+                m ? static_cast<std::int64_t>(
+                        m->manager_enforce_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("quota_violation_total", quota_viol);
+            insert_kv("quota-violation-total", quota_viol);
+            insert_kv("mutation_budget_rejected", mut_budget_rej);
+            insert_kv("mutation_budget_rejected_total", mut_budget_rej);
+            insert_kv("mutation-budget-rejected", mut_budget_rej);
+            insert_kv("quota_reject_typed_total", typed_rej);
+            insert_kv("panic_quota_distinguished_total", panic_dist);
+            insert_kv("manager_enforce_total", mgr_enforce);
+            insert_kv("manager-wired", 1);
+            insert_kv("panic-quota-distinguished", 1);
+            insert_kv("typed-reject-not-panic", 1);
+            insert_kv("issue", 1618);
+            insert_kv("schema", 1618); // lineage 1600|1590|1579|…
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

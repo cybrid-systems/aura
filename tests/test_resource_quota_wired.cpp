@@ -218,8 +218,9 @@ static void ac6_query_stats() {
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") \"schema\")");
     // Schema lineage: 1481 → … → 1590 (agents may accept earlier ids).
     CHECK(schema && is_int(*schema) &&
-              (as_int(*schema) == 1600 || as_int(*schema) == 1590 || as_int(*schema) == 1579 ||
-               as_int(*schema) == 1554 || as_int(*schema) == 1498 || as_int(*schema) == 1481),
+              (as_int(*schema) == 1618 || as_int(*schema) == 1600 || as_int(*schema) == 1590 ||
+               as_int(*schema) == 1579 || as_int(*schema) == 1554 || as_int(*schema) == 1498 ||
+               as_int(*schema) == 1481),
           "schema in known lineage");
     auto checks =
         cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") \"checks_total\")");

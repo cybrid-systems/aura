@@ -153,12 +153,13 @@ static void ac7_stats_primitive() {
     auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(r.has_value() && aura::compiler::types::is_hash(*r), "hash");
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'schema)");
-    // #1590 bumped schema to 1590; accept 1579 for older agents.
+    // #1618 bumped schema to 1618; accept earlier lineage for older agents.
     CHECK(schema.has_value() && aura::compiler::types::is_int(*schema) &&
-              (aura::compiler::types::as_int(*schema) == 1600 ||
+              (aura::compiler::types::as_int(*schema) == 1618 ||
+               aura::compiler::types::as_int(*schema) == 1600 ||
                aura::compiler::types::as_int(*schema) == 1590 ||
                aura::compiler::types::as_int(*schema) == 1579),
-          "schema == 1600 or 1590 or 1579");
+          "schema == 1618 or 1600 or 1590 or 1579");
     auto phase =
         cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'module_phase)");
     CHECK(phase.has_value() && aura::compiler::types::is_int(*phase) &&
