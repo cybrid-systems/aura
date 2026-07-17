@@ -997,12 +997,13 @@ namespace {
         (void)ev->transfer_and_revalidate_panic_checkpoint(Evaluator::g_current_fiber_void);
     }
 
-    // (3) g_block_gc_for_pending_checkpoint: Issue #1489 / #651 AC1.
+    // (3) g_block_gc_for_pending_checkpoint: Issue #1489 / #651 / #1581.
     // Called by Fiber::yield(MutationBoundary) when a pending
     // PanicCheckpoint exists. Arms process-wide GC defer (if not
-    // already armed by save), bumps metrics, and signals the
-    // scheduler-facing gc_hooks depth so GCCollector::collect /
-    // compact_sweep skip destructive reclaim until commit/restore.
+    // already armed by save), sends scheduler-facing defer signal
+    // (fiber id + checkpoint epoch), bumps metrics, so
+    // GCCollector::request/collect and compact_sweep skip destructive
+    // reclaim until commit/restore.
     void block_gc_for_pending_checkpoint_trampoline() {
         auto* ev = Evaluator::yield_hook_evaluator();
         if (!ev)
@@ -1013,7 +1014,16 @@ namespace {
         // arms first; yield re-arms only if save path was skipped).
         ev->arm_gc_defer_for_pending_panic();
         ev->bump_gc_blocked_by_pending_panic();
-        aura::gc_hooks::note_gc_defer_pending_panic_signal();
+
+        // Issue #1581: explicit scheduler defer signal with provenance.
+        std::uint64_t fiber_id = 0;
+        if (Evaluator::g_current_fiber_void != nullptr) {
+            auto* fiber = static_cast<aura::serve::Fiber*>(Evaluator::g_current_fiber_void);
+            fiber_id = fiber->id();
+        }
+        const std::uint64_t checkpoint_epoch = ev->current_bridge_epoch();
+        aura::gc_hooks::send_defer_gc_signal(fiber_id, checkpoint_epoch);
+
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
             m->gc_panic_pending_deferral_total.fetch_add(1, std::memory_order_relaxed);
     }

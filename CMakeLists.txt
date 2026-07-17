@@ -5145,6 +5145,9 @@ aura_issue_test_link_llvm_jit(test_resource_quota_module)
 # Issue #1580: fiber resume post-steal EnvFrame/StableNodeRef/panic refresh.
 aura_add_issue_test(test_fiber_resume_post_steal_refresh)
 aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_refresh)
+# Issue #1581: scheduler GC defer + pending PanicCheckpoint steal/GC stress.
+aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
+aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
