@@ -12,24 +12,9 @@
 tests/test_incremental_aot_closure_deps.cpp
 src/compiler/aura_jit_bridge.cpp
 src/compiler/aura_jit_bridge.h
-# Issue #1481: typed-error ResourceQuota enforcement helpers
-# (check_arena_quota / check_mutation_quota / check_fiber_quota /
-# check_time_quota / allocate_checked). Tests via import pattern
-# matching test_issue_1476 — links against aura.compiler.evaluator
-# module. Per #1478 / #1480 precedent, link may hit the system 5-min
-# build timeout (per invariant #29). Verification deferred to
-# follow-up #1538 batch.
-tests/test_resource_quota.cpp
-# Sister entry: query:resource-quota-stats primitive registration
-# (commit 87396a77) lives in evaluator_primitives_obs_jit_12.cpp at
-# L209-adjacent. The primitive reads ev.compiler_metrics_ fields
-# (resource_quota_checks_total / _rejects_total / _max_fibers /
-# _max_mutations) — same surface that tests/test_resource_quota.cpp
-# AC7 verifies via direct counter inspection. Per #1453 test-binding
-# rule, a production primitive-source change must pair with a tests/
-# update; the existing 7 ACs (especially AC7) cover the counter state
-# the primitive exposes, so this allowlist entry is sufficient.
-src/compiler/evaluator_primitives_obs_jit_12.cpp
+# Issue #1481 / #1548: test_resource_quota.cpp verified green in CI
+# (allowlist entry removed). query:resource-quota-stats covered by
+# tests/test_primitive_resource_quota_stats.cpp (#1548).
 # Issue #1482: Env SymId-primary path (Commit 1/2/3 of #1482: bad84370
 # + 18c25050 + 8e973580). Test file (tests/test_env_symid_primary_path.cpp)
 # is registered in CMakeLists.txt but the link may hit the system
