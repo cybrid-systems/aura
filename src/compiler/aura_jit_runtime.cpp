@@ -235,6 +235,14 @@ extern "C" void aura_bypass_count_reset() {
 //
 static std::atomic<uint64_t> g_workspace_unchecked_fastpath_count{0};
 static std::atomic<uint64_t> g_workspace_deopt_count{0};
+// Issue #1610: JIT MacroIntroduced hygiene policy counters.
+// consults = lower() saw source_marker==MacroIntroduced;
+// deopt = dirty+MacroIntroduced forced deopt (or explicit hygiene deopt).
+static std::atomic<uint64_t> g_jit_macro_hygiene_consults{0};
+static std::atomic<uint64_t> g_jit_macro_introduced_deopt{0};
+// Issue #1610: IR lowering stamp counters (shared with query:ir-hygiene-stats).
+static std::atomic<uint64_t> g_hygiene_ir_macro_marker_total{0};
+static std::atomic<uint64_t> g_hygiene_ir_provenance_stamped_total{0};
 
 // Issue #157 Phase 1c: in-LLVM-callable deopt counter. The JIT
 // emits a call to this at the start of every deopt basic block
@@ -254,10 +262,42 @@ extern "C" uint64_t aura_deopt_count() {
     return g_workspace_deopt_count.load(std::memory_order_relaxed);
 }
 
+// Issue #1610: compile-time / lower-path hygiene observability (not LLVM symbols).
+extern "C" void aura_jit_macro_hygiene_consult_inc() {
+    g_jit_macro_hygiene_consults.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void aura_jit_macro_introduced_deopt_inc() {
+    g_jit_macro_introduced_deopt.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_jit_macro_hygiene_consults() {
+    return g_jit_macro_hygiene_consults.load(std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_jit_macro_introduced_deopt() {
+    return g_jit_macro_introduced_deopt.load(std::memory_order_relaxed);
+}
+
+// Issue #1610: IR lowering MacroIntroduced / provenance stamp counters.
+extern "C" void aura_hygiene_ir_macro_marker_inc() {
+    g_hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void aura_hygiene_ir_provenance_stamped_inc() {
+    g_hygiene_ir_provenance_stamped_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_hygiene_ir_macro_marker_total() {
+    return g_hygiene_ir_macro_marker_total.load(std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_hygiene_ir_provenance_stamped_total() {
+    return g_hygiene_ir_provenance_stamped_total.load(std::memory_order_relaxed);
+}
+
 extern "C" void aura_counters_reset() {
     g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
     g_workspace_unchecked_fastpath_count.store(0, std::memory_order_relaxed);
     g_workspace_deopt_count.store(0, std::memory_order_relaxed);
+    g_jit_macro_hygiene_consults.store(0, std::memory_order_relaxed);
+    g_jit_macro_introduced_deopt.store(0, std::memory_order_relaxed);
+    g_hygiene_ir_macro_marker_total.store(0, std::memory_order_relaxed);
+    g_hygiene_ir_provenance_stamped_total.store(0, std::memory_order_relaxed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

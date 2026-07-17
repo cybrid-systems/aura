@@ -90,8 +90,9 @@ struct IRInstruction {
     std::uint8_t linear_ownership_state = 0;
     std::uint32_t adt_variant_id = 0;
     std::uint32_t narrow_evidence = 0;
-    // Issue #455: must stay in sync with aura.compiler.ir::IRInstruction.
+    // Issue #455 / #1610: must stay in sync with aura.compiler.ir::IRInstruction.
     std::uint8_t source_marker = 0;
+    std::uint32_t provenance = 0;
 };
 
 struct BasicBlock {

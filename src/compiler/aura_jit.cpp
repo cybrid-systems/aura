@@ -43,6 +43,13 @@ namespace types = aura::compiler::types;
 #include <string>
 #include "hash_meta.h" // #908
 
+// Issue #1610: declared in aura_jit_runtime.cpp — compile-time consults
+// during FlatInstruction lower (not ORC-registered LLVM symbols).
+extern "C" void aura_jit_macro_hygiene_consult_inc();
+extern "C" void aura_jit_macro_introduced_deopt_inc();
+extern "C" uint64_t aura_jit_macro_hygiene_consults();
+extern "C" uint64_t aura_jit_macro_introduced_deopt();
+
 namespace aura::jit {
 
 // PrimId values (must match ir.ixx PrimId enum order)
@@ -237,6 +244,10 @@ struct LLVMBuilder {
     // side-channel shape_map if the instruction has no shape set.
     // Returns 0 (Dynamic / unknown) if neither source has a value.
     inline uint32_t inst_shape(const FlatInstruction& inst) const {
+        // Issue #1610: MacroIntroduced instructions never take L1/L2
+        // shape specialization (conservative hygiene — treat as Dynamic).
+        if (inst.source_marker == 1 /*MacroIntroduced*/)
+            return 0;
         if (inst.shape_id != 0)
             return inst.shape_id;
         if (shape_map && inst.ops[0] < shape_map_size)
@@ -587,6 +598,19 @@ struct LLVMBuilder {
     bool lower(const FlatInstruction& inst, uint32_t block_id, const FlatFunction& fn)
         pre(block_id < fn.num_blocks) pre(fn.num_blocks == 0 || fn.blocks != nullptr) {
         (void)block_id;
+        // Issue #1610: MacroIntroduced hygiene at JIT lower entry.
+        // Consult counter always; dirty+MacroIntroduced forces deopt
+        // (jit_macro_introduced_deopt) so self-evo cannot specialize
+        // mutated macro-expanded code on the hot path.
+        if (inst.source_marker == 1 /*MacroIntroduced*/) {
+            aura_jit_macro_hygiene_consult_inc();
+            if (inst.dirty != 0) {
+                aura_jit_macro_introduced_deopt_inc();
+                if (fn_deopt_inc)
+                    irb->CreateCall(fn_deopt_inc);
+                return false;
+            }
+        }
         // Issue #684: deopt when SoA instruction_dirty_ propagated to JIT.
         if (inst.dirty != 0) {
             if (fn_deopt_inc)
@@ -2200,6 +2224,11 @@ void aura_exception_clear_all();
 uint64_t aura_get_defuse_version();
 // Issue #157 Phase 1c / #1534 / #1535 / #1537: deopt + dual-epoch fences.
 void aura_deopt_inc();
+// Issue #1610: MacroIntroduced hygiene consult / deopt counters.
+void aura_jit_macro_hygiene_consult_inc();
+void aura_jit_macro_introduced_deopt_inc();
+uint64_t aura_jit_macro_hygiene_consults();
+uint64_t aura_jit_macro_introduced_deopt();
 int aura_jit_guard_shape_epoch_check(const char* name);
 int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
                                        std::uint32_t opcode);

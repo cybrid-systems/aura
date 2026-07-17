@@ -19,8 +19,16 @@ import aura.compiler.evaluator;
 
 namespace aura::compiler {
 
-// Issue #1244 Phase 1: count IR instructions stamped MacroIntroduced.
+// Issue #1244 / #1610: MacroIntroduced IR stamp counters.
+// Primary storage is C-linkage (aura_jit_runtime.cpp) so query stats can
+// read without importing this module. Module atomics mirror for any TU
+// that imports lowering; emit() bumps both.
 export inline std::atomic<std::uint64_t> hygiene_ir_macro_marker_total{0};
+export inline std::atomic<std::uint64_t> hygiene_ir_provenance_stamped_total{0};
+
+// C bump helpers (defined in aura_jit_runtime.cpp).
+extern "C" void aura_hygiene_ir_macro_marker_inc();
+extern "C" void aura_hygiene_ir_provenance_stamped_inc();
 
 // A slot binding: either a local variable (slot index) or captured (env slot)
 enum class BindingKind : std::uint8_t { Local, Captured, Cell };
@@ -175,9 +183,12 @@ export struct LoweringState {
             return;
         auto& blk = cur_func->blocks[cur_block];
         blk.instructions.push_back({op, {op0, op1, op2, op3}});
-        // Propagate type_id from source AST node to IR instruction
+        // Propagate type_id / marker / provenance from source AST (#455 / #1610).
         if (current_flat && current_source_id != ast::NULL_NODE &&
             current_source_id < current_flat->size()) {
+            // Issue #1610: always stamp AST node id as IR source link.
+            blk.instructions.back().source_ast_node_id =
+                static_cast<std::uint32_t>(current_source_id);
             auto tid = current_flat->type_id(current_source_id);
             if (tid != 0)
                 blk.instructions.back().type_id = tid;
@@ -187,16 +198,24 @@ export struct LoweringState {
             // the call-site level (in addition to the existing
             // per-function IRFunction::marker check from #246).
             // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
-            // Issue #1244 Phase 1: full IR hygiene propagation of
+            // Issue #1244 / #1610: full IR hygiene propagation of
             // SyntaxMarker::MacroIntroduced for JIT/AOT/inliner guards.
             auto mk = current_flat->marker(current_source_id);
             blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
+            // Issue #1610: provenance stamping (macro expansion origin).
+            const auto prov = current_flat->provenance(current_source_id);
+            blk.instructions.back().provenance = prov;
+            if (prov != 0) {
+                hygiene_ir_provenance_stamped_total.fetch_add(1, std::memory_order_relaxed);
+                aura_hygiene_ir_provenance_stamped_inc(); // #1610 shared C counter
+            }
             if (mk == aura::ast::SyntaxMarker::MacroIntroduced) {
                 // Observability for hygiene-IR propagation (CompilerMetrics
                 // not always available in lowering TU — bump local atomic).
-                // Issue #1273: full MacroIntroduced enforcement path for
-                // InlinePass / query:pattern / JIT (source_marker == 1).
+                // Issue #1273 / #1610: MacroIntroduced path for InlinePass /
+                // query:pattern / JIT (source_marker == 1).
                 hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
+                aura_hygiene_ir_macro_marker_inc(); // #1610 shared C counter
                 if (cur_func)
                     cur_func->marker = 1; // IRFunction-level MacroIntroduced
             }

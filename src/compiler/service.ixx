@@ -269,7 +269,9 @@ export struct EscapeAnalysisWrap {
                      instr.narrow_evidence,
                      instr.type_id,
                      instr.linear_ownership_state,
-                     0});
+                     0,
+                     // Issue #1610: IR→JIT marker propagation
+                     instr.source_marker});
             }
         }
         aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
@@ -2896,7 +2898,9 @@ public:
                                                    instr.narrow_evidence,
                                                    instr.type_id,
                                                    instr.linear_ownership_state,
-                                                   dirty});
+                                                   dirty,
+                                                   // Issue #1610: IR→JIT marker propagation
+                                                   instr.source_marker});
                         ++inst_off;
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
@@ -10344,7 +10348,9 @@ public:
                                                    instr.narrow_evidence,
                                                    instr.type_id,
                                                    instr.linear_ownership_state,
-                                                   0});
+                                                   0,
+                                                   // Issue #1610: IR→JIT marker propagation
+                                                   instr.source_marker});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};

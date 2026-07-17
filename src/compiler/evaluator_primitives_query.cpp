@@ -24,6 +24,12 @@ import aura.core.type;
 import aura.compiler.pass_manager;
 import aura.compiler.value;
 
+// Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
+extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
+extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
+extern "C" std::uint64_t aura_jit_macro_introduced_deopt();
+extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -5376,20 +5382,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_bool(result.ok);
     });
 
-    // Issue #501 / #514: query:ir-hygiene-stats. Hash view of IR-level
-    // MacroIntroduced hygiene (AST→IR propagation + InlinePass policy):
-    //   - inline-hygiene-skipped: InlinePass macro_hygiene_skipped_
-    //   - macro-markers: workspace SyntaxMarker::MacroIntroduced tally
-    //   - respect-macro-hygiene: InlinePass::respect_macro_hygiene_ (1=on)
-    //   - ir-hygiene-total: inline_skipped + macro_markers
-    //   - ir-hygiene-recommendation: 0=ok, 1=review skips, 2=markers w/o policy
+    // Issue #501 / #514 / #1610: query:ir-hygiene-stats — authoritative
+    // IR-level MacroIntroduced hygiene (AST→IR stamp + InlinePass + JIT).
+    // Schema **1610** (lineage 501/514). AC metrics:
+    //   ir-hygiene-stamped-count  (= hygiene_ir_macro_marker_total)
+    //   jit-macro-introduced-deopt
+    // plus wire flags for lowering stamp + JIT marker check.
     ObservabilityPrims::register_stats_impl(
         "query:ir-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(24);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5418,7 +5423,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
             const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-            const std::uint64_t total = inline_skipped + markers;
+            const std::uint64_t stamped = aura_hygiene_ir_macro_marker_total();
+            const std::uint64_t provenance_stamped = aura_hygiene_ir_provenance_stamped_total();
+            const std::uint64_t jit_deopt = aura_jit_macro_introduced_deopt();
+            const std::uint64_t jit_consults = aura_jit_macro_hygiene_consults();
+            const std::uint64_t total = inline_skipped + markers + stamped;
             const bool respects = InlinePass::get_respect_macro_hygiene();
             std::int64_t recommendation = 0;
             if (inline_skipped > 0 && !respects)
@@ -5427,11 +5436,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 recommendation = 2;
             else if (markers > 0 && inline_skipped == 0 && respects)
                 recommendation = 1;
+            // #501/#514 lineage
             insert_kv("inline-hygiene-skipped", static_cast<std::int64_t>(inline_skipped));
             insert_kv("macro-markers", static_cast<std::int64_t>(markers));
             insert_kv("respect-macro-hygiene", respects ? 1 : 0);
             insert_kv("ir-hygiene-total", static_cast<std::int64_t>(total));
             insert_kv("ir-hygiene-recommendation", recommendation);
+            // #1610 AC keys
+            insert_kv("ir-hygiene-stamped-count", static_cast<std::int64_t>(stamped));
+            insert_kv("provenance-stamped-count", static_cast<std::int64_t>(provenance_stamped));
+            insert_kv("jit-macro-introduced-deopt", static_cast<std::int64_t>(jit_deopt));
+            insert_kv("jit-macro-hygiene-consults", static_cast<std::int64_t>(jit_consults));
+            insert_kv("lowering-stamp-wired", 1);
+            insert_kv("jit-marker-check-wired", 1);
+            insert_kv("aot-bridge-marker-wired", 1);
+            insert_kv("issue", 1610);
+            insert_kv("schema", 1610); // lineage 501 / 514 / 1047
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

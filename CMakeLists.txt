@@ -5226,6 +5226,9 @@ aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_1608)
 # Issue #1609: query:pattern MacroIntroduced hygiene force-filter.
 aura_add_issue_test(test_query_pattern_hygiene_1609)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)
+# Issue #1610: IR/JIT/AOT MacroIntroduced + provenance propagation.
+aura_add_issue_test(test_ir_hygiene_propagation_1610)
+aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation_1610)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
