@@ -5125,6 +5125,9 @@ aura_issue_test_link_llvm_jit(test_issue_1494)
 # Issue #1495: wire per-block dirty bitmask into partial re-lower (eval/mutate).
 aura_add_issue_test(test_issue_1495)
 aura_issue_test_link_llvm_jit(test_issue_1495)
+# Issue #1574: wire IRCacheEntry dirty bitmask into optimization pass pipeline.
+aura_add_issue_test(test_issue_1574)
+aura_issue_test_link_llvm_jit(test_issue_1574)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
