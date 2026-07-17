@@ -1,0 +1,254 @@
+;; tests/commercial_readiness_stdlib_uuid.aura
+;;
+;; Eighth-pass audit: std/uuid — UUID v4 generation library.
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_uuid.aura
+;;
+;; ── Module contract ──────────────────────────────────────────────────────
+;; lib/std/uuid.aura is documented as a 3-export module:
+;;   (export uuid uuid-compact uuid-nil)
+;;
+;; Algorithm: linear congruential generator (LCG) with glibc parameters
+;; (1103515245 / 2147483647) seeded with 123456789 at module load.
+;; Output formatting follows RFC 4122 v4 UUID spec:
+;;   - 13th hex digit must be '4' (version)
+;;   - 17th hex digit must be in 89ab (variant)
+;;   - 8-4-4-4-12 group layout with dashes (or compact 32 hex chars)
+;;
+;; ── What this audit tests ────────────────────────────────────────────────
+;;   1. (require "std/uuid") loads without error
+;;   2. All 3 named exports are procedures
+;;   3. uuid-nil returns the canonical all-zeros 36-char string
+;;   4. uuid produces a fresh, valid v4 UUID per call (verify format)
+;;   5. uuid-compact produces a valid 32-char compact hex string
+;;   6. The PRNG mutates across calls (different UUIDs)
+;;   7. Composition tests using uuid-nil as a deterministic input
+;;
+;; ── Audit history (this session) ─────────────────────────────────────────
+;;   B-uuid-2026-07-18-A. (uuid-nil) returned "" instead of the
+;;        canonical "00000000-0000-0000-0000-000000000000" string.
+;;        Root cause: module-level (define (f) "literal") is parsed
+;;        with the literal treated as a doc-string (Common Lisp
+;;        convention) rather than the function body. The function
+;;        ends up with an empty body and returns "" when called.
+;;        Top-level (define (f) "...") outside a require'd module
+;;        is unaffected — different eval path. FIXED this session
+;;        by let-binding the constant inside the body:
+;;          (define (uuid-nil) (let ((s "000...0")) s))
+;;        Pattern noted for any other stdlib file that uses the
+;;        same form; aura module eval needs to be either fixed to
+;;        not interpret bare body strings as doc-strings, or the
+;;        let-bind workaround needs to be applied at every site.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Inline check framework (same pattern as surface / encoding / json /
+;; string / uuid audits)
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-true label actual)
+  (if (and (not (null? actual)) (not (equal? actual #f)) (not (equal? actual 0)))
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-no-error label thunk)
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; uuid-nil-expected — the canonical "nil UUID" string
+(define uuid-nil-expected "00000000-0000-0000-0000-000000000000")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Module load + export surface (3 exports)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-no-error "uuid-require-no-crash"
+  (lambda () (require "std/uuid")))
+
+(expect-true "export-uuid-procedure?"          (procedure? uuid))
+(expect-true "export-uuid-compact-procedure?" (procedure? uuid-compact))
+(expect-true "export-uuid-nil-procedure?"     (procedure? uuid-nil))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; uuid-nil — canonical all-zeros UUID (B-uuid-2026-07-18-A fixed)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "uuid-nil-returns-canonical"
+  (uuid-nil) uuid-nil-expected)
+
+(expect "uuid-nil-length-is-36"
+  (string-length (uuid-nil)) 36)
+
+(expect "uuid-nil-stable-across-calls"
+  (uuid-nil) (uuid-nil))
+
+(expect-true "uuid-nil-is-string"
+  (string? (uuid-nil)))
+
+;; Compare to the source-declared literal — they should be equal
+(expect "uuid-nil-matches-doc-literal"
+  (uuid-nil) "00000000-0000-0000-0000-000000000000")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; uuid — RFC 4122 v4 UUID (8-4-4-4-12, version=4, variant∈89ab)
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Length = 36 chars (32 hex + 4 dashes)
+(expect "uuid-length-36"
+  (string-length (uuid)) 36)
+
+;; 8-4-4-4-12 dash positions at 8, 13, 18, 23 (0-indexed)
+(let ((u (uuid)))
+  (expect "uuid-dash-pos-8"  (string-ref u 8)  45)   ; '-'
+  (expect "uuid-dash-pos-13" (string-ref u 13) 45)   ; '-'
+  (expect "uuid-dash-pos-18" (string-ref u 18) 45)   ; '-'
+  (expect "uuid-dash-pos-23" (string-ref u 23) 45))  ; '-'
+
+;; 13th char (0-indexed 14) MUST be '4' (version digit)
+(expect "uuid-version-marker-4"
+  (string-ref (uuid) 14) 52)  ; '4' = ASCII 52
+
+;; 17th char (0-indexed 19) MUST be in '89ab'
+(let ((variant (string-ref (uuid) 19)))
+  (expect-true "uuid-variant-marker-in-89ab"
+    (or (= variant 56)  ; '8' = 56
+        (= variant 57)  ; '9' = 57
+        (= variant 97)  ; 'a' = 97
+        (= variant 98)))) ; 'b' = 98
+
+;; Non-dash positions must be hex (0-9 / a-f)
+;; Positions 0-7 (group 1): all hex
+(let ((u (uuid)))
+  (expect-true "uuid-group-1-pos-0-hex"
+    (or (and (>= (string-ref u 0) 48) (<= (string-ref u 0) 57))
+        (and (>= (string-ref u 0) 97) (<= (string-ref u 0) 102))))
+  (expect-true "uuid-group-1-pos-7-hex"
+    (or (and (>= (string-ref u 7) 48) (<= (string-ref u 7) 57))
+        (and (>= (string-ref u 7) 97) (<= (string-ref u 7) 102)))))
+
+;; Group 4 (positions 24-35): all hex
+(let ((u (uuid)))
+  (expect-true "uuid-group-4-pos-24-hex"
+    (or (and (>= (string-ref u 24) 48) (<= (string-ref u 24) 57))
+        (and (>= (string-ref u 24) 97) (<= (string-ref u 24) 102))))
+  (expect-true "uuid-group-4-pos-35-hex"
+    (or (and (>= (string-ref u 35) 48) (<= (string-ref u 35) 57))
+        (and (>= (string-ref u 35) 97) (<= (string-ref u 35) 102)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; uuid-compact — 32 hex chars, no dashes
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "uuid-compact-length-32"
+  (string-length (uuid-compact)) 32)
+
+(let ((u (uuid-compact)))
+  ;; No dashes anywhere
+  (expect-true "uuid-compact-no-dash-0"
+    (not (= (string-ref u 0) 45)))
+  (expect-true "uuid-compact-no-dash-8"
+    (not (= (string-ref u 8) 45)))
+  (expect-true "uuid-compact-no-dash-16"
+    (not (= (string-ref u 16) 45)))
+  (expect-true "uuid-compact-no-dash-31"
+    (not (= (string-ref u 31) 45))))
+
+;; Compact also follows v4: position 12 (1-indexed: 13th char) MUST be '4'
+(expect "uuid-compact-version-marker-4"
+  (string-ref (uuid-compact) 12) 52)  ; '4' = ASCII 52
+
+;; Position 16 (variant marker) must be in 89ab
+(let ((variant (string-ref (uuid-compact) 16)))
+  (expect-true "uuid-compact-variant-marker-in-89ab"
+    (or (= variant 56)
+        (= variant 57)
+        (= variant 97)
+        (= variant 98))))
+
+;; All positions are hex (sample positions)
+(let ((u (uuid-compact)))
+  (expect-true "uuid-compact-pos-0-hex"
+    (or (and (>= (string-ref u 0) 48) (<= (string-ref u 0) 57))
+        (and (>= (string-ref u 0) 97) (<= (string-ref u 0) 102))))
+  (expect-true "uuid-compact-pos-31-hex"
+    (or (and (>= (string-ref u 31) 48) (<= (string-ref u 31) 57))
+        (and (>= (string-ref u 31) 97) (<= (string-ref u 31) 102)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; PRNG state — calls return different UUIDs (LCG seeded at module load)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-true "uuid-call-1-different-from-call-2"
+  (not (equal? (uuid) (uuid))))
+
+(expect-true "uuid-call-3-different-from-call-1"
+  (not (equal? (uuid) (uuid))))
+
+(expect-true "uuid-compact-different-from-previous-compact"
+  (not (equal? (uuid-compact) (uuid-compact))))
+
+;; uuid vs uuid-compact from same PRNG should differ (different formats)
+(expect-true "uuid-vs-uuid-compact-different"
+  (not (equal? (uuid) (uuid-compact))))
+
+;; uuid-nil always returns the same constant (different from random UUIDs)
+(expect-true "uuid-nil-different-from-random-uuid"
+  (not (equal? (uuid-nil) (uuid))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Composition tests — uuid-nil as a deterministic input
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; string-append with uuid-nil should produce correct concatenated form
+(expect "compose-uuid-nil-prefix"
+  (string-append "nil:" (uuid-nil))
+  (string-append "nil:" "00000000-0000-0000-0000-000000000000"))
+
+;; uuid-nil should be substitutable in any 36-char string position
+(expect "compose-uuid-nil-three-times"
+  (string-append (uuid-nil) "," (uuid-nil) "," (uuid-nil))
+  "00000000-0000-0000-0000-000000000000,00000000-0000-0000-0000-000000000000,00000000-0000-0000-0000-000000000000")
+
+;; Verify uuid-nil is itself stable as a string literal (compare to
+;; direct literal — should match exactly, not just length-wise)
+(expect-true "uuid-nil-matches-literal-equality"
+  (equal? (uuid-nil) uuid-nil-expected))
+
+;; Round-trip uuid-nil via substring (length-checks again, complementary)
+(expect "uuid-nil-first-8-chars"
+  (substring (uuid-nil) 0 8) "00000000")
+(expect "uuid-nil-last-12-chars"
+  (substring (uuid-nil) 24 36) "000000000000")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; B-uuid inventory footer
+;; ═════════════════════════════════════════════════════════════════════════
+;; B-uuid-2026-07-18-A: (uuid-nil) returned "" instead of canonical
+;;       all-zeros UUID. Module-level (define (f) "literal") parses
+;;       the literal as a doc-string and the function body is empty.
+;;       FIXED this session by let-binding the constant. Pattern
+;;       documented for any other stdlib file with the same form.
+;;       Engine fix needed to make module-level constant-returning
+;;       0-arg functions work without the let-bind workaround.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
