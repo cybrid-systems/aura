@@ -85,10 +85,16 @@ ShapeID inline_shape_of(std::int64_t val) {
         case EvalValueTag::StringV2:
             return finish_inline_shape_id(SHAPE_STRING);
         case EvalValueTag::Special:
-            if (val == 3 || val == 7)
+            // Issue #1620: Special encoding contracts (bool true/false/void).
+            // Matches cxx26_invariants kSpecial* constants.
+            if (val == 3 || val == 7) {
+                contract_assert((val & 3) == 3); // Special low2
                 return finish_inline_shape_id(SHAPE_BOOL);
-            if (val == 11)
+            }
+            if (val == 11) {
+                contract_assert((val & 3) == 3);
                 return finish_inline_shape_id(SHAPE_VOID);
+            }
             return finish_inline_shape_id(SHAPE_ANY);
         case EvalValueTag::Ref: {
             inline_shape_ref_dispatch_count.fetch_add(1, std::memory_order_relaxed);

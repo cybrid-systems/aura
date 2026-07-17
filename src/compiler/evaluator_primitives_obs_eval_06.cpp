@@ -439,16 +439,18 @@ void ObservabilityPrims::register_eval_p51(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 52 (orig lines 6634-6686)
 void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #742: query:cpp26-contracts-stats — C++26 Contracts +
+    // Issue #742 / #1620: query:cpp26-contracts-stats — C++26 Contracts +
     // consteval hot-path invariant observability for Arena/SoA/Value/
-    // Shape/Pass pipeline (non-duplicative with #658 highperf-cpp26,
-    // #431 cxx26-invariants, #465 cxx26-hotpath-invariants).
+    // Shape/Pass/FlatAST pipeline (non-duplicative with #658 highperf-cpp26,
+    // #431 cxx26-invariants, #465 cxx26-hotpath-invariants, #1321/#1519).
     //
-    // Fields (3 + sentinel):
+    // Fields (lineage + #1620 expand):
     //   - contract-violations-caught  cpp26::contract_violations_caught_total
     //   - consteval-checks            kConstevalChecksTotal (compile-time)
     //   - hotpath-invariant-hits      cpp26::hotpath_invariant_hits_total
-    //   - schema == 742
+    //   - hotpath-contracts-1620-active / arena-tier / value-as / shape-bit /
+    //     flatast-get-type coverage flags
+    //   - schema == 1620 (lineage 742|1519|1321)
     ObservabilityPrims::register_stats_impl(
         "query:cpp26-contracts-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
@@ -458,7 +460,8 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t consteval_checks = aura::core::cpp26::kConstevalChecksTotal;
             const std::int64_t hotpath_hits = static_cast<std::int64_t>(
                 aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed));
-            auto* ht = FlatHashTable::create(8);
+            // #1620: more keys — create(32) headroom.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -497,8 +500,33 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                 "hotpath-contracts-1519-active",
                 static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_1519_active.load(
                     std::memory_order_relaxed)));
+            // #1620 AC coverage flags
+            insert_kv(
+                "hotpath-contracts-1620-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_1620_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv("arena-tier-contracts-active",
+                      static_cast<std::int64_t>(aura::core::cpp26::arena_tier_contracts_active.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "value-as-star-contracts-active",
+                static_cast<std::int64_t>(aura::core::cpp26::value_as_star_contracts_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "shape-bit-test-contracts-active",
+                static_cast<std::int64_t>(aura::core::cpp26::shape_bit_test_contracts_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "flatast-get-type-contracts-active",
+                static_cast<std::int64_t>(aura::core::cpp26::flatast_get_type_contracts_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "hotpath-contracts-expanded-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_expanded_active.load(
+                    std::memory_order_relaxed)));
             insert_kv("hotpath-invariant-hits", hotpath_hits);
-            insert_kv("schema", 742);
+            insert_kv("issue", 1620);
+            insert_kv("schema", 1620); // lineage 742|1519|1321
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -5256,6 +5256,9 @@ aura_issue_test_link_llvm_jit(test_resource_quota_manager_1618)
 
 aura_add_issue_test(test_soa_view_enforcement_1619)
 aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1619)
+
+aura_add_issue_test(test_cpp26_contracts_hotpath_1620)
+aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_1620)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)

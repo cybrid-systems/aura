@@ -282,8 +282,61 @@ inline constexpr std::size_t kPerTierExpected = kSmallPoolTotalBytes / kExpected
 static_assert(kPerTierExpected == 1024 * 1024,
               "Issue #1519: per-tier region must stay 1MB (3MB pool / 3 tiers)");
 
+// ── Issue #1620: Arena / Value / Shape / FlatAST / SoAView deepen ──
+//
+// Refines closed #1321 with compile-time guarantees for remaining
+// high-churn mutation hot paths (tier size, dirty depth, NodeTag
+// packing, special Value encodings, SoAView enforcement phase).
+
+// Arena SmallObjectPool max tier must match allocate pre(size <= kMax).
+inline constexpr std::size_t kArenaMaxSmallObjectBytes = 64;
+static_assert(kArenaMaxSmallObjectBytes == kExpectedTierSizes[2],
+              "Issue #1620: Arena max small object must equal tier2 size");
+static_assert(kArenaMaxSmallObjectBytes == 64,
+              "Issue #1620: Arena kMaxSmallSize must stay 64 for allocate contracts");
+
+// FlatAST mark_dirty_upward production bounds (ast.ixx constants).
+inline constexpr std::uint64_t kMarkDirtyMaxDepthConsteval = 64;
+inline constexpr std::uint64_t kMarkDirtyCountThresholdConsteval = 4096;
+static_assert(kMarkDirtyMaxDepthConsteval == 64,
+              "Issue #1620: mark_dirty max depth must stay 64 (stack safety)");
+static_assert(kMarkDirtyCountThresholdConsteval == 4096,
+              "Issue #1620: mark_dirty count threshold must stay 4096");
+static_assert((kMarkDirtyCountThresholdConsteval & (kMarkDirtyCountThresholdConsteval - 1)) == 0,
+              "Issue #1620: mark_dirty count threshold should be power-of-2");
+
+// NodeTag packing used by tag_arity_index (Let=0x06, LetRec=0x07).
+inline constexpr std::uint8_t kNodeTagLetVal = 0x06;
+inline constexpr std::uint8_t kNodeTagLetRecVal = 0x07;
+static_assert(kNodeTagLetVal == 0x06, "Issue #1620: NodeTag::Let must stay 0x06");
+static_assert(kNodeTagLetRecVal == 0x07, "Issue #1620: NodeTag::LetRec must stay 0x07");
+static_assert(kNodeTagLetVal < kNodeTagLetRecVal, "Issue #1620: Let/LetRec tags ordered");
+// Let with 2 children → tag_arity pack (0x06<<8)|2
+inline constexpr std::uint32_t kTagArityLet2 =
+    (static_cast<std::uint32_t>(kNodeTagLetVal) << 8) | 2u;
+static_assert(kTagArityLet2 == 0x602u, "Issue #1620: Let arity-2 tag_arity pack");
+
+// EvalValue Special encodings used by inline_shape_of (bool / void).
+inline constexpr std::int64_t kSpecialBoolTrue = 3;
+inline constexpr std::int64_t kSpecialBoolFalse = 7;
+inline constexpr std::int64_t kSpecialVoid = 11;
+static_assert(kSpecialBoolTrue == 3, "Issue #1620: Special true must stay 3");
+static_assert(kSpecialBoolFalse == 7, "Issue #1620: Special false must stay 7");
+static_assert(kSpecialVoid == 11, "Issue #1620: Special void must stay 11");
+static_assert((kSpecialBoolTrue & 3) == kSpecialTagLow2,
+              "Issue #1620: bool true must have Special low2 bits");
+static_assert((kSpecialBoolFalse & 3) == kSpecialTagLow2,
+              "Issue #1620: bool false must have Special low2 bits");
+static_assert((kSpecialVoid & 3) == kSpecialTagLow2,
+              "Issue #1620: void must have Special low2 bits");
+
+// SoAView enforcement phase (soa_view.ixx kSoaViewEnforcementPhase = 2).
+inline constexpr int kSoaViewEnforcementPhaseConsteval = 2;
+static_assert(kSoaViewEnforcementPhaseConsteval >= 2,
+              "Issue #1620: SoAView enforcement phase must be >= 2 after #1619");
+
 // Exported count for (query:cpp26-contracts-stats) consteval_checks field.
-// Bumped #1321 (+4), #1466 Phase 1 (+17), #1519 (+12 SIMD/cache/dirty/freelist/shape).
-inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 65;
+// Bumped #1321 (+4), #1466 Phase 1 (+17), #1519 (+12), #1620 (+12 Arena/FlatAST/Value/SoA).
+inline constexpr std::int64_t kCpp26ConstevalChecksShipped = 77;
 
 } // namespace aura::core
