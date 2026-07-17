@@ -441,10 +441,17 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
             {
-                // Issue #1287: mandatory bridge_epoch safety — never eval
-                // through stale flat*/pool* after mutation invalidate.
+                // Issue #1287 / #1558: race-window dual-check after
+                // materialize_call_env — never eval through stale flat*/pool*
+                // or EnvFrame after concurrent mutate / steal / GC compact.
+                // (closure_needs_safe_fallback already ran; mutation may race
+                // between that check and eval_flat.)
                 const auto cur_epoch = current_bridge_epoch();
-                if (is_bridge_stale(cl_copy.bridge_epoch, cur_epoch)) {
+                const bool bridge_stale = is_bridge_stale(cl_copy.bridge_epoch, cur_epoch);
+                const bool env_stale =
+                    cl_copy.env_id != NULL_ENV_ID &&
+                    (is_env_frame_invalid(cl_copy.env_id) || is_env_frame_stale(cl_copy.env_id));
+                if (bridge_stale || env_stale) {
                     if (metrics) {
                         metrics->compiler_closure_safe_fallbacks.fetch_add(
                             1, std::memory_order_relaxed);
@@ -462,12 +469,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             1, std::memory_order_relaxed);
                         record_epoch_stale_steal_caught(metrics);
                     }
-                    // Issue #1485 C1: this inline check is a race-window
-                    // safety net for the flat*/pool* dangling case (the
-                    // helper at L363 already passed; mutation raced in
-                    // before we got here). Bump the 2 new top-level
-                    // atomics so the metric surfaces epoch-only stale
-                    // catches that bypassed closure_needs_safe_fallback.
+                    // Issue #1485 / #1558: race-window safety net for dual-epoch.
                     bump_stale_closure_prevented();
                     bump_closure_epoch_mismatch_fallback();
                     // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.

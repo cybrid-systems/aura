@@ -1122,8 +1122,9 @@ extern "C" void aura_evaluator_bump_mutation_steal_attempt() {
 }
 
 // Issue #485: transfer mutation stack on Fiber::resume.
-// Issue #1490: transfer_mutation_stack_to_current_fiber now also
-// runs refresh_stale_frames_after_steal + probe_and_repin_linear.
+// Issue #1490 / #1558: transfer_mutation_stack_to_current_fiber runs
+// refresh_stale_frames_after_steal + probe_and_repin_linear (dual-epoch
+// + linear re-pin before the stolen fiber continues).
 extern "C" void aura_evaluator_resume_fiber_migration() {
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
