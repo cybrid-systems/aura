@@ -10,6 +10,8 @@
 #include <cassert> // Issue #354: assert for yield-during-boundary check
 #include <unistd.h>
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 import std;
 #if AURA_HAVE_EVENTFD
@@ -31,6 +33,11 @@ extern "C" void aura_evaluator_post_resume_refresh(); // Issue #1490
 
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
+std::atomic<std::uint64_t> Fiber::join_total_{0};
+std::atomic<std::uint64_t> Fiber::join_timeout_total_{0};
+std::atomic<std::uint64_t> Fiber::join_cancel_total_{0};
+std::atomic<std::uint64_t> Fiber::join_wait_us_total_{0};
+std::atomic<std::uint64_t> Fiber::join_wait_us_max_{0};
 
 // Issue #618: GC safepoint frequency tuning atomic. Initialized to
 // 50 (matches historical every-Nth-allocation heuristic). The
@@ -505,6 +512,144 @@ void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
     }
     // Yield back to worker's loop context
     Fiber::yield();
+}
+
+// ── Issue #1584: structured Fiber::join ─────────────────
+
+std::uint64_t Fiber::join_total() noexcept {
+    return join_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_timeout_total() noexcept {
+    return join_timeout_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_cancel_total() noexcept {
+    return join_cancel_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_wait_us_total() noexcept {
+    return join_wait_us_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_wait_us_max() noexcept {
+    return join_wait_us_max_.load(std::memory_order_relaxed);
+}
+
+JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
+    join_total_.fetch_add(1, std::memory_order_relaxed);
+    const auto t0 = std::chrono::steady_clock::now();
+    auto finish = [&](JoinStatus st) -> JoinResult {
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        join_wait_us_total_.fetch_add(us, std::memory_order_relaxed);
+        auto prev = join_wait_us_max_.load(std::memory_order_relaxed);
+        while (us > prev &&
+               !join_wait_us_max_.compare_exchange_weak(prev, us, std::memory_order_relaxed)) {
+        }
+        if (st == JoinStatus::Timeout)
+            join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
+        else if (st == JoinStatus::Cancelled)
+            join_cancel_total_.fetch_add(1, std::memory_order_relaxed);
+        return JoinResult{st, us};
+    };
+
+    if (!target || target == g_current_fiber)
+        return finish(JoinStatus::Invalid);
+    if (target->is_done())
+        return finish(JoinStatus::Ok);
+
+    const bool has_deadline = timeout_ms.has_value();
+    const auto deadline = has_deadline ? t0 + std::chrono::milliseconds(*timeout_ms)
+                                       : std::chrono::steady_clock::time_point::max();
+
+    // Fiber-context path: register on scheduler joiner_map and park.
+    if (g_current_fiber != nullptr && g_scheduler != nullptr) {
+        // Fast re-check under race with completion.
+        if (target->is_done())
+            return finish(JoinStatus::Ok);
+        if (!g_scheduler->add_joiner(target->id(), g_current_fiber)) {
+            // Target vanished or not registered — recheck Done.
+            if (target->is_done())
+                return finish(JoinStatus::Ok);
+            return finish(JoinStatus::Invalid);
+        }
+
+        // Wait loop: BlockingIO yield parks until target Done wakes us
+        // (or we poll for timeout/cancel via Explicit yields when deadline).
+        while (!target->is_done()) {
+            if (g_current_fiber->is_cancel_requested()) {
+                g_scheduler->remove_joiner(target->id(), g_current_fiber);
+                return finish(JoinStatus::Cancelled);
+            }
+            if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
+                g_scheduler->remove_joiner(target->id(), g_current_fiber);
+                return finish(JoinStatus::Timeout);
+            }
+            if (has_deadline) {
+                // Timeout path: short Explicit yields so steal/GC can progress
+                // and we can re-check the deadline without busy-spinning the
+                // worker forever. Joiner stays registered for eventfd wake.
+                Fiber::yield(YieldReason::Explicit);
+            } else {
+                g_current_fiber->set_state(FiberState::Waiting);
+                Fiber::yield(YieldReason::BlockingIO);
+                // After resume: drain eventfd (non-blocking).
+                int evfd = g_current_fiber->eventfd();
+                if (evfd >= 0) {
+                    std::uint64_t val = 0;
+                    while (::read(evfd, &val, sizeof(val)) > 0) {
+                    }
+                }
+                g_current_fiber->set_state(FiberState::Running);
+            }
+        }
+        g_scheduler->remove_joiner(target->id(), g_current_fiber);
+        return finish(JoinStatus::Ok);
+    }
+
+    // Host-thread path (tests without active fiber context).
+    while (!target->is_done()) {
+        if (g_current_fiber && g_current_fiber->is_cancel_requested())
+            return finish(JoinStatus::Cancelled);
+        if (has_deadline && std::chrono::steady_clock::now() >= deadline)
+            return finish(JoinStatus::Timeout);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return finish(JoinStatus::Ok);
+}
+
+JoinResult Fiber::join(std::span<Fiber* const> targets, std::optional<std::uint64_t> timeout_ms) {
+    if (targets.empty())
+        return JoinResult{JoinStatus::Ok, 0};
+
+    const auto t0 = std::chrono::steady_clock::now();
+    JoinResult last{JoinStatus::Ok, 0};
+    for (Fiber* t : targets) {
+        std::optional<std::uint64_t> remaining = timeout_ms;
+        if (timeout_ms.has_value()) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now() - t0)
+                                     .count();
+            if (elapsed >= static_cast<std::int64_t>(*timeout_ms)) {
+                join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
+                last.status = JoinStatus::Timeout;
+                last.wait_us = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count());
+                return last;
+            }
+            remaining =
+                static_cast<std::uint64_t>(*timeout_ms - static_cast<std::uint64_t>(elapsed));
+        }
+        last = join(t, remaining);
+        if (last.status != JoinStatus::Ok)
+            return last;
+    }
+    // Aggregate wait time for the batch.
+    last.wait_us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    return last;
 }
 
 } // namespace aura::serve

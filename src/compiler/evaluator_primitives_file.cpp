@@ -7,6 +7,7 @@ module;
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "security_capabilities.h"
