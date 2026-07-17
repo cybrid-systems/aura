@@ -374,6 +374,11 @@ public:
     [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
     // Issue #1595: times join Ok path invoked linear/StableNodeRef enforcement.
     [[nodiscard]] static std::uint64_t join_linear_enforcement_total() noexcept;
+    // Issue #1597: coarse join latency histogram (5 buckets, µs edges:
+    //   [0]=<100, [1]=<1k, [2]=<10k, [3]=<100k, [4]≥100k).
+    static constexpr std::size_t kJoinLatencyHistBuckets = 5;
+    [[nodiscard]] static std::uint64_t join_latency_hist(std::size_t bucket) noexcept;
+    [[nodiscard]] static std::uint64_t join_latency_hist_sum() noexcept;
 
     // Issue #213 Cycle 3: per-fiber mutation stack. The
     // Evaluator's enter/exit_mutation_boundary reads/writes
@@ -497,6 +502,8 @@ private:
     static std::atomic<std::uint64_t> join_wait_us_total_;
     static std::atomic<std::uint64_t> join_wait_us_max_;
     static std::atomic<std::uint64_t> join_linear_enforcement_total_;
+    // Issue #1597 join latency histogram (process-wide).
+    static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
 };
 
 // Issue #213 Cycle 3: function pointers that the Evaluator

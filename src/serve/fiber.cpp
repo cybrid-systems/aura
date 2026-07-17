@@ -42,6 +42,8 @@ std::atomic<std::uint64_t> Fiber::join_wait_us_total_{0};
 std::atomic<std::uint64_t> Fiber::join_wait_us_max_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
+// Issue #1597 join latency histogram.
+std::atomic<std::uint64_t> Fiber::join_latency_hist_[Fiber::kJoinLatencyHistBuckets]{};
 
 // Issue #618: GC safepoint frequency tuning atomic. Initialized to
 // 50 (matches historical every-Nth-allocation heuristic). The
@@ -541,6 +543,19 @@ std::uint64_t Fiber::join_linear_enforcement_total() noexcept {
     return join_linear_enforcement_total_.load(std::memory_order_relaxed);
 }
 
+std::uint64_t Fiber::join_latency_hist(std::size_t bucket) noexcept {
+    if (bucket >= kJoinLatencyHistBuckets)
+        return 0;
+    return join_latency_hist_[bucket].load(std::memory_order_relaxed);
+}
+
+std::uint64_t Fiber::join_latency_hist_sum() noexcept {
+    std::uint64_t s = 0;
+    for (std::size_t i = 0; i < kJoinLatencyHistBuckets; ++i)
+        s += join_latency_hist_[i].load(std::memory_order_relaxed);
+    return s;
+}
+
 // C ABI for observability primitives (avoid pulling fiber.h into obs partitions).
 extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total() {
     return Fiber::join_linear_enforcement_total();
@@ -558,6 +573,19 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         auto prev = join_wait_us_max_.load(std::memory_order_relaxed);
         while (us > prev &&
                !join_wait_us_max_.compare_exchange_weak(prev, us, std::memory_order_relaxed)) {
+        }
+        // Issue #1597: coarse join latency histogram buckets (µs).
+        {
+            std::size_t b = 4;
+            if (us < 100)
+                b = 0;
+            else if (us < 1000)
+                b = 1;
+            else if (us < 10000)
+                b = 2;
+            else if (us < 100000)
+                b = 3;
+            join_latency_hist_[b].fetch_add(1, std::memory_order_relaxed);
         }
         if (st == JoinStatus::Timeout)
             join_timeout_total_.fetch_add(1, std::memory_order_relaxed);

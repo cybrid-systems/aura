@@ -1,7 +1,7 @@
 # AI Closed-Loop Readiness Observability
 
-**Issues:** #1593 (SLO + trend + adaptive linkage), #1499 (production expand),
-#1470 (MVP), #1483 / #1493 / #1591 / #1592 (sibling metrics)
+**Issues:** #1597 (orchestration metrics), #1593 (SLO + trend + adaptive),
+#1499 (production expand), #1470 (MVP), #1483 / #1493 / #1591 / #1592 / #1584–#1586
 
 ## Primitive
 
@@ -54,7 +54,22 @@ Single high-frequency query for AI agents before/after self-mutation batches.
 | `adaptive-safepoint-recommended` | 1 when orchestrators should back off |
 | `adaptive-soft-triggers` | Times soft adapt ran (health &lt; 50) |
 | `adaptive-safepoint-threshold` | Current adaptive threshold |
-| `schema` | **1593** (Agents may still accept 1499) |
+| `schema` | **1597** (Agents may still accept 1593 / 1499) |
+
+### #1597 parallel orchestration
+
+| Key | Meaning |
+|-----|---------|
+| `orch-health-score` | 0–100 subscore from join/mailbox/parallel pressure |
+| `avg-join-latency-us` / `join-latency-max-us` | Fiber::join latency |
+| `join_latency_histogram` | Sum of coarse hist buckets (&lt;100 / &lt;1k / &lt;10k / &lt;100k / ≥100k µs) |
+| `join-latency-hist-b0` … `b4` | Per-bucket counts |
+| `mailbox_backpressure_p99` | Pseudo-p99 pressure gauge from reject rate |
+| `mailbox-backpressure-rejects` / `mailbox-pushes` | MultiFiberMailbox counters |
+| `parallel_task_throughput` | tasks/s (from ok / parallel_elapsed_us) |
+| `parallel-tasks-ok` / `err` / `joined` / `fail-fast` / `timeouts` | parallel_orch stats |
+| `orchestration_starvation_mitigated` | steal mitigated + join linear enforce |
+| `adaptive-concurrency-recommended` | 1 → lower max_concurrency under orch pressure |
 
 ## Health score (sketch)
 
@@ -67,6 +82,7 @@ health = 100
   − min(15, quota_rejects/5) if ≥5
   − 10 if mostly full re-lower under load
   − hygiene / dirty-prune / long-hold / safepoint-wait soft penalties
+  − orch-health soft fold (join latency / mailbox BP / fail rate)
 clamp [0, 100]
 ```
 
@@ -75,10 +91,11 @@ clamp [0, 100]
 When `slo-breach` and `health-score < 50`, one soft
 `bump_safepoint_adaptive_threshold()` runs so GC/orchestrators back off
 under severe pressure. Orchestrators should also read
-`adaptive-safepoint-recommended` and `action`.
+`adaptive-safepoint-recommended`, `adaptive-concurrency-recommended`, and `action`.
 
 ## Tests
 
 - `tests/test_issue_1470.cpp` — MVP shape
-- `tests/test_issue_1499.cpp` — health-score (schema 1499|1593)
+- `tests/test_issue_1499.cpp` — health-score (schema 1499|1593|1597)
 - `tests/test_ai_closedloop_readiness_1593.cpp` — SLO / trend / adaptive
+- `tests/test_ai_closedloop_orch_readiness_1597.cpp` — orch join/mailbox/parallel

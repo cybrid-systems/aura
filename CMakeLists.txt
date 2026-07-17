@@ -5193,6 +5193,9 @@ aura_issue_test_link_llvm_jit(test_fiber_join_linear)
 # Issue #1596: runtime linear ownership + live-closure scan refine.
 aura_add_issue_test(test_linear_ownership_post_mutate)
 aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate)
+# Issue #1597: orch metrics folded into ai-closedloop-readiness-stats.
+aura_add_issue_test(test_ai_closedloop_orch_readiness_1597)
+aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness_1597)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
