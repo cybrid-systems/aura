@@ -195,18 +195,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1481: query:resource-quota-stats (sister to #869 above).
-    // Returns a 4-field hash: {checks_total, rejects_total, max_fibers,
-    // max_mutations} from the typed-error enforcement helpers shipped at
-    // ebc88e0d (ResourceQuotaExceeded enum variant) + 0bfeec38 (5 inline
-    // impl bodies in evaluator.ixx + counter wiring). Aggregate tracking
-    // migration (per-call mutation / fiber quota compare) is deferred to
-    // follow-up issues — for #1481 (scope-limited close), only the
-    // typed-error entry point + counter wiring exists, so the
-    // _checks_total / _rejects_total counters are observable while
-    // _max_fibers / _max_mutations reflect the currently-configured
-    // limits (defaults 256 / 100000 from observability_metrics.h:1568
-    // area).
+    // Issue #1481 / #1498: query:resource-quota-stats.
+    // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
+    // #1498 production fields (AC2): current_usage, memory_quota,
+    // memory_quota_total, exceeded_count (=rejects), mutations_used.
+    // schema bumped to 1498 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
         "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_
@@ -228,7 +221,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->resource_quota_max_mutations.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            // Issue #1498: live usage + configured quotas for agent dashboards.
+            const std::int64_t current_usage =
+                static_cast<std::int64_t>(ev.resource_quota_current_usage());
+            const std::int64_t memory_quota = static_cast<std::int64_t>(ev.resource_quota_memory());
+            const std::int64_t memory_quota_total =
+                static_cast<std::int64_t>(ev.resource_quota_memory_total());
+            const std::int64_t mut_used = static_cast<std::int64_t>(ev.mutation_quota_used());
+            auto* ht = FlatHashTable::create(32) /* #1141 / #1498 more keys */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -257,9 +257,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             };
             insert_kv("checks_total", checks_total);
             insert_kv("rejects_total", rejects_total);
+            insert_kv("exceeded_count", rejects_total); // #1498 AC2 alias
             insert_kv("max_fibers", max_fibers);
             insert_kv("max_mutations", max_mutations);
-            insert_kv("schema", 1481);
+            insert_kv("current_usage", current_usage);
+            insert_kv("memory_quota", memory_quota);
+            insert_kv("memory_quota_total", memory_quota_total);
+            insert_kv("mutations_used", mut_used);
+            insert_kv("schema", 1498);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
