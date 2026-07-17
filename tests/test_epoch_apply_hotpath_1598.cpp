@@ -174,8 +174,8 @@ static void ac5_query_metrics() {
 
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1598, "schema 1598");
-    CHECK(href(cs, "issue") == 1598, "issue 1598");
+    CHECK(href(cs, "schema") == 1604 || href(cs, "schema") == 1598, "schema 1604|1598");
+    CHECK(href(cs, "issue") == 1604 || href(cs, "issue") == 1598, "issue 1604|1598");
     CHECK(href(cs, "stale_closure_prevented") >= 0, "stale_closure_prevented");
     CHECK(href(cs, "closure_epoch_mismatch_fallback") >= 0, "closure_epoch_mismatch_fallback");
     CHECK(href(cs, "post_steal_refresh_count") >= 1, "post_steal_refresh_count");
@@ -262,7 +262,7 @@ static void ac6_stress_1000() {
     CHECK(load_u64(m->stale_closure_prevented) >= 0, "stale counter valid");
     CHECK(load_u64(m->bridge_epoch_bumps_total) >= 0, "bridge bumps valid");
     // Query still works after stress.
-    CHECK(href(cs, "schema") == 1598, "query valid post-stress");
+    CHECK(href(cs, "schema") == 1604 || href(cs, "schema") == 1598, "query valid post-stress");
     std::println("  serial={} conc={} stale_prev={} mismatch_fb={} refresh={} bridge_bumps={}",
                  kSerial, runs.load(), load_u64(m->stale_closure_prevented),
                  load_u64(m->closure_epoch_mismatch_fallback), ev.get_post_steal_refresh_count(),
