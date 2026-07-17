@@ -223,12 +223,14 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         return;
     }
-    const auto& flat = *workspace_flat_;
+    auto& flat = *workspace_flat_;
 
     if (tag_arity_index_workspace_ != workspace_flat_ || tag_arity_index_.empty()) {
         tag_arity_index_rebuild_full(flat);
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
+        // Keep FlatAST index policy knobs mirrored for ensure_tag_arity_index.
+        (void)flat;
         return;
     }
 
@@ -239,6 +241,28 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
 
     if (cur_gen == tag_arity_index_synced_gen_ && cur_size > tag_arity_index_synced_size_) {
         tag_arity_index_append_nodes(flat, tag_arity_index_synced_size_);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
+        bump_pattern_index_rebuild_trigger(trigger);
+        return;
+    }
+
+    // Issue #1503: when dirty fraction is high, prefer full rebuild
+    // over walking every dirty node for patch (same threshold as FlatAST).
+    std::size_t dirty_n = 0;
+    const std::size_t scan_n = std::min(cur_size, tag_arity_index_synced_size_);
+    for (aura::ast::NodeId id = 0; id < static_cast<aura::ast::NodeId>(scan_n); ++id) {
+        if (flat.is_dirty(id))
+            ++dirty_n;
+    }
+    const std::uint8_t pct = flat.tag_arity_index_full_rebuild_threshold_pct();
+    const bool prefer_full = scan_n > 0 && dirty_n * 100 > scan_n * static_cast<std::size_t>(pct);
+    if (prefer_full) {
+        // Full Evaluator index rebuild; also refresh FlatAST index with
+        // the same threshold policy (bumps threshold-full-rebuilds when
+        // ensure chooses full for dirty fraction).
+        tag_arity_index_rebuild_full(flat);
+        flat.mark_tag_arity_index_dirty();
+        flat.ensure_tag_arity_index();
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
         return;

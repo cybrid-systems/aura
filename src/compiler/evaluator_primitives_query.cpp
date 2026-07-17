@@ -1598,8 +1598,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       rebuild_time_us + delta_hits));
         });
 
-    // Issue #490: query:pattern-index-rebuild-stats. Hash view of
-    // lazy vs eager Evaluator index rebuild counters + FlatAST timing.
+    // Issue #490 / #1503: query:pattern-index-rebuild-stats. Hash view of
+    // lazy vs eager Evaluator index rebuild counters + FlatAST timing +
+    // incremental maintenance policy (threshold, auto-warm, patches).
     ObservabilityPrims::register_stats_impl(
         "query:pattern-index-rebuild-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -1609,11 +1610,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             std::uint64_t flat_rebuilds = 0;
             std::uint64_t flat_rebuild_time_us = 0;
+            std::uint64_t flat_delta_hits = 0;
+            std::uint64_t threshold_full = 0;
+            std::uint64_t incremental_patches = 0;
+            std::int64_t threshold_pct = 25;
             if (auto* ws = ev->workspace_flat()) {
                 flat_rebuilds = ws->tag_arity_index_rebuilds();
                 flat_rebuild_time_us = ws->tag_arity_index_rebuild_time_us();
+                flat_delta_hits = ws->tag_arity_index_delta_hits();
+                threshold_full = ws->tag_arity_index_threshold_full_rebuilds();
+                incremental_patches = ws->tag_arity_index_incremental_patches();
+                threshold_pct =
+                    static_cast<std::int64_t>(ws->tag_arity_index_full_rebuild_threshold_pct());
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1646,8 +1656,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev->get_pattern_index_eager_mutate_rebuilds()));
             insert_kv("eager-cow-rebuilds",
                       static_cast<std::int64_t>(ev->get_pattern_index_eager_cow_rebuilds()));
+            insert_kv("auto-warm-syncs",
+                      static_cast<std::int64_t>(ev->get_pattern_index_auto_warm_syncs()));
             insert_kv("flat-rebuilds", static_cast<std::int64_t>(flat_rebuilds));
             insert_kv("flat-rebuild-time-us", static_cast<std::int64_t>(flat_rebuild_time_us));
+            insert_kv("flat-delta-hits", static_cast<std::int64_t>(flat_delta_hits));
+            insert_kv("threshold-full-rebuilds", static_cast<std::int64_t>(threshold_full));
+            insert_kv("incremental-patches", static_cast<std::int64_t>(incremental_patches));
+            insert_kv("threshold-pct", threshold_pct);
+            insert_kv("schema", 1503);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
