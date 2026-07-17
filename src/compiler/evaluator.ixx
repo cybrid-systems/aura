@@ -398,15 +398,23 @@ public:
     [[nodiscard]] Evaluator* owner() const { return owner_; }
     void set_parent_id(EnvId id) { parent_id_ = id; }
     [[nodiscard]] EnvId parent_id() const { return parent_id_; }
-    // Issue #207 (Cycle 1): bind(name, value) writes to
-    // bindings_ only. The migration to route through
-    // bind_symid is a Cycle 2 item (requires pool_ to
-    // become non-const, which is a bigger refactor that
-    // touches many call sites).
+    // Issue #207 / #1482 restore: route through bind_with_linear_state so
+    // when pool_ is set the SymId PRIMARY array stays in lockstep with
+    // string bindings_ (capture via alloc_env_frame_from_env needs
+    // bindings_symid_; set!/lookup need string or SymId after materialize).
     void bind(std::string_view n, types::EvalValue v) {
-        bindings_.emplace_back(std::string(n), std::move(v));
-        // Issue #894: O(1) local name index (shadows parent on rebind).
-        binding_index_[bindings_.back().first] = bindings_.size() - 1;
+        // 0 == linear_rt::Untracked (namespace defined later in this module)
+        bind_with_linear_state(n, std::move(v), 0);
+    }
+    // Issue #1482 restore: wholesale string-binding replace used by
+    // materialize_call_env when rehydrating an EnvFrame that still
+    // carries legacy bindings_ (Define/begin paths that bound before
+    // pool was set). Rebuilds binding_index_ for O(1) lookup.
+    void replace_string_bindings(std::span<const std::pair<std::string, types::EvalValue>> bs) {
+        bindings_.assign(bs.begin(), bs.end());
+        binding_index_.clear();
+        for (std::size_t i = 0; i < bindings_.size(); ++i)
+            binding_index_[bindings_[i].first] = i;
     }
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old

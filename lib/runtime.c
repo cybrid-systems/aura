@@ -51,11 +51,24 @@ unsigned long long aura_get_module_version(void) {
 // stays 0, the check always passes vacuously. This is correct
 // for standalone AOT — the safety net is only meaningful under
 // the host's concurrent-mutation regime.
+static unsigned long long g_current_bridge_epoch = 0;
 void aura_set_current_bridge_epoch(unsigned long long v) {
-    (void)v;
+    g_current_bridge_epoch = v;
 }
 unsigned long long aura_get_current_bridge_epoch(void) {
-    return 0;
+    return g_current_bridge_epoch;
+}
+
+// Issue #1485 C2: standalone-AOT stubs for defuse_version (same
+// pattern as module_version / bridge_epoch). Host process uses
+// aura_jit_bridge.cpp; standalone AOT has no concurrent mutation
+// so default 0 always matches closure stamps at alloc.
+static unsigned long long g_aot_defuse_version = 0;
+void aura_set_aot_defuse_version(unsigned long long v) {
+    g_aot_defuse_version = v;
+}
+unsigned long long aura_get_aot_defuse_version(void) {
+    return g_aot_defuse_version;
 }
 
 #define IS_PAIR(v) (((v) & 3) == 1)
@@ -535,7 +548,7 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // aura_set_current_bridge_epoch. defuse_version_ was stamped at
     // alloc from aura_get_aot_defuse_version() (kept in sync by
     // aura_set_aot_defuse_version from the C++ side).
-    if (closure_heap[id].bridge_epoch != g_current_bridge_epoch) {
+    if (closure_heap[id].bridge_epoch != aura_get_current_bridge_epoch()) {
         return 0;
     }
     if (closure_heap[id].defuse_version != aura_get_aot_defuse_version()) {

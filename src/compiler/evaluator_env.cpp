@@ -77,6 +77,18 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         if (it->first == n) {
             return it->second;
         }
+    // 1b. Issue #1482 restore: bindings_symid_ is PRIMARY. materialize_call_env
+    // copies only the SymId array (string bindings_ stay empty). Free vars /
+    // letrec recursive names captured via bind_symid therefore live only here.
+    // When pool_ is set (apply_closure sets it from the closure pool), resolve
+    // the name via intern and hit the SymId path before walking parents.
+    if (pool_ && !bindings_symid_.empty()) {
+        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
+            if (it->first == s)
+                return it->second;
+        }
+    }
     // 2. Check parent
     if (parent_) {
         return parent_->lookup(n);
@@ -106,6 +118,22 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                         return owner_->cells()[ci];
                 }
                 return b.second;
+            }
+        }
+        // Issue #1482: EnvFrame primary storage is bindings_symid_ (string
+        // bindings_ often empty post-capture). Resolve free vars from outer
+        // let/define that only live on the SymId path.
+        if (pool_ && !pfr.bindings_symid_.empty()) {
+            auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+            for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend(); ++it) {
+                if (it->first == s) {
+                    if (is_cell(it->second)) {
+                        auto ci = as_cell_id(it->second);
+                        if (ci < owner_->cells().size())
+                            return owner_->cells()[ci];
+                    }
+                    return it->second;
+                }
             }
         }
         // Recurse via SoA: walk the parent's parent_id_ chain.
@@ -187,16 +215,13 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // interns names but the body's `lookup(name)` does the
 // string-keyed loop). Without the mirror, lambda params would
 // be invisible to body code.
-// Issue #1482 Commit 1: bindings_symid_ is now PRIMARY on Env.
-// The legacy bindings_ + binding_index_ arrays are no longer
-// eagerly mirrored here; they are LAZY-derived from bindings_symid_
-// via Env::bindings_with_names() (which uses pool_->resolve() per
-// SymId, with "@<symid:N>" fallback when pool_ is null). The
-// followup commits (#1550 + #1551) handle the full lazy-derive
-// + desync tightening + dual-path consistency validation in
-// walk/GC paths. Until that lands, callers of the legacy
-// string-keyed Env::lookup(name) will not find this frame's
-// bindings — that path is being migrated.
+//
+// Issue #1482 Commit 1 made bindings_symid_ PRIMARY and dropped
+// the eager mirror, intending #1550/#1551 to migrate Variable
+// lookup to SymId. That migration is incomplete: Variable still
+// uses Env::lookup(name). Restoring the mirror (when pool_ is set)
+// unblocks let/letrec-bound lambdas (tree-walker path) — CI
+// gradual/suite/integ/bash regressions ("unbound variable: x").
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
     bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
 }
@@ -204,6 +229,24 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
     bindings_symid_.emplace_back(s, std::move(v));
     bindings_linear_ownership_state_.push_back(state);
+    // Mirror into string-keyed bindings_ so Env::lookup(name) finds
+    // lambda params bound via apply_closure / Path B. Only when pool_
+    // can resolve SymId → name (canonical or captured pool).
+    if (pool_) {
+        const auto name = pool_->resolve(s);
+        if (!name.empty()) {
+            const auto& val = bindings_symid_.back().second;
+            const std::string key(name);
+            if (auto it = binding_index_.find(key); it != binding_index_.end() &&
+                                                    it->second < bindings_.size() &&
+                                                    bindings_[it->second].first == key) {
+                bindings_[it->second].second = val;
+            } else {
+                bindings_.emplace_back(key, val);
+                binding_index_[bindings_.back().first] = bindings_.size() - 1;
+            }
+        }
+    }
 }
 
 void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
@@ -516,16 +559,13 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
 // position in the SoA arena); callers can override with an
 // explicit parent_id if they want to re-parent the frame.
 //
-// P0 + Issue #1482 Commit 1: bindings_ no longer eagerly mirrored
-// from Env::bind_symid — bindings_symid_ is PRIMARY on Env. The legacy
-// bindings_ array on the frame is populated lazily via
-// Env::bindings_with_names() (per-SymId pool_->resolve() with
-// "@<symid:N>" fallback when pool_ is null) and copied here only
-// when an explicit named-view is materialized by a caller. The
-// legacy EnvFrame::bindings() getter still returns a span over the
-// possibly-empty bindings_ array; SymId-keyed readers should use
-// Env::bindings_symid() instead. See followups #1550 / #1551 for
-// the follow-on lazy-derive + dual-path consistency validation work.
+// Issue #1482 restore: copy BOTH bindings_symid_ (PRIMARY) and
+// legacy string bindings_ into the frame. Define / multi-define
+// begin often bind via Env::bind without a pool (string-only); if
+// we drop string bindings at capture, set! free vars (total-pass)
+// and recursive nested defines (seen?) become unbound after
+// materialize_call_env. SymId path remains primary for new binds
+// that go through bind_symid / bind_with_linear_state(+pool).
 //
 // primitives_/pool_/cells_ deliberately not part of the frame
 // (cells_ removed entirely from EnvFrame struct in P0 step 1;
@@ -544,13 +584,12 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
     EnvFrame& fr = env_frames_[id];
     // e is `const`, so .bindings()/.bindings_symid() return
-    // std::span (const overload). Issue #1482 Commit 2: bindings_symid_
-    // is PRIMARY on Env (bindings_ is empty post Commit 1 mirror drop) so
-    // only the SymId-keyed array gets copied into the new frame. The
-    // legacy bindings_ array on the frame stays empty and is populated
-    // lazily via Env::bindings_with_names() when materialized.
+    // std::span (const overload).
     auto bss = e.bindings_symid();
     fr.bindings_symid_.assign(bss.begin(), bss.end());
+    // Dual-path capture: preserve string-keyed cells (Define without pool).
+    auto bs = e.bindings();
+    fr.bindings_.assign(bs.begin(), bs.end());
     // Issue #1539: copy linear ownership SoA (pad/truncate to match).
     auto los = e.bindings_linear_ownership_state();
     fr.bindings_linear_ownership_state_.assign(los.begin(), los.end());
@@ -780,12 +819,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
                          cl.env_id, fr.version_, defuse_version_.load(std::memory_order_acquire));
         }
     }
-    // Issue #1482 Commit 2: bindings_symid_ is PRIMARY on Env (bindings_ is empty post Commit 1
-    // mirror drop). The legacy string-keyed assignments on ne.bindings() are no longer needed; the
-    // materialized env's bindings_ stays empty and is populated lazily via
-    // Env::bindings_with_names() when an explicit named view is requested. Only the SymId-keyed
-    // array is copied.
+    // Issue #1482 restore: rehydrate BOTH paths from the capture frame.
+    // SymId PRIMARY for new code; string bindings for set!/lookup and
+    // defines that never had a pool at bind time.
     ne.bindings_symid_mut() = fr.bindings_symid_;
+    if (!fr.bindings_.empty())
+        ne.replace_string_bindings(fr.bindings_);
     // Issue #1539: copy linear ownership SoA into materialized Env.
     ne.bindings_linear_ownership_state_mut() = fr.bindings_linear_ownership_state_;
     if (ne.bindings_linear_ownership_state_mut().size() < ne.bindings_symid().size()) {
@@ -1658,12 +1697,24 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
 // lookup_cell_ptr. SoA walk via env_frames_ when registered,
 // legacy pointer walk otherwise.
 std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
-    // 1. Local bindings
+    // 1. Local bindings (string path)
     for (auto& b : bindings_) {
         if (b.first == n) {
             if (is_cell(b.second))
                 return as_cell_id(b.second);
             return std::nullopt;
+        }
+    }
+    // 1b. Issue #1482: SymId PRIMARY when string bindings empty
+    // (materialize may only have rehydrated bindings_symid_).
+    if (pool_ && !bindings_symid_.empty()) {
+        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
+            if (it->first == s) {
+                if (is_cell(it->second))
+                    return as_cell_id(it->second);
+                return std::nullopt;
+            }
         }
     }
     // 2. SoA walk via env_frames_ when registered
@@ -1689,6 +1740,17 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
                     if (is_cell(b.second))
                         result = as_cell_id(b.second);
                     return false;
+                }
+            }
+            // SymId path on parent frames
+            if (pool_ && !f.bindings_symid_.empty()) {
+                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+                for (auto it = f.bindings_symid_.rbegin(); it != f.bindings_symid_.rend(); ++it) {
+                    if (it->first == s) {
+                        if (is_cell(it->second))
+                            result = as_cell_id(it->second);
+                        return false;
+                    }
                 }
             }
             return true;
