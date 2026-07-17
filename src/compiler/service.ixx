@@ -7603,12 +7603,14 @@ public:
             return std::unexpected(parse_error_diag(pr));
         }
         bool boundary_success = true;
-        // Issue #1547: typed try_acquire (quota → AuraError, not throw).
+        // Issue #1547 / #1556: typed try_acquire (quota → AuraError, not throw).
         auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
             evaluator_, /*pending_count=*/1, &boundary_success);
         if (!guard_r) {
-            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                                          guard_r.error().message});
+            // Surface ResourceQuotaExceeded message for Agents (retry/skip).
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::OutOfMemory,
+                                                          std::string("ResourceQuotaExceeded: ") +
+                                                              guard_r.error().message});
         }
         auto guard = std::move(*guard_r);
         auto result =

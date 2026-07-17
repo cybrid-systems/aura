@@ -156,12 +156,15 @@ static void ac5_stress_1000() {
 }
 
 static void ac6_legacy_ctor() {
-    std::println("\n--- AC6: legacy ctor still works ---");
+    std::println("\n--- AC6: legacy ctor still works (deprecated #1556) ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
     bool ok = true;
     {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
         Guard guard(ev, &ok);
+#pragma GCC diagnostic pop
         CHECK(ok, "legacy ctor sets ok=true");
         CHECK(guard.is_outermost() || true, "legacy guard usable");
     }

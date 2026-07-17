@@ -36,6 +36,10 @@ function(aura_test_compile_options TARGET)
         # genuinely an error we'd want to catch, and the warning
         # only fires from inside the libstdc++ regex headers.
         -Wno-error=maybe-uninitialized -Wno-maybe-uninitialized
+        # Issue #1556: MutationBoundaryGuard legacy ctor is [[deprecated]]
+        # in favor of try_acquire; ~30 residual call-sites migrate
+        # incrementally. Attribute remains for IDEs / new code.
+        -Wno-deprecated-declarations
     )
 endfunction()
 
