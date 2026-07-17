@@ -535,3 +535,10 @@ Stable keys; unknown keys must be ignored by Agents.
 
 See `docs/design/mutation-boundary-fairness.md` and
 `docs/design/mutation-boundary-safe-yield.md`.
+
+### AI closed-loop readiness (Issue #1593)
+
+`query:ai-closedloop-readiness-stats` — schema **1593**:
+`health-score`, `slo-breach`, `health-trend`, `action`, `recommendation`,
+sibling counters (quota, steal, post-steal, safe-yield). See
+`docs/design/ai-closedloop-readiness.md`.
