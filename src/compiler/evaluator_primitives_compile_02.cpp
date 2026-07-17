@@ -421,6 +421,9 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
                 // Issue #1281: children_ PCV topology restore count.
                 {"children-topology-restore",
                  make_int(static_cast<std::int64_t>(snap.children_topology_restore_count))},
+                // Issue #1502: parent_ topology restore / rebuild-from-children.
+                {"parent-topology-restore",
+                 make_int(static_cast<std::int64_t>(snap.parent_topology_restore_count))},
             };
             return build_hash(kv);
         });

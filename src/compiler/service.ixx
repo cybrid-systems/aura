@@ -6328,6 +6328,8 @@ public:
             s.parent_safe_view_count = ws_flat->parent_safe_view_count();
             // Issue #1281/#1282: children topology restore + wrap restamp.
             s.children_topology_restore_count = ws_flat->children_topology_restore_count();
+            // Issue #1502: parent_ topology rebuild after failed boundary.
+            s.parent_topology_restore_count = ws_flat->parent_topology_restore_count();
             s.auto_restamp_on_wrap_count = ws_flat->auto_restamp_on_wrap_count();
             // Issue #256: AST operation observability counters
             // (children/parent_of/mark_dirty_upward call counts

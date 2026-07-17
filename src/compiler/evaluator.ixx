@@ -9527,10 +9527,17 @@ public:
             // so the restoration is O(1) per node.
             // Issue #1281: PCV topology fidelity is mandatory on
             // every failed boundary — restore_children always runs.
+            // Issue #1502: restore_children also rebuilds parent_
+            // from the restored child lists (full children_/parent_
+            // topology), so partial MutationRecord inverse failures
+            // cannot leave parent_of() inconsistent with children().
             workspace_flat_->restore_children(std::move(cp.children_snapshot));
             stats.children_column_restored = true;
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                 m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1502: parent topology restored with children.
+                m->parent_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
+            }
             // Issue #266: restore sym_id_ / param columns for bulk
             // rename operations when fine rollback was requested.
             if (cp.fine_rollback) {
