@@ -31,6 +31,20 @@
 | `src/test/benchmark_gate.ixx` | `tests/benchmark.py` + `./build.py bench` |
 | `src/test/test_issue_pattern.ixx` | `tests/test_harness.hpp` + `tests/templates/test_issue_pattern.cpp` |
 | `src/test/` | `tests/` · `tests/domain/` · `cmake/AuraDomainTests.cmake` |
+| Pass concepts 内联在 `pass_manager` | **`src/core/concept_constraints.ixx`**（#1577；`import aura.core.concept_constraints`） |
+
+### Pass concepts（Issue #1577）
+
+所有 Pass 流水线 concepts（`Pass` / `AnalysisPass` / `PureAnalysisPass` / `DirtyAwarePass` / `IncrementalPass` / `InstructionDirtyAwarePass` / `JITFriendlyPass` / `SoAViewAwarePass` / `LegacyPass` / `RequiresSoAViewPass` / `ShapeStableAwarePass`）集中在：
+
+```cpp
+import aura.core.concept_constraints;  // 或 import pass_manager（export import 再导出）
+// aura::compiler::Pass / DirtyAwarePass / …
+```
+
+- 实现细节与 `run_pipeline` 仍在 `pass_manager.ixx`
+- 具体 pass 适配器：`optimization_passes.ixx`（#1576）
+- 观测：`(engine:metrics "query:pass-concepts-stats")` schema 1577
 
 写 `test_issue_*`：复制模板 → `aura_add_issue_test` → `cmake --build build --target …`。  
 跑 issue 矩阵：`python3 tests/run_issue_tests.py --tier fast` 或 `./build.py test issues-fast`。

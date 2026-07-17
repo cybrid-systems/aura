@@ -7,6 +7,7 @@ export module aura.compiler.optimization_passes;
 
 import std;
 import aura.compiler.ir;
+import aura.core.concept_constraints; // #1577: Pass / DirtyAware / …
 import aura.compiler.pass_manager;
 
 export namespace aura::compiler::opt_registry {

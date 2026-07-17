@@ -34,51 +34,17 @@ import aura.compiler.coercion_map;
 import aura.compiler.ir_soa;
 import aura.compiler.soa_view;
 import aura.compiler.dirty_propagation;
+// Issue #1577: Pass concepts centralized in concept_constraints.
+// export import re-exports aura::compiler::Pass / DirtyAwarePass / …
+// so existing `import aura.compiler.pass_manager` consumers keep working.
+export import aura.core.concept_constraints;
 import aura.diag;
 
 namespace aura::compiler {
 
-// ── Pass concept — any type with run(IRModule&) + has_error() ───
-//
-// Issue #274: FlatAST mutation visitors follow the same fold
-// pattern via aura::ast::MutationVisitor + run_mutation_pipeline
-// in aura.core.ast (visit_mutation(FlatAST&, const MutationRecord&)
-// + has_error()).
-export template <typename P>
-concept Pass = requires(P& p, aura::ir::IRModule& m) {
-    { p.run(m) } -> std::same_as<void>;
-    { p.has_error() } -> std::convertible_to<bool>;
-};
-
-// ── AnalysisPass concept (Issue #163) — narrower than Pass ────
-//
-// A read-only analysis pass — annotates the IR with metadata
-// without semantic side effects. The narrower contract
-// (vs the full `Pass`) is just: it also exposes a `name()`
-// returning a string view. The `name()` requirement lets us:
-//   - Auto-log which passes ran (via name())
-//   - Distinguish passes by name in diagnostic output
-//   - Compose a pass registry indexed by name
-//
-// The read-only-on-IRModule property is NOT enforced at
-// compile time (would need contracts / a richer type system).
-// Passes that satisfy AnalysisPass SHOULD NOT mutate the IR
-// in observable ways, but we trust the author here.
-//
-// Currently, EscapeAnalysisPass, TypePropagationPass, and
-// LinearOwnershipPass satisfy the AnalysisPass contract.
-// The Pass concept still works for them too (AnalysisPass
-// is a subset of Pass — the extra `name()` requirement is
-// additive).
-export template <typename A>
-concept AnalysisPass = requires(A& a, aura::ir::IRModule& m) {
-    { a.run(m) } -> std::same_as<void>;
-    { a.has_error() } -> std::convertible_to<bool>;
-    { a.name() } -> std::convertible_to<std::string_view>;
-};
-
 // Issue #1517: forward declare so analysis/full pipelines can share
 // the same SoAView enforcement (defined below with SoAViewAwarePass).
+// Pass / AnalysisPass / … concepts: see aura.core.concept_constraints (#1577).
 export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
 
 // ── run_analysis_pipeline — fold over analysis passes ────────────
@@ -238,26 +204,7 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
     return pass_pipeline_detail::g_pipeline_yield_hook;
 }
 
-// Issue #1241 Phase 1: SoAView-friendly pass marker (DOD / columnar consult).
-// Passes may optionally expose uses_soa_view() = true when their hot path
-// iterates IRFunctionSoA columns / IRInstructionView rather than AoS IR.
-export template <typename P>
-concept SoAViewAwarePass = Pass<P> && requires(const P& p) {
-    { p.uses_soa_view() } -> std::convertible_to<bool>;
-};
-
-// Issue #1517: explicit legacy opt-out for passes that intentionally
-// remain AoS (e.g. transitional Wrap). Declares
-//   static constexpr bool kLegacyPass = true;
-export template <typename P>
-concept LegacyPass = Pass<P> && requires { requires std::remove_cvref_t<P>::kLegacyPass == true; };
-
-// Issue #1517: pass declared as requiring SoAView (strict mode).
-// Declares static constexpr bool kRequireSoAView = true;
-// Must also satisfy SoAViewAwarePass — enforced by check_pass_dod_compliance.
-export template <typename P>
-concept RequiresSoAViewPass =
-    Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireSoAView == true; };
+// SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
 // Issue #1517: compile-time DOD compliance check.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
@@ -382,119 +329,20 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
     return !pass.has_error();
 }
 
-// ── Issue #381: PureAnalysisPass concept ────────────────────────
-//
-// Narrows AnalysisPass to passes that don't mutate the IR
-// Module AND don't mutate their own observable state across
-// runs. Use case: a pipeline that runs the same pass twice
-// (once for analysis, once for re-verification after a
-// mutation) should get the same answer both times — the
-// "pure" property guarantees that.
-//
-// Compile-time check: `run()` is `const`. The pass instance
-// can still hold result-accumulator state, but cannot be
-// observable-different between consecutive runs (i.e., the
-// per-instance `results()`/`result()` accessor reflects only
-// the most recent `run()`).
-//
-// The "same IRModule → same results" property is NOT a
-// compile-time check (would need contracts on the IRModule
-// hash) — it's a discipline that pass authors follow when
-// they annotate their class with this concept. The
-// static_assert on ComputeKindWrap below documents the
-// intent.
-//
-// Migration path: existing AnalysisPass types don't
-// automatically become PureAnalysisPass — they need a const
-// run() (some have it; most don't yet). ComputeKindWrap
-// satisfies this concept already (it only writes to
-// results_, which is the documented accumulator).
-export template <typename P>
-concept PureAnalysisPass = AnalysisPass<P> && requires(const P& p, aura::ir::IRModule& m) {
-    { p.run(m) } -> std::same_as<void>;
-};
-
-// ── Issue #381: IncrementalPass concept ─────────────────────────
-//
-// A pass that exposes per-block or per-function entry points
-// for partial re-running. The default `run(IRModule&)` still
-// works for full re-runs, but the incremental entry points
-// let the pipeline re-execute just the dirty subset after a
-// mutation (instead of re-running the whole pass).
-//
-// The "has run_block" property is the load-bearing one for
-// per-block incremental re-lower; "has run_function" covers
-// the per-function case (ConstantFoldingWrap, TypeCheckWrap).
-//
-// Existing passes that already satisfy this pattern:
-//   - ConstantFoldingWrap: has `fold_function(IRFunction&)`
-//     and `fold_block(BasicBlock&)`.
-//
-// Migration: rename `fold_function` / `fold_block` to
-// `run_function` / `run_block` (or add type-erased wrappers)
-// and add the concept `static_assert`. The new
-// `run_incremental_pipeline` template uses this concept.
-export template <typename P>
-concept IncrementalPass =
-    Pass<P> && requires(P& p, aura::ir::IRFunction& f, aura::ir::BasicBlock& b) {
-        { p.run(f) } -> std::same_as<void>;
-        { p.run(b) } -> std::same_as<void>;
-    };
-
-// ── Issue #381: DirtyAwarePass concept ──────────────────────────
-//
-// A pass that can consult per-block dirty state and skip
-// clean blocks. Companion to the per-block dirty column on
-// IRFunctionSoA (#196) and the per-instruction dirty column
-// on IRFunctionSoA (#380).
-//
-// The "has is_block_dirty" property is the load-bearing one;
-// the pipeline can use it to short-circuit: "if all blocks
-// are clean, skip this pass entirely."
-//
-// Migration: dirty-aware pass implementations add an
-// `is_block_dirty(block_id)` method. The pipeline queries it
-// before running the pass.
-export template <typename P>
-concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id) {
-    { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
-};
-
-// Issue #1197 Phase 1: instruction-level dirty short-circuit (optional).
-// Passes may expose is_instruction_dirty(block_id, inst_id); the dirty
-// pipeline consults it when present to skip clean instructions.
-export template <typename P>
-concept InstructionDirtyAwarePass =
-    DirtyAwarePass<P> && requires(const P& p, std::uint32_t block_id, std::uint32_t inst_id) {
-        { p.is_instruction_dirty(block_id, inst_id) } -> std::convertible_to<bool>;
-    };
+// PureAnalysisPass / IncrementalPass / DirtyAwarePass /
+// InstructionDirtyAwarePass / ShapeStableAwarePass / JITFriendlyPass:
+// defined in aura.core.concept_constraints (#1577).
 
 // Metric: instruction-level dirty skips (#1197).
 export inline std::atomic<std::uint64_t> passes_skipped_instruction_dirty{0};
 
-// ── Issue #744: ShapeStableAwarePass concept ──────────────────
-//
-// Passes that can skip clean blocks when the enclosing function's
-// ShapeProfiler profile is stable (speculative opt win preserved).
+// ── Issue #744: ShapeStable probe hooks (runtime; concept is centralized) ──
 export using FnShapeStableProbeFn = bool (*)(std::string_view fn_name) noexcept;
 export inline FnShapeStableProbeFn g_fn_shape_stable_probe = nullptr;
 
 export void set_fn_shape_stable_probe(FnShapeStableProbeFn probe) noexcept {
     g_fn_shape_stable_probe = probe;
 }
-
-export template <typename P>
-concept ShapeStableAwarePass = DirtyAwarePass<P>;
-
-// ── Issue #494: JITFriendlyPass concept ───────────────────────
-//
-// Passes that expose a pipeline epoch hint for JIT / mutation_epoch
-// coordination. The hint is advisory (relaxed-ordering); CompilerService
-// may set it from mutation_epoch_ before incremental re-lower.
-export template <typename P>
-concept JITFriendlyPass = Pass<P> && requires(const P& p) {
-    { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
-};
 
 // ── Issue #381: run_incremental_pipeline — fold over per-function / per-block work ──────────
 //

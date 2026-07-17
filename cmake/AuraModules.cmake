@@ -31,6 +31,8 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/soa_view.ixx
     # Issue #1206 / #1575: dirty cascade engine (before pass_manager which imports it).
     src/compiler/dirty_propagation.ixx
+    # Issue #1577: centralized Pass concepts (after ir; before pass_manager).
+    src/core/concept_constraints.ixx
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
