@@ -139,6 +139,64 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // (engine:metrics "query:render-pass-incremental-stats") — Issue #1578.
+    ObservabilityPrims::register_stats_impl(
+        "query:render-pass-incremental-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::opt_registry;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            const auto load = [](std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            const std::pair<std::string, EvalValue> fields[] = {
+                {"phase", make_int(kOptimizationPassesPhase)},
+                {"dirty-skipped-blocks", make_int(load(render_dirty_skipped_blocks))},
+                {"shape-stable-violations", make_int(load(render_shape_stable_violations))},
+                {"incremental-hits", make_int(load(render_incremental_hits))},
+                {"blocks-processed", make_int(load(render_blocks_processed_total))},
+                {"pass-runs", make_int(load(render_pass_runs_total))},
+                {"full-fallback", make_int(load(render_full_module_fallback_total))},
+                {"fb-present-skips", make_int(load(render_framebuffer_present_skips))},
+                {"fb-present-ok", make_int(load(render_framebuffer_present_ok))},
+                {"schema", make_int(1578)},
+            };
+            for (auto& [k, v] : fields) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
     // concrete optimization_passes registry + contract/pipeline counters.
     ObservabilityPrims::register_stats_impl(
