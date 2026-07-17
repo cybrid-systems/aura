@@ -427,11 +427,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto probe = v;
             while (is_pair(probe)) {
                 auto pidx = as_pair_idx(probe);
-                if (pidx >= pairs.size()) break;
+                if (pidx >= pairs.size())
+                    break;
                 ++len;
                 probe = pairs[pidx].cdr;
             }
-            if (n > len) n = len;
+            if (n > len)
+                n = len;
         }
         EvalValue result = make_void();
         // Build result in reverse then reverse it

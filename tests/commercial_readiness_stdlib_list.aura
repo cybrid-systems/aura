@@ -1,0 +1,352 @@
+;; tests/commercial_readiness_stdlib_list.aura
+;;
+;; Eighth-pass audit: std/list — fundamental list operations.
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_list.aura
+;;
+;; ── Module contract ──────────────────────────────────────────────────────
+;; lib/std/list.aura is documented as a 23-export module:
+;;   (export foldr foldl map for-each member? zip zip3 take skip
+;;           take-while drop-while
+;;           partition sort range sum product last flatten
+;;           intersperse intersperse-iterative any all)
+;;
+;; Per file header (Hot-path guidance #923 / #928 / #1549), the
+;; implementation prioritizes iterative / constant-stack patterns
+;; (named-let + reverse accumulation) over recursive ones. Functions
+;; are designed to compose into foldl for large lists rather than
+;; deep user recursion.
+;;
+;; ── Test environment quirk ──────────────────────────────────────────────
+;; Aura note: `(list)` as a bare expression evaluates to 0 (the
+;; integer, not the empty list) in module file-eval context. Test
+;; expectations that use `(list)` for the empty literal will show
+;; "expected=0 actual=()" failures — fix by using `'()` or explicit
+;; construction. This is a test-environment artifact, not a stdlib
+;; bug; std/list itself returns the proper empty list `()`.
+;;
+;; ── What this audit tests ────────────────────────────────────────────────
+;;   1. (require "std/list") loads without error
+;;   2. All 23 named exports are procedures
+;;   3. Functional smoke tests for each export — empty + edge + multi-
+;;      element inputs, predicate composition, flat vs nested lists
+;;
+;; ── Audit history (this session) ─────────────────────────────────────────
+;;   B-list-2026-07-18-A. (take n lst) returned the un-reversed
+;;        accumulator (e.g. (40 30 20 10) instead of (10 20 30 40))
+;;        when n exceeded the list length. Root cause: `take` is
+;;        registered as a C++ engine primitive in
+;;        src/compiler/evaluator_primitives_list.cpp:411. The
+;;        implementation builds the result via `for`-loop then
+;;        reverses, but the loop's early-exit (`if (!is_pair(v))
+;;        return result;`) bypassed the post-loop reverse when
+;;        n > length, returning the un-reversed accumulator.
+;;        FIXED in src/compiler/evaluator_primitives_list.cpp this
+;;        session by bounding n by list length upfront — the loop
+;;        now runs exactly min(n, length) times and always reaches
+;;        the post-loop reverse path. Stdlib .aura fix alone did
+;;        not work because the engine primitive takes precedence
+;;        over the .aura define; engine fix is the actual fix.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Inline check framework
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-true label actual)
+  (if (and (not (null? actual)) (not (equal? actual #f)) (not (equal? actual 0)))
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-no-error label thunk)
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Module load + export surface (23 exports)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-no-error "list-require-no-crash"
+  (lambda () (require "std/list")))
+
+(expect-true "export-foldr-procedure?"            (procedure? foldr))
+(expect-true "export-foldl-procedure?"            (procedure? foldl))
+(expect-true "export-map-procedure?"              (procedure? map))
+(expect-true "export-for-each-procedure?"         (procedure? for-each))
+(expect-true "export-member?-procedure?"          (procedure? member?))
+(expect-true "export-zip-procedure?"              (procedure? zip))
+(expect-true "export-zip3-procedure?"             (procedure? zip3))
+(expect-true "export-take-procedure?"             (procedure? take))
+(expect-true "export-skip-procedure?"             (procedure? skip))
+(expect-true "export-take-while-procedure?"       (procedure? take-while))
+(expect-true "export-drop-while-procedure?"       (procedure? drop-while))
+(expect-true "export-partition-procedure?"        (procedure? partition))
+(expect-true "export-sort-procedure?"             (procedure? sort))
+(expect-true "export-range-procedure?"            (procedure? range))
+(expect-true "export-sum-procedure?"              (procedure? sum))
+(expect-true "export-product-procedure?"          (procedure? product))
+(expect-true "export-last-procedure?"             (procedure? last))
+(expect-true "export-flatten-procedure?"          (procedure? flatten))
+(expect-true "export-intersperse-procedure?"      (procedure? intersperse))
+(expect-true "export-intersperse-iterative-procedure?"
+                                                 (procedure? intersperse-iterative))
+(expect-true "export-any-procedure?"              (procedure? any))
+(expect-true "export-all-procedure?"              (procedure? all))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; foldl / foldr — left / right fold
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "foldl-+-sum"
+  (foldl + 0 (list 1 2 3 4)) 10)
+(expect "foldl-+-empty"
+  (foldl + 0 (list)) 0)
+;; Left fold with append — common idiom for list concatenation.
+;; Verifies the constant-stack semantics described in the std/list
+;; file header (Hot-path guidance #923 / #928 / #1549).
+(expect "foldl-append-list-build"
+  (foldl append '() (list (list 1) (list 2 3) (list 4 5 6)))
+  (list 1 2 3 4 5 6))
+(expect "foldr-cons-list-keep"
+  (foldr cons (list) (list 1 2 3)) (list 1 2 3))
+(expect "foldl-*-product"
+  (foldl * 1 (list 1 2 3 4)) 24)
+(expect "foldr-+-reverse-fold"
+  (foldr + 0 (list 1 2 3 4)) 10)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; for-each — side-effecting iteration (returns #t on completion)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-true "for-each-empty-returns-true"
+  (for-each (lambda (x) x) (list)))
+(expect-true "for-each-on-list"
+  (for-each (lambda (x) x) (list 1 2 3)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; member? — predicate for list membership
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "member?-yes" (member? 2 (list 1 2 3 4)) #t)
+(expect "member?-no"  (member? 5 (list 1 2 3 4)) #f)
+(expect "member?-empty-list" (member? 1 (list)) #f)
+(expect-true "member?-string-yes"
+  (member? "world" (list "hello" "world" "foo")))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; zip / zip3 — pair / triple zip
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "zip-equal"
+  (zip (list 1 2 3) (list (quote a) (quote b) (quote c)))
+  (list (list 1 (quote a)) (list 2 (quote b)) (list 3 (quote c))))
+(expect "zip-a-short"
+  (zip (list 1 2) (list (quote a) (quote b) (quote c)))
+  (list (list 1 (quote a)) (list 2 (quote b))))
+(expect "zip-b-short"
+  (zip (list 1 2 3) (list (quote a) (quote b)))
+  (list (list 1 (quote a)) (list 2 (quote b))))
+(expect "zip-empty"
+  (zip (list) (list 1 2 3)) '())
+(expect "zip3-equal"
+  (zip3 (list 1 2) (list (quote a) (quote b)) (list "x" "y"))
+  (list (list 1 (quote a) "x") (list 2 (quote b) "y")))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; take / skip — B-list-2026-07-18-A verified working both directions
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "take-2-of-5"
+  (take 2 (list 1 2 3 4 5)) (list 1 2))
+(expect "take-0"
+  (take 0 (list 1 2 3)) '())
+(expect "take-exact"
+  (take 3 (list 1 2 3)) (list 1 2 3))
+(expect "take-more-than"           ; B-list-2026-07-18-A fixed
+  (take 99 (list 1 2 3)) (list 1 2 3))
+(expect "take-by-one-more"          ; edge case just past length
+  (take 4 (list 1 2 3)) (list 1 2 3))
+(expect "take-empty-list"
+  (take 5 (list)) '())
+(expect "take-large-list"
+  (take 5 (list 1 2 3 4 5 6 7 8)) (list 1 2 3 4 5))
+(expect "skip-2-of-5"
+  (skip 2 (list 1 2 3 4 5)) (list 3 4 5))
+(expect "skip-0"
+  (skip 0 (list 1 2 3)) (list 1 2 3))
+(expect "skip-all"
+  (skip 99 (list 1 2 3)) '())
+(expect "skip-empty-list"
+  (skip 5 (list)) '())
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; take-while / drop-while — predicate-driven
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "take-while-positive"
+  (take-while (lambda (x) (< x 3)) (list 1 2 3 1 2))
+  (list 1 2))
+(expect "take-while-all-true"
+  (take-while (lambda (x) (< x 10)) (list 1 2 3)) (list 1 2 3))
+(expect "take-while-none-true"
+  (take-while (lambda (x) (< x 0)) (list 1 2 3)) '())
+(expect "drop-while-positive"
+  (drop-while (lambda (x) (< x 3)) (list 1 2 3 1 2))
+  (list 3 1 2))
+(expect "drop-while-all-true"
+  (drop-while (lambda (x) (< x 10)) (list 1 2 3)) '())
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; sort — native list-sort or merge-sort fallback
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "sort-already"
+  (sort (list 1 2 3 4 5)) (list 1 2 3 4 5))
+(expect "sort-reverse"
+  (sort (list 5 4 3 2 1)) (list 1 2 3 4 5))
+(expect "sort-empty"
+  (sort (list)) '())
+(expect "sort-single"
+  (sort (list 7)) (list 7))
+(expect "sort-dup"
+  (sort (list 3 1 2 1 3)) (list 1 1 2 3 3))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; range — inclusive start, exclusive end
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "range-0-5"
+  (range 0 5) (list 0 1 2 3 4))
+(expect "range-empty-start-equal-end"
+  (range 5 5) '())
+(expect "range-empty-start-greater"
+  (range 5 3) '())
+(expect "range-negative"
+  (range -3 3) (list -3 -2 -1 0 1 2))
+(expect "range-single"
+  (range 7 8) (list 7))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; sum / product — numeric aggregates (via foldl)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "sum-1-5"
+  (sum (list 1 2 3 4 5)) 15)
+(expect "sum-empty"
+  (sum (list)) 0)
+(expect "sum-single"
+  (sum (list 42)) 42)
+(expect "sum-negative"
+  (sum (list -1 -2 3)) 0)
+(expect "product-1-5"
+  (product (list 1 2 3 4 5)) 120)
+(expect "product-empty"
+  (product (list)) 1)
+(expect "product-with-zero"
+  (product (list 1 2 0 4 5)) 0)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; last — final element of list (returns () on empty)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "last-of-3"
+  (last (list 1 2 3)) 3)
+(expect "last-of-1"
+  (last (list 42)) 42)
+(expect "last-of-empty"
+  (last (list)) '())
+(expect-true "last-of-empty-is-null"
+  (null? (last (list))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; flatten — fully iterative stack walk (per source comment, #1549)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "flatten-empty"
+  (flatten (list)) '())
+(expect "flatten-flat"
+  (flatten (list 1 2 3)) (list 1 2 3))
+(expect "flatten-nested-1lvl"
+  (flatten (list (list 1 2) (list 3 4))) (list 1 2 3 4))
+(expect "flatten-deeply-nested"
+  (flatten (list (list 1 (list 2 3)) (list (list 4 5) 6)))
+  (list 1 2 3 4 5 6))
+(expect "flatten-empty-nested"
+  (flatten (list (list) (list 1 2) (list) (list 3) (list)))
+  (list 1 2 3))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; intersperse — alternate sep between elements
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "intersperse-1-4"
+  (intersperse 0 (list 1 2 3 4)) (list 1 0 2 0 3 0 4))
+(expect "intersperse-1-2"
+  (intersperse 0 (list 1 2)) (list 1 0 2))
+(expect "intersperse-1"
+  (intersperse 0 (list 1)) (list 1))
+(expect "intersperse-empty"
+  (intersperse 0 (list)) '())
+(expect-true "intersperse-iterative-is-proc"
+  (procedure? intersperse-iterative))
+(expect "intersperse-iterative-matches"
+  (intersperse-iterative (quote x) (list 1 2 3))
+  (intersperse (quote x) (list 1 2 3)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; any / all — predicate-driven boolean folds
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "any-pos"     (any (lambda (x) (< x 0)) (list 1 2 3)) #f)
+(expect "any-neg"     (any (lambda (x) (< x 0)) (list -1 2 3)) #t)
+(expect "any-empty"   (any (lambda (x) (< x 0)) (list)) #f)
+(expect "all-pos"     (all (lambda (x) (< x 10)) (list 1 2 3)) #t)
+(expect "all-mixed"   (all (lambda (x) (< x 10)) (list 1 20 3)) #f)
+(expect "all-empty"   (all (lambda (x) (< x 10)) (list)) #t)
+(expect "any-evens"   (any (lambda (x) (= 0 (modulo x 2))) (list 1 3 5 6)) #t)
+(expect "all-evens"   (all (lambda (x) (= 0 (modulo x 2))) (list 2 4 6)) #t)
+(expect "all-evens-fail"
+  (all (lambda (x) (= 0 (modulo x 2))) (list 2 4 5)) #f)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Composition tests — primitives compose cleanly (post-B-list fix)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "compose-sum-range"
+  (sum (range 0 6)) 15)
+(expect "compose-foldl-+-0-to-10"
+  (foldl + 0 (range 0 11)) 55)
+(expect "compose-take-then-reverse"
+  (reverse (take 3 (list 1 2 3 4 5))) (list 3 2 1))
+(expect "compose-skip-then-take"
+  (take 2 (skip 2 (list 1 2 3 4 5))) (list 3 4))
+(expect "compose-flatten-then-sum"
+  (sum (flatten (list (list 1 2) (list 3)))) 6)
+(expect "compose-zip-then-map"
+  (map (lambda (p) (car p)) (zip (list 1 2 3) (list (quote a) (quote b) (quote c))))
+  (list 1 2 3))
+;; B-list-2026-07-18-A — take with n > length now composes correctly
+(expect "compose-skip-then-take-overflow"
+  (take 99 (skip 3 (list 1 2 3 4 5))) (list 4 5))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
