@@ -5094,6 +5094,9 @@ aura_issue_test_link_llvm_jit(test_issue_1545)
 # Issue #1486: linear ownership closed-loop parent (entry + boundary + GC + metrics).
 aura_add_issue_test(test_issue_1486)
 aura_issue_test_link_llvm_jit(test_issue_1486)
+# Issue #1487: ResourceQuota Arena + MutationBoundary closed-loop parent.
+aura_add_issue_test(test_issue_1487)
+aura_issue_test_link_llvm_jit(test_issue_1487)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)

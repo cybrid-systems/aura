@@ -1,7 +1,17 @@
 # Arena allocate_raw ↔ Resource Quota Wiring
 
-**Issue:** #1546 (parent #1481)  
-**Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `query:resource-quota-stats`
+**Issues:** #1487 (parent closed-loop), #1546, #1481, #1547, #1548  
+**Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `try_acquire`, `query:resource-quota-stats`
+
+## #1487 closed-loop map
+
+| AC | Surface | Shipped |
+|----|---------|---------|
+| 1 `allocate_raw` quota | Owner callback → `check_arena_quota`; reject → `nullptr` (no used bump). Typed: `allocate_checked` → `AuraError{ResourceQuotaExceeded}` | #1546 |
+| 2 MutationBoundary | `try_acquire` → `check_mutation_quota`; reject → typed error. Flush samples `resource_quota_checks_total` (no mid-boundary abort) | #1547, #1487 |
+| 3 Primitive + metrics | `query:resource-quota-stats` (schema 1481), `resource_quota_checks/rejects_total` | #1481, #1548 |
+| 4 Exhaustion tests | `test_resource_quota` + `test_arena_quota_wired` + `test_mutation_guard_typed_error` + `test_issue_1487` | #1548, #1487 |
+| 5 Integration with #1481 | Helpers + counters + wiring end-to-end | all above |
 
 ## Inventory: `allocate_raw` family
 
