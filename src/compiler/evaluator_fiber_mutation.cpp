@@ -799,6 +799,12 @@ void Evaluator::flush_mutation_boundary() {
     if (stack.empty()) {
         return; // not in a mutation boundary; nothing to flush
     }
+    // Issue #1487: resource-quota liveness on flush. Rejection is
+    // try_acquire's job (typed AuraError); mid-boundary flush must not
+    // abort a half-committed transaction. We only re-sample the check
+    // counter so agents observe flush activity under quota policy.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
     // (2) Release barrier on defuse_version_ so other threads see
     // the current version on their next acquire.
     defuse_version_.fetch_add(0, std::memory_order_release);
