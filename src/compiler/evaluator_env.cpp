@@ -823,12 +823,14 @@ void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
         fn(id, cl);
 }
 
-// Issue #1545: scan live closures for linear captures.
+// Issue #1545 / #1486: scan live closures for linear captures.
 // A capture is "linear" if the EnvFrame SoA has any state != Untracked.
 // mark_invalid → stamp Closure::bridge_epoch = 0 so apply_closure /
 // closure_needs_safe_fallback takes the safe path (is_bridge_stale).
+// only_if_moved: restrict mark to closures with at least one Moved
+// binding (mutation-boundary closed-loop; invalidate uses false).
 Evaluator::LinearLiveClosureScanResult
-Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid) noexcept {
+Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_if_moved) noexcept {
     LinearLiveClosureScanResult out;
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
@@ -844,16 +846,20 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid) noexcept {
             continue;
         const EnvFrame& fr = env_frames_[cl.env_id];
         bool has_linear = false;
+        bool has_moved = false;
         for (const auto s : fr.bindings_linear_ownership_state_) {
-            if (s != linear_rt::Untracked) {
+            if (s != linear_rt::Untracked)
                 has_linear = true;
-                break;
-            }
+            if (s == linear_rt::Moved)
+                has_moved = true;
         }
         if (!has_linear)
             continue;
         ++out.with_linear_capture;
-        if (mark_invalid) {
+        if (has_moved)
+            ++out.with_moved_capture;
+        const bool should_mark = mark_invalid && (!only_if_moved || has_moved);
+        if (should_mark) {
             // Force safe_fallback on next apply regardless of later
             // restamp attempts that only update matching epochs.
             cl.bridge_epoch = 0;

@@ -5091,6 +5091,9 @@ set_tests_properties(test_issue_1544_verification PROPERTIES TIMEOUT 60)
 # Issue #1545: live-closure linear capture scan on invalidate/compact/JIT.
 aura_add_issue_test(test_issue_1545)
 aura_issue_test_link_llvm_jit(test_issue_1545)
+# Issue #1486: linear ownership closed-loop parent (entry + boundary + GC + metrics).
+aura_add_issue_test(test_issue_1486)
+aura_issue_test_link_llvm_jit(test_issue_1486)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
