@@ -40,6 +40,8 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
+    # Issue #1201 / #1576: concrete opt passes + contracts (imports pass_manager).
+    src/compiler/optimization_passes.ixx
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx

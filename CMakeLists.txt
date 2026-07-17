@@ -5130,6 +5130,9 @@ aura_add_issue_test(test_issue_1574)
 aura_issue_test_link_llvm_jit(test_issue_1574)
 # Issue #1575: DirtyPropagation BFS cascade + IR bridges + DirtyAware integration.
 aura_add_issue_test(test_dirty_propagation_cascade)
+# Issue #1576: concrete optimization passes + C++26 contracts registry.
+aura_add_issue_test(test_optimization_passes_contracts)
+aura_issue_test_link_llvm_jit(test_optimization_passes_contracts)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)
