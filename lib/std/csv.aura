@@ -6,7 +6,12 @@
 (define (split-lines text)
   (let loop ((chars (string->list text)) (current '()) (result '()))
     (if (null? chars)
-        (append result (list (list->string (reverse current))))
+        ;; Drop the trailing empty line that a final \n produces. Without
+        ;; this, "a\nb\n" parses to ["a" "b" ""] (3 lines) instead of
+        ;; ["a" "b"] (2 lines) — off-by-one that broke every csv test.
+        (if (null? current)
+            result
+            (append result (list (list->string (reverse current)))))
         (let ((c (car chars)) (rest (cdr chars)))
           (if (= c 10)
               (loop rest '() (append result (list (list->string (reverse current)))))
