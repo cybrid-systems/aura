@@ -5094,6 +5094,9 @@ aura_issue_test_link_llvm_jit(test_issue_1545)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
+# Issue #1547: MutationBoundaryGuard::try_acquire typed ResourceQuotaExceeded.
+aura_add_issue_test(test_mutation_guard_typed_error)
+aura_issue_test_link_llvm_jit(test_mutation_guard_typed_error)
 # Issue #1472: End-to-end atomic batch for complex mutate ops + index
 # sync. Pure C++ (no CompilerService / LLVM JIT); tests atomic-batch
 # observability + MutationBoundaryGuard + lockless helper suppression.

@@ -2899,6 +2899,10 @@ private:
     std::uint64_t resource_quota_memory_ = 0;
     std::uint64_t resource_quota_fibers_ = 0;
     std::uint64_t resource_quota_time_us_ = 0;
+    // Issue #1547: mutation budget (0 = unlimited). Separate from
+    // metrics.resource_quota_max_mutations (Agent-facing default display).
+    std::uint64_t resource_quota_mutations_ = 0;
+    std::atomic<std::uint64_t> mutation_quota_used_{0};
 
     // Issue #242 / #1360: panic checkpoint for append-only arenas.
     // save_panic_checkpoint() snapshots each size; on restore we
@@ -8577,6 +8581,21 @@ public:
     // Issue #753: long-running deployment infra observability.
     void set_resource_quota_memory(std::uint64_t limit) noexcept { resource_quota_memory_ = limit; }
     void set_resource_quota_fibers(std::uint64_t limit) noexcept { resource_quota_fibers_ = limit; }
+    // Issue #1547: host-set mutation budget for try_acquire / check_mutation_quota.
+    void set_resource_quota_mutations(std::uint64_t limit) noexcept {
+        resource_quota_mutations_ = limit;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->resource_quota_max_mutations.store(limit, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t resource_quota_mutations() const noexcept {
+        return resource_quota_mutations_;
+    }
+    [[nodiscard]] std::uint64_t mutation_quota_used() const noexcept {
+        return mutation_quota_used_.load(std::memory_order_relaxed);
+    }
+    void reset_mutation_quota_used() noexcept {
+        mutation_quota_used_.store(0, std::memory_order_relaxed);
+    }
     void set_resource_quota_time_us(std::uint64_t limit) noexcept {
         resource_quota_time_us_ = limit;
     }
@@ -8623,13 +8642,26 @@ public:
                                          std::to_string(resource_quota_memory_)};
     }
 
-    [[nodiscard]] std::optional<aura::core::AuraError> check_mutation_quota() noexcept {
+    // Issue #1481 / #1547: typed-error mutation budget check.
+    // pending_count = mutations about to enter (default 1 per try_acquire).
+    // resource_quota_mutations_ == 0 → unlimited (default; matches #1481 AC5).
+    [[nodiscard]] std::optional<aura::core::AuraError>
+    check_mutation_quota(std::uint64_t pending_count = 1) noexcept {
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
         if (m)
             m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
-        // Aggregate tracking remains via bump_longrunning_quota_violations;
-        // this entry point is for typed-error opt-in callers.
-        return std::nullopt;
+        if (resource_quota_mutations_ == 0)
+            return std::nullopt;
+        const auto used = mutation_quota_used_.load(std::memory_order_relaxed);
+        if (used + pending_count <= resource_quota_mutations_)
+            return std::nullopt;
+        if (m)
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                     std::string("mutation quota exceeded: used ") +
+                                         std::to_string(used) + " + pending " +
+                                         std::to_string(pending_count) + " > limit " +
+                                         std::to_string(resource_quota_mutations_)};
     }
 
     [[nodiscard]] std::optional<aura::core::AuraError> check_fiber_quota() noexcept {
@@ -10095,12 +10127,21 @@ public:
 // If the body (or any nested Guard) flips `ok` to false, the
 // Guard dtor rolls back (linear ownership + panic-checkpoint
 // restore + defuse_version_ bump suppression).
+// Issue #1547: try_acquire-based protect macro. On quota reject the
+// body is skipped (ok stays true for no-op; callers that need the
+// error use try_acquire directly).
 #define AURA_MUTATION_BOUNDARY_PROTECT(EV, BODY)                                                   \
     do {                                                                                           \
         bool _aura_mbp_ok = true;                                                                  \
+        auto _aura_mbp_gr = ::aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(       \
+            (EV), /*pending_count=*/1, &_aura_mbp_ok);                                             \
+        if (!_aura_mbp_gr) {                                                                       \
+            _aura_mbp_ok = false;                                                                  \
+            break;                                                                                 \
+        }                                                                                          \
         {                                                                                          \
-            ::aura::compiler::Evaluator::MutationBoundaryGuard _aura_mbp_guard((EV),               \
-                                                                               &_aura_mbp_ok);     \
+            auto& _aura_mbp_guard = **_aura_mbp_gr;                                                \
+            (void)_aura_mbp_guard;                                                                 \
             BODY;                                                                                  \
         }                                                                                          \
         if (!_aura_mbp_ok) {                                                                       \
@@ -10135,6 +10176,22 @@ public:
             ev.request_fine_rollback_for_next_boundary();
         }
 
+        // Issue #1547: typed-error factory — check_mutation_quota then construct.
+        // Replaces panic/throw paths with AuraResult. On pass, bumps
+        // mutation_quota_used_ by pending_count.
+        [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
+        try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
+                    bool fine_rollback = false) noexcept {
+            if (auto err = ev.check_mutation_quota(pending_count))
+                return std::unexpected(std::move(*err));
+            ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
+            return std::make_unique<MutationBoundaryGuard>(ev, success_flag, fine_rollback);
+        }
+
+        // Issue #1547: legacy RAII ctor retained for backward compat.
+        // Prefer try_acquire() for typed ResourceQuotaExceeded (new code /
+        // typed_mutate / eval_on_current). Not marked [[deprecated]] because
+        // -Werror=deprecated-declarations would force a mass call-site rewrite.
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                               bool fine_rollback = false) noexcept
             : fine_rollback_(fine_rollback)
