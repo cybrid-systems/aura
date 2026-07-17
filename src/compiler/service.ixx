@@ -4225,8 +4225,11 @@ public:
         // helper should_relower(). The function takes the relevant
         // fields as values (no this->) so the same logic can be
         // unit-tested in isolation.
+        // Issue #1555: also treat body-only bitmasks (dirty_block_count>0)
+        // as needs-relower even if entry.dirty was cleared inconsistently.
         if (should_relower(source_hash, it->second.source_hash, it->second.dirty,
-                           it->second.mutation_count, it->second.mutation_count)) {
+                           it->second.mutation_count, it->second.mutation_count) ||
+            it->second.dirty_block_count() > 0) {
             // Issue #487: bump the should_relower counter
             // for observability (the re-lower path fired
             // on dirty). The ratio should_relower /
@@ -6040,13 +6043,18 @@ public:
 
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
 
-    // Issue #1506: prefer partial re-lower when ir_cache_v2_ already
-    // has this define and it is dirty with the same source hash
-    // (body-only bitmasks from mark_define_dirty / set-body). Falls
-    // through to full cache_define on first time, source change, or
-    // partial failure. Used by eval() + eval_ir() define paths so
-    // the production pipeline actually consumes relower_define_blocks
-    // (not only tests / eval-current).
+    // Issue #1506 / #1555: prefer partial re-lower (or clean-hit reuse)
+    // when ir_cache_v2_ already has this define. Production eval / eval_ir
+    // define paths use this so AI mutate:set-body / re-eval does not always
+    // full-lower via cache_define.
+    //
+    // Decision (matches #1555 AC2):
+    //   lookup_define_v2 → 0 (hit, clean): reuse; no lower
+    //   lookup_define_v2 → 1 (dirty or source changed):
+    //     if same source_hash && dirty blocks → relower_define_blocks
+    //       (dispatches relower_define_function when dirty_func_count==1)
+    //     else full cache_define
+    //   lookup_define_v2 → 2 (miss): full cache_define
     EvalResult cache_define_prefer_partial(std::string_view source, aura::ast::FlatAST& flat,
                                            aura::ast::StringPool& pool,
                                            aura::ast::NodeId expanded_root,
@@ -6055,6 +6063,21 @@ public:
         const std::string src(source);
         const auto hash = fnv1a_64(src);
         const int st = lookup_define_v2(name_str, hash);
+
+        // Issue #1555 AC1: clean hit — reuse cached IR (no full lower).
+        if (st == 0) {
+            metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
+            if (bind_in_env) {
+                auto bound = evaluator_.top_env().lookup_binding(name_str);
+                if (!bound) {
+                    // Cached but unbound (e.g. after env reset) — full bind.
+                    return cache_define(source, flat, pool, expanded_root, name_str, bind_in_env,
+                                        module_name);
+                }
+            }
+            return EvalResult(types::make_void());
+        }
+
         if (st == 1) {
             auto it = ir_cache_v2_.find(name_str);
             if (it != ir_cache_v2_.end() && !it->second.irs.empty() &&
@@ -6070,6 +6093,8 @@ public:
                             expanded = body;
                     }
                 }
+                // #1555: dirty_func_count==1 → relower_define_function inside
+                // relower_define_blocks; multi-func dirty → partial or full fallback.
                 if (relower_define_blocks(name_str, source, flat, pool, expanded)) {
                     // Partial path updated IR; still ensure env binding
                     // when requested (first define may not have bound).
@@ -6086,6 +6111,7 @@ public:
             }
             // Source changed, no IR, or partial failed → full path.
         }
+        // st == 2 (miss) or st == 1 fallback
         return cache_define(source, flat, pool, expanded_root, name_str, bind_in_env, module_name);
     }
 
