@@ -7,6 +7,24 @@
 
 Compiler-managed **IRClosure / tree-walker Closure + EnvFrame** values that capture linear state must remain reachable as GC roots across mutation and compaction. Registration is **metric-tracked** (not a separate root table): live roots are re-collected via `Evaluator::collect_compiler_managed_gc_roots` under the current `bridge_epoch`.
 
+### Proactive live-closure walk (#1545 / #1557)
+
+| API | Role |
+|-----|------|
+| `Evaluator::walk_active_closures(fn)` | Unique-lock walk of tree-walker `closures_` map |
+| `Evaluator::scan_live_closures_for_linear_captures(mark, only_if_moved)` | EnvFrame SoA `!= Untracked` → optional **force-invalid** (`bridge_epoch=0` = logical Drop / safe_fallback) |
+| `AuraJIT::walk_active_closures(epoch)` | JIT-side bulk stale-fn mark (ResourceTracker pre-evict pairs with `aura_jit_linear_live_closure_scan`) |
+
+| Path | Scan wiring |
+|------|-------------|
+| `invalidate_function` | pre-cascade `scan_live_closures_for_linear_captures(mark)` |
+| `compact_env_frames` | pre-remap scan |
+| JIT ResourceTracker / hot-swap | `aura_jit_linear_live_closure_scan` + `walk_active_closures` |
+| **fiber steal** (#1557) | `probe_linear_ownership_on_fiber_steal` → scan first, then epoch probe |
+| Guard exit / typed_mutate | `apply_linear_post_mutate_pipeline_` scan only_if_moved |
+
+**Force Drop semantics:** there is no separate free of captured heap cells; marking `bridge_epoch=0` forces `is_bridge_stale` / `closure_needs_safe_fallback` so the capture cannot be applied (logical Drop). Moved captures also bump `linear_ownership_violation_prevented`.
+
 | Counter | Meaning |
 |---------|---------|
 | `linear_ownership_gc_root_registrations_total` | Root re-registration events (invalidate resync, compact restamp, manual bump) |
@@ -14,6 +32,9 @@ Compiler-managed **IRClosure / tree-walker Closure + EnvFrame** values that capt
 | `linear_ownership_gc_violations_prevented_total` | Probe caught linear/epoch violation |
 | `linear_ownership_gc_env_version_resync_total` | `resync_linear_jit_gc_roots_after_invalidate` ran |
 | `linear_gc_root_audit_checks_total` | `#1543` consistency audit invocations |
+| `linear_live_closure_scans_total` | `#1545/#1557` proactive scans |
+| `linear_live_closures_marked_invalid_total` | Closures force-invalidated by scan |
+| `linear_ownership_violation_prevented` | Use-after-move / Moved mark prevented |
 
 ## Invariant
 

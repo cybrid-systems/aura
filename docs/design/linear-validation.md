@@ -19,7 +19,7 @@ Issue **#1538** unifies them so every successful `typed_mutate` / `typed_mutate_
 | AC | Surface | Shipped |
 |----|---------|---------|
 | 1 Entry validation | `apply_closure` / `materialize_call_env` / JIT Apply | #1478, #1542, #1540 |
-| 2 Invalidate + boundary scan | `scan_live_closures_for_linear_captures` on invalidate/compact/JIT + outermost Guard exit (Moved-only mark) | #1545, #1486 |
+| 2 Invalidate + boundary scan | `scan_live_closures_for_linear_captures` on invalidate/compact/JIT + fiber steal (#1557) + outermost Guard exit (Moved-only mark) | #1545, #1486, #1557 |
 | 3 GC root consistency | `docs/design/linear-gc-roots.md` + audit ring | #1543 |
 | 4 Metrics | `linear_post_mutate_enforcements`, `linear_ownership_violation_prevented` | #1478 |
 | 5 Tests | use-after-move + stress | #1539, #1544, `test_issue_1486` |
@@ -49,13 +49,37 @@ typed_mutate / typed_mutate_atomic (success)
         └─ scan_live_closures_for_linear_captures(mark, only_if_moved)
               └─ bridge_epoch=0 on Moved captures → safe_fallback
 
-invalidate_function (#1494)
+invalidate_function (#1494 / #1557)
   ├─ scan_live_closures_for_linear_captures(mark_invalid)  // all linear
   └─ linear_post_mutate_enforce_all
 
+compact_env_frames (#1545)
+  └─ scan_live_closures_for_linear_captures(mark_invalid)  // pre-remap
+
+fiber steal (#1557)
+  └─ probe_linear_ownership_on_fiber_steal
+        ├─ scan_live_closures_for_linear_captures(mark_invalid)  // proactive
+        └─ epoch/version probe + linear_gc_root audit
+
 mark_define_dirty (#1494)
   └─ scan_live_closures_for_linear_captures(mark, only_if_moved)
+
+JIT ResourceTracker / hot-swap (#1545 / #1536)
+  ├─ aura_jit_linear_live_closure_scan → scan_live_closures...
+  └─ AuraJIT::walk_active_closures(epoch)
 ```
+
+## Observability (Agent surface)
+
+| Metric | Use |
+|--------|-----|
+| `linear_live_closure_scans_total` | How often proactive scans ran |
+| `linear_live_closures_marked_invalid_total` | Force-invalid (logical Drop) count |
+| `linear_ownership_violation_prevented` | Moved / use-after-move prevented |
+| `linear_post_mutate_enforcements` | Per-env apply-time enforce |
+| `jit_walk_active_closures_total` | JIT bulk stale-fn walks |
+
+See also `docs/design/linear-gc-roots.md` and `(engine:metrics "query:linear-ownership-gc-compiler-stats")`.
 
 ## MutationResult fields (#1538)
 

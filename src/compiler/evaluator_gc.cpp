@@ -373,6 +373,15 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
 }
 
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
+    // Issue #1557: proactive live-closure linear scan before the
+    // epoch probe — mark Moved/linear captures invalid (bridge_epoch=0)
+    // so apply_closure takes safe_fallback after steal, not only after
+    // invalidate_function / compact. only_if_moved=false: any linear
+    // capture is force-invalidated across the steal boundary (parity
+    // with invalidate_function scan). Locks are taken inside the scan.
+    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                 /*only_if_moved=*/false);
+
     const auto current_ver = defuse_version_snapshot();
     const auto current_bridge = current_bridge_epoch();
     bool violation = false;
