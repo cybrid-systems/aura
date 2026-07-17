@@ -127,10 +127,12 @@
 ;; std/stats — registry read-only ops.
 ;; ═════════════════════════════════════════════════════════════════════════
 (require "std/stats")
-;; list? currently returns 1 (numeric) instead of #t, so we test by length
-;; and cross-check count vs length instead.
+;; list? predicate now returns #t/#f (boolean) — Issue #2026-07-17 fix
+;; was returning numeric 1 which broke any consumer treating truthy as bool
+;; (filter, list-statistics, etc.). Direct check below now works.
 (let ((all (stats:list)))
   (expect "stats:list non-empty" (> (length all) 0) #t)
+  (expect "stats:list predicate" (list? all) #t)
   (expect "stats:count matches length" (= (stats:count) (length all)) #t))
 
 ;; ═════════════════════════════════════════════════════════════════════════
@@ -172,6 +174,8 @@
 (require "std/list")
 (expect "list length" (length (list 1 2 3)) 3)
 (expect "list car" (car (list 10 20 30)) 10)
+(expect "list? on '(1 2 3)" (list? '(1 2 3)) #t)
+(expect "list? on empty" (list? '()) #t)
 (expect "null? on empty" (null? '()) #t)
 
 ;; ═════════════════════════════════════════════════════════════════════════
