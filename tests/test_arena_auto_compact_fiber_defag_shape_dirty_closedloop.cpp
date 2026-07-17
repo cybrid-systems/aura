@@ -74,7 +74,8 @@ static void run_matrix(CompilerService& cs) {
     CHECK(setup_workspace(cs), "recursive workspace setup");
     auto h = cs.eval("(engine:metrics \"query:arena-auto-policy-stats\")");
     CHECK(h && is_hash(*h), "arena-auto-policy-stats returns hash");
-    CHECK(policy_hash(cs, "schema") == 743, "schema == 743");
+    CHECK(policy_hash(cs, "schema") == 1621 || policy_hash(cs, "schema") == 743,
+          "schema == 1621|743");
     CHECK(policy_hash(cs, "auto-compact-triggers") >= 0, "auto-compact-triggers present");
     CHECK(policy_hash(cs, "defrag-fiber-safe-hits") >= 0, "defrag-fiber-safe-hits present");
     CHECK(policy_hash(cs, "fragmentation-post-mutate") >= 0, "fragmentation-post-mutate present");

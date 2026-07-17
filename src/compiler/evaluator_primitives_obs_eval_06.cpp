@@ -536,18 +536,16 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 53 (orig lines 6687-6763)
 void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #743: query:arena-auto-policy-stats — Arena auto-compact + live
-    // defrag + fiber safepoint + dirty/Shape closed loop (non-duplicative with
-    // #642 arena-auto-compaction-stats, #685 arena-auto-compact-stats,
-    // #569 arena-auto-compact-defrag-stats).
+    // Issue #743 / #1621: query:arena-auto-policy-stats — Arena auto-compact +
+    // live defrag + fiber safepoint + dirty/Shape smart policy closed loop
+    // (non-duplicative with #642/#685/#569; refine #743).
     //
-    // Fields (5 + sentinel):
-    //   - auto-compact-triggers     alloc-path + group adaptive triggers
-    //   - defrag-fiber-safe-hits    fiber-context compact/defrag safepoints
-    //   - fragmentation-post-mutate post-mutate frag ratio (basis points)
-    //   - shape-inval-on-compact    ShapeProfiler + on_compact_hook fires
-    //   - env-reval-success         env resync after compact invalidation
-    //   - schema == 743
+    // Fields (lineage 743 + #1621 smart policy):
+    //   - auto-compact-triggers / defrag-fiber-safe-hits / fragmentation-post-mutate
+    //   - shape-inval-on-compact / env-reval-success
+    //   - smart-policy-evaluations / smart-policy-triggers / shape-churn-triggers
+    //   - boundary-exit-compacts / fiber-transition-compacts / live-defrag-policy-hits
+    //   - smart-policy-wired / schema == 1621
     ObservabilityPrims::register_stats_impl(
         "query:arena-auto-policy-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t auto_triggers =
@@ -579,7 +577,29 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
                 env_reval +=
                     m->incremental_closure_env_version_resync_total.load(std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(8);
+            const std::int64_t smart_eval = static_cast<std::int64_t>(
+                aura::core::arena_policy::smart_policy_evaluations_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t smart_trig = static_cast<std::int64_t>(
+                aura::core::arena_policy::smart_policy_triggers_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t shape_churn =
+                static_cast<std::int64_t>(aura::core::arena_policy::shape_churn_triggers_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t boundary_ex = static_cast<std::int64_t>(
+                aura::core::arena_policy::boundary_exit_compact_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t fiber_tr = static_cast<std::int64_t>(
+                aura::core::arena_policy::fiber_transition_compact_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t live_pol = static_cast<std::int64_t>(
+                aura::core::arena_policy::live_defrag_policy_hits_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t soft_gated = static_cast<std::int64_t>(
+                aura::core::arena_policy::smart_policy_soft_gated_total.load(
+                    std::memory_order_relaxed));
+            // #1621: ~16 keys — create(32) headroom.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -611,7 +631,18 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fragmentation-post-mutate", static_cast<std::int64_t>(frag_post));
             insert_kv("shape-inval-on-compact", static_cast<std::int64_t>(shape_inval));
             insert_kv("env-reval-success", static_cast<std::int64_t>(env_reval));
-            insert_kv("schema", 743);
+            // #1621 smart policy AC keys
+            insert_kv("smart-policy-evaluations", smart_eval);
+            insert_kv("smart-policy-triggers", smart_trig);
+            insert_kv("shape-churn-triggers", shape_churn);
+            insert_kv("boundary-exit-compacts", boundary_ex);
+            insert_kv("fiber-transition-compacts", fiber_tr);
+            insert_kv("live-defrag-policy-hits", live_pol);
+            insert_kv("smart-policy-soft-gated", soft_gated);
+            insert_kv("smart-policy-wired", 1);
+            insert_kv("closed-loop-wired", 1);
+            insert_kv("issue", 1621);
+            insert_kv("schema", 1621); // lineage 743
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

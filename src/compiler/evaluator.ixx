@@ -4941,23 +4941,32 @@ public:
             m->incremental_closure_env_version_resync_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #743: MutationBoundary / fiber transition arena auto-policy probe.
+    // Issue #743 / #1621: MutationBoundary / fiber transition arena
+    // smart auto-policy probe (frag + dirty + Shape churn + defrag_req).
     void probe_arena_auto_policy_on_boundary_exit(bool success) noexcept {
         if (!arena_group_)
             return;
         const double frag = arena_ ? arena_->stats().fragmentation_ratio() : 0.0;
-        const bool want_compact =
-            frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
+        const double small_util = arena_ ? arena_->small_pool_utilization() : 0.0;
+        const bool want_defrag = arena_ && arena_->defrag_requested();
+        const bool dirty =
             aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
+        const bool shape = aura::core::arena_policy::peek_shape_churn();
+        const auto decision = aura::core::arena_policy::evaluate_auto_compact_policy(
+            frag, want_defrag, dirty, shape, /*fiber_active=*/false,
+            aura::core::arena_policy::in_render_hotpath(), small_util);
         if (success) {
             aura::core::arena_policy::record_fragmentation_post_mutate(frag);
-            if (want_compact && compiler_metrics_) {
+            if (decision.should_compact && compiler_metrics_) {
                 static_cast<CompilerMetrics*>(compiler_metrics_)
                     ->arena_guard_request_defrag_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        if (want_compact) {
+        if (decision.should_compact) {
+            (void)aura::core::arena_policy::consume_dirty_cascade();
+            (void)aura::core::arena_policy::consume_shape_churn();
             const std::size_t saved = arena_group_->auto_compact_with_safety();
+            aura::core::arena_policy::record_boundary_exit_compact();
             if (success && saved > 0) {
                 aura::core::arena_policy::record_env_reval_success();
                 if (resync_live_closure_env_versions_on_invalidate() > 0)
@@ -4971,9 +4980,21 @@ public:
         if (!arena_group_)
             return;
         const double frag = arena_ ? arena_->stats().fragmentation_ratio() : 0.0;
-        if (frag >= 0.30 || (arena_ && arena_->defrag_requested()) ||
-            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire))
-            arena_group_->auto_compact_with_safety();
+        const double small_util = arena_ ? arena_->small_pool_utilization() : 0.0;
+        const bool want_defrag = arena_ && arena_->defrag_requested();
+        const bool dirty =
+            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
+        const bool shape = aura::core::arena_policy::peek_shape_churn();
+        const auto decision = aura::core::arena_policy::evaluate_auto_compact_policy(
+            frag, want_defrag, dirty, shape, /*fiber_active=*/true,
+            aura::core::arena_policy::in_render_hotpath(), small_util);
+        if (!decision.should_compact)
+            return;
+        (void)aura::core::arena_policy::consume_dirty_cascade();
+        (void)aura::core::arena_policy::consume_shape_churn();
+        arena_group_->auto_compact_with_safety();
+        aura::core::arena_policy::record_fiber_transition_compact();
+        aura::core::arena_policy::record_defrag_fiber_safe_hit();
     }
     // Proactive EnvFrame version re-stamp for live tree-walker closures
     // held across invalidate_function / partial re-lower. Returns the

@@ -616,6 +616,11 @@ public:
         return buffer_.size() + small_pool_.capacity();
     }
 
+    // Issue #1621: SmallObjectPool utilization for smart auto-compact policy.
+    [[nodiscard]] double small_pool_utilization() const noexcept {
+        return small_pool_.utilization();
+    }
+
     // Issue #187 (P0): estimate how many bytes could be reclaimed
     // by a compaction. This is a cheap, side-effect-free check that
     // callers (auto-compact trigger, observability) can use to decide
@@ -1086,31 +1091,39 @@ private:
     // require frag_high to act on want_defrag. small_high
     // still triggers compact() (no flag interaction).
     void maybe_auto_compact_on_alloc() noexcept {
-        static constexpr double kFragThreshold = 0.30;
-        static constexpr double kSmallPoolThreshold = 0.85;
-        // Issue #1320 Phase 1: soft-gate auto-compact during render hot path
-        // so present/draw frames are not jittered by compaction spikes.
-        // Request is preserved; next non-render alloc will act.
-        if (aura::core::arena_policy::in_render_hotpath()) {
+        // Issue #685 / #743 / #1621: smart auto-compact policy —
+        // frag + small-pool util + dirty cascade + Shape churn +
+        // defrag_req, soft-gated on render hot path, fiber-safe
+        // safepoint when a fiber is active.
+        const bool render_hp = aura::core::arena_policy::in_render_hotpath();
+        if (render_hp) {
             aura::core::arena_policy::record_compact_soft_gated_render();
+            // Still evaluate for metrics (soft-gate count).
+            (void)aura::core::arena_policy::evaluate_auto_compact_policy(
+                stats().fragmentation_ratio(), defrag_requested(),
+                aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire),
+                aura::core::arena_policy::peek_shape_churn(), aura::gc_hooks::fiber_active(),
+                /*render_hotpath=*/true, small_pool_.utilization());
             return;
         }
         const auto snap = stats();
-        const bool small_high = small_pool_.utilization() >= kSmallPoolThreshold;
-        const bool frag_high = snap.fragmentation_ratio() >= kFragThreshold;
         const bool want_defrag = defrag_requested();
-        const bool dirty_cascade = aura::core::arena_policy::consume_dirty_cascade();
-        // Four independent triggers; compact() path uses
-        // small_high OR frag_high OR dirty_cascade. The
-        // want_defrag path additionally requires frag_high
-        // so we don't clear the request flag on a no-op defrag.
-        if (!small_high && !frag_high && !dirty_cascade)
+        // Peek then consume so a no-trigger path does not drop signals
+        // that boundary-exit / fiber probes still need.
+        const bool dirty_pending =
+            aura::core::arena_policy::dirty_cascade_pending.load(std::memory_order_acquire);
+        const bool shape_pending = aura::core::arena_policy::peek_shape_churn();
+        const bool fiber = aura::gc_hooks::fiber_active();
+        const auto decision = aura::core::arena_policy::evaluate_auto_compact_policy(
+            snap.fragmentation_ratio(), want_defrag, dirty_pending, shape_pending, fiber,
+            /*render_hotpath=*/false, small_pool_.utilization());
+        if (!decision.should_compact)
             return;
-        if (want_defrag && !frag_high && !dirty_cascade)
-            return; // keep flag set for a future alloc
-                    // that actually triggers fragmentation
+        // Consume signals only when we act (avoid lost wakeups).
+        (void)aura::core::arena_policy::consume_dirty_cascade();
+        (void)aura::core::arena_policy::consume_shape_churn();
 
-        if (aura::gc_hooks::fiber_active()) {
+        if (fiber) {
             stats_.compaction_yield_checks++;
             aura::gc_hooks::safepoint_check();
             aura::core::arena_policy::record_defrag_fiber_safe_hit();
@@ -1120,18 +1133,15 @@ private:
         }
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
-        if (want_defrag) {
-            // Issue #1518: prefer live_compact (mark + freelist relocate
-            // + deopt coord) when freelist holes or tracked live objs exist;
-            // fall back to defrag_no_clear_request otherwise.
+        if (decision.prefer_live_defrag || want_defrag) {
+            // Issue #1518 / #1621: prefer live_compact (mark + freelist
+            // relocate + deopt coord) when freelist holes or tracked
+            // live objs exist; fall back to defrag_no_clear_request.
             if (small_pool_.free_slot_count() > 0 || live_count() > 0) {
                 const auto marked = live_compact(/*force=*/false);
                 if (marked > 0 || small_pool_.free_slot_count() == 0)
-                    saved = 1; // non-zero so auto-trigger accounting continues
+                    saved = 1;
             } else {
-                // Issue #300 AC5 follow-up: use defrag_no_clear_request
-                // so a transient no-op defrag (saved == 0) doesn't
-                // lose the user's pending request flag.
                 saved = defrag_no_clear_request();
             }
             if (saved > 0)
@@ -1148,6 +1158,8 @@ private:
             stats_.frag_reduced_bp +=
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
+        (void)decision.reason;
+        (void)saved;
     }
 
     void invoke_compact_hook_() {
