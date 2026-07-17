@@ -43,8 +43,12 @@ Readers (`apply_closure`, `aura_is_jit_closure_fresh`) acquire-load either domai
 | `invalidate_cascade_depth_max` / `_total` | BFS depth HWM + sum |
 | `compiler_live_closure_stale_prevented_total` | Walk/active stale marks |
 
+Agent dashboard: `query:unified-invalidation-stats` schema **1607**
+(see `docs/design/unified-invalidation-1607.md`).
+
 ## Tests
 
+- `tests/test_unified_invalidation_1607.cpp` — **#1607** AC consolidation
 - `tests/test_issue_1496.cpp` — unified protocol + concurrent mutate/apply
 - `tests/test_issue_1476.cpp` — MVP dual-epoch lockstep (still green)
 - `tests/test_issue_1491.cpp` — apply/JIT dual-check closed-loop

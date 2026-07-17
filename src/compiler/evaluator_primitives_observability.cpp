@@ -316,6 +316,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:post-steal-closed-loop-stats",
     // Issue #1598 — apply_closure / JIT / steal dual-epoch hotpath
     "query:epoch-apply-hotpath-stats",
+    // Issue #1607 / #1496 — unified mark_define_dirty / invalidate dual-epoch
+    "query:unified-invalidation-stats",
     // Issue #1595 — join / mailbox / parallel_intend linear + StableNodeRef
     "query:join-linear-enforcement-stats",
     "ast:yield-at-boundary",
