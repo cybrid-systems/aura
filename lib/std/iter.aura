@@ -61,7 +61,7 @@
         (iter (cdr rest) groups)))))
 
 (define (frequencies lst)
-  (occurrences (lambda (x) x) lst))
+  (hash->alist (occurrences (lambda (x) x) lst)))
 
 (define (split-at n lst)
   (let iter ((i 0) (rest lst) (left (list)))
