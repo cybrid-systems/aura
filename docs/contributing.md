@@ -233,6 +233,8 @@ if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 - [ ] 参数校验在 `as_*` / 索引访问之前
 - [ ] `workspace_read_only_` 快速路径
 - [ ] mutation boundary yield
+- [ ] multi-step Agent loops: yield only via `query:mutation-boundary-safe-yield` /
+      `ast:yield-at-boundary` when depth is 0 (Issue #1504; never yield under Guard)
 - [ ] `add_mutation_with_rollback` + `mark_dirty_upward`
 - [ ] fuzz：`fuzz_defuse.py --quick`、`fuzz_workspace.py --quick`、`fuzz_snapshot.py --quick`
 - [ ] ASAN：`ASAN_OPTIONS=detect_leaks=1 ./build/test_ir`

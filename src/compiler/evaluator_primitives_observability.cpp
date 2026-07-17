@@ -295,6 +295,11 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #504 — Guard impact log for AI decision loops
     "query:mutation-boundary-log",
     "query:mutation-boundary-hold-stats",
+    // Issue #1504 — first-class safe yield + depth instrumentation
+    "query:mutation-boundary-depth",
+    "query:mutation-boundary-safe-yield",
+    "query:mutation-boundary-safe-yield-stats",
+    "ast:yield-at-boundary",
     // Issue #595 — Marker/dirty/epoch/Guard self-evo loop
     "query:self-evolution-loop-stats",
     // Issue #415 — DirtyReason verification categories +

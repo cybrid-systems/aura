@@ -758,6 +758,48 @@ void Evaluator::yield_mutation_boundary() {
     }
 }
 
+// Issue #1504: Agent-facing safe yield. Never yields while a
+// MutationBoundaryGuard holds workspace_mtx_ (deadlock with #362).
+// When depth==0 / not held: cooperative yield (MutationBoundary reason)
+// so multi-Agent orchestration can interleave without long holds.
+int Evaluator::try_safe_yield_at_boundary(std::int64_t timeout_ms) noexcept {
+    (void)timeout_ms; // reserved: future preemptive soft deadline
+    const std::size_t depth = mutation_boundary_depth();
+    const bool held = mutation_boundary_held() || any_active_mutation_boundary();
+    if (depth > 0 || held) {
+        safe_yield_skipped_held_total_.fetch_add(1, std::memory_order_relaxed);
+        return 1; // skipped-held
+    }
+    // Safe point: prefer mutation-boundary yield reason when hook present.
+    if (aura::messaging::g_fiber_yield_mutation_boundary) {
+        aura::messaging::g_fiber_yield_mutation_boundary();
+        // Hook no-ops when no fiber is current (test path).
+        if (aura::serve::g_current_fiber) {
+            safe_yield_ok_total_.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
+        safe_yield_no_fiber_total_.fetch_add(1, std::memory_order_relaxed);
+        return 0; // safe no-op
+    }
+    if (aura::messaging::g_fiber_yield) {
+        aura::messaging::g_fiber_yield();
+        if (aura::serve::g_current_fiber) {
+            safe_yield_ok_total_.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
+        safe_yield_no_fiber_total_.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    // No fiber scheduler wired (unit tests / stdin): still a safe point.
+    safe_yield_no_fiber_total_.fetch_add(1, std::memory_order_relaxed);
+    return 0;
+}
+
+int Evaluator::mutation_boundary_depth_slot_value() const noexcept {
+    int* slot = mutation_boundary_depth_slot(const_cast<Evaluator*>(this));
+    return slot ? *slot : 0;
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Issue #285: install the flush_mutation_boundary hook into the
 // messaging bridge. The hook runs on the fiber thread (set/cleared
