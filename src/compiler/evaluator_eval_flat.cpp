@@ -131,11 +131,11 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
     m->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #681: pre-call epoch/version enforcement for live closures
-// held across mutate:rebind / invalidate_function.
-// Issue #1287: dual-path apply_closure must treat bridge_epoch /
+// Issue #681 / #1287 / #1491: pre-call epoch/version enforcement for
+// live closures held across mutate:rebind / invalidate_function.
+// Dual-path apply_closure (map + bridge) MUST treat bridge_epoch /
 // EnvFrame version mismatch as mandatory safe fallback (no dangling
-// flat*/pool* use after mutation).
+// flat*/pool* use after mutation). Parent closed-loop: #1491.
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;

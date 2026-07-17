@@ -554,20 +554,37 @@ extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
     return m ? m->aot_bridge_epoch_mismatches_.load(std::memory_order_relaxed) : 0;
 }
 
-// Issue #1508: dual-freshness probe for JIT aura_closure_call.
+// Issue #1508 / #1491: dual-freshness probe for JIT aura_closure_call.
 // bridge_epoch ↔ g_aot_table_epoch (hot-swap / invalidate domain)
 // defuse/env_version ↔ g_aot_defuse_version (mutate / EnvFrame domain)
-// Zero capture = legacy/untracked side (not stale for that domain).
+//
+// Strictness matches Evaluator::is_bridge_stale / is_env_frame_stale (#1365 /
+// #1475 / #1491 AC): when tracking is active (current != 0), an unstamped
+// capture (0) is STALE unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1. Non-zero
+// mismatch is always stale. current==0 → domain inactive → not stale.
 extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                                           std::uint64_t captured_defuse_or_env_version) {
     if (aot_metrics())
         aot_metrics()->jit_closure_dual_check_total.fetch_add(1, std::memory_order_relaxed);
     const std::uint64_t cur_bridge = g_aot_table_epoch.load(std::memory_order_acquire);
     const std::uint64_t cur_defuse = g_aot_defuse_version;
-    const bool bridge_ok = (captured_bridge_epoch == 0) || (captured_bridge_epoch == cur_bridge);
-    const bool defuse_ok =
-        (captured_defuse_or_env_version == 0) || (captured_defuse_or_env_version == cur_defuse);
-    return bridge_ok && defuse_ok;
+
+    static const bool legacy_trust = []() noexcept {
+        if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+            return e[0] != '0' && e[0] != '\0';
+        return false;
+    }();
+
+    auto domain_ok = [](std::uint64_t captured, std::uint64_t current, bool trust) noexcept {
+        if (current == 0)
+            return true; // tracking inactive for this domain
+        if (captured == 0)
+            return trust; // unstamped while tracking active
+        return captured == current;
+    };
+
+    return domain_ok(captured_bridge_epoch, cur_bridge, legacy_trust) &&
+           domain_ok(captured_defuse_or_env_version, cur_defuse, legacy_trust);
 }
 
 extern "C" void aura_jit_closure_record_dual_check(void) {

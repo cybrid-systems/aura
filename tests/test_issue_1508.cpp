@@ -15,6 +15,7 @@
 #include "compiler/aura_jit_bridge.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <print>
 #include <vector>
 
@@ -37,6 +38,8 @@ using aura::test::g_passed;
 
 static void ac1_helper_freshness() {
     std::println("\n--- AC1: aura_is_jit_closure_fresh helper ---");
+    // Strict default before first freshness call (static legacy_trust init).
+    setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
     // Align host epochs to known values.
     aura_set_aot_defuse_version(10);
     // Bump table once so we know current ≠ 0.
@@ -48,10 +51,14 @@ static void ac1_helper_freshness() {
     CHECK(aura_is_jit_closure_fresh(e1, 10), "matching bridge+defuse is fresh");
     CHECK(!aura_is_jit_closure_fresh(e1 - 1, 10), "stale bridge is not fresh");
     CHECK(!aura_is_jit_closure_fresh(e1, 11), "stale defuse is not fresh");
-    // Zero capture = legacy untracked side → still ok for that domain.
-    CHECK(aura_is_jit_closure_fresh(0, 10), "bridge=0 (legacy) + matching defuse is fresh");
-    CHECK(aura_is_jit_closure_fresh(e1, 0), "matching bridge + defuse=0 (legacy) is fresh");
-    CHECK(aura_is_jit_closure_fresh(0, 0), "both zero (fully legacy) is fresh");
+    // Issue #1491: unstamped capture while tracking is active is STALE
+    // (aligns with is_bridge_stale / is_env_frame_stale).
+    CHECK(!aura_is_jit_closure_fresh(0, 10), "bridge=0 + active table is stale (strict #1491)");
+    CHECK(!aura_is_jit_closure_fresh(e1, 0), "defuse=0 + active defuse is stale (strict #1491)");
+    CHECK(!aura_is_jit_closure_fresh(0, 0), "both zero under active tracking is stale");
+    // Defuse domain inactive → zero defuse capture is ok with matching bridge.
+    aura_set_aot_defuse_version(0);
+    CHECK(aura_is_jit_closure_fresh(e1, 0), "matching bridge + defuse tracking off is fresh");
 }
 
 static void ac2_stamp_on_alloc() {

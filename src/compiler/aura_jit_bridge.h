@@ -159,10 +159,11 @@ bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 
-// Issue #1508: JIT closure dual-freshness (bridge_epoch + env/defuse).
-// Returns true when both domains match current host epochs.
-// captured_bridge==0 or captured_defuse==0 means "unset / legacy" for
-// that domain (treated as fresh for that side only).
+// Issue #1508 / #1491: JIT closure dual-freshness (bridge_epoch + env/defuse).
+// Returns true when both domains are fresh vs current host epochs.
+// Strict (default): unstamped capture (0) while domain tracking is active
+// (current != 0) is STALE — matches is_bridge_stale / is_env_frame_stale.
+// AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores pre-#1491 "0 is ok" trust.
 bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                                std::uint64_t captured_defuse_or_env_version);
 // Bump dual-check / stale-deopt / safe-fallback metrics (nullable aot_metrics).

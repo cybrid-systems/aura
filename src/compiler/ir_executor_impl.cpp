@@ -278,11 +278,12 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
         return false;
     bool stale = false;
     const auto cur_epoch = ev->current_bridge_epoch();
-    if (cl.bridge_epoch != 0 && cur_epoch != 0 &&
-        Evaluator::is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
+    // Issue #1491: same strict is_bridge_stale contract as apply_closure
+    // (unstamped while tracking active → stale; nonzero mismatch → stale).
+    if (Evaluator::is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
     }
-    // env_version=0 → unset/legacy (skip). Non-zero must not be behind defuse.
+    // Stamp on IRClosure itself (may lag live EnvFrame after compact).
     if (cl.env_version != 0) {
         const auto defuse = ev->defuse_version();
         if (cl.env_version < defuse)
@@ -291,6 +292,7 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
     constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
     if (cl.env_id != kNullEnv) {
         const auto eid = static_cast<EnvId>(cl.env_id);
+        // Live EnvFrame dual-check (#1475 / #1491).
         if (ev->is_env_frame_invalid(eid) || ev->is_env_frame_stale(eid))
             stale = true;
     }
