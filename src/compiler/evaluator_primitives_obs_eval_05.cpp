@@ -680,7 +680,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(32); // #1601 more keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -737,12 +737,51 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
                   : 0;
+            // Issue #1601: production consumer metrics (eval/eval_ir prefer partial).
+            const std::int64_t incr_blocks =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_relower_blocks_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t per_fn =
+                m ? static_cast<std::int64_t>(
+                        m->relower_per_function_called_count.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t skipped =
+                m ? static_cast<std::int64_t>(
+                        m->relower_skipped_entirely_count.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t full_called =
+                m ? static_cast<std::int64_t>(
+                        m->relower_full_called_count.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_hits =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t blocks_saved =
+                m ? static_cast<std::int64_t>(
+                        m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t dirty_ratio_bp =
+                (dirty_hits + blocks_saved) > 0
+                    ? static_cast<std::int64_t>((dirty_hits * 10000) / (dirty_hits + blocks_saved))
+                    : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"impact-blocks-hit", make_int(impact_blocks_hit)},
                 {"partial-relowers", make_int(partial_relowers)},
                 {"full-fallbacks", make_int(full_fallbacks)},
                 {"time-saved-us", make_int(time_saved_us)},
-                {"schema", make_int(718)},
+                // #1601 AC4 names (underscore form for agents)
+                {"incremental_relower_blocks", make_int(incr_blocks)},
+                {"relower_per_function_called_count", make_int(per_fn)},
+                {"relower_skipped_entirely_count", make_int(skipped)},
+                {"relower_full_called_count", make_int(full_called)},
+                {"dirty_block_ratio", make_int(dirty_ratio_bp)}, // basis points
+                {"dirty_block_ratio_bp", make_int(dirty_ratio_bp)},
+                {"eval-prefer-partial-wired", make_int(1)},
+                {"relower-only-dirty-blocks-wired", make_int(1)},
+                {"issue", make_int(1601)},
+                {"schema", make_int(1601)}, // lineage 718
             };
             return build_hash(kv);
         });

@@ -4789,6 +4789,16 @@ public:
     // passed in (rather than looked up internally) so
     // the caller can pass either the per-call flat or
     // the workspace_flat, depending on the call site.
+    // Issue #1601 AC2: explicit alias for the production partial path —
+    // selectively re-lowers only dirty functions/blocks (via
+    // relower_define_function per-block copy + limited dirty pipeline)
+    // and falls back to full re-lower when shape mismatches.
+    bool relower_only_dirty_blocks(const std::string& name, std::string_view source,
+                                   aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                   aura::ast::NodeId expanded_root) {
+        return relower_define_blocks(name, source, flat, pool, expanded_root);
+    }
+
     bool relower_define_blocks(const std::string& name, std::string_view source,
                                aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                aura::ast::NodeId expanded_root) {
@@ -6122,9 +6132,9 @@ public:
                             expanded = body;
                     }
                 }
-                // #1555: dirty_func_count==1 → relower_define_function inside
-                // relower_define_blocks; multi-func dirty → partial or full fallback.
-                if (relower_define_blocks(name_str, source, flat, pool, expanded)) {
+                // #1555/#1601: dirty_func_count==1 → relower_define_function inside
+                // relower_only_dirty_blocks; multi-func dirty → partial or full fallback.
+                if (relower_only_dirty_blocks(name_str, source, flat, pool, expanded)) {
                     // Partial path updated IR; still ensure env binding
                     // when requested (first define may not have bound).
                     if (bind_in_env) {
@@ -7050,8 +7060,11 @@ public:
         // Check if root is a Define node
         if (flat_ptr->get(flat_ptr->root).tag == aura::ast::NodeTag::Define) {
             auto name = pool_ptr->resolve(flat_ptr->get(flat_ptr->root).sym_id);
-            auto result =
-                cache_define(code, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
+            // Issue #1601: prefer partial re-lower on redefine (same path as
+            // eval/eval_ir via cache_define_prefer_partial) so serve define
+            // after mutate:set-body does not always full-lower.
+            auto result = cache_define_prefer_partial(code, *flat_ptr, *pool_ptr, flat_ptr->root,
+                                                      std::string(name));
             return result; // tree-walker result (not void — serve protocol needs return value)
         }
 
