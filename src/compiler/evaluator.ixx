@@ -1419,6 +1419,12 @@ public:
     void set_repopulate_workspace_dep_graph_fn(std::function<void()> fn) {
         repopulate_workspace_dep_graph_fn_ = std::move(fn);
     }
+    // Issue #1495: prefer partial re-lower of dirty ir_cache_v2_
+    // defines before tree-walker eval-current (AI set-body hot path).
+    std::function<void()> relower_dirty_defines_fn_ = nullptr;
+    void set_relower_dirty_defines_fn(std::function<void()> fn) {
+        relower_dirty_defines_fn_ = std::move(fn);
+    }
     // Phase 3: read cache entry from outside the module.
     using IsDefineDirtyFn = bool(const std::string&);
     std::function<IsDefineDirtyFn> is_define_dirty_fn_ = nullptr;

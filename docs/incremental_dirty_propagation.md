@@ -59,6 +59,25 @@ If the macro is *redefined* (`define-hygienic-macro` with the same name), the bo
 - `tests/test_issue_331.cpp` (Issue #331) — dirty bitmask + query:pattern integration; 8 scenarios.
 - `tests/test_issue_327.cpp` (Issue #327, this commit) — end-to-end incremental compilation; 7 scenarios covering the epoch gate axis.
 
+## #1495: consume body-only dirty on eval / populate (shipped)
+
+Prior to #1495, `mark_define_dirty` always called `mark_all_blocks_dirty` on the
+primary target. That forced `dirty_func_count >= 2` (entry + body), so
+`relower_define_blocks` skipped the per-function path and always full-lowered.
+
+| Surface | Behavior after #1495 |
+|---------|----------------------|
+| `mark_define_dirty` primary | body-only dirty when `irs.size() == 2`; nested (`>2`) keeps full dirty |
+| cascade dependents | unchanged body-only for `irs[1]` (#1514) |
+| `relower_dirty_defines_from_workspace` | walks dirty v2 entries → `relower_define_blocks` |
+| `(eval-current)` | calls the hook before tree-walker eval |
+| `populate_ir_cache_v2_from_workspace` | partial first, then full `cache_define` fallback |
+
+**Metrics (AC3):** `incremental_relower_blocks_total`, `relower_full_called_count`
+(snapshot `full_relower_count`), `dirty_block_ratio_bp`.
+
+**Tests:** `tests/test_issue_1495.cpp`, builds on `test_issue_1474` selective copy.
+
 ## Future work
 
 1. Quantitative benchmark comparing `'incremental` vs `'full` paths (per-function dirty block count distribution). Issue #327 AC #3 deferred to `edsl_benchmark.py` extension.

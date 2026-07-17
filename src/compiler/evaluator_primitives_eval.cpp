@@ -590,6 +590,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
+        // Issue #1495: before tree-walker eval, prefer partial re-lower
+        // for any dirty ir_cache_v2_ defines (body-only dirty from
+        // mark_define_dirty after mutate:set-body / rebind). Full
+        // cache_define is only the fallback inside relower_define_blocks.
+        if (ev.relower_dirty_defines_fn_)
+            ev.relower_dirty_defines_fn_();
         auto expanded = aura::compiler::macro_expand_all(*ev.workspace_flat_, *ev.workspace_pool_,
                                                          ev.workspace_flat_->root);
         ev.coverage_counters_[4]++;

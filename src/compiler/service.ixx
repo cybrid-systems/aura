@@ -736,6 +736,11 @@ public:
         // storms.
         evaluator_.set_repopulate_workspace_dep_graph_fn(
             [this]() { this->populate_dep_graph_from_workspace(); });
+        // Issue #1495: lazy partial re-lower of dirty defines on
+        // (eval-current) — consumes body-only dirty bitmask from
+        // mark_define_dirty without requiring a set-code pre-cache.
+        evaluator_.set_relower_dirty_defines_fn(
+            [this]() { (void)this->relower_dirty_defines_from_workspace(); });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
         evaluator_.set_is_define_dirty_fn([this](const std::string& name) -> bool {
             const auto* entry = this->get_define_v2(name);
@@ -4398,12 +4403,40 @@ public:
 
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
-            it->second.dirty = true;
-            it->second.mark_all_blocks_dirty();
-            // Issue #946/#950 Phase 1: also mark instruction dirty bitmask
-            // when present (finer grain ready for partial re-lower).
-            it->second.mark_all_instruction_dirty();
-            metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            auto& primary = it->second;
+            primary.dirty = true;
+            // Issue #1495: typical define shape is irs[0]=__top__ +
+            // irs[1]=body Lambda. mark_all_blocks_dirty on the primary
+            // forced dirty_func_count>=2 and skipped per-function
+            // relower_define_blocks → always full re-lower. Prefer
+            // body-only dirty so partial re-lower wins on set-body.
+            // Nested lambdas (irs.size()>2) keep full dirty (#1261).
+            const bool nested_primary = primary.irs.size() > 2;
+            if (!nested_primary && primary.irs.size() >= 2 &&
+                primary.block_dirty_per_func_.size() >= 2 &&
+                !primary.block_dirty_per_func_[1].empty()) {
+                if (primary.block_dirty_per_func_.size() < primary.irs.size())
+                    primary.block_dirty_per_func_.resize(primary.irs.size());
+                // Keep __top__ (func 0) clean; mark all body blocks dirty.
+                for (auto& b : primary.block_dirty_per_func_[0])
+                    b = 0;
+                for (std::uint32_t bi = 0;
+                     bi < static_cast<std::uint32_t>(primary.block_dirty_per_func_[1].size());
+                     ++bi) {
+                    primary.mark_block_dirty(/*func_idx=*/1, bi);
+                }
+                metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                primary.mark_all_blocks_dirty();
+                // Issue #946/#950 Phase 1: instruction dirty bitmask.
+                primary.mark_all_instruction_dirty();
+                metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                if (nested_primary) {
+                    metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
             // Issue #598 / #1494: post-mutate linear runtime enforcement
             // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
             // Scan Moved captures so long-lived closures cannot apply
@@ -4412,11 +4445,6 @@ public:
             metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
             (void)evaluator_.scan_live_closures_for_linear_captures(
                 /*mark_invalid=*/true, /*only_if_moved=*/true);
-            // Issue #1261: nested lambdas (irs[2..]) require full dirty
-            // — body-only cascade would under-invalidate.
-            if (it->second.irs.size() > 2) {
-                metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
-            }
         }
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for
@@ -4767,6 +4795,13 @@ public:
                         metrics_.relower_partial_funcs_saved_total.fetch_add(
                             clean_funcs, std::memory_order_relaxed);
                     }
+                    // Issue #1495: stamp source after partial so
+                    // lookup_define_v2 hits (hash match + clean dirty).
+                    if (!source.empty()) {
+                        it->second.source = std::string(source);
+                        it->second.source_hash = fnv1a_64(it->second.source);
+                    }
+                    it->second.dirty = false;
                     // Issue #1514: sync JIT — evict native code for this
                     // define so next exec recompiles only the dirty fn.
                     (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(), dirty_ids.size());
@@ -5122,6 +5157,9 @@ public:
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
             return;
+        // Issue #1495: prefer partial re-lower for already-cached
+        // dirty defines before the full cache_define path below.
+        (void)relower_dirty_defines_from_workspace();
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             auto v = ws_flat->get(id);
             if (v.tag != aura::ast::NodeTag::Define)
@@ -5145,6 +5183,16 @@ public:
                                          (it != ir_cache_v2_.end() && !it->second.irs.empty());
             if (it != ir_cache_v2_.end() && !it->second.dirty && it->second.source_hash == hash &&
                 ir_materialized) {
+                continue;
+            }
+            // Issue #1495: if partial re-lower already cleaned this
+            // entry (dirty cleared), skip full lower even when hash
+            // still drifts (source stamp may lag body unparse form).
+            if (it != ir_cache_v2_.end() && !it->second.dirty &&
+                it->second.dirty_block_count() == 0 && ir_materialized && !it->second.irs.empty()) {
+                // Refresh hash to match current workspace.
+                it->second.source = canonical;
+                it->second.source_hash = hash;
                 continue;
             }
             auto alloc = arena_.allocator();
@@ -5200,6 +5248,76 @@ public:
                 entry.dirty = false;
             }
         }
+    }
+
+    // Issue #1495: walk dirty ir_cache_v2_ entries and prefer
+    // partial re-lower (relower_define_blocks → per-function /
+    // per-block) before a full cache_define. Called from
+    // populate_ir_cache_v2_from_workspace and (eval-current)
+    // so AI mutate:set-body / rebind hot paths actually consume
+    // the body-only dirty bitmask instead of always full-lowering.
+    //
+    // Returns the number of defines successfully partially re-lowered
+    // (or skipped-as-clean). Full-fallback count is already on
+    // relower_full_called_count.
+    std::size_t relower_dirty_defines_from_workspace() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool)
+            return 0;
+        std::size_t ok = 0;
+        // Snapshot names first — relower may erase/replace entries.
+        std::vector<std::string> dirty_names;
+        dirty_names.reserve(ir_cache_v2_.size());
+        for (const auto& [n, e] : ir_cache_v2_) {
+            if (e.dirty || e.dirty_block_count() > 0)
+                dirty_names.push_back(n);
+        }
+        for (const auto& name : dirty_names) {
+            auto it = ir_cache_v2_.find(name);
+            if (it == ir_cache_v2_.end())
+                continue;
+            if (!it->second.dirty && it->second.dirty_block_count() == 0)
+                continue;
+            // Locate the Define node + Lambda body in the workspace.
+            aura::ast::NodeId def_id = aura::ast::NULL_NODE;
+            aura::ast::NodeId lambda_id = aura::ast::NULL_NODE;
+            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                auto v = ws_flat->get(id);
+                if (v.tag != aura::ast::NodeTag::Define)
+                    continue;
+                if (v.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                if (std::string(ws_pool->resolve(v.sym_id)) != name)
+                    continue;
+                def_id = id;
+                if (!v.children.empty())
+                    lambda_id = v.child(0);
+                break;
+            }
+            if (def_id == aura::ast::NULL_NODE || lambda_id == aura::ast::NULL_NODE)
+                continue;
+            // Prefer Lambda node for per-function re-lower path.
+            const auto expanded = (lambda_id < ws_flat->size() &&
+                                   ws_flat->get(lambda_id).tag == aura::ast::NodeTag::Lambda)
+                                      ? lambda_id
+                                      : def_id;
+            std::string body_src = unparse_node(*ws_flat, *ws_pool, lambda_id, 0);
+            std::string canonical = "(define " + name + " " + body_src + ")";
+            // Gate: should_partial_relower OR single-function dirty
+            // (body-only from #1495 mark). Large dirty surfaces still
+            // go through relower_define_blocks which may full-fallback.
+            const std::size_t dirty_n = it->second.dirty_block_count();
+            if (dirty_n == 0) {
+                it->second.dirty = false;
+                ++ok;
+                continue;
+            }
+            if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
+                ++ok;
+            }
+        }
+        return ok;
     }
 
     // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
@@ -6144,13 +6262,14 @@ public:
         } else {
             s.dirty_trigger_rate_bp = 0;
         }
-        // Issue #1474: per-block re-lower observability.
-        // Mirror the new incremental_relower_blocks_total
-        // counter and derive dirty_block_ratio_bp from the
-        // existing ir_soa_block_dirty_hits_total /
+        // Issue #1474 / #1495: per-block re-lower observability.
+        // Mirror incremental_relower_blocks_total + full_relower_count
+        // and derive dirty_block_ratio_bp from the existing
+        // ir_soa_block_dirty_hits_total /
         // ir_soa_relower_blocks_saved_total pair.
         s.incremental_relower_blocks_total =
             metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
+        s.full_relower_count = metrics_.relower_full_called_count.load(std::memory_order_relaxed);
         {
             const std::uint64_t hits =
                 metrics_.ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed);
@@ -9197,6 +9316,10 @@ public:
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
     // Issue #1514: test/Agent seam for dirty cascade without full invalidate.
     void public_mark_define_dirty(const std::string& name) { mark_define_dirty(name); }
+    // Issue #1495: test/agent entry for partial re-lower of dirty defines.
+    std::size_t public_relower_dirty_defines_from_workspace() {
+        return relower_dirty_defines_from_workspace();
+    }
 
     // Issue #1378: test accessors for cascade ordering / epoch accounting.
     [[nodiscard]] std::uint64_t public_mutation_epoch() const noexcept {
