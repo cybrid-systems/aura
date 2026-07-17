@@ -1,0 +1,226 @@
+;; tests/commercial_readiness_stdlib_encoding.aura
+;;
+;; Eighth-pass audit: std/encoding — hex + base64 encoding library.
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_encoding.aura
+;;
+;; ── Module contract ──────────────────────────────────────────────────────
+;; lib/std/encoding.aura is documented as a 4-export module:
+;;   (export hex-encode hex-decode base64-encode base64-decode)
+;;
+;; hex-encode/decode uses lowercase hex chars 0-9 a-f, with byte→char
+;; using list->string of single-byte lists. Padding/folding hand-rolled.
+;;
+;; ── What this audit tests ────────────────────────────────────────────────
+;; The contract surface:
+;;   1. (require "std/encoding") succeeds
+;;   2. All 4 exports are procedures
+;;   3. hex-encode / hex-decode round-trip for ASCII + boundary bytes
+;;   4. base64-encode / base64-decode round-trip, including 1/2/3-byte
+;;      padding cases
+;;   5. Cross-encode (base64 → hex → base64) for short inputs
+;;
+;; ── Known contract limitations (documented, NOT necessarily fixed) ───────
+;;   C1. hex-decode silently skips a trailing odd-length char:
+;;       (hex-decode "414") → "A" (the "4" is dropped)
+;;   C2. hex-decode silently treats invalid hex chars as 0:
+;;       (hex-decode "ZZ") → "" (both `Z`s decode as hv=0, val=0x00, byte=0)
+;;       — actually emits byte 0 twice… verify
+;;   C3. base64-decode uses 65 (='A') as sentinel for missing chars in
+;;       partial input groups; partial inputs shorter than 4 chars
+;;       emit best-effort bytes rather than raising.
+;;   C4. No URL-safe base64 variant (-/_ instead of +/) is exposed.
+;;   C5. Empty string round-trip on both encoders returns "" as expected.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Inline check framework (same pattern as socket / process / refactor)
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-true label actual)
+  (if (and (not (null? actual)) (not (equal? actual #f)) (not (equal? actual 0)))
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-no-error label thunk)
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Module load + export surface
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-no-error "encoding-require-no-crash"
+  (lambda () (require "std/encoding")))
+
+(expect-true "export-hex-encode-procedure?" (procedure? hex-encode))
+(expect-true "export-hex-decode-procedure?" (procedure? hex-decode))
+(expect-true "export-base64-encode-procedure?" (procedure? base64-encode))
+(expect-true "export-base64-decode-procedure?" (procedure? base64-decode))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hex-encode — ASCII → lowercase hex
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Empty input
+(expect "hex-encode-empty" (hex-encode "") "")
+
+;; Single byte boundaries
+(expect "hex-encode-null-byte"  (hex-encode "\x00") "00")
+(expect "hex-encode-byte-0x41"  (hex-encode "A")     "41")
+(expect "hex-encode-byte-0xff"  (hex-encode "\xff")  "ff")
+
+;; Multi-byte ASCII
+(expect "hex-encode-ABC"   (hex-encode "ABC")       "414243")
+(expect "hex-encode-hello" (hex-encode "hello")     "68656c6c6f")
+(expect "hex-encode-num"   (hex-encode "0123456789") "30313233343536373839")
+
+;; High bytes (0x80+) — verify byte range works through quotient/modulo
+(expect-true "hex-encode-high-byte-3-chars"
+  (= (string-length (hex-encode "\x80\xff\x7f")) 6))
+
+(expect "hex-encode-bytes-0x80-0xff-0x7f"
+  (hex-encode "\x80\xff\x7f")
+  "80ff7f")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hex-decode — hex string → bytes (3-char-of-byte refs)
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Empty input
+(expect "hex-decode-empty" (hex-decode "") "")
+
+;; Single byte
+(expect "hex-decode-null"  (hex-decode "00")  "\x00")
+(expect "hex-decode-A"     (hex-decode "41")  "A")
+(expect "hex-decode-byte-ff" (hex-decode "ff") "\xff")
+
+;; Multi-byte
+(expect "hex-decode-ABC"   (hex-decode "414243") "ABC")
+(expect "hex-decode-hello" (hex-decode "68656c6c6f") "hello")
+
+;; Uppercase hex should also work (encoder emits lowercase but
+;; decoder is case-insensitive on a-f ↔ A-F).
+(expect "hex-decode-uppercase-AF" (hex-decode "AF") "\xaf")
+
+;; Documented contract — odd-length silently skips trailing char (C1)
+(expect "hex-decode-odd-trailing-skipped"
+  (hex-decode "414") "A")
+
+;; Documented contract — invalid hex chars decode as 0 (C2)
+;; "ZZ" → 0x00 twice → byte 0x00 emitted twice → string of two nulls
+(expect "hex-decode-invalid-zeros"
+  (hex-decode "ZZ")
+  "\x00\x00")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hex round-trip
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "hex-roundtrip-empty" (hex-decode (hex-encode "")) "")
+(expect "hex-roundtrip-ABC"   (hex-decode (hex-encode "ABC")) "ABC")
+(expect "hex-roundtrip-hello"
+  (hex-decode (hex-encode "hello world"))
+  "hello world")
+(expect "hex-roundtrip-binary"
+  (hex-decode (hex-encode "\x00\x7f\x80\xff"))
+  "\x00\x7f\x80\xff")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; base64-encode — bytes → base64
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Empty input
+(expect "b64-encode-empty"  (base64-encode "") "")
+
+;; 3-byte aligned (no padding)
+(expect "b64-encode-ABC"    (base64-encode "ABC")    "QUJD")
+(expect "b64-encode-Man"    (base64-encode "Man")    "TWFu")
+
+;; 2-byte trailing (1 `=` padding)
+(expect "b64-encode-Ma"     (base64-encode "Ma")     "TWE=")
+
+;; 1-byte trailing (2 `=` padding)
+(expect "b64-encode-M"      (base64-encode "M")      "TQ==")
+
+;; Standard canonical vector
+(expect "b64-encode-hello-world"
+  (base64-encode "Hello, World!")
+  "SGVsbG8sIFdvcmxkIQ==")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; base64-decode — base64 → bytes
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Empty input
+(expect "b64-decode-empty"  (base64-decode "") "")
+
+;; Aligned (no padding)
+(expect "b64-decode-ABC"    (base64-decode "QUJD")     "ABC")
+(expect "b64-decode-Man"    (base64-decode "TWFu")     "Man")
+
+;; With padding
+(expect "b64-decode-Ma"     (base64-decode "TWE=")     "Ma")
+(expect "b64-decode-M"      (base64-decode "TQ==")     "M")
+
+;; Standard canonical vector
+(expect "b64-decode-hello-world"
+  (base64-decode "SGVsbG8sIFdvcmxkIQ==")
+  "Hello, World!")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; base64 round-trip
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "b64-roundtrip-empty" (base64-decode (base64-encode "")) "")
+
+;; All three length-mod-3 cases round-trip cleanly
+(expect "b64-roundtrip-len-mod-3-0"
+  (base64-decode (base64-encode "foobar")) "foobar")
+(expect "b64-roundtrip-len-mod-3-1"
+  (base64-decode (base64-encode "fooba")) "fooba")
+(expect "b64-roundtrip-len-mod-3-2"
+  (base64-decode (base64-encode "foobar2")) "foobar2")
+
+;; Larger string — ASCII printable range
+(expect "b64-roundtrip-sentence"
+  (base64-decode (base64-encode "The quick brown fox jumps over the lazy dog"))
+  "The quick brown fox jumps over the lazy dog")
+
+;; Binary bytes round-trip
+(expect "b64-roundtrip-binary"
+  (base64-decode (base64-encode "\x00\x01\x02\xff\xfe\xfd"))
+  "\x00\x01\x02\xff\xfe\xfd")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Cross-encoding: hex-encode((base64-encode(x))) is stable
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; "Hello, World!" — base64 → hex should be the stable hex of the
+;; base64 string (a useful cross-check that both encoders produce
+;; reproducible output independently).
+(expect "b64-then-hex-hello-world"
+  (hex-encode (base64-encode "Hello, World!"))
+  "53475673624738734946776f6d786b49513d3d")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
