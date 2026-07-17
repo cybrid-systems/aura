@@ -9,6 +9,7 @@ module;
 #include "core/workspace_isolation.hh"
 #include "core/self_healing_hooks.h"
 #include "security_capabilities.h"
+#include <chrono>
 #include <cstdio>
 
 module aura.compiler.evaluator;
@@ -297,6 +298,8 @@ bool Evaluator::restore_panic_checkpoint() {
     auto set_fn = primitives_.lookup("set-code");
     if (!set_fn)
         return false;
+    // Issue #1583: high-resolution recovery latency (stall budget SLO).
+    const auto t0 = std::chrono::steady_clock::now();
     auto idx = string_heap_.size();
     string_heap_.push_back(panic_safe_source_);
     auto result = (*set_fn)({make_string(idx)});
@@ -380,6 +383,14 @@ bool Evaluator::restore_panic_checkpoint() {
         panic_safe_env_frames_size_ = 0;
         // Issue #1489: recovery complete — restore GC scheduling.
         release_gc_defer_for_pending_panic();
+    }
+    // Issue #1583: always sample restore latency (success or fail attempt
+    // after set-code) so stall budget violations are visible under load.
+    {
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto us = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        record_recovery_latency_us(us, RecoveryLatencyKind::PanicRestore);
     }
     return ok;
 }

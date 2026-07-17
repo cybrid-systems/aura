@@ -19,6 +19,7 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "core/self_healing_hooks.h"
+#include <chrono>
 
 module aura.compiler.evaluator;
 
@@ -176,6 +177,8 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
         ev.bump_longrunning_resource_trend();
         if (limit > 0 && current > limit) {
+            // Issue #1583: time quota-reject recovery path (self-heal + counters).
+            const auto t0 = std::chrono::steady_clock::now();
             ev.bump_longrunning_quota_violations();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -183,6 +186,10 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
             aura::core::self_heal::trigger_self_healing(
                 {.kind = "quota-violation", .message = kind, .code = current});
             ev.bump_longrunning_heal_triggers();
+            const auto t1 = std::chrono::steady_clock::now();
+            const auto us = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+            ev.record_recovery_latency_us(us, Evaluator::RecoveryLatencyKind::QuotaReject);
             return make_bool(false);
         }
         if (limit > 0)

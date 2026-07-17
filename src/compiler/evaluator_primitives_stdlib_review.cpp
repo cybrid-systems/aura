@@ -754,21 +754,31 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             return build_kv_hash(ev, kv);
         });
 
-    // Issue #1215 Phase 1: composite production-health query (SLO surface).
+    // Issue #1215 Phase 1 + #1583: composite production-health query (SLO).
     ObservabilityPrims::register_stats_impl(
         "query:production-health", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             const auto heal = m ? load_u64(m, m->longrunning_heal_triggers_total) : 0;
             const auto quota_v = m ? load_u64(m, m->longrunning_quota_violations_total) : 0;
+            const auto stall_v =
+                m ? load_u64(m, m->longrunning_recovery_stall_violations_total) : 0;
             // Simple health score: 100 baseline minus violations (floor 0).
+            // #1583: stall budget violations also degrade score.
             std::int64_t score = 100;
             if (quota_v > 0)
                 score = std::max<std::int64_t>(0, 100 - static_cast<std::int64_t>(quota_v));
+            if (stall_v > 0)
+                score = std::max<std::int64_t>(0, score - static_cast<std::int64_t>(stall_v));
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1215)},
                 {"score", make_int(score)},
                 {"heal-triggers", make_int(heal)},
                 {"quota-violations", make_int(static_cast<std::int64_t>(quota_v))},
+                {"recovery-stall-violations", make_int(static_cast<std::int64_t>(stall_v))},
+                {"recovery-p99-us",
+                 make_int(static_cast<std::int64_t>(ev.recovery_latency_p99_us()))},
+                {"stall-budget-us",
+                 make_int(static_cast<std::int64_t>(ev.recovery_stall_budget_us()))},
                 {"slo-enforcement",
                  make_int(m ? load_u64(m, m->production_health_slo_scaffold) : 1)},
                 {"healthy", make_int(score >= 80 ? 1 : 0)},

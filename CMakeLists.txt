@@ -5151,6 +5151,9 @@ aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
 # Issue #1582: policy-driven SelfHealing engine + graceful drain + quota/panic.
 aura_add_issue_test(test_self_heal_policy_engine)
 aura_issue_test_link_llvm_jit(test_self_heal_policy_engine)
+# Issue #1583: recovery latency stall budget + longrunning-recovery-stats.
+aura_add_issue_test(test_longrunning_recovery_latency)
+aura_issue_test_link_llvm_jit(test_longrunning_recovery_latency)
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
 aura_issue_test_link_llvm_jit(test_issue_1496)

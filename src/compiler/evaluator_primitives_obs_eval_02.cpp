@@ -211,6 +211,77 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1583 / #1207: query:longrunning-recovery-stats — recovery
+    // latency stall budget + p50/p99 for panic-restore / quota-reject.
+    //
+    // Fields:
+    //   - stall-budget-us
+    //   - samples / panic-samples / quota-samples
+    //   - latency-us-total / latency-us-max / latency-us-avg
+    //   - latency-p50-us / latency-p99-us
+    //   - stall-violations
+    //   - schema == 1583
+    ObservabilityPrims::register_stats_impl(
+        "query:longrunning-recovery-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto samples =
+                m ? m->longrunning_recovery_samples.load(std::memory_order_relaxed) : 0;
+            const auto total_us =
+                m ? m->longrunning_recovery_latency_us_total.load(std::memory_order_relaxed) : 0;
+            const auto avg = samples > 0 ? total_us / samples : 0;
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("stall-budget-us", static_cast<std::int64_t>(ev.recovery_stall_budget_us()));
+            insert_kv("samples", static_cast<std::int64_t>(samples));
+            insert_kv(
+                "panic-samples",
+                static_cast<std::int64_t>(
+                    m ? m->longrunning_recovery_panic_samples.load(std::memory_order_relaxed) : 0));
+            insert_kv(
+                "quota-samples",
+                static_cast<std::int64_t>(
+                    m ? m->longrunning_recovery_quota_samples.load(std::memory_order_relaxed) : 0));
+            insert_kv("latency-us-total", static_cast<std::int64_t>(total_us));
+            insert_kv("latency-us-max",
+                      static_cast<std::int64_t>(
+                          m ? m->longrunning_recovery_latency_us_max.load(std::memory_order_relaxed)
+                            : 0));
+            insert_kv("latency-us-avg", static_cast<std::int64_t>(avg));
+            insert_kv("latency-p50-us", static_cast<std::int64_t>(ev.recovery_latency_p50_us()));
+            insert_kv("latency-p99-us", static_cast<std::int64_t>(ev.recovery_latency_p99_us()));
+            insert_kv("stall-violations",
+                      static_cast<std::int64_t>(ev.get_recovery_stall_violations()));
+            insert_kv("schema", 1583);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 18 (orig lines 2915-2976)

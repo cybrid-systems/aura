@@ -676,6 +676,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:list-soa-hotpath-stats",
     // Issue #753 — long-running deployment infra stats
     "query:longrunning-infra-stats",
+    // Issue #1583 / #1207 — recovery latency stall budget + p50/p99 SLO
+    "query:longrunning-recovery-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats
