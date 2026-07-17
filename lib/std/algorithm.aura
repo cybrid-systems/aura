@@ -52,7 +52,7 @@
     (if (> low high) #f
       (let* ((mid (quotient (+ low high) 2))
              (val (list-ref lst mid)))
-        (cond ((= val target) #t)
+        (cond ((= val target) mid)
               ((< val target) (loop (+ mid 1) high))
               (else (loop low (- mid 1))))))))
 
