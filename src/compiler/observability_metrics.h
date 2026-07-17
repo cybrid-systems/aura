@@ -1612,6 +1612,17 @@ struct CompilerMetrics {
     //     queries vs. "what was the all-time max".
     std::atomic<std::uint64_t> per_fiber_mutation_stack_depth_max{0};
     std::atomic<std::uint64_t> per_fiber_mutation_stack_depth_current_max{0};
+    // Issue #1493: mutation_stack_depth histogram (buckets:
+    // 0, 1, 2, 3, 4, 5-7, 8-15, 16+). Bumped on each depth sample.
+    static constexpr std::size_t kMutationStackDepthHistBuckets = 8;
+    std::atomic<std::uint64_t> mutation_stack_depth_histogram[kMutationStackDepthHistBuckets]{};
+    // Issue #1493: process-mirrored safepoint wait-while-mutation (µs + count).
+    // Also accumulated process-wide in gc_hooks for serve-only paths.
+    std::atomic<std::uint64_t> safepoint_wait_while_mutation_held_us{0};
+    std::atomic<std::uint64_t> safepoint_wait_while_mutation_held_count{0};
+    // Issue #1493: hold-time driven gc_frequency_tune_ratio adjustments.
+    std::atomic<std::uint64_t> safepoint_frequency_adapt_up_total{0};
+    std::atomic<std::uint64_t> safepoint_frequency_adapt_down_total{0};
     // Issue #846: aot-hotswap-pipeline-stats
     std::atomic<std::uint64_t> aot_hotswap_pipe_total{0};
     std::atomic<std::uint64_t> aot_hotswap_pipe_hits_total{0};

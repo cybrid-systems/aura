@@ -5112,6 +5112,9 @@ aura_issue_test_link_llvm_jit(test_issue_1491)
 # Issue #1492: nested MutationBoundary steal defer + starvation mitigation.
 aura_add_issue_test(test_issue_1492)
 aura_issue_test_link_llvm_jit(test_issue_1492)
+# Issue #1493: per-fiber mutation depth / adaptive safepoint observability.
+aura_add_issue_test(test_issue_1493)
+aura_issue_test_link_llvm_jit(test_issue_1493)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
