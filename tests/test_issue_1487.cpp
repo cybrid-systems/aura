@@ -106,7 +106,10 @@ static void ac3_primitive_stats() {
     auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(r && is_hash(*r), "engine:metrics returns hash");
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'schema)");
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1481, "schema == 1481");
+    // Schema 1481 → 1498 (#1498 production fields); accept either for
+    // parent closed-loop compatibility during rollout.
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1498 || as_int(*schema) == 1481),
+          "schema == 1498 (or legacy 1481)");
 }
 
 static void ac4_exhaustion_loops() {

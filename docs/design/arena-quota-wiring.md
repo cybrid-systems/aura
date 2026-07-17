@@ -1,7 +1,24 @@
 # Arena allocate_raw ↔ Resource Quota Wiring
 
-**Issues:** #1487 (parent closed-loop), #1546, #1481, #1547, #1548  
+**Issues:** #1498 (production parent), #1487, #1546, #1481, #1547, #1548  
 **Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `try_acquire`, `query:resource-quota-stats`
+
+## #1498 production closed-loop
+
+| AC | Surface | Shipped |
+|----|---------|---------|
+| 1 allocate + Guard | `allocate_raw` / `allocate_checked` + `try_acquire` typed `ResourceQuotaExceeded` | #1546/#1547/#1498 |
+| 2 stats fields | `current_usage`, `memory_quota`, `memory_quota_total`, `exceeded_count`, schema **1498** | #1498 |
+| 3 cumulative total | `set_resource_quota_memory_total` → `used + request > total` | #1498 |
+| 4 exhaustion tests | `tests/test_issue_1498.cpp` + existing suite | #1498 |
+| 5 registry primitives | eval under unlimited quota; stats via `register_stats_impl` | #1498 |
+
+**Dual memory limits (both 0 = unlimited):**
+
+| API | Semantics |
+|-----|-----------|
+| `set_resource_quota_memory(N)` | Per-request: reject if `request > N` |
+| `set_resource_quota_memory_total(N)` | Cumulative: reject if `arena.used + request > N` |
 
 ## #1487 closed-loop map
 

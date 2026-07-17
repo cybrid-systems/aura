@@ -2930,7 +2930,10 @@ private:
     bool gc_defer_armed_for_panic_cp_ = false;
 
     // Issue #753: long-running resource quota limits (0 = unlimited).
+    // resource_quota_memory_ = per-request size cap (#1481).
+    // resource_quota_memory_total_ = cumulative arena.used + request (#1498).
     std::uint64_t resource_quota_memory_ = 0;
+    std::uint64_t resource_quota_memory_total_ = 0;
     std::uint64_t resource_quota_fibers_ = 0;
     std::uint64_t resource_quota_time_us_ = 0;
     // Issue #1547: mutation budget (0 = unlimited). Separate from
@@ -8762,6 +8765,20 @@ public:
     }
     // Issue #753: long-running deployment infra observability.
     void set_resource_quota_memory(std::uint64_t limit) noexcept { resource_quota_memory_ = limit; }
+    // Issue #1498: cumulative arena heap budget (used + request > limit → reject).
+    // Independent of per-request resource_quota_memory_ (0 = unlimited).
+    void set_resource_quota_memory_total(std::uint64_t limit) noexcept {
+        resource_quota_memory_total_ = limit;
+    }
+    [[nodiscard]] std::uint64_t resource_quota_memory_total() const noexcept {
+        return resource_quota_memory_total_;
+    }
+    // Live arena.stats().used when arena_ is set (0 otherwise).
+    [[nodiscard]] std::uint64_t resource_quota_current_usage() const noexcept {
+        if (!arena_)
+            return 0;
+        return static_cast<std::uint64_t>(arena_->stats().used);
+    }
     void set_resource_quota_fibers(std::uint64_t limit) noexcept { resource_quota_fibers_ = limit; }
     // Issue #1547: host-set mutation budget for try_acquire / check_mutation_quota.
     void set_resource_quota_mutations(std::uint64_t limit) noexcept {
@@ -8812,16 +8829,30 @@ public:
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
         if (m)
             m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
-        if (resource_quota_memory_ == 0)
-            return std::nullopt;
-        if (requested_bytes <= resource_quota_memory_)
-            return std::nullopt;
-        if (m)
-            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
-        return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
-                                     std::string("arena quota exceeded: requested ") +
-                                         std::to_string(requested_bytes) + " bytes > limit " +
-                                         std::to_string(resource_quota_memory_)};
+        // Issue #1481: per-request size cap (0 = unlimited).
+        if (resource_quota_memory_ != 0 && requested_bytes > resource_quota_memory_) {
+            if (m)
+                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                         std::string("arena quota exceeded: requested ") +
+                                             std::to_string(requested_bytes) + " bytes > limit " +
+                                             std::to_string(resource_quota_memory_)};
+        }
+        // Issue #1498: cumulative heap budget — production AI loops need
+        // total used + request, not only single-allocation size.
+        if (resource_quota_memory_total_ != 0 && arena_) {
+            const auto used = static_cast<std::uint64_t>(arena_->stats().used);
+            if (used + requested_bytes > resource_quota_memory_total_) {
+                if (m)
+                    m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                return aura::core::AuraError{
+                    aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                    std::string("arena cumulative quota exceeded: used ") + std::to_string(used) +
+                        " + requested " + std::to_string(requested_bytes) + " > total limit " +
+                        std::to_string(resource_quota_memory_total_)};
+            }
+        }
+        return std::nullopt;
     }
 
     // Issue #1481 / #1547: typed-error mutation budget check.
