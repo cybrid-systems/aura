@@ -23,6 +23,12 @@
 # (src/compiler/evaluator_primitives_*.cpp changes) MUST update
 # docs/generated/primitives.md. Auto-fix regenerates + re-stages.
 #
+# 2026-07-17 (Issue #1572): when tests/*.cpp is staged (add/mod/delete),
+# regenerate docs/generated/test-registry.json via gen_test_registry.py
+# and re-stage it. CI's gate → check_test_coverage already --checks the
+# registry; without auto-regen, every new test_issue_* left a stale
+# catalog and a red gate. Same auto-fix + --check pattern as docs.
+#
 # Flow:
 #   1. Collect staged C++ files matching the same filter CI uses
 #      (src|tests) + (\.(cpp|ixx|hh|h)$).
@@ -37,9 +43,11 @@
 #      verify the working tree + index are now consistent with source.
 #      If they're not, FAIL the commit. (Past #739/#740 slipped past
 #      regen + re-stage into commits — --check catches that case.)
-#   7. `git add` the modified C++/Python/generated files so the formatted
+#   7. If tests/*.cpp staged (incl. deletes), regen test-registry.json
+#      + git add, then gen_test_registry.py --check.
+#   8. `git add` the modified C++/Python/generated files so the formatted
 #      content is what gets committed (no separate "format" noise commit).
-#   8. Final `clang-format --dry-run -Werror` and `ruff check` +
+#   9. Final `clang-format --dry-run -Werror` and `ruff check` +
 #      `ruff format --check` — belt-and-suspenders so the commit message
 #      is honest even if auto-fix ever diverges from --check.
 #
@@ -73,6 +81,12 @@ src_files=$(git diff --cached --name-only --diff-filter=ACMR \
 # (Issue #1484) since bare `#include "X.h"` patterns only matter for
 # test files (production includes use the subdir prefixes by convention).
 test_files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '^tests/.*\.cpp$' \
+    || true)
+
+# Registry catalog tracks tests/test_*.cpp add/mod/delete (Issue #1572).
+# Include D so removing a test drops it from test-registry.json.
+test_registry_files=$(git diff --cached --name-only --diff-filter=ACMRD \
     | grep -E '^tests/.*\.cpp$' \
     || true)
 
@@ -200,6 +214,44 @@ if [ -n "$test_files" ]; then
         exit 1
     fi
     echo "pre-commit: test includes linter clean ✓"
+fi
+
+# ── Test registry regen (Issue #1572) ──────────────────────────────
+# When tests/*.cpp is staged (add/mod/rename/delete), regenerate the
+# lightweight TestRegistry catalog so docs/generated/test-registry.json
+# stays in sync with source. Without this, every new test_issue_* left
+# a stale registry and failed `./build.py gate` (check_test_coverage).
+# Pattern mirrors docs regen: write → git add → --check verify.
+if [ -n "$test_registry_files" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "❌ pre-commit: python3 not found on PATH" >&2
+        exit 1
+    fi
+
+    echo "pre-commit: regenerating test-registry (tests/ has staged changes)..."
+    if ! python3 "$ROOT/scripts/gen_test_registry.py" > /tmp/test_registry_regen.log 2>&1; then
+        echo "❌ pre-commit: gen_test_registry.py failed. See /tmp/test_registry_regen.log" >&2
+        cat /tmp/test_registry_regen.log >&2
+        exit 1
+    fi
+    cat /tmp/test_registry_regen.log
+
+    registry_path="docs/generated/test-registry.json"
+    if [ -f "$ROOT/$registry_path" ]; then
+        # Always re-stage so the regenerated content is in this commit
+        # (even if git status is quiet — covers first-time adds).
+        git add "$ROOT/$registry_path"
+        echo "pre-commit: staged $registry_path"
+    fi
+    echo "pre-commit: test-registry regen clean ✓"
+
+    if ! python3 "$ROOT/scripts/gen_test_registry.py" --check > /tmp/test_registry_check.log 2>&1; then
+        echo "❌ pre-commit: test-registry still stale after regen (--check failed)" >&2
+        cat /tmp/test_registry_check.log >&2
+        echo "   Hint: run python3 scripts/gen_test_registry.py && git add $registry_path" >&2
+        exit 1
+    fi
+    echo "pre-commit: test-registry verify (--check) clean ✓"
 fi
 
 # If neither C++ nor Python staged, exit 0 (nothing to format).

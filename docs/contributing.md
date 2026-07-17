@@ -7,13 +7,15 @@
 ## 构建与测试
 
 ```bash
-./scripts/install-githooks.sh   # 一次性：启用 pre-commit（含 docs 自动 regen）
+./scripts/install-githooks.sh   # 一次性：启用 pre-commit（docs + test-registry 自动 regen）
 ./build.py build
-./build.py gate           # 静态门栅 = CI job `gate`（docs/lint/format/fixtures/surface/binding）
-./build.py check          # gate + build + CI 测试矩阵
-./build.py test unit      # test_ir
-./build.py test integ     # .aura 端到端
-./build.py bench --strict # #1569：编译器流水线 benchmark SLO 硬门栅
+./build.py gate              # 静态门栅 = CI job `gate`
+./build.py gate --fix         # #1572：auto-regen docs/registry + lint/format --fix
+./build.py test-registry --fix  # 仅刷新 docs/generated/test-registry.json
+./build.py check              # gate + build + CI 测试矩阵
+./build.py test unit          # test_ir
+./build.py test integ         # .aura 端到端
+./build.py bench --strict     # #1569：编译器流水线 benchmark SLO 硬门栅
 ```
 
 ### 路径对照（Issue #1570 — 避免 404 / 幽灵模块）
@@ -47,12 +49,20 @@
 
 **Git hooks**：`.githooks/` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。
 
-- **pre-commit**：staged C++/Python 自动 `clang-format` / `ruff`；任意 staged C++ 变更后还会做**全树** `clang-format --dry-run`（与 CI 相同，避免只修 staged 文件、其他文件仍漂移）；staged `src/` 变更会 regen `docs/generated/*.md`。
-- **pre-push**：推送前跑 `./build.py gate`（docs + lint + clang-format + fixtures），与 CI `gate` job 对齐。
+- **pre-commit**：staged C++/Python 自动 `clang-format` / `ruff`；任意 staged C++ 变更后还会做**全树** `clang-format --dry-run`（与 CI 相同，避免只修 staged 文件、其他文件仍漂移）；staged `src/` 变更会 regen `docs/generated/*.md`；staged `tests/*.cpp`（含删除）会 regen + stage `docs/generated/test-registry.json`（#1572）。
+- **pre-push**：推送前跑 `./build.py gate`（docs + lint + format + fixtures + surface + registry + binding），与 CI `gate` job 对齐。
 
-本地可手动：`./build.py format --fix`（修 C++ 格式）、`./build.py gate`（跑完整静态检查）。
+本地可手动：`./build.py format --fix`（修 C++ 格式）、`./build.py gate`（检查）、`./build.py gate --fix`（修格式 + 刷 docs/registry）。
 
 加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例。若未装 hook，须手动 **`./build.py docs`** 并把 `docs/generated/*.md` 一并提交（否则 `docs --check` 挂）。
+
+### 新增 `test_issue_*` 流程（Issue #1572 — 避免 stale registry）
+
+1. 复制 `tests/templates/test_issue_pattern.cpp` → `tests/test_issue_<N>.cpp`（或 `tests/domain/…` + `aura_add_issue_test`）。
+2. 文件头加 `// @category: …` 与 `// @reason: Issue #N — …`（供 `gen_test_registry.py` 扫描）。
+3. **提交时**：装了 hook 则 pre-commit 自动 `gen_test_registry.py` + `git add docs/generated/test-registry.json`。
+4. **未装 hook / 想先本地对齐**：`./build.py test-registry --fix` 或 `./build.py gate --fix`，再 `git add docs/generated/test-registry.json`。
+5. CI / pre-push：`./build.py gate`（check-only）通过 `cmd_test_registry` + `check_test_coverage` 校验 registry 新鲜度；stale 时提示 `./build.py test-registry --fix`。
 
 ## Evaluator 是什么
 
@@ -101,15 +111,19 @@ for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
 
 `./build.py gate` 跑：
 
-- `scripts/check_primitive_surface.py --strict` + unit gate  
-- `scripts/check_test_coverage.py`（#1453：primitive 源码变更必须带 `tests/`；`test-registry.json` 新鲜度）
-- `scripts/run_pets_regression.py` / `./build.py test pets`（#1454：aura-pets headless TUI 回归）
+- `scripts/gen_docs.py --check`（docs 新鲜度）
+- ruff + clang-format（可用 `./build.py gate --fix` 自动修）
+- fixtures / primitive surface (`--strict`)
+- `./build.py test-registry` → `scripts/gen_test_registry.py --check`（#1572）
+- `scripts/check_test_coverage.py`（#1453：primitive 源码变更必须带 `tests/`；registry 二次校验）
+
+相关：`scripts/run_pets_regression.py` / `./build.py test pets`（#1454，不在 gate 内，在 test 矩阵）。
 
 故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。  
 例外路径：`tests/test-binding-allowlist.txt`（尽量少用）。
 
 EDSL 自测：`./build/aura < tests/edsl_self_test.aura`（harness：`lib/std/edsl-test-harness.aura`）。  
-测试索引：`python3 scripts/gen_test_registry.py` → [generated/test-registry.json](generated/test-registry.json)。  
+测试索引：`./build.py test-registry --fix` 或 `python3 scripts/gen_test_registry.py` → [generated/test-registry.json](generated/test-registry.json)。  
 框架说明：[testing-framework-v1.md](design/testing-framework-v1.md)。
 
 **观测读取（P1 / #1433）**：测试与 Agent 优先 facade：

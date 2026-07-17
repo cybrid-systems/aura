@@ -6,7 +6,8 @@ Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
   ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
-  ./build.py gate             # docs + lint + fixtures（CI 静态检查）
+  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry
+  ./build.py gate --fix       # 同上，但 auto-regen docs/registry + lint/format --fix（#1572）
   ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
@@ -22,6 +23,8 @@ Usage:
   ./build.py lint --fix        # 自动修复可修复项并格式化
   ./build.py format            # clang-format 全树校验（与 CI gate 相同）
   ./build.py format --fix      # clang-format -i 自动修复 src/ + tests/
+  ./build.py test-registry     # 校验 docs/generated/test-registry.json 新鲜度（#1572）
+  ./build.py test-registry --fix  # 重新生成 test-registry.json
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
@@ -1470,6 +1473,33 @@ def cmd_primitive_surface():
     return 0
 
 
+def cmd_test_registry():
+    """Issue #1572: test-registry.json freshness (scripts/gen_test_registry.py).
+
+    Default: --check (fail if docs/generated/test-registry.json is stale).
+    With --fix: rewrite the registry from tests/test_*.cpp headers.
+    Also wired into pre-commit when tests/*.cpp is staged.
+    """
+    fix = "--fix" in sys.argv[2:]
+    print(f"{B}═══ Test registry {'(fix)' if fix else '(check)'} (#1572) ═══{N}")
+    script = ROOT / "scripts" / "gen_test_registry.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    args = [sys.executable, str(script)]
+    if not fix:
+        args.append("--check")
+    r = run(args, cwd=ROOT)
+    if r != 0:
+        if fix:
+            fail("test-registry generation failed")
+        else:
+            fail("test-registry stale — run ./build.py test-registry --fix")
+        return r
+    ok("test-registry regenerated" if fix else "test-registry OK")
+    return 0
+
+
 def cmd_test_binding():
     """Issue #1453: prim source ↔ tests/ binding + test-registry freshness."""
     print(f"{B}═══ Test binding + coverage (#1453) ═══{N}")
@@ -1501,13 +1531,21 @@ def cmd_test_binding():
 
 
 def cmd_gate():
-    """Fast static checks for CI (docs + lint + format + fixtures + surface + binding)."""
+    """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
+
+    Issue #1572: pass --fix to auto-regen docs + test-registry and to run
+    lint/format in fix mode (those subcommands already read --fix from argv).
+    CI always runs without --fix (check-only).
+    """
+    fix = "--fix" in sys.argv[2:]
+    print(f"{B}═══ Gate {'(fix)' if fix else '(check)'} ═══{N}")
     return (
-        cmd_docs(check=True)
+        cmd_docs(check=not fix)
         or cmd_lint()
         or cmd_format()
         or cmd_fixtures()
         or cmd_primitive_surface()
+        or cmd_test_registry()
         or cmd_test_binding()
     )
 
@@ -1904,6 +1942,7 @@ def main():
         "fixtures": cmd_fixtures,
         "lint": cmd_lint,
         "format": cmd_format,
+        "test-registry": cmd_test_registry,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
