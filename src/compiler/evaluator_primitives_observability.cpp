@@ -204,6 +204,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:capability-effect-stats",
     // Issue #1566 — multi-tenant WorkspaceIsolationPolicy
     "query:tenant-isolation-stats",
+    // Issue #1567 — mutation audit WAL persist + crash recovery
+    "query:audit-wal-stats",
+    "query:mutation-audit-log",
     // Issues #809–#817 Phase 1 unified production/error/macro surfaces
     "query:error-handling-policy-stats",
     "query:fiber-scheduler-init-stats",

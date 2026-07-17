@@ -3688,6 +3688,9 @@ private:
         std::uint64_t tenant_id = 0;
         std::uint64_t provenance_mutation_id = 0;
         bool effect_denied = false;
+        // Issue #1567: bridge/provenance epoch at emit (additive, ring layout
+        // compatible — new field at end).
+        std::uint64_t epoch = 0;
     };
     std::array<MutationAuditEntry, kMutationAuditRingSize> mutation_audit_ring_{};
     std::atomic<std::uint64_t> mutation_audit_seq_{0};
@@ -3785,6 +3788,11 @@ public:
     }
     void emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
                              std::string_view op, ast::NodeId target_node) noexcept;
+    // Issue #1567: optional mutation audit WAL (append + crash recovery).
+    // Returns true if persist enabled (and replay applied when dir has data).
+    bool enable_mutation_audit_wal(std::string_view persist_dir) noexcept;
+    void disable_mutation_audit_wal() noexcept;
+    [[nodiscard]] bool mutation_audit_wal_enabled() const noexcept;
     // Issue #1565: capability effect check + audit (returns true if allowed).
     // Integrates sandbox Strict/Restricted + grant matrix + provenance.
     [[nodiscard]] bool check_and_record_effect(std::uint16_t required_effect_bits,

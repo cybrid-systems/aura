@@ -264,6 +264,11 @@ aura_add_issue_test(test_tenant_isolation_enforcement)
 aura_issue_test_link_llvm_jit(test_tenant_isolation_enforcement)
 add_dependencies(all_test_issue_targets test_tenant_isolation_enforcement)
 
+# Issue #1567: mutation audit WAL persist + crash recovery
+aura_add_issue_test(test_mutation_audit_wal)
+aura_issue_test_link_llvm_jit(test_mutation_audit_wal)
+add_dependencies(all_test_issue_targets test_mutation_audit_wal)
+
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)

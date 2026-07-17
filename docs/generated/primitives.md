@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**520** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**521** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 99 primitives (19%)
-- **core**: 370 primitives (71%)
+- **core**: 371 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
 
@@ -577,13 +577,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `scheduler:pin` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Security: (8)
+## Security: (9)
 
 - `security:check-effect` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:check-tenant-isolation` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-capability!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-cross-tenant!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-effect!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
+- `security:set-audit-persist-dir!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-effect-sandbox-mode!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-sandbox-mode!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-tenant-principal!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -777,7 +778,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (370)
+### Core builtins (must remain primitive) (371)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1028,6 +1029,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `security:grant-capability!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-cross-tenant!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-effect!` — `src/compiler/evaluator_primitives_security.cpp`
+- `security:set-audit-persist-dir!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-effect-sandbox-mode!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-sandbox-mode!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-tenant-principal!` — `src/compiler/evaluator_primitives_security.cpp`

@@ -5979,21 +5979,26 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> multi_fiber_mailbox_typed{1};         // #1211
     std::atomic<std::uint64_t> seva_self_opt_loop_scaffold{1};       // #1212
     std::atomic<std::uint64_t> mutation_audit_wal_scaffold{1};       // #1213
-    std::atomic<std::uint64_t> arena_moving_defrag_scaffold{1};      // #1214
-    std::atomic<std::uint64_t> production_health_slo_scaffold{1};    // #1215
-    std::atomic<std::uint64_t> typed_mutation_audit_pass{1};         // #1216
-    std::atomic<std::uint64_t> envframe_version_propagate{1};        // #1217
-    std::atomic<std::uint64_t> ir_region_effect_annotations{1};      // #1218
-    std::atomic<std::uint64_t> slo_self_heal_triggers{1};            // #1219
-    std::atomic<std::uint64_t> closure_bridge_epoch_scaffold{1};     // #1220
-    std::atomic<std::uint64_t> hotpath_contract_test_gates{1};       // #1221
-    std::atomic<std::uint64_t> metrics_prometheus_scaffold{1};       // #1222
-    std::atomic<std::uint64_t> gc_ffi_root_registration{1};          // #1223
-    std::atomic<std::uint64_t> dead_metric_detection_scaffold{1};    // #1224
-    std::atomic<std::uint64_t> arena_stats_per_fiber{1};             // #1225
-    std::atomic<std::uint64_t> lifetime_pin_scaffold{1};             // #1226
-    std::atomic<std::uint64_t> hot_path_primitives_module{1};        // #1227
-    std::atomic<std::uint64_t> eda_parse_common_dedup{1};            // #1228
+    // Issue #1567: mutation audit WAL persist / crash recovery mirrors
+    std::atomic<std::uint64_t> audit_record_persisted_total{0};
+    std::atomic<std::uint64_t> audit_wal_replay_count{0};
+    std::atomic<std::uint64_t> audit_crash_recovery_success{0};
+    std::atomic<std::uint64_t> audit_wal_bytes_written{0};
+    std::atomic<std::uint64_t> arena_moving_defrag_scaffold{1};   // #1214
+    std::atomic<std::uint64_t> production_health_slo_scaffold{1}; // #1215
+    std::atomic<std::uint64_t> typed_mutation_audit_pass{1};      // #1216
+    std::atomic<std::uint64_t> envframe_version_propagate{1};     // #1217
+    std::atomic<std::uint64_t> ir_region_effect_annotations{1};   // #1218
+    std::atomic<std::uint64_t> slo_self_heal_triggers{1};         // #1219
+    std::atomic<std::uint64_t> closure_bridge_epoch_scaffold{1};  // #1220
+    std::atomic<std::uint64_t> hotpath_contract_test_gates{1};    // #1221
+    std::atomic<std::uint64_t> metrics_prometheus_scaffold{1};    // #1222
+    std::atomic<std::uint64_t> gc_ffi_root_registration{1};       // #1223
+    std::atomic<std::uint64_t> dead_metric_detection_scaffold{1}; // #1224
+    std::atomic<std::uint64_t> arena_stats_per_fiber{1};          // #1225
+    std::atomic<std::uint64_t> lifetime_pin_scaffold{1};          // #1226
+    std::atomic<std::uint64_t> hot_path_primitives_module{1};     // #1227
+    std::atomic<std::uint64_t> eda_parse_common_dedup{1};         // #1228
 
     // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
