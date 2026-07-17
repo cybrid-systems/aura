@@ -33,6 +33,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.ir_soa;
 import aura.compiler.soa_view;
+import aura.compiler.dirty_propagation;
 import aura.diag;
 
 namespace aura::compiler {
@@ -368,6 +369,16 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
     if (pass_pipeline_detail::g_pipeline_hotpath_depth > 0)
         pipeline_hotpath_light_analysis_total.fetch_add(1, std::memory_order_relaxed);
     pass.run(mod);
+    // Issue #1575: DirtyAwarePass → auto-flush cascade roots into
+    // dirty_propagation::g_global_dirty when a DepGraph is registered
+    // via dirty::set_pipeline_dep_graph + note_pipeline_cascade_root.
+    // Uses requires-expression (not DirtyAwarePass<> by name) because
+    // this template is defined above the DirtyAwarePass concept.
+    if constexpr (requires(const P& p, std::uint32_t block_id) {
+                      { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
+                  }) {
+        (void)aura::compiler::dirty::flush_pipeline_cascade_roots();
+    }
     return !pass.has_error();
 }
 

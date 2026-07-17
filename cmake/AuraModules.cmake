@@ -29,6 +29,8 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/ir_soa.ixx
     # Issue #1241 / #1517: SoAView helpers (before pass_manager which imports it).
     src/compiler/soa_view.ixx
+    # Issue #1206 / #1575: dirty cascade engine (before pass_manager which imports it).
+    src/compiler/dirty_propagation.ixx
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
