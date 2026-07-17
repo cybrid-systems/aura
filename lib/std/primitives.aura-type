@@ -1,0 +1,6 @@
+primitives:help: -> Any
+primitives:list: -> Any
+primitives:categories: -> Any
+primitives:entry-points: -> Any
+primitives:registry-file: -> String
+primitives:discover: -> Any

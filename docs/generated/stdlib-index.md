@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**64** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**65** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -44,6 +44,7 @@
 | `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `agent:spawn` `agent:ask` `agent:list` … (+8) | — |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
+| `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
@@ -70,3 +71,14 @@
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
 | `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563) |
+
+## Engine primitives (#1552)
+
+Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` registrations. Agent entry points:
+
+- `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
+- `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
+- Full name catalog: [primitives.md](primitives.md) (511 scanned registrations)
+- Registry map: [primitives-registry.md](primitives-registry.md)
+
+Central registry orchestrates **29** `register_*_primitives` groups (see primitives-registry.md for the ordered list).

@@ -463,7 +463,84 @@ def scan_stdlib() -> list[tuple[str, str, list[str]]]:
     return rows
 
 
-def render_stdlib(rows: list[tuple[str, str, list[str]]]) -> str:
+# Issue #1552: extract register_* groups from the central registry TU.
+_REGISTER_CALL_RE = re.compile(r"primitives_detail::(register_[a-z0-9_]+_primitives)\s*\(")
+
+
+def scan_primitive_registry_groups() -> list[str]:
+    """Ordered register_*_primitives calls from evaluator_primitives_registry.cpp."""
+    path = SRC / "compiler" / "evaluator_primitives_registry.cpp"
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    # Preserve order, drop duplicates (should be unique).
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _REGISTER_CALL_RE.finditer(text):
+        name = m.group(1)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def render_primitives_registry(groups: list[str], prim_count: int) -> str:
+    """#1552: Agent/dev map of central PrimRegistrar orchestration."""
+    lines = [
+        GENERATED_BANNER,
+        "# Primitives registry map (generated, Issue #1552)",
+        "",
+        "Central orchestration: "
+        "`src/compiler/evaluator_primitives_registry.cpp` → "
+        "`Evaluator::register_all_primitives()`.",
+        "",
+        f"Scanned registrations in `src/**/*.cpp`: **{prim_count}** "
+        "(see [primitives.md](primitives.md) for the full name list).",
+        "",
+        "## Agent discovery entry points",
+        "",
+        "| Surface | Example |",
+        "|---------|---------|",
+        '| Stdlib facade | `(require "std/primitives" all:)(primitives:help)` |',
+        '| INDEX | `(require "std/INDEX" all:)(stdlib:help "primitives")` |',
+        '| Describe | `(primitive:describe "+")` |',
+        "| List + meta | `(query:primitive-list-with-meta)` |",
+        "| Meta catalog | `(query:primitives-meta-catalog)` |",
+        '| Stats | `(engine:metrics "query:primitives-meta-stats")` |',
+        "",
+        "## Registration groups (boot order)",
+        "",
+        "These are the `primitives_detail::register_*_primitives` calls in the central registry TU:",
+        "",
+    ]
+    if not groups:
+        lines.append("_No register_* calls found (registry path missing?)._")
+    else:
+        for i, g in enumerate(groups, 1):
+            lines.append(f"{i}. `{g}`")
+    lines.extend(
+        [
+            "",
+            "## Fiber / mutation integration (for Agents)",
+            "",
+            "- **mutation** / **mutate** / **workspace-query** / **control** "
+            "— self-modifying FlatAST + fiber-sensitive entry points",
+            "- Prefer Guard / safe-yield boundaries when calling from multi-agent loops (see `#1504`, `#1547`)",
+            "- Adding a primitive: register in the matching `evaluator_primitives_*.cpp`, "
+            "ensure the register_* is invoked from the central registry, attach "
+            "`PrimMeta`, add a suite/regression test, run `./build.py docs`",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_stdlib(
+    rows: list[tuple[str, str, list[str]]],
+    *,
+    prim_count: int = 0,
+    registry_groups: list[str] | None = None,
+) -> str:
     lines = [
         GENERATED_BANNER,
         "# Standard library index (generated)",
@@ -481,7 +558,29 @@ def render_stdlib(rows: list[tuple[str, str, list[str]]]) -> str:
             exp = "—"
         desc_cell = desc.replace("|", "\\|") if desc else "—"
         lines.append(f"| `std/{name}` | {exp} | {desc_cell} |")
-    lines.append("")
+    # Issue #1552: surface engine primitives discoverability next to stdlib.
+    lines.extend(
+        [
+            "",
+            "## Engine primitives (#1552)",
+            "",
+            "Low-level capabilities are **not** stdlib modules; they are C++ "
+            "`PrimRegistrar` registrations. Agent entry points:",
+            "",
+            '- `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`',
+            '- `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`',
+            f"- Full name catalog: [primitives.md](primitives.md) ({prim_count} scanned registrations)",
+            "- Registry map: [primitives-registry.md](primitives-registry.md)",
+            "",
+        ]
+    )
+    if registry_groups:
+        lines.append(
+            f"Central registry orchestrates **{len(registry_groups)}** "
+            "`register_*_primitives` groups "
+            "(see primitives-registry.md for the ordered list)."
+        )
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -489,10 +588,12 @@ def write_outputs() -> dict[str, str]:
     primitives = scan_primitives()
     modules = scan_modules()
     stdlib = scan_stdlib()
+    reg_groups = scan_primitive_registry_groups()
     return {
         "primitives.md": render_primitives(primitives),
         "modules.md": render_modules(modules),
-        "stdlib-index.md": render_stdlib(stdlib),
+        "stdlib-index.md": render_stdlib(stdlib, prim_count=len(primitives), registry_groups=reg_groups),
+        "primitives-registry.md": render_primitives_registry(reg_groups, len(primitives)),
     }
 
 

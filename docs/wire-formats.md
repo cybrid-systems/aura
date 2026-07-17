@@ -493,3 +493,26 @@ Production migration targets (in `src/core/ast.ixx`):
 - `FlatAST::serialize_soa` / `deserialize_soa` — Cycle 14 P3
 - (Future) `NodeView` auto_serialize — Cycle 14 P1 (blocked on
   GCC 16.1 dual ICE)
+
+---
+
+## 9. Related: engine primitives discoverability (#1552)
+
+Wire formats above describe **AST/IR bytes** on the cache/IPC path.
+They are **not** the PrimRegistrar public API surface.
+
+For Agent / developer discovery of **runtime primitives** (including
+fiber / mutation integration points that *touch* FlatAST mutation
+logs serialized in §3):
+
+- Central orchestration: `src/compiler/evaluator_primitives_registry.cpp`
+- Agent facade: `(require "std/primitives" all:)` → `primitives:help` /
+  `primitives:list` / `primitives:discover`
+- INDEX: `(stdlib:help "primitives")`
+- Generated maps: `docs/generated/primitives.md`,
+  `docs/generated/primitives-registry.md` (`./build.py docs`)
+- Runtime introspection: `(primitive:describe name)`,
+  `(query:primitive-list-with-meta)`, `(query:primitives-meta-catalog)`
+
+Contributor checklist for adding a primitive (registration + meta +
+docs): [contributing.md](contributing.md) §Discoverability (#1552).

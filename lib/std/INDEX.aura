@@ -137,13 +137,16 @@
     (list "time"
       (list "Time helpers"
             "(time:now)"))
+    ; ── Engine primitives discoverability (#1552) ──
+    (list "primitives"
+      (list "Engine PrimRegistrar registry (fiber/mutate/query hot paths) + Agent discovery (#1552)"
+            "(require \"std/primitives\" all:)(primitives:help)"))
     ; ── Helpers ──
     ; Issue #981: removed duplicate "hash" entry (first entry under
     ; Collection + data is canonical: "(hash:set 'k 'v)").
     (list "INDEX"
       (list "This discoverability index"
             "(stdlib:list)"))))
-
 ; ── (stdlib:list) — returns list of all module names
 (define (stdlib:list)
   (map car stdlib-registry))

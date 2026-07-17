@@ -1,5 +1,29 @@
 // evaluator_primitives_registry.cpp — P1-c: register_all_primitives orchestration
 // aura.compiler.evaluator module partition; orchestrates register_all_primitives().
+//
+// ═══════════════════════════════════════════════════════════════════════
+// #1552 — Agent / developer discoverability (canonical registration map)
+// ═══════════════════════════════════════════════════════════════════════
+// This file is the CENTRAL entry for all PrimRegistrar callbacks.
+// Implementation bodies live in evaluator_primitives_*.cpp (+ verticals).
+//
+// Agent discovery surfaces (do not invent new ones without updating these):
+//   - (require "std/primitives" all:) → primitives:help / :list / :discover
+//   - (require "std/INDEX" all:) → (stdlib:help "primitives")
+//   - (primitive:describe name) / (query:primitive-list-with-meta)
+//   - (query:primitives-meta) / (query:primitives-meta-catalog)
+//   - docs/generated/primitives.md + docs/generated/primitives-registry.md
+//
+// Registration groups (order below = boot order):
+//   S0 core: type-char, pair-string, json, list, vector-hash, math,
+//            reflect, query, runtime, test, diagnostic, misc, file, git,
+//            module, control, char, mutation, auto-evolve
+//   EDSL:    workspace-query, mutate, workspace, persist, eval, observability
+//   S1–S2:   stdlib-review, eda, security, verify-tool (full_primitives only)
+//
+// Fiber / mutation integration points for Agents:
+//   mutation + mutate + workspace-query + control (+ safe-yield / boundary)
+// ═══════════════════════════════════════════════════════════════════════
 
 module;
 
