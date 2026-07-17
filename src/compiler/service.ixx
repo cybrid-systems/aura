@@ -4550,11 +4550,10 @@ public:
                 }
             }
         }
-        // Issue #1476 AC5: track invalidate_cascade_depth_max via
-        // CAS loop. Sustained high values indicate hot dep_graph
-        // edges (many siblings depend on the same mutated
-        // define).
+        // Issue #1476 / #1496 AC5: track invalidate_cascade_depth_max
+        // via CAS + sum depth for avg (depth_total / protocol calls).
         const auto final_depth = static_cast<std::uint64_t>(depth);
+        metrics_.invalidate_cascade_depth_total.fetch_add(final_depth, std::memory_order_relaxed);
         auto expected = metrics_.invalidate_cascade_depth_max.load(std::memory_order_relaxed);
         while (
             final_depth > expected &&
@@ -8548,43 +8547,14 @@ private:
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
         (void)evaluator_.linear_post_mutate_enforce_all();
 
-        // Issue #166 Phase 1: bump the global mutation epoch under the lock.
-        // Release ordering so apply_closure / JIT / interpreter paths that
-        // load with acquire see the bump before using stale bridge/EnvFrame
-        // metadata (Issue #739).
-        //
-        // Issue #1400 Option 1 (coupled bumps): bridge_epoch() and
-        // mutation_epoch_ share the same atomic (see bridge_epoch() at
-        // line ~8624 + bump_bridge_epoch() below). Calling
-        // bump_bridge_epoch() here makes the dual-domain intent
-        // (bridge staleness + mutation epoch) explicit at the call site
-        // and locks the invariant via the public helper — a future
-        // decoupling of the two domains will fail to compile here
-        // rather than silently desync.
-        bump_bridge_epoch();
-        // Issue #1476 AC2: also bump defuse_version_ here so the
-        // dual-epoch atomicity matches mark_define_dirty (which
-        // now bumps both via atomic_bump_epochs_and_stamp_bridge).
-        // Without this, closures captured against EnvFrames from
-        // pre-mutation state would survive invalidate_function
-        // and read stale bindings on next apply — #1475's
-        // is_env_frame_stale helper catches them at apply time,
-        // but the write side should also be atomic so readers
-        // and writers agree on the epoch.
-        evaluator_.bump_defuse_version_for_test();
-        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-        // Keep AOT table epoch in lockstep (same as atomic_bump helper).
-        aura_aot_bump_func_table_epoch();
-        // Issue #1414: invalidate solved_delta_cache_ so any
-        // cached solve_delta results from the pre-mutation
-        // state don't get reused. Paired with bump_bridge_epoch
-        // above (epoch advance + cache wipe are atomic w.r.t.
-        // the next solve_delta_cached call). Bumps the
-        // solve_delta_cache_epoch_ counter; any in-flight
-        // solve_delta_cached that already passed the lookup
-        // check sees the new epoch and treats the (about-to-
-        // be-removed) entry as stale.
-        on_typed_mutation_epoch_bump();
+        // Issue #1496 / #1476: SINGLE dual-epoch + bridge stamp + JIT
+        // soft-deopt protocol — same helper as mark_define_dirty.
+        // Readers (apply_closure / aura_closure_call) that acquire-load
+        // either domain see both advanced before hard JIT erase /
+        // dep_graph teardown below. Replaces the historical hand-rolled
+        // bump_bridge_epoch + defuse + aot sequence that could desync
+        // with the soft path.
+        atomic_bump_epochs_and_stamp_bridge(name);
         // Issue #531: bump closure_stale_refresh_count_ on
         // every invalidate_function — measures the closure
         // refresh frequency post-mutate. Stats-only
@@ -8670,6 +8640,20 @@ private:
             // layout. This is the determinism contract for the follow-up
             // record_dependency edge-creation order.
             std::sort(dependents.begin(), dependents.end());
+
+            // Issue #1496: cascade depth for hard invalidate (root + dependents).
+            // Pairs with mark_define_dirty cascade metrics so soft/hard share
+            // the same observability surface.
+            const auto inv_depth =
+                static_cast<std::uint64_t>(1 + dependents.size()); // root + fan-out
+            metrics_.invalidate_cascade_depth_total.fetch_add(inv_depth, std::memory_order_relaxed);
+            auto inv_expected =
+                metrics_.invalidate_cascade_depth_max.load(std::memory_order_relaxed);
+            while (inv_depth > inv_expected &&
+                   !metrics_.invalidate_cascade_depth_max.compare_exchange_weak(inv_expected,
+                                                                                inv_depth)) {
+                // retry
+            }
 
             // Clean up old dependency info for all affected functions
             // (the redefined function and all its transitives)
@@ -9804,19 +9788,23 @@ public:
             static_cast<std::uint64_t>(bridges->size()), std::memory_order_relaxed);
     }
 
-    // Issue #1522 / #1476 / #1524: SINGLE AUTHORITATIVE invalidation helper.
+    // Issue #1522 / #1476 / #1524 / #1496: SINGLE AUTHORITATIVE dual-epoch
+    // + bridge stamp + JIT soft-deopt protocol.
     //
-    // INVARIANT: every path that invalidates live closures / JIT / bridges
-    // after a mutation MUST call this (or invalidate_function which owns
-    // its own full cascade). Forbidden patterns:
+    // Called by BOTH soft path (mark_define_dirty) and hard path
+    // (invalidate_function) so writers cannot advance one domain without
+    // the other. Forbidden patterns:
     //   - bare bump_bridge_epoch() without stamp / AOT table / batch_deopt
     //   - bare invalidate_bridge_for() without a preceding dual-epoch bump
     //     (except cascade dependents after this helper already bumped)
+    //   - hand-rolled dual bump inside invalidate_function (pre-#1496)
     //
-    // Dual domains advanced atomically:
+    // Dual domains advanced with release ordering:
     //   1. bridge / mutation_epoch_  (is_bridge_stale)
-    //   2. AOT func table epoch       (aura_closure_call dual check)
-    // Then stamp bridges + soft-deopt JIT fn_trackers_.
+    //   2. defuse_version_           (is_env_frame_stale / #1475)
+    //   3. AOT func table epoch      (aura_closure_call dual check)
+    // Then: solve_delta wipe, stamp bridges, soft-deopt JIT fn_trackers_,
+    // walk_active_closures for live-closure stale prevention.
     //
     // name empty → stamp every known bridge / ir_cache_v2 entry (typed_mutate
     // catch-all when the affected define set is unknown).
@@ -9829,6 +9817,11 @@ public:
         OrderedUniqueLock<std::shared_mutex> mutate_guard =
             OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
+        metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1496: release fence before publishing new epochs so
+        // concurrent apply_closure readers that acquire-load either
+        // domain cannot observe half-updated bridge tables.
+        std::atomic_thread_fence(std::memory_order_release);
         // bridge_epoch FIRST (release ordering on mutation_epoch_).
         bump_bridge_epoch();
         // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
@@ -9836,6 +9829,9 @@ public:
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
         // Keep AOT table epoch in lockstep for dual-check aura_closure_call.
         aura_aot_bump_func_table_epoch();
+        // Issue #1414 / #1496: wipe solve_delta cache with the same
+        // write-side protocol so soft dirty and hard invalidate agree.
+        on_typed_mutation_epoch_bump();
         // Stamp bridges (if any) + soft-deopt JIT trackers at the NEW epoch.
         // invalidate_bridge_for already calls notify_jit_fn_trackers_batch_deopt_.
         if (name.empty()) {
@@ -10594,9 +10590,12 @@ public:
             bump_shape_fiber_refresh();
             if (!name.empty()) {
                 mark_shape_dirty_for_fn_key(fn_key);
-                // Soft: epoch bump so JIT shape_map guards recheck, but
-                // prefer mark-dirty over full jit_cache_ erase when possible.
+                // Soft: dual-epoch bump so JIT shape_map guards recheck
+                // (#1496: never advance bridge without defuse). Prefer
+                // mark-dirty over full jit_cache_ erase when possible.
                 bump_bridge_epoch();
+                evaluator_.bump_defuse_version_for_test();
+                metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
                 metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
                 shape_jit_pass::record_incremental_recompile_hit();
             }
@@ -10605,7 +10604,12 @@ public:
 
         if (!name.empty()) {
             mark_shape_dirty_for_fn_key(fn_key);
+            // Issue #1496: dual-epoch write — bare bump_bridge_epoch here
+            // desynced defuse_version_ when invalidate_function already ran
+            // atomic_bump_epochs_and_stamp_bridge (hard path lockstep fail).
             bump_bridge_epoch();
+            evaluator_.bump_defuse_version_for_test();
+            metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
             evaluator_.resync_live_closure_env_versions_on_invalidate();
             jit_.invalidate(name.c_str());
             jit_.invalidate_prefix(name.c_str());

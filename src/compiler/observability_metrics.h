@@ -119,8 +119,8 @@ struct CompilerMetrics {
     // Issue #1536: bulk walk_active_closures after invalidate / dirty mark.
     std::atomic<std::uint64_t> jit_walk_active_closures_total{0};
     std::atomic<std::uint64_t> jit_walk_active_closures_stale_total{0};
-    // Issue #1476: unified mark_define_dirty / invalidate_function atomic
-    // protocol observability.
+    // Issue #1476 / #1496: unified mark_define_dirty / invalidate_function
+    // atomic protocol observability.
     //   - bridge_epoch_bumps_total: lifetime total of bump_bridge_epoch()
     //     calls (one per mark_define_dirty + one per invalidate_function +
     //     one per cascade dependent). Pairs with mutation_epoch_ acquire-
@@ -130,8 +130,14 @@ struct CompilerMetrics {
     //     depth from a single mark_define_dirty root. Sustained high
     //     values indicate hot dep_graph edges (many siblings depend
     //     on the same mutated define).
+    //   - unified_invalidation_protocol_total: atomic_bump_epochs_and_stamp_bridge
+    //     entries (#1496 AC — both soft dirty + hard invalidate paths).
+    //   - invalidate_cascade_depth_total: sum of BFS depths (avg =
+    //     total / mark_define_dirty roots via bridge_epoch_bumps ratio).
     std::atomic<std::uint64_t> bridge_epoch_bumps_total{0};
     std::atomic<std::uint64_t> invalidate_cascade_depth_max{0};
+    std::atomic<std::uint64_t> unified_invalidation_protocol_total{0};
+    std::atomic<std::uint64_t> invalidate_cascade_depth_total{0};
     // Issue #402: needs_tree_walker_fallback counters. The
     // (call) counter is bumped on every invocation (incl.
     // early returns). The (fast_path) counter bumps when
