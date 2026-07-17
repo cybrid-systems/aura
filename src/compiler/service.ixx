@@ -8754,11 +8754,11 @@ private:
         OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
 
-        // Issue #1545 / #1494: pre-cascade walk of live TW closures
-        // capturing linear values — mark invalid (bridge_epoch=0) so
-        // apply takes safe_fallback before IR/JIT teardown races with
-        // linear state. Then EnvFrame enforce so Moved frames bump
-        // linear_ownership_violation_prevented (AC1 closed-loop).
+        // Issue #1545 / #1494 / #1606: pre-cascade walk_active_closures
+        // via scan_live_closures_for_linear_captures — mark invalid
+        // (bridge_epoch=0) so apply takes safe_fallback before IR/JIT
+        // teardown races with linear state. Then EnvFrame enforce so
+        // Moved frames bump linear_ownership_violation_prevented.
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
         (void)evaluator_.linear_post_mutate_enforce_all();
 

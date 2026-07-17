@@ -87,7 +87,7 @@ int main() {
         auto h = cs.eval(R"((engine:metrics "query:linear-boundary-consistency-stats"))");
         CHECK(h && is_hash(*h), "boundary-consistency-stats is hash");
         CHECK(href_m(cs, "schema") == 1596 || href_m(cs, "schema") == 1568,
-              "schema 1596|1568 lineage");
+              "schema 1606|1596|1568 lineage");
         CHECK(href_m(cs, "active") == 1, "active");
         CHECK(href_m(cs, "phase") == 2, "phase 2");
     }
