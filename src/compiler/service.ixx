@@ -7310,7 +7310,14 @@ public:
             return std::unexpected(parse_error_diag(pr));
         }
         bool boundary_success = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(evaluator_, &boundary_success);
+        // Issue #1547: typed try_acquire (quota → AuraError, not throw).
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            evaluator_, /*pending_count=*/1, &boundary_success);
+        if (!guard_r) {
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          guard_r.error().message});
+        }
+        auto guard = std::move(*guard_r);
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
         if (result) {
@@ -7361,7 +7368,13 @@ public:
         // marking the guard as failure makes the intent
         // explicit and prepares for the future rollback path).
         bool boundary_success = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(evaluator_, &boundary_success);
+        // Issue #1547: typed try_acquire (check_mutation_quota → ResourceQuotaExceeded).
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            evaluator_, /*pending_count=*/1, &boundary_success);
+        if (!guard_r) {
+            return {0, false, guard_r.error().message};
+        }
+        auto guard = std::move(*guard_r);
 
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
