@@ -6284,6 +6284,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_hotpath_enter_total{0};
     // #1559: dirty short-circuit skip counter (mirrors arena_policy::render_hotpath_skip_total)
     std::atomic<std::uint64_t> render_hotpath_skip_total{0};
+    // #1562: dirty-region differential present metrics
+    std::atomic<std::uint64_t> render_dirty_region_skips_total{0};
+    std::atomic<std::uint64_t> render_dirty_cells_emitted_total{0};
+    std::atomic<std::uint64_t> render_dirty_cells_skipped_total{0};
     // #1317 render observability + RENDER_PRIMITIVE_META
     std::atomic<std::uint64_t> render_primitive_meta_active{1};
     std::atomic<std::uint64_t> render_obs_query_hits{0};

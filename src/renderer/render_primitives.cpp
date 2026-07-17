@@ -1,10 +1,10 @@
-// render_primitives.cpp — Issues #1559/#1561: present_batch / draw_batch engine.
-// Dirty short-circuit, hotpath, Arena-backed zero-copy ANSI present.
+// render_primitives.cpp — Issues #1559/#1561/#1562: present/draw + dirty-delta + zero-copy.
 
 #include "renderer/render_primitives.hh"
 
 #include "core/arena_auto_policy_stats.h"
 #include "core/zero_copy_output.hh"
+#include "renderer/batch_terminal.hh"
 
 #include <cstring>
 #include <string>
@@ -22,18 +22,42 @@ namespace {
         HotpathGuard& operator=(const HotpathGuard&) = delete;
     };
 
-    // Build ANSI into reusable scratch, place final bytes in Arena-backed zero-copy view.
-    // Returns frame byte count. Out: sgr_emits.
-    // #1561: uses FrameBumpArena (or caller-supplied ArenaLike via present_batch_with_arena).
+    // Build dirty-aware ANSI into scratch, place in Arena-backed zero-copy view.
+    // Out: sgr_emits, cells_emitted. Returns frame byte count.
     template <typename ArenaLike>
-    std::size_t build_frame_zero_copy_arena(const FramebufferSoA& fb, ArenaLike& arena,
-                                            std::uint64_t& sgr_emits) {
+    std::size_t build_frame_zero_copy_arena(const FramebufferSoA& fb, DirtyRegion& dirty,
+                                            ArenaLike& arena, std::uint64_t& sgr_emits,
+                                            std::uint64_t& cells_emitted) {
         thread_local std::string ansi_scratch;
         ansi_scratch.clear();
-        sgr_emits = build_terminal_frame_ansi(ansi_scratch, fb.width, fb.height, fb.cells_c());
+
+        // Clamp dirty AABB into framebuffer.
+        DirtyRegion region = dirty;
+        if (!region.clamp_to(static_cast<std::uint32_t>(fb.width),
+                             static_cast<std::uint32_t>(fb.height))) {
+            sgr_emits = 0;
+            cells_emitted = 0;
+            return 0;
+        }
+
+        const auto emit = build_terminal_frame_ansi_dirty(ansi_scratch, fb.width, fb.height,
+                                                          fb.cells_c(), region);
+        sgr_emits = emit.sgr_emits;
+        cells_emitted = emit.cells_emitted;
+
+        const std::uint64_t full_cells =
+            static_cast<std::uint64_t>(fb.width) * static_cast<std::uint64_t>(fb.height);
+        record_dirty_emit_sample(cells_emitted, full_cells);
+        if (emit.partial) {
+            ++g_render_hot_path_stats.dirty_partial_presents;
+            g_dirty_delta_metrics().dirty_partial_presents.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            g_dirty_delta_metrics().dirty_full_frame_presents.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+        g_render_hot_path_stats.dirty_cells_emitted += cells_emitted;
 
         auto& zc = aura::core::zero_copy::g_zero_copy_fb;
-        // Frame-scope reset so each present starts at bump base (capacity retained).
         if constexpr (requires { arena.reset(); }) {
             arena.reset();
         }
@@ -60,6 +84,8 @@ namespace {
         if (!dirty.is_dirty()) {
             ++g_render_hot_path_stats.dirty_short_circuit_total;
             ++g_engine_counters.present_skips;
+            g_dirty_delta_metrics().dirty_region_skips_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             aura::core::arena_policy::render_hotpath_skip_total.fetch_add(
                 1, std::memory_order_relaxed);
             if (out_opt)
@@ -71,8 +97,11 @@ namespace {
 
         auto& arena = arena_opt ? *arena_opt : aura::core::zero_copy::g_render_frame_arena();
         std::uint64_t sgr_emits = 0;
-        const std::size_t n = build_frame_zero_copy_arena(fb, arena, sgr_emits);
+        std::uint64_t cells_emitted = 0;
+        const std::size_t n =
+            build_frame_zero_copy_arena(fb, dirty, arena, sgr_emits, cells_emitted);
         g_engine_counters.sgr_emits += sgr_emits;
+        g_engine_counters.dirty_cells_emitted += cells_emitted;
 
         auto& zc = aura::core::zero_copy::g_zero_copy_fb;
         const auto last = zc.last_view();
@@ -113,6 +142,7 @@ void reset_render_engine_counters_for_test() noexcept {
     aura::core::zero_copy::g_zero_copy_fb.acquire_count = 0;
     aura::core::zero_copy::g_zero_copy_fb.release_count = 0;
     aura::core::zero_copy::reset_zero_copy_metrics_for_test();
+    reset_dirty_delta_metrics_for_test();
 }
 
 std::int64_t present_batch(const FramebufferSoA& fb, DirtyRegion& dirty, int fd) {

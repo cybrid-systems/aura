@@ -22,6 +22,7 @@ module;
 #include "compiler/ffi_hot_path.hh"
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_ffi.hh"
+#include "renderer/render_pass.hh"
 #include "renderer/render_primitives.hh"
 #include "terminal_buffer_registry.hh"
 #include "hash_meta.h"
@@ -1128,6 +1129,49 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         RENDER_PRIMITIVE_META(1, "Return ANSI frame string for buffer (no write) (#1349).",
                               "(int) -> string"));
 
+    // Issue #1562: (terminal-mark-dirty buf-id x y) → #t/#f
+    // Explicit dirty mark without changing cell content (for differential present).
+    add_render(
+        "terminal-mark-dirty",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]))
+                return make_bool(false);
+            auto id = as_int(a[0]);
+            auto x = as_int(a[1]);
+            auto y = as_int(a[2]);
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_bool(false);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            if (x < 0 || y < 0 || x >= b.w || y >= b.h)
+                return make_bool(false);
+            b.dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+            return make_bool(true);
+        },
+        RENDER_PRIMITIVE_META(3, "Mark cell dirty for differential present (#1562).",
+                              "(int int int) -> bool"));
+
+    // Issue #1562: (terminal-mark-all-dirty buf-id) → #t/#f
+    add_render(
+        "terminal-mark-all-dirty",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_bool(false);
+            auto id = as_int(a[0]);
+            std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+            if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
+                !s_term_bufs[static_cast<std::size_t>(id)])
+                return make_bool(false);
+            auto& b = *s_term_bufs[static_cast<std::size_t>(id)];
+            std::unique_lock<std::shared_mutex> buf(b.rwlock);
+            b.dirty.mark_all_dirty(static_cast<std::uint32_t>(b.w),
+                                   static_cast<std::uint32_t>(b.h));
+            return make_bool(true);
+        },
+        RENDER_PRIMITIVE_META(1, "Mark entire terminal buffer dirty (#1562).", "(int) -> bool"));
+
     // Issue #1559: (render-draw-batch buf-id x y ch [fg [bg]]) → cells-written
     // Low-level draw primitive (RENDER_PRIMITIVE_META); marks dirty for present short-circuit.
     add_render(
@@ -1222,6 +1266,62 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                             m ? load(m->render_jit_aot_prefer_hits) : 0,
                             m ? load(m->render_deopt_throttle_window_ms) : 500));
             return types::make_string(sidx);
+        });
+
+    // ── Issue #1562: query:render-dirty-delta-stats ──
+    ObservabilityPrims::register_stats_impl(
+        "query:render-dirty-delta-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto& dm = aura::renderer::g_dirty_delta_metrics();
+            if (m) {
+                m->render_obs_query_hits.fetch_add(1, std::memory_order_relaxed);
+                m->render_dirty_region_skips_total.store(
+                    dm.dirty_region_skips_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->render_dirty_cells_emitted_total.store(
+                    dm.dirty_cells_emitted_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->render_dirty_cells_skipped_total.store(
+                    dm.dirty_cells_skipped_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
+            };
+            insert_kv("schema", 1562);
+            insert_kv("active", 1);
+            insert_kv("dirty-region-skips",
+                      static_cast<std::int64_t>(
+                          dm.dirty_region_skips_total.load(std::memory_order_relaxed)));
+            insert_kv("dirty-cells-emitted",
+                      static_cast<std::int64_t>(
+                          dm.dirty_cells_emitted_total.load(std::memory_order_relaxed)));
+            insert_kv("dirty-cells-skipped",
+                      static_cast<std::int64_t>(
+                          dm.dirty_cells_skipped_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "dirty-present-frames",
+                static_cast<std::int64_t>(dm.dirty_present_frames.load(std::memory_order_relaxed)));
+            insert_kv("dirty-partial-presents",
+                      static_cast<std::int64_t>(
+                          dm.dirty_partial_presents.load(std::memory_order_relaxed)));
+            insert_kv("dirty-full-frame-presents",
+                      static_cast<std::int64_t>(
+                          dm.dirty_full_frame_presents.load(std::memory_order_relaxed)));
+            insert_kv("dirty-cells-avg",
+                      static_cast<std::int64_t>(aura::renderer::dirty_cells_avg()));
+            insert_kv("dirty-cells-p99",
+                      static_cast<std::int64_t>(aura::renderer::dirty_cells_p99()));
+            // skip-rate as basis points (0..10000)
+            insert_kv("dirty-cell-skip-rate-bp",
+                      static_cast<std::int64_t>(aura::renderer::dirty_cell_skip_rate() * 10000.0));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // ── Issue #1354/#1560: query:render-ffi-available ──
