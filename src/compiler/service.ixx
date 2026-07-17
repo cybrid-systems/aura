@@ -4405,15 +4405,13 @@ public:
         if (it != ir_cache_v2_.end()) {
             auto& primary = it->second;
             primary.dirty = true;
-            // Issue #1495: typical define shape is irs[0]=__top__ +
-            // irs[1]=body Lambda. mark_all_blocks_dirty on the primary
-            // forced dirty_func_count>=2 and skipped per-function
-            // relower_define_blocks → always full re-lower. Prefer
-            // body-only dirty so partial re-lower wins on set-body.
-            // Nested lambdas (irs.size()>2) keep full dirty (#1261).
+            // Issue #1495 / #1505: typical define shape is irs[0]=__top__
+            // + irs[1]=body Lambda. Prefer body-only dirty so partial
+            // re-lower wins on set-body. Nested lambdas (irs[2..N]) are
+            // marked only when free_vars free-ref `name` (self-recursion
+            // / capture), not full-entry dirty (#1261 full is fallback).
             const bool nested_primary = primary.irs.size() > 2;
-            if (!nested_primary && primary.irs.size() >= 2 &&
-                primary.block_dirty_per_func_.size() >= 2 &&
+            if (primary.irs.size() >= 2 && primary.block_dirty_per_func_.size() >= 2 &&
                 !primary.block_dirty_per_func_[1].empty()) {
                 if (primary.block_dirty_per_func_.size() < primary.irs.size())
                     primary.block_dirty_per_func_.resize(primary.irs.size());
@@ -4424,6 +4422,30 @@ public:
                      bi < static_cast<std::uint32_t>(primary.block_dirty_per_func_[1].size());
                      ++bi) {
                     primary.mark_block_dirty(/*func_idx=*/1, bi);
+                }
+                // Issue #1505: free-var scan of nested lambdas for self.
+                if (nested_primary) {
+                    for (std::size_t fi = 2; fi < primary.irs.size(); ++fi) {
+                        if (fi >= primary.block_dirty_per_func_.size())
+                            break;
+                        const auto& nfn = primary.irs[fi];
+                        bool free_refs_self = false;
+                        for (const auto& fv : nfn.free_vars) {
+                            if (fv == name) {
+                                free_refs_self = true;
+                                break;
+                            }
+                        }
+                        if (!free_refs_self)
+                            continue;
+                        auto& fb = primary.block_dirty_per_func_[fi];
+                        if (fb.empty() && !nfn.blocks.empty())
+                            fb.resize(nfn.blocks.size(), std::uint8_t{0});
+                        for (auto& b : fb)
+                            b = 1;
+                    }
+                    metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 }
                 metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
@@ -4512,30 +4534,54 @@ public:
                     continue;
                 auto& centry = cit->second;
                 const bool nested_lambdas = centry.irs.size() > 2;
-                // Issue #1514 / #1505: nested-lambda dependents prefer
-                // body-only dirty (irs[1]) instead of mark_all — nested
-                // lambdas (irs[2..]) are self-contained and do not need
-                // re-lower when only the call edge in the body is affected.
-                // Falls back to full dirty only when body bitmasks missing.
+                // Issue #1514 / #1505: dep_graph_-aware cascade for
+                // dependents. Convention: irs[0]=__top__, irs[1]=body.
+                // The CALL to `cur` lives in the body → mark body blocks.
+                // Nested lambdas (irs[2..N]) are only marked when their
+                // free_vars free-reference `cur` (the mutated/cascaded
+                // name) — not a full-entry dirty. Falls back to full
+                // dirty only when body bitmasks are missing.
                 if (centry.irs.size() >= 2 && 1 < centry.block_dirty_per_func_.size()) {
-                    // Targeted: mark only the body function's blocks dirty.
-                    // Convention: body Lambda is at irs[1]; irs[0] is __top__.
                     centry.dirty = true;
-                    // Ensure bitmask rows exist for all funcs (nested may
-                    // have empty rows after init edge cases).
                     if (centry.block_dirty_per_func_.size() < centry.irs.size())
                         centry.block_dirty_per_func_.resize(centry.irs.size());
+                    // Body (call site of `cur`).
                     for (auto& b : centry.block_dirty_per_func_[1]) {
                         b = 1;
                     }
-                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1505: free-var scan of nested lambdas.
+                    // Match free_vars against `cur` (immediate cascade
+                    // predecessor), not only the BFS root — multi-hop
+                    // cascades invalidate the intermediate name.
                     if (nested_lambdas) {
-                        // Issue #1514: targeted nested-lambda cascade hit.
+                        for (std::size_t fi = 2; fi < centry.irs.size(); ++fi) {
+                            if (fi >= centry.block_dirty_per_func_.size())
+                                break;
+                            const auto& nfn = centry.irs[fi];
+                            bool free_refs_cur = false;
+                            for (const auto& fv : nfn.free_vars) {
+                                if (fv == cur) {
+                                    free_refs_cur = true;
+                                    break;
+                                }
+                            }
+                            if (!free_refs_cur)
+                                continue;
+                            // Free-ref hit: mark all blocks of this nested
+                            // lambda dirty (function-level free_vars; no
+                            // per-block free-var map yet).
+                            auto& fb = centry.block_dirty_per_func_[fi];
+                            if (fb.empty() && !nfn.blocks.empty())
+                                fb.resize(nfn.blocks.size(), std::uint8_t{0});
+                            for (auto& b : fb)
+                                b = 1;
+                        }
                         metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
                             1, std::memory_order_relaxed);
                     }
+                    metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 } else if (nested_lambdas) {
-                    // Fallback: no body bitmask → full dirty (pre-#1514).
+                    // Fallback: no body bitmask → full dirty (pre-#1505).
                     centry.dirty = true;
                     centry.mark_all_blocks_dirty();
                     metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
