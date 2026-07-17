@@ -3309,6 +3309,9 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     return impl_->compiled_fns_;
 }
 
+// Issue #1545: declared in aura_jit_bridge.h — host linear live-closure scan.
+extern "C" int aura_jit_linear_live_closure_scan(void);
+
 void AuraJIT::invalidate(const char* name) {
     if (!impl_ || !name)
         return;
@@ -3319,6 +3322,9 @@ void AuraJIT::invalidate(const char* name) {
     std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
     // Issue #1516: drop per-function AOT snapshot on invalidate.
     impl_->fn_aot_modules_.erase(n);
+    // Issue #1545: pre-evict linear live-closure scan (mark invalid +
+    // deopt surface) BEFORE ResourceTracker::remove tears down code.
+    (void)aura_jit_linear_live_closure_scan();
     // Drop the per-function resource tracker (removes the
     // module from the JITDylib) AND the per-function compile
     // cache entry. This matches what get_or_create_tracker()

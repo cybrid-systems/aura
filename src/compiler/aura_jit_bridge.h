@@ -221,6 +221,13 @@ void aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t
 // Always bumps jit_linear_post_mutate_enforcements_total when callback set.
 int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
 
+// Issue #1545: host wires Evaluator::scan_live_closures_for_linear_captures.
+// Called from AuraJIT::invalidate before ResourceTracker::remove (pre-evict).
+typedef void (*aura_linear_live_closure_scan_fn_t)(void* user_data);
+void aura_set_linear_live_closure_scan_fn(aura_linear_live_closure_scan_fn_t fn, void* user_data);
+// Invoke host scan (no-op if unset). Returns 1 if callback ran, 0 otherwise.
+int aura_jit_linear_live_closure_scan(void);
+
 // Issue #358 — incremental re-AOT foundation.
 //
 // `aura_set_is_define_dirty_fn` registers a host-side callback

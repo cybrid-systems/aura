@@ -812,6 +812,80 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     return ne;
 }
 
+// Issue #1545: walk tree-walker live closures_ under unique lock so
+// callers can mutate (e.g. mark invalid). Parallel to
+// AuraJIT::walk_active_closures / IRExecutor::walk_runtime_closures.
+void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
+    if (!fn)
+        return;
+    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    for (auto& [id, cl] : closures_)
+        fn(id, cl);
+}
+
+// Issue #1545: scan live closures for linear captures.
+// A capture is "linear" if the EnvFrame SoA has any state != Untracked.
+// mark_invalid → stamp Closure::bridge_epoch = 0 so apply_closure /
+// closure_needs_safe_fallback takes the safe path (is_bridge_stale).
+Evaluator::LinearLiveClosureScanResult
+Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid) noexcept {
+    LinearLiveClosureScanResult out;
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Lock order: closures unique → env_frames shared (same as apply
+    // materialize relative ordering; no reverse acquire elsewhere).
+    std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    for (auto& [id, cl] : closures_) {
+        (void)id;
+        ++out.examined;
+        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+            continue;
+        const EnvFrame& fr = env_frames_[cl.env_id];
+        bool has_linear = false;
+        for (const auto s : fr.bindings_linear_ownership_state_) {
+            if (s != linear_rt::Untracked) {
+                has_linear = true;
+                break;
+            }
+        }
+        if (!has_linear)
+            continue;
+        ++out.with_linear_capture;
+        if (mark_invalid) {
+            // Force safe_fallback on next apply regardless of later
+            // restamp attempts that only update matching epochs.
+            cl.bridge_epoch = 0;
+            ++out.marked_invalid;
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->linear_live_closures_marked_invalid_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                // Also surface on the safe-fallback family so agents
+                // correlating #1475 / #1545 see the invalidate path.
+                m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    return out;
+}
+
+ClosureId Evaluator::register_active_closure(Closure cl) {
+    stamp_closure_bridge_epoch(cl);
+    const ClosureId id = next_id();
+    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    closures_[id] = std::move(cl);
+    return id;
+}
+
+std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
+    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+    auto it = closures_.find(id);
+    if (it == closures_.end())
+        return std::nullopt;
+    return it->second;
+}
+
 // Issue #242: is_env_frame_stale — true if the frame's
 // stamped version is older than the current defuse_version_
 // (i.e. captured before a mutation that may have invalidated
@@ -1129,6 +1203,10 @@ std::size_t Evaluator::compact_env_frames() {
     // could add closures_ to a stale view of env_frames_ (frame
     // already reclaimed or remap table wrong).
     std::lock_guard interlock(compact_env_frames_lock_);
+    // Issue #1545: pre-compact walk — mark linear-capturing closures
+    // invalid before env_id remap so apply never walks remapped
+    // frames with use-after-move / post-mutate linear state.
+    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {

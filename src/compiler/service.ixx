@@ -633,6 +633,15 @@ public:
                 return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
             },
             &evaluator_);
+        // Issue #1545: JIT ResourceTracker pre-evict linear live-closure scan.
+        aura_set_linear_live_closure_scan_fn(
+            [](void* user) {
+                if (!user)
+                    return;
+                static_cast<Evaluator*>(user)->scan_live_closures_for_linear_captures(
+                    /*mark_invalid=*/true);
+            },
+            &evaluator_);
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.
@@ -8395,6 +8404,11 @@ private:
         OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
 
+        // Issue #1545: pre-cascade walk of live TW closures capturing
+        // linear values — mark invalid (bridge_epoch=0) so apply takes
+        // safe_fallback before IR/JIT teardown races with linear state.
+        (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+
         // Issue #166 Phase 1: bump the global mutation epoch under the lock.
         // Release ordering so apply_closure / JIT / interpreter paths that
         // load with acquire see the bump before using stale bridge/EnvFrame
@@ -10468,6 +10482,14 @@ public:
                     return 0;
                 auto* ev = static_cast<Evaluator*>(user);
                 return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
+            },
+            &evaluator_);
+        // Issue #1545: re-bind live-closure linear scan for JIT ResourceTracker.
+        aura_set_linear_live_closure_scan_fn(
+            [](void* user) {
+                if (!user)
+                    return;
+                static_cast<Evaluator*>(user)->scan_live_closures_for_linear_captures(true);
             },
             &evaluator_);
 

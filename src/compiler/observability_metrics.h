@@ -3220,6 +3220,13 @@ struct CompilerMetrics {
     // (typed_mutate, invalidate_function, compact_env_frames, JIT hot-swap,
     // fiber steal, GC safepoint). See docs/design/linear-gc-roots.md.
     std::atomic<std::uint64_t> linear_gc_root_audit_checks_total{0};
+    // Issue #1545: live-closure linear capture scans (invalidate / compact /
+    // JIT ResourceTracker pre-evict). One bump per
+    // scan_live_closures_for_linear_captures invocation.
+    std::atomic<std::uint64_t> linear_live_closure_scans_total{0};
+    // Closures marked invalid (bridge_epoch=0) because they captured
+    // linear-tracked bindings during a scan with mark_invalid=true.
+    std::atomic<std::uint64_t> linear_live_closures_marked_invalid_total{0};
     // Issue #1478: linear post-mutate enforcement counters (Issue #1478
     // AC #4). Distinct from the *_gc_* counters above (those track
     // GC-root registration lifecycle; these track per-closure-call
