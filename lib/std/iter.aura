@@ -31,7 +31,7 @@
       (every? pred (cdr lst)))))
 
 (define (find pred lst)
-  (if (null? lst) ()
+  (if (null? lst) #f
     (if (pred (car lst)) (car lst)
       (find pred (cdr lst)))))
 
