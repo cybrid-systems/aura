@@ -55,7 +55,8 @@ static void ac1_shape_schema() {
     CompilerService cs;
     auto h = cs.eval(std::format("(engine:metrics \"{}\")", kQ));
     CHECK(h && is_hash(*h), "ai-closedloop-readiness-stats is hash");
-    CHECK(href(cs, "schema") == 1593 || href(cs, "schema") == 1499, "schema == 1593 or 1499");
+    CHECK(href(cs, "schema") == 1597 || href(cs, "schema") == 1593 || href(cs, "schema") == 1499,
+          "schema == 1597 or 1593 or 1499");
 }
 
 static void ac2_health_and_1470() {

@@ -47,8 +47,8 @@ static void ac1_schema_health() {
     CompilerService cs;
     auto h = cs.eval(std::format("(engine:metrics \"{}\")", kQ));
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1593, "schema 1593");
-    CHECK(href(cs, "issue") == 1593, "issue 1593");
+    CHECK(href(cs, "schema") == 1597 || href(cs, "schema") == 1593, "schema 1597|1593");
+    CHECK(href(cs, "issue") == 1597 || href(cs, "issue") == 1593, "issue 1597|1593");
     const auto health = href(cs, "health-score");
     CHECK(health >= 0 && health <= 100, "health in [0,100]");
     CHECK(href(cs, "action") >= 0 && href(cs, "action") <= 4, "action");

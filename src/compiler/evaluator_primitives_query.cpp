@@ -12,7 +12,9 @@ module;
 #include "core/gc_hooks.h" // #1593 safepoint wait linkage
 #include "serve/fiber.h"
 #include "serve/metrics.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "serve/multi_fiber_mailbox.h" // #1597 orch readiness
+#include "serve/parallel_orch.h"       // #1597 orch readiness
+#include "hash_meta.h"                 // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -732,14 +734,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1470 / #1499 / #1593: query:ai-closedloop-readiness-stats —
+    // Issue #1470 / #1499 / #1593 / #1597: query:ai-closedloop-readiness-stats —
     // consolidated health for AI editing loops.
     //
     // #1470: wraps / invalidations / batch-commits / hygiene-skips /
     // dirty-prunes + recommendation [0..4].
     // #1499: production breakdown + health-score 0..100 + action.
     // #1593: SLO breach, health-trend, sibling linkage (#1591/#1592),
-    // adaptive-safepoint recommendation + soft adapt signal, schema 1593.
+    // adaptive-safepoint recommendation + soft adapt signal.
+    // #1597: parallel orchestration (join latency / mailbox backpressure /
+    // parallel throughput / starvation mitigated) folded into health + schema 1597.
     //
     // Recommendation priority (most severe first, #1470 contract):
     //   0 = healthy  1 = wraps  2 = high invalidations  3 = hygiene
@@ -877,16 +881,105 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (safe_yield_skip >= 50)
                 penalize(5);
 
+            // ── #1597: parallel orchestration health ─────────────────
+            using aura::serve::Fiber;
+            using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+            using aura::serve::parallel_orch::g_parallel_orch_stats;
+            const std::uint64_t join_n = Fiber::join_total();
+            const std::uint64_t join_wait_us = Fiber::join_wait_us_total();
+            const std::uint64_t join_wait_max = Fiber::join_wait_us_max();
+            const std::uint64_t join_timeouts = Fiber::join_timeout_total();
+            const std::int64_t avg_join_us =
+                join_n > 0 ? static_cast<std::int64_t>(join_wait_us / join_n) : 0;
+            // Coarse histogram bucket counts (exported as sum + b0..b4).
+            const std::uint64_t join_hist_sum = Fiber::join_latency_hist_sum();
+            const std::uint64_t join_hist_b0 = Fiber::join_latency_hist(0);
+            const std::uint64_t join_hist_b1 = Fiber::join_latency_hist(1);
+            const std::uint64_t join_hist_b2 = Fiber::join_latency_hist(2);
+            const std::uint64_t join_hist_b3 = Fiber::join_latency_hist(3);
+            const std::uint64_t join_hist_b4 = Fiber::join_latency_hist(4);
+
+            const std::uint64_t mb_pushes =
+                g_mf_mailbox_stats.pushes.load(std::memory_order_relaxed);
+            const std::uint64_t mb_bp =
+                g_mf_mailbox_stats.backpressure_rejects.load(std::memory_order_relaxed);
+            const std::uint64_t mb_recv_waits =
+                g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
+            const std::uint64_t mb_recv_timeouts =
+                g_mf_mailbox_stats.recv_timeouts.load(std::memory_order_relaxed);
+            // Pseudo-p99 backpressure pressure (ms): 0 when no rejects; else
+            // scales with reject rate (capped). Agents use as pressure gauge.
+            std::int64_t mailbox_backpressure_p99 = 0;
+            if (mb_bp > 0) {
+                const auto denom = mb_pushes + mb_bp;
+                const auto rate_bp =
+                    denom > 0 ? static_cast<std::int64_t>((mb_bp * 10000u) / denom) : 10000;
+                mailbox_backpressure_p99 =
+                    std::min<std::int64_t>(10000, 50 + rate_bp + static_cast<std::int64_t>(mb_bp));
+            }
+
+            const std::uint64_t po_joined =
+                g_parallel_orch_stats.tasks_joined.load(std::memory_order_relaxed);
+            const std::uint64_t po_ok =
+                g_parallel_orch_stats.tasks_ok.load(std::memory_order_relaxed);
+            const std::uint64_t po_err =
+                g_parallel_orch_stats.tasks_err.load(std::memory_order_relaxed);
+            const std::uint64_t po_ff =
+                g_parallel_orch_stats.fail_fast_aborts.load(std::memory_order_relaxed);
+            const std::uint64_t po_to =
+                g_parallel_orch_stats.timeouts.load(std::memory_order_relaxed);
+            const std::uint64_t po_elapsed =
+                g_parallel_orch_stats.parallel_elapsed_us.load(std::memory_order_relaxed);
+            // Throughput (tasks/s ×1000 as milli-tps integer for EDSL int fields).
+            std::int64_t parallel_throughput_mtps = 0;
+            if (po_elapsed > 0 && po_ok > 0)
+                parallel_throughput_mtps =
+                    static_cast<std::int64_t>((po_ok * 1000000ull) / po_elapsed); // tasks/s
+
+            // Orchestration subscore 0..100 (higher better).
+            std::int64_t orch_health = 100;
+            auto orch_pen = [&](std::int64_t pts) {
+                orch_health -= pts;
+                if (orch_health < 0)
+                    orch_health = 0;
+            };
+            if (avg_join_us >= 1000)
+                orch_pen(std::min<std::int64_t>(20, avg_join_us / 1000));
+            if (join_timeouts >= 3)
+                orch_pen(std::min<std::int64_t>(15, static_cast<std::int64_t>(join_timeouts) * 3));
+            if (mb_bp >= 5)
+                orch_pen(std::min<std::int64_t>(20, static_cast<std::int64_t>(mb_bp) / 2));
+            if (po_joined > 0 && po_err * 5 >= po_joined)
+                orch_pen(15); // ≥20% error rate
+            if (po_ff >= 2)
+                orch_pen(10);
+            if (po_to >= 2)
+                orch_pen(10);
+
+            // Fold orch into main health (capped soft penalty).
+            if (orch_health < 80)
+                penalize(std::min<std::int64_t>(15, (80 - orch_health) / 2));
+            if (avg_join_us >= 10000)
+                penalize(5);
+            if (mailbox_backpressure_p99 >= 500)
+                penalize(5);
+
+            // Starvation mitigated = steal fairness + join-path linear enforce
+            // (join Ok after wait) + mailbox recv_waits that completed (proxy).
+            const std::uint64_t orch_starvation_mitigated =
+                steal_mitigated + Fiber::join_linear_enforcement_total();
+
             // Orchestration action (independent of #1470 recommendation).
             std::int64_t action = 0;
             if (quota_rejects >= 5)
                 action = 3; // raise-quota
             else if (cascade_max >= 8)
                 action = 4; // check-cascade
-            else if (rollbacks >= 5 || invalidations >= 20)
-                action = 2; // throttle-mutate
-            else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50)
-                action = 1; // investigate-refs
+            else if (rollbacks >= 5 || invalidations >= 20 || orch_health < 50)
+                action = 2; // throttle-mutate (incl. orch pressure)
+            else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50 ||
+                     mb_bp >= 10 || avg_join_us >= 5000)
+                action = 1; // investigate-refs / orch latency
 
             // #1593 SLO: health < threshold OR severe action.
             constexpr std::int64_t kSloThreshold = 70;
@@ -902,15 +995,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Adaptive safepoint soft linkage: on hard breach, nudge threshold
             // (orchestrators also read adaptive-safepoint-recommended).
             std::int64_t adaptive_recommended = 0;
-            if (slo_breach || live_depth > 0 || avg_hold_us >= 2000 || safe_yield_skip >= 20)
+            if (slo_breach || live_depth > 0 || avg_hold_us >= 2000 || safe_yield_skip >= 20 ||
+                orch_health < 60)
                 adaptive_recommended = 1;
+            // #1597: recommend lowering parallel concurrency under orch pressure.
+            std::int64_t adaptive_concurrency_recommended = 0;
+            if (orch_health < 70 || mailbox_backpressure_p99 >= 200 || avg_join_us >= 5000 ||
+                po_ff >= 1 || po_to >= 1)
+                adaptive_concurrency_recommended = 1;
             if (slo_breach && health < 50) {
                 s_adaptive_soft_triggers.fetch_add(1, std::memory_order_relaxed);
                 // Soft adapt: one exponential backoff step (capped in helper).
                 ev.bump_safepoint_adaptive_threshold();
             }
 
-            auto* ht = FlatHashTable::create(96);
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
@@ -987,8 +1086,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           s_adaptive_soft_triggers.load(std::memory_order_relaxed)));
             insert_kv("adaptive-safepoint-threshold",
                       static_cast<std::int64_t>(ev.get_safepoint_adaptive_threshold()));
-            insert_kv("issue", 1593);
-            insert_kv("schema", 1593); // Agents may still accept 1499
+            // #1597: parallel orchestration breakdown + SLO linkage
+            insert_kv("orch-health-score", orch_health);
+            insert_kv("avg-join-latency-us", avg_join_us);
+            insert_kv("join-latency-max-us", static_cast<std::int64_t>(join_wait_max));
+            insert_kv("join-total", static_cast<std::int64_t>(join_n));
+            insert_kv("join-timeouts", static_cast<std::int64_t>(join_timeouts));
+            insert_kv("join_latency_histogram", static_cast<std::int64_t>(join_hist_sum));
+            insert_kv("join-latency-hist-b0", static_cast<std::int64_t>(join_hist_b0));
+            insert_kv("join-latency-hist-b1", static_cast<std::int64_t>(join_hist_b1));
+            insert_kv("join-latency-hist-b2", static_cast<std::int64_t>(join_hist_b2));
+            insert_kv("join-latency-hist-b3", static_cast<std::int64_t>(join_hist_b3));
+            insert_kv("join-latency-hist-b4", static_cast<std::int64_t>(join_hist_b4));
+            insert_kv("mailbox_backpressure_p99", mailbox_backpressure_p99);
+            insert_kv("mailbox-backpressure-rejects", static_cast<std::int64_t>(mb_bp));
+            insert_kv("mailbox-pushes", static_cast<std::int64_t>(mb_pushes));
+            insert_kv("mailbox-recv-waits", static_cast<std::int64_t>(mb_recv_waits));
+            insert_kv("mailbox-recv-timeouts", static_cast<std::int64_t>(mb_recv_timeouts));
+            insert_kv("parallel_task_throughput", parallel_throughput_mtps);
+            insert_kv("parallel-tasks-ok", static_cast<std::int64_t>(po_ok));
+            insert_kv("parallel-tasks-err", static_cast<std::int64_t>(po_err));
+            insert_kv("parallel-tasks-joined", static_cast<std::int64_t>(po_joined));
+            insert_kv("parallel-fail-fast", static_cast<std::int64_t>(po_ff));
+            insert_kv("parallel-timeouts", static_cast<std::int64_t>(po_to));
+            insert_kv("parallel-elapsed-us", static_cast<std::int64_t>(po_elapsed));
+            insert_kv("orchestration_starvation_mitigated",
+                      static_cast<std::int64_t>(orch_starvation_mitigated));
+            insert_kv("adaptive-concurrency-recommended", adaptive_concurrency_recommended);
+            insert_kv("issue", 1597);
+            insert_kv("schema", 1597); // Agents may still accept 1593|1499
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
