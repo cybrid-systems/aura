@@ -54,10 +54,10 @@
 
 (define (group-by keyfn lst)
   (let iter ((rest lst) (groups (hash)))
-    (if (null? rest) groups
+    (if (null? rest) (hash->alist groups)
       (let* ((key (keyfn (car rest)))
              (group (hash-ref groups key (list))))
-        (hash-set! groups key (cons (car rest) group))
+        (hash-set! groups key (append group (list (car rest))))
         (iter (cdr rest) groups)))))
 
 (define (frequencies lst)
