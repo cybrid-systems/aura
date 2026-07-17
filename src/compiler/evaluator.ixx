@@ -3291,6 +3291,9 @@ private:
     mutable std::atomic<std::uint64_t> pattern_index_lazy_rebuilds_{0};
     mutable std::atomic<std::uint64_t> pattern_index_eager_mutate_rebuilds_{0};
     mutable std::atomic<std::uint64_t> pattern_index_eager_cow_rebuilds_{0};
+    // Issue #1503: Lazy policy auto-syncs when index is already warm
+    // (post first query:pattern) so mutate→query stays incremental.
+    mutable std::atomic<std::uint64_t> pattern_index_auto_warm_syncs_{0};
     // Issue #448: mutation coordination observability. Bumped
     // by the scheduler / fiber hooks when:
     //   - a work-steal attempt is deferred or skipped
@@ -4198,6 +4201,19 @@ public:
     }
     [[nodiscard]] std::uint64_t get_pattern_index_eager_cow_rebuilds() const noexcept {
         return pattern_index_eager_cow_rebuilds_.load(std::memory_order_relaxed);
+    }
+    // Issue #1503: true when Evaluator tag_arity_index_ is populated for
+    // the current workspace_flat_ (safe shared-lock snapshot).
+    [[nodiscard]] bool tag_arity_index_is_warm() const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_);
+        return workspace_flat_ != nullptr && tag_arity_index_workspace_ == workspace_flat_ &&
+               !tag_arity_index_.empty();
+    }
+    void bump_pattern_index_auto_warm_syncs() const noexcept {
+        pattern_index_auto_warm_syncs_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_index_auto_warm_syncs() const noexcept {
+        return pattern_index_auto_warm_syncs_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_stale_ref_blocked_count() const noexcept {
         return stale_ref_blocked_count_.load(std::memory_order_relaxed);
@@ -10710,12 +10726,24 @@ public:
             if (outermost && ev_->arena_group_) {
                 ev_->probe_arena_auto_policy_on_boundary_exit(success);
             }
-            // Issue #490: proactive Evaluator tag_arity_index rebuild
-            // on successful outermost Guard exit when policy requests it.
-            if (outermost && success &&
-                ev_->pattern_index_policy_ == PatternIndexPolicy::EagerAfterMutate) {
-                ev_->build_tag_arity_index(
-                    static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
+            // Issue #490 / #1503: proactive Evaluator tag_arity_index
+            // maintenance on successful outermost Guard exit:
+            //   - EagerAfterMutate: always rebuild/sync
+            //   - Lazy + warm index: auto incremental sync so the next
+            //     query:pattern after self-mutate stays O(dirty), not a
+            //     surprise O(N) full rebuild on large ASTs
+            if (outermost && success && ev_->workspace_flat_) {
+                const bool eager =
+                    ev_->pattern_index_policy_ == PatternIndexPolicy::EagerAfterMutate;
+                const bool warm_lazy = ev_->pattern_index_policy_ == PatternIndexPolicy::Lazy &&
+                                       ev_->tag_arity_index_is_warm();
+                if (eager || warm_lazy) {
+                    if (warm_lazy)
+                        ev_->bump_pattern_index_auto_warm_syncs();
+                    ev_->build_tag_arity_index(
+                        static_cast<std::uint8_t>(eager ? PatternIndexRebuildTrigger::EagerMutate
+                                                        : PatternIndexRebuildTrigger::LazyQuery));
+                }
             }
             // Issue #1252: post-mutate linear ownership revalidate on
             // successful outermost Guard exit (#672 path made mandatory).

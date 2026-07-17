@@ -89,8 +89,10 @@ int main() {
         const auto d0 = flat.tag_arity_index_delta_hits();
         auto id = flat.add_literal(99);
         flat.mark_dirty_upward_with_index_update(id);
-        // append should have delta-indexed the new node
-        CHECK(flat.tag_arity_index_delta_hits() >= d0 + 1 || !flat.tag_arity_index_dirty(),
+        // Issue #1503: append may live-patch (incremental_patches) or
+        // clear dirty; either is correct vs full rebuild.
+        CHECK(flat.tag_arity_index_delta_hits() >= d0 + 1 ||
+                  flat.tag_arity_index_incremental_patches() > 0 || !flat.tag_arity_index_dirty(),
               "append update or clean");
         auto found = flat.find_by_tag_arity(static_cast<std::uint32_t>(flat.get(id).tag), 0, 0);
         bool contains = false;

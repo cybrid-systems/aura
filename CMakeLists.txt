@@ -5139,6 +5139,9 @@ aura_issue_test_link_llvm_jit(test_issue_1501)
 # Issue #1502: strong atomic structural topology rollback (children_/parent_).
 aura_add_issue_test(test_issue_1502)
 aura_issue_test_link_llvm_jit(test_issue_1502)
+# Issue #1503: incremental tag_arity_index + dirty linkage + rebuild policy.
+aura_add_issue_test(test_issue_1503)
+aura_issue_test_link_llvm_jit(test_issue_1503)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
