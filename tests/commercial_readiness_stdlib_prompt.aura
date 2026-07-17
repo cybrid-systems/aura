@@ -1,0 +1,139 @@
+;; tests/commercial_readiness_stdlib_prompt.aura
+;;
+;; Regression coverage for lib/std/prompt.aura (unified LLM prompt builder).
+;;
+;; Covers:
+;;   - build-sys-prompt with all-empty arguments
+;;   - build-sys-prompt with full arguments
+;;   - get-api-ref-for-modules with empty / sample module lists
+;;   - string-join-parts with empty list
+;;   - string-join-modules with single / multiple modules
+;;
+;; Note on expect semantics: in Aura Lisp, (and ...) of mixed truthy values
+;; returns () which is truthy, so a generic expect-true does not reliably
+;; catch #f. We use `expect` with an explicit expected value (#t/#f) for
+;; boolean predicates — same pattern as commercial_readiness_stdlib_data_types.
+;;
+;; Run:
+;;   build/aura < tests/commercial_readiness_stdlib_prompt.aura
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Inline check framework
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-no-error label thunk)
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Load target module
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/prompt" all:)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; build-sys-prompt — all-empty arguments
+;;   Expected: returns just PROMPT_IDENTITY (no stdlib/hint/api-ref blocks)
+;; ═════════════════════════════════════════════════════════════════════════
+(let ((result (build-sys-prompt '() "" "" "")))
+  ;; With all-empty args, output must equal PROMPT_IDENTITY exactly.
+  (expect "bsp-empty-exact-identity" result PROMPT_IDENTITY)
+  (expect "bsp-empty-no-stdlib-marker"
+    (string-contains? result "Available stdlib:") #f)
+  (expect "bsp-empty-no-hint-marker"
+    (string-contains? result "TASK-SPECIFIC HINT:") #f)
+  (expect "bsp-empty-no-api-ref-marker"
+    (string-contains? result "Aura API Reference:") #f))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; build-sys-prompt — full arguments
+;;   Verify stdlib line, hints block, api-ref block all present.
+;; ═════════════════════════════════════════════════════════════════════════
+(let* ((stdlib '("std/list" "std/hash"))
+       (api-ref ";; api-ref-content")
+       (task-name "my-task")
+       (hints "Prefer list operations")
+       (result (build-sys-prompt stdlib api-ref task-name hints)))
+  ;; Identity preserved at start
+  (expect "bsp-full-starts-with-identity"
+    (string-contains? result PROMPT_IDENTITY) #t)
+  ;; Stdlib line
+  (expect "bsp-full-has-stdlib-marker"
+    (string-contains? result "Available stdlib:") #t)
+  (expect "bsp-full-has-stdlib-modules"
+    (string-contains? result "std/list, std/hash") #t)
+  (expect "bsp-full-has-stdlib-require-hint"
+    (string-contains? result "(require std/name all:)") #t)
+  ;; Hints block
+  (expect "bsp-full-has-hint-divider"
+    (string-contains? result "========================================") #t)
+  (expect "bsp-full-has-hint-marker"
+    (string-contains? result "TASK-SPECIFIC HINT:") #t)
+  (expect "bsp-full-has-hint-text"
+    (string-contains? result "Prefer list operations") #t)
+  ;; API reference block
+  (expect "bsp-full-has-api-ref-marker"
+    (string-contains? result "Aura API Reference:") #t)
+  (expect "bsp-full-has-api-ref-text"
+    (string-contains? result ";; api-ref-content") #t)
+  ;; Idempotency / no-leakage: empty-task-name should NOT change output.
+  ;; Comparing full output with task-name="" vs task-name="my-task" should
+  ;; be byte-identical — the parameter is unused in the body.
+  (let ((result-empty-name (build-sys-prompt stdlib api-ref "" hints)))
+    (expect "bsp-task-name-is-dead-param"
+      (equal? result result-empty-name) #t)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; get-api-ref-for-modules — empty list
+;;   Even with no modules, get-api-ref returns aura-pitfalls text; the
+;;   wrapper should propagate that string (not crash, not return "").
+;; ═════════════════════════════════════════════════════════════════════════
+(expect-no-error "garef-empty-no-throw"
+  (lambda ()
+    (let ((ref (get-api-ref-for-modules '())))
+      (expect "garef-empty-is-string" (string? ref) #t)
+      (expect "garef-empty-non-empty" (> (string-length ref) 0) #t)
+      (expect "garef-empty-has-pitfalls"
+        (string-contains? ref "Pitfalls") #t))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; get-api-ref-for-modules — sample modules
+;; ═════════════════════════════════════════════════════════════════════════
+(expect-no-error "garef-sample-no-throw"
+  (lambda ()
+    (let ((ref (get-api-ref-for-modules '("std/list" "std/hash"))))
+      (expect "garef-sample-is-string" (string? ref) #t)
+      (expect "garef-sample-non-empty" (> (string-length ref) 0) #t))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; string-join-parts — empty list
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "sjp-empty" (string-join-parts '()) "")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; string-join-modules — single / multiple modules
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "sjm-single" (string-join-modules '("std/list")) "std/list")
+(expect "sjm-two"
+  (string-join-modules '("std/list" "std/hash"))
+  "std/list, std/hash")
+(expect "sjm-three"
+  (string-join-modules '("a" "b" "c"))
+  "a, b, c")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "\n=== prompt audit done ===\n")
