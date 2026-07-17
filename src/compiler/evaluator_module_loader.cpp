@@ -159,8 +159,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (loading_stack_.count(resolved)) {
-            auto eidx = string_heap_.size();
-            string_heap_.push_back("circular dependency: " + resolved);
+            // Issue #1488: do not push an unused error string into string_heap_
+            // (return is void; message was never consumed).
+            std::println(std::cerr, "load_module_file: circular dependency: '{}'", resolved);
             return types::make_void();
         }
         loading_stack_.insert(resolved);

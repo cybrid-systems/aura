@@ -3531,10 +3531,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "node " + std::to_string(node) + " has no parent in the AST");
             }
 
-            // Create the new function definition string
+            // Create the new function definition string (local only —
+            // Issue #1488: do not push unused define_str into string_heap_).
             std::string define_str = "(define (" + new_name + " x) x)";
-            auto define_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(define_str);
 
             // Parse the define into workspace
             auto pr = aura::parser::parse_to_flat(define_str, flat, *ev.workspace_pool_);

@@ -166,10 +166,8 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
             // Prefix injection: bind both prefix:name and bare name for each export
             for (auto& [name, val] : mod_env->bindings()) {
                 auto prefixed = prefix + name;
-                // Inter the prefixed name into the workspace pool
-                auto psid = ev.string_heap_.size();
-                ev.string_heap_.push_back(prefixed);
-                // Bind in top env with prefix
+                // Env::bind copies key strings — do not push to string_heap_
+                // (Issue #1488: dead intern leftover polluted the heap).
                 ev.top_.bind(prefixed, val);
                 // Also bind bare name (no prefix) so tree-walker can find it
                 ev.top_.bind(name, val);
