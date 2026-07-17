@@ -167,7 +167,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_bool(false);
             v = pairs[idx].cdr; // follow cdr chain
         }
-        return make_int(1);
+        // Issue #2026-07-17 (commercial-readiness audit): predicates must
+        // return make_bool(true), not make_int(1). Several stdlib sites
+        // (filter, list-statistics, etc.) treat truthy values as numeric
+        // and silently dropped list? results; the surface test worked
+        // around this bug by checking (length ...) instead of (list? ...).
+        // Now consistent with all other predicates.
+        return make_bool(true);
     });
     add("null?", [](const auto& a) {
         return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
