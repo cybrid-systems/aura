@@ -1,0 +1,317 @@
+;; tests/commercial_readiness_stdlib_hash.aura
+;;
+;; Eighth-pass audit: std/hash — hash table operations.
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_hash.aura
+;;
+;; ── Module contract ──────────────────────────────────────────────────────
+;; lib/std/hash.aura is documented as a 14-export module:
+;;   (export hash-set hash-ref hash-get hash-remove
+;;           hash-keys hash-values hash-length hash->list
+;;           hash-for-each hash-fold
+;;           hash-merge hash-empty? alist->hash frequencies)
+;;
+;; Engine primitives (registered as add() in evaluator_primitives):
+;;   hash-set! hash-ref hash hash-remove! hash-keys hash-values
+;;   hash-length
+;;
+;; Scheme-level wrappers / additions in this file:
+;;   hash-set (wraps hash-set!), hash-get (wraps hash-ref),
+;;   hash-remove (wraps hash-remove!), hash-for-each,
+;;   hash-fold, hash-empty?, hash->list, hash-merge,
+;;   alist->hash, frequencies
+;;
+;; ── Historical note ──────────────────────────────────────────────────────
+;; Previous (define (hash-ref h k) (hash-ref h k)) self-recursive
+;; shadow was found and removed during the surface audit 2026-07-17.
+;; The current file relies on the engine primitive hash-ref WITHOUT
+;; shadowing it. Don't re-add a local define without changing the body
+;; to a different name (e.g., hash-get already exists as the safe wrapper).
+;;
+;; ── Test environment quirk (NOT a stdlib bug) ───────────────────────────
+;; In module file-eval, `(list)` as a bare expression evaluates to 0
+;; (the integer, not the empty list). Use `'()` for empty-list literals
+;; in test expectations. hash keys/values lists returned by the API
+;; are proper lists — only the literal `(list)` in test code is
+;; affected. Reference hash-keys/h-values/h->list via expect rather
+;; than expecting hardcoded list literals where possible.
+;;
+;; ── What this audit tests ────────────────────────────────────────────────
+;;   1. (require "std/hash") loads without error
+;;   2. All 14 named exports are procedures
+;;   3. Functional smoke tests: set/ref/get/remove/length/empty
+;;   4. hash-keys / hash-values / hash->list content
+;;   5. hash-for-each / hash-fold — iteration and reduction
+;;   6. alist->hash / hash-merge / frequencies — composition ops
+;;   7. Edge cases: missing keys, empty hash, single-entry, large set
+;;
+;; ── Audit history (this session) ─────────────────────────────────────────
+;;   This module scanned clean on first probe — no bugs surfaced.
+;;   Audit file is a regression baseline for the working subset.
+;;   (Note: the file's comment block documents a prior self-recursive
+;;    hash-ref shadow removed in the surface audit; nothing new.)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Inline check framework (same pattern as other stdlib audits)
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-true label actual)
+  (if (and (not (null? actual)) (not (equal? actual #f)) (not (equal? actual 0)))
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-no-error label thunk)
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; helper: build a small alist for cross-module tests
+(define small-alist (list (list "x" 10) (list "y" 20) (list "z" 30)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Module load + export surface (14 exports)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-no-error "hash-require-no-crash"
+  (lambda () (require "std/hash")))
+
+(expect-true "export-hash-set-procedure?"      (procedure? hash-set))
+(expect-true "export-hash-ref-procedure?"      (procedure? hash-ref))
+(expect-true "export-hash-get-procedure?"      (procedure? hash-get))
+(expect-true "export-hash-remove-procedure?"   (procedure? hash-remove))
+(expect-true "export-hash-keys-procedure?"     (procedure? hash-keys))
+(expect-true "export-hash-values-procedure?"   (procedure? hash-values))
+(expect-true "export-hash-length-procedure?"   (procedure? hash-length))
+(expect-true "export-hash->list-procedure?"    (procedure? hash->list))
+(expect-true "export-hash-for-each-procedure?" (procedure? hash-for-each))
+(expect-true "export-hash-fold-procedure?"     (procedure? hash-fold))
+(expect-true "export-hash-merge-procedure?"    (procedure? hash-merge))
+(expect-true "export-hash-empty?-procedure?"   (procedure? hash-empty?))
+(expect-true "export-alist->hash-procedure?"  (procedure? alist->hash))
+(expect-true "export-frequencies-procedure?"   (procedure? frequencies))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-set / hash-ref / hash-get / hash-remove — basic ops
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; hash-set returns the hash (chainable)
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (hash-set h "b" 2)
+  (hash-set h "c" 3)
+  (expect "h-set-then-ref-a" (hash-ref h "a") 1)
+  (expect "h-set-then-ref-b" (hash-ref h "b") 2)
+  (expect "h-set-then-ref-c" (hash-ref h "c") 3))
+
+;; hash-get is a wrapped alias of hash-ref
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (expect "h-get-a"      (hash-get h "a") 1)
+  (expect "h-get-missing" (hash-get h "missing") '()))
+
+;; hash-remove — leaves the hash without the entry
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (hash-set h "b" 2)
+  (hash-set h "c" 3)
+  (hash-remove h "b")
+  (expect "h-after-remove-len"  (hash-length h) 2)
+  (expect "h-after-remove-a"    (hash-ref h "a") 1)
+  (expect "h-after-remove-c"    (hash-ref h "c") 3))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-length / hash-empty?
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect "h-length-fresh" (hash-length (hash)) 0)
+(expect-true "h-empty?-fresh" (hash-empty? (hash)))
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (expect "h-length-one" (hash-length h) 1)
+  (expect "h-not-empty?-one" (hash-empty? h) #f))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-keys / hash-values / hash->list
+;; ═════════════════════════════════════════════════════════════════════════
+
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (hash-set h "b" 2)
+  (hash-set h "c" 3)
+  (expect "h-length-3" (hash-length h) 3)
+  (expect-true "h-keys-nonempty" (not (null? (hash-keys h))))
+  (expect-true "h-values-nonempty" (not (null? (hash-values h))))
+  (expect-true "h->list-nonempty" (not (null? (hash->list h))))
+  ;; alist membership — every key/value pair must appear
+  (expect-true "h-keys-contains-a" (member? "a" (hash-keys h)))
+  (expect-true "h-keys-contains-b" (member? "b" (hash-keys h)))
+  (expect-true "h-keys-contains-c" (member? "c" (hash-keys h)))
+  (expect-true "h-values-contains-1" (member? 1 (hash-values h)))
+  (expect-true "h-values-contains-2" (member? 2 (hash-values h)))
+  (expect-true "h-values-contains-3" (member? 3 (hash-values h)))
+  ;; h->list items are 2-element lists (key . value)
+  (let ((items (hash->list h)))
+    (expect-true "h->list-item-count"
+      (= (length items) 3))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-for-each — apply fn(key, value) to every entry
+;; ═════════════════════════════════════════════════════════════════════════
+
+(let ((h (hash))
+      (count 0)
+      (sum 0))
+  (hash-set h "a" 10)
+  (hash-set h "b" 20)
+  (hash-set h "c" 30)
+  (hash-for-each h (lambda (k v) (set! count (+ count 1)) (set! sum (+ sum v))))
+  (expect "for-each-count" count 3)
+  (expect "for-each-sum"   sum 60))
+
+;; hash-for-each on empty hash should be a no-op
+(let ((count 0))
+  (hash-for-each (hash) (lambda (k v) (set! count (+ count 1))))
+  (expect "for-each-empty-no-op" count 0))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-fold — reduce
+;; ═════════════════════════════════════════════════════════════════════════
+
+(let ((h (hash)))
+  (hash-set h "a" 1)
+  (hash-set h "b" 2)
+  (hash-set h "c" 3)
+  (expect "h-fold-sum-values"
+    (hash-fold h (lambda (k v acc) (+ acc v)) 0) 6)
+  (expect "h-fold-concat-keys"
+    (hash-fold h (lambda (k v acc) (string-append acc k)) "")
+    (let loop ((keys (sort (hash-keys h))) (acc ""))
+      (if (null? keys) acc
+        (loop (cdr keys) (string-append acc (car keys)))))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; hash-merge — combine two hashes (b's values win on overlap)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(let ((a (hash)) (b (hash)))
+  (hash-set a "x" 1)
+  (hash-set a "y" 2)
+  (hash-set b "y" 99)
+  (hash-set b "z" 3)
+  (let ((m (hash-merge a b)))
+    (expect "merge-keys-len"  (hash-length m) 3)
+    (expect "merge-a-only-x"   (hash-ref m "x") 1)
+    (expect "merge-overlap-b-wins" (hash-ref m "y") 99)
+    (expect "merge-b-only-z"   (hash-ref m "z") 3)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; alist->hash — convert association list
+;; ═════════════════════════════════════════════════════════════════════════
+
+(expect-true "al->hash-empty"
+  (hash-empty? (alist->hash '())))
+
+(let ((h (alist->hash small-alist)))
+  (expect "al->hash-length" (hash-length h) 3)
+  (expect "al->hash-x"       (hash-ref h "x") 10)
+  (expect "al->hash-y"       (hash-ref h "y") 20)
+  (expect "al->hash-z"       (hash-ref h "z") 30))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; frequencies — count occurrences
+;; ═════════════════════════════════════════════════════════════════════════
+
+(let ((f (frequencies '())))
+  (expect-true "freq-empty"
+    (hash-empty? f)))
+
+(let ((f (frequencies (list "a" "b" "a" "c" "a" "b"))))
+  (expect "freq-length"  (hash-length f) 3)
+  (expect "freq-a"        (hash-ref f "a") 3)
+  (expect "freq-b"        (hash-ref f "b") 2)
+  (expect "freq-c"        (hash-ref f "c") 1))
+
+;; frequencies on numbers
+(let ((f (frequencies (list 1 2 1 3 1 2))))
+  (expect "freq-int-length" (hash-length f) 3)
+  (expect "freq-int-1"       (hash-ref f 1) 3)
+  (expect "freq-int-2"       (hash-ref f 2) 2)
+  (expect "freq-int-3"       (hash-ref f 3) 1))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Edge cases + larger data sets
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Insert many keys and verify length + every key
+(let ((h (hash)) (total-keys 16))
+  (let loop ((i 0))
+    (if (< i total-keys)
+      (begin
+        (hash-set h (string-append "k" (number->string i)) (* i 2))
+        (loop (+ i 1)))))
+  (expect "h-large-length" (hash-length h) 16)
+  ;; spot-check a few entries
+  (expect "h-large-k0"  (hash-ref h "k0") 0)
+  (expect "h-large-k7"  (hash-ref h "k7") 14)
+  (expect "h-large-k15" (hash-ref h "k15") 30))
+
+;; Remove a key that exists, then verify it's gone
+(let ((h (hash)))
+  (hash-set h "alpha" 1)
+  (hash-set h "beta" 2)
+  (hash-remove h "alpha")
+  (expect "h-removed-len" (hash-length h) 1)
+  (expect-true "h-removed-gone" (not (member? "alpha" (hash-keys h)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Composition tests
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; hash-fold over hash constructed via alist->hash
+(let ((f (hash-fold (alist->hash small-alist)
+                    (lambda (k v acc) (+ acc v)) 0)))
+  (expect "compose-alist-fold-sum" f 60))
+
+;; frequencies composed with hash-keys (sort both before compare for
+;; deterministic ordering)
+(let ((f (frequencies (list "x" "y" "x" "z" "x"))))
+  (expect "freq-x" (hash-ref f "x") 3)
+  (expect "freq-y" (hash-ref f "y") 1)
+  (expect "freq-z" (hash-ref f "z") 1)
+  (expect-true "freq-keys-membership"
+    (and (member? "x" (hash-keys f))
+         (member? "y" (hash-keys f))
+         (member? "z" (hash-keys f)))))
+
+;; hash-merge of fresh alists (via alist->hash)
+(let ((a (alist->hash (list (list "u" 1) (list "v" 2))))
+      (b (alist->hash (list (list "w" 3))))
+      (m (hash-merge (alist->hash (list (list "u" 1) (list "v" 2)))
+                     (alist->hash (list (list "w" 3))))))
+  (expect "compose-alist-merge-len" (hash-length m) 3)
+  (expect "compose-alist-merge-u"   (hash-ref m "u") 1)
+  (expect "compose-alist-merge-v"   (hash-ref m "v") 2)
+  (expect "compose-alist-merge-w"   (hash-ref m "w") 3))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker — clean baseline; no B-block (no bugs surfaced this round)
+;; ═════════════════════════════════════════════════════════════════════════
+
+(display "DONE")
+(newline)
