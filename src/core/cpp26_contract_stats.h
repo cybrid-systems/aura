@@ -27,11 +27,15 @@ inline std::atomic<std::uint64_t> hotpath_invariant_hits_total{0};
 // EvalValueTag enum x9 + ShapeID boundary x4 + IR SoA breakdown x3 +
 // tagged bit layout x1).
 // Issue #1519: bumped to 65 (+12 SIMD/cache/dirty/shape/freelist asserts).
-inline constexpr std::int64_t kConstevalChecksTotal = 65;
+// Issue #1620: bumped to 77 (+12 Arena max/FlatAST dirty/NodeTag/Value
+// Special encodings/SoAView phase consteval invariants).
+inline constexpr std::int64_t kConstevalChecksTotal = 77;
 // Approximate Contract pre/post/assert density across Arena + Value +
 // Shape + dirty hot paths (manual inventory; Agents detect drift).
 // Issue #1519: raised from 26 → 48 after hot-path Contract deepening.
-inline constexpr std::int64_t kContractHotPathsShipped = 48;
+// Issue #1620: raised 48 → 56 (FlatAST get/type_id + mark_dirty +
+// shape bit-test + arena tier overflow path).
+inline constexpr std::int64_t kContractHotPathsShipped = 56;
 
 // Issue #1321 Phase 1: coverage flags — hot accessors that gained contracts.
 inline std::atomic<std::uint64_t> hotpath_contracts_expanded_active{1};
@@ -44,11 +48,17 @@ inline std::atomic<std::uint64_t> arena_compact_contracts_active{1};
 inline std::atomic<std::uint64_t> dirty_cascade_contracts_active{1};
 // Issue #1519: deeper hot-path Contracts coverage flag + violation surface.
 inline std::atomic<std::uint64_t> hotpath_contracts_1519_active{1};
+// Issue #1620: Arena/Value/Shape/FlatAST hot-path Contracts expand flag.
+inline std::atomic<std::uint64_t> hotpath_contracts_1620_active{1};
+inline std::atomic<std::uint64_t> arena_tier_contracts_active{1};
+inline std::atomic<std::uint64_t> value_as_star_contracts_active{1};
+inline std::atomic<std::uint64_t> shape_bit_test_contracts_active{1};
+inline std::atomic<std::uint64_t> flatast_get_type_contracts_active{1};
 inline std::atomic<std::uint64_t> contract_violation_hotpath_count{0};
 // Issue #1466: hot-path consteval invariant hits — bumped each time a
 // new consteval invariant is added. Mirrors kConstevalChecksTotal but
 // observable at runtime via (query:cpp26-contracts-stats).
-inline std::atomic<std::uint64_t> consteval_invariants_total{65};
+inline std::atomic<std::uint64_t> consteval_invariants_total{77};
 
 inline void record_contract_violation_caught() noexcept {
     contract_violations_caught_total.fetch_add(1, std::memory_order_relaxed);

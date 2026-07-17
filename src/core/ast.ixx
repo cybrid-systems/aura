@@ -3421,6 +3421,14 @@ public:
     // ── Access ─────────────────────────────────────────────────
 
     NodeView get(NodeId id) const {
+        // Issue #1620: hot-path SoA column access invariant probe
+        // (zero cost under release observe; Agents track hits).
+        if (id < tag_.size()) {
+            aura::core::cpp26::record_hotpath_invariant_hit();
+            // In-bounds NodeId → primary SoA columns must cover it.
+            contract_assert(id < int_val_.size());
+            contract_assert(id < sym_id_.size());
+        }
         if (id >= tag_.size()) {
             // Defensive: stale or invalid NodeId. Return a default
             // NodeView (empty spans, NULL_NODE-like values). The
@@ -5151,6 +5159,10 @@ public:
         // Zero release cost under observe semantic.
         pre(id < tag_.size())
             post(mark_dirty_upward_call_count_.load(std::memory_order_relaxed) > 0) {
+        // Issue #1620: dirty cascade is a core mutation hot path —
+        // probe invariant hit for Agents (pairs with Contracts pre/post).
+        aura::core::cpp26::record_hotpath_invariant_hit();
+        contract_assert(kMarkDirtyMaxDepth == 64);
         // Issue #256: bump the call counter + track total nodes
         // touched. The ratio (total_nodes / call_count) gives
         // the average dirty-propagation depth per mutation —
@@ -7106,11 +7118,24 @@ public:
 
     // ── Type ID access ─────────────────────────────────────────
 
-    std::uint32_t type_id(NodeId id) const { return id < type_id_.size() ? type_id_[id] : 0; }
+    // Issue #1620: FlatAST type column hot accessor — bounds-safe,
+    // records invariant hit when column is live (mutation reval path).
+    std::uint32_t type_id(NodeId id) const {
+        if (id < type_id_.size()) {
+            aura::core::cpp26::record_hotpath_invariant_hit();
+            contract_assert(id < tag_.size() || tag_.empty());
+            return type_id_[id];
+        }
+        return 0;
+    }
 
     void set_type(NodeId id, std::uint32_t tid) {
-        if (id < type_id_.size())
+        if (id < type_id_.size()) {
+            // Issue #1620: type stamp hot path (typed mutation reval).
+            aura::core::cpp26::record_hotpath_invariant_hit();
+            contract_assert(id < tag_.size());
             type_id_[id] = tid;
+        }
         // Issue #412: stamp the cache entry with the current
         // generation. The cache hit path compares this against
         // type_cache_generation() — if they match, the entry
