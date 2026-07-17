@@ -235,14 +235,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1592 / #1608: unified post-steal / resume closed-loop dashboard.
-    // Covers EnvFrame refresh, StableNodeRef restamp, linear enforcement.
-    // #1608: AC metric aliases (post_steal_refresh_count, stale_frame_prevented)
-    // + resume-path wire flags (Fiber::resume → aura_evaluator_post_resume_refresh).
+    // Issue #1592 / #1608 / #1612: unified post-steal / resume closed-loop
+    // dashboard. EnvFrame refresh + linear repin + MacroIntroduced hygiene.
+    // Schema **1612** (lineage 1608/1592). AC keys:
+    //   macro_stale_ref_prevented, macro_provenance_repin_total
     ObservabilityPrims::register_stats_impl(
         "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(40);
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -303,8 +303,27 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("refresh-stale-frames-helper-wired", 1);
             insert_kv("linear-probe-repin-wired", 1);
             insert_kv("post-resume-refresh-hook-wired", 1);
-            insert_kv("issue", 1608);
-            insert_kv("schema", 1608); // lineage 1592
+            // #1612 AC: MacroIntroduced marker / provenance on resume/steal/GC
+            const std::int64_t macro_stale =
+                m ? static_cast<std::int64_t>(
+                        m->macro_stale_ref_prevented_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t macro_repin =
+                m ? static_cast<std::int64_t>(
+                        m->macro_provenance_repin_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t macro_invoke =
+                static_cast<std::int64_t>(ev.get_macro_refresh_invoke_count());
+            insert_kv("macro_stale_ref_prevented", macro_stale);
+            insert_kv("macro-stale-ref-prevented", macro_stale);
+            insert_kv("macro_provenance_repin_total", macro_repin);
+            insert_kv("macro-provenance-repin-total", macro_repin);
+            insert_kv("macro-refresh-invoke-count", macro_invoke);
+            insert_kv("macro-refresh-helper-wired", 1);
+            insert_kv("macro-provenance-probe-wired", 1);
+            insert_kv("gc-compact-macro-refresh-wired", 1);
+            insert_kv("issue", 1612);
+            insert_kv("schema", 1612); // lineage 1608 / 1592
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

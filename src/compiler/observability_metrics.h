@@ -2169,6 +2169,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_version_mismatch_post_steal_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_repair_total{0};
 
+    // Issue #1612: MacroIntroduced marker/provenance refresh on fiber
+    // resume / steal / GC compact (query:post-steal-closed-loop-stats schema 1612).
+    std::atomic<std::uint64_t> macro_stale_ref_prevented_total{0};
+    std::atomic<std::uint64_t> macro_provenance_repin_total{0};
+    std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
+    std::atomic<std::uint64_t> macro_provenance_probe_total{0};
+
     // Issue #756: EnvFrame dual-path consistency enforcement +
     // desync panic policy + GCEnvWalkFn stale handling under
     // concurrent mutation/steal counters backing the

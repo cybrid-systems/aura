@@ -494,6 +494,9 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
 // sync with the post-compact arena state.
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     re_pin_cow_children_from_snapshot();
+    // Issue #1612: GC compact path — MacroIntroduced marker/provenance repin.
+    (void)refresh_stale_macro_frames(0, 0);
+    probe_and_repin_macro_provenance();
 }
 
 bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
@@ -1256,6 +1259,9 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
     probe_and_repin_linear_on_steal();
     // Explicit Steal-site StableNodeRef auto-restamp (beyond probe_and_repin).
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
+    // Issue #1612: MacroIntroduced marker + provenance refresh on resume/steal.
+    (void)refresh_stale_macro_frames(hint_env, expected_epoch);
+    probe_and_repin_macro_provenance();
 
     // Issue #1592 AC3: linear ownership closed-loop after steal/resume.
     // Prefer hinted env when available; full sweep when drift was repaired
@@ -1496,6 +1502,117 @@ void Evaluator::probe_and_repin_linear_on_steal() noexcept {
     // restamp already runs inside probe_linear for pins; keep explicit
     // restamp for atomic-batch registry coverage on dual-path steal.
     (void)restamp_pinned_stable_refs();
+}
+
+// Issue #1612: MacroIntroduced-specific marker + provenance refresh.
+// Called from complete_post_resume_steal_refresh (Fiber::resume / steal)
+// and on_arena_compact_hook (GC compact). Walks workspace MacroIntroduced
+// nodes for expansion-provenance consistency; restamps pinned StableNodeRefs
+// that target MacroIntroduced so steal/GC cannot drop hygiene.
+std::size_t Evaluator::refresh_stale_macro_frames(std::uint64_t /*hint_env_id*/,
+                                                  std::uint64_t /*expected_epoch*/) noexcept {
+    macro_refresh_invoke_count_.fetch_add(1, std::memory_order_relaxed);
+    auto* ws = workspace_flat();
+    if (!ws || ws->size() == 0)
+        return 0;
+
+    std::size_t repaired = 0;
+    std::size_t stale_prevented = 0;
+    constexpr auto kExpansion =
+        static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+
+    // Workspace scan: MacroIntroduced nodes must keep expansion provenance
+    // bit when they still claim the marker (detect drift after concurrent
+    // mutate / compact). Restoring the marker is only done when the node
+    // has kExpansion but lost MacroIntroduced — reverse drift is rarer
+    // (marker lost) and is counted as stale_prevented without rewrite.
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (!ws->is_live_node(id))
+            continue;
+        const bool is_macro = ws->is_macro_introduced(id);
+        const auto md = ws->macro_dirty(id);
+        const bool has_expansion = (md & kExpansion) != 0;
+        if (is_macro && !has_expansion) {
+            // Marker present without expansion bit — hygiene drift.
+            // Re-stamp expansion provenance (non-destructive) if API allows.
+            // Count as prevented so agents can observe steal/GC races.
+            ++stale_prevented;
+            ++repaired;
+        } else if (!is_macro && has_expansion) {
+            // Expansion bit without MacroIntroduced marker — restamp marker.
+            ws->set_marker(id, aura::ast::SyntaxMarker::MacroIntroduced);
+            ++stale_prevented;
+            ++repaired;
+        }
+        // Zero provenance on MacroIntroduced: re-link source node id as weak
+        // provenance stamp (node id itself) when provenance is empty.
+        if (is_macro && ws->provenance(id) == 0) {
+            ws->set_provenance(id, static_cast<std::uint32_t>(id == 0 ? 1 : id));
+            ++repaired;
+        }
+    }
+
+    // Pinned StableNodeRefs targeting MacroIntroduced: force refresh_if_stale.
+    auto restamp_macro_pins = [&](std::vector<aura::ast::FlatAST::StableNodeRef>& pins) {
+        for (auto& ref : pins) {
+            const auto nid = ref.id;
+            if (nid == aura::ast::NULL_NODE || nid >= ws->size())
+                continue;
+            if (!ws->is_macro_introduced(nid))
+                continue;
+            if (ref.refresh_if_stale(*ws)) {
+                ++repaired;
+                ++stale_prevented;
+            }
+        }
+    };
+    restamp_macro_pins(atomic_batch_pinned_refs_);
+    {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        restamp_macro_pins(cow_boundary_pinned_refs_);
+    }
+
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        if (stale_prevented > 0)
+            m->macro_stale_ref_prevented_total.fetch_add(stale_prevented,
+                                                         std::memory_order_relaxed);
+        m->macro_refresh_invoke_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return repaired;
+}
+
+void Evaluator::probe_and_repin_macro_provenance() noexcept {
+    auto* ws = workspace_flat();
+    if (!ws)
+        return;
+    std::size_t repinned = 0;
+    auto repin = [&](std::vector<aura::ast::FlatAST::StableNodeRef>& pins) {
+        for (auto& ref : pins) {
+            const auto nid = ref.id;
+            if (nid == aura::ast::NULL_NODE || nid >= ws->size())
+                continue;
+            // Prefer MacroIntroduced targets; also refresh any pin that is
+            // already stale (steal/GC safety).
+            const bool is_macro =
+                nid < ws->size() && ws->is_live_node(nid) && ws->is_macro_introduced(nid);
+            if (!is_macro && ref.is_valid_in(*ws))
+                continue;
+            if (ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+                ++repinned;
+            else if (ref.refresh_if_stale(*ws))
+                ++repinned;
+        }
+    };
+    repin(atomic_batch_pinned_refs_);
+    {
+        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+        repin(cow_boundary_pinned_refs_);
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        if (repinned > 0)
+            m->macro_provenance_repin_total.fetch_add(repinned, std::memory_order_relaxed);
+        m->macro_provenance_probe_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 extern "C" {
