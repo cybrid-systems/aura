@@ -5247,6 +5247,9 @@ aura_issue_test_link_llvm_jit(test_linear_coercion_synergy_1615)
 # Issue #1616: IRClosure/ClosureBridge MacroIntroduced provenance (refine #1047).
 aura_add_issue_test(test_ir_closure_provenance_1616)
 aura_issue_test_link_llvm_jit(test_ir_closure_provenance_1616)
+
+aura_add_issue_test(test_let_poly_solve_delta_1617)
+aura_issue_test_link_llvm_jit(test_let_poly_solve_delta_1617)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)

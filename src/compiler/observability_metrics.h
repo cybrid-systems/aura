@@ -3700,6 +3700,26 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_incremental_reverify_truncated_under_guard_total{0};
     std::atomic<std::uint64_t> type_incremental_epoch_sync_hits_total{0};
     std::atomic<std::uint64_t> type_incremental_blame_chain_length_total{0};
+    // Issue #1617: Let-Polymorphism dirty invalidation + solve_delta
+    // occurrence/ADT priority under truncated reverify (folds into
+    // query:type-incremental-fidelity-stats schema 1617).
+    //   - let_poly_dirty_roots_tracked_total: mark_let_poly_dirty hits
+    //   - let_poly_regeneralize_check_total: re-generalize checks in
+    //     solve_delta / post-mutation Let-Poly scopes
+    //   - let_poly_truncation_fallback_total: targeted reverify of
+    //     let_poly roots after reverify_truncated
+    //   - let_poly_priority_reverify_hits_total: clean constraints
+    //     re-scanned at Let-Poly priority (>= 3)
+    //   - let_poly_post_mutation_scope_total: post_mutation Let/LetRec
+    //     scopes that triggered targeted reval
+    //   - solve_delta_worklist_size_peak: max worklist size observed
+    //     in solve_delta (mutation-load early-exit tuning)
+    std::atomic<std::uint64_t> let_poly_dirty_roots_tracked_total{0};
+    std::atomic<std::uint64_t> let_poly_regeneralize_check_total{0};
+    std::atomic<std::uint64_t> let_poly_truncation_fallback_total{0};
+    std::atomic<std::uint64_t> let_poly_priority_reverify_hits_total{0};
+    std::atomic<std::uint64_t> let_poly_post_mutation_scope_total{0};
+    std::atomic<std::uint64_t> solve_delta_worklist_size_peak{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +

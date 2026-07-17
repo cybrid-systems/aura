@@ -271,9 +271,28 @@ void ConstraintSystem::mark_touched_on_delta(TypeId var, bool occurrence_narrow)
         occurrence_priority_roots_.insert(rep);
 }
 
+void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
+    // Issue #1617: Let-Poly free / instantiation vars need
+    // re-generalization priority in solve_delta + reverify.
+    note_touched_var(var);
+    const auto rep = union_find_rep_index(var);
+    if (rep == UINT32_MAX)
+        return;
+    if (let_poly_dirty_roots_.insert(rep).second) {
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->let_poly_dirty_roots_tracked_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
 std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
-    const std::size_t impact =
-        dirty_count_ * 8 + touched_roots_.size() * 4 + occurrence_priority_roots_.size() * 16;
+    // Issue #1617: Let-Poly roots inflate the budget so
+    // generalization/instantiation sites are less likely to be
+    // dropped by bounded reverify under high-churn mutate.
+    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4 +
+                               occurrence_priority_roots_.size() * 16 +
+                               let_poly_dirty_roots_.size() * 12;
     const std::size_t scaled = std::max(kReverifyCleanScanLimit, impact);
     return std::min(scaled, kReverifyCleanScanMax);
 }
@@ -372,6 +391,8 @@ int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
             if (raw_rep != UINT32_MAX) {
                 if (occurrence_priority_roots_.count(raw_rep) > 0)
                     pri = std::max(pri, 4);
+                else if (let_poly_dirty_roots_.count(raw_rep) > 0)
+                    pri = std::max(pri, 3); // Issue #1617: Let-Poly priority
                 else if (touched_roots_.count(raw_rep) > 0)
                     pri = std::max(pri, 1);
                 auto it = var_to_constraints_.find(raw_rep);
@@ -389,6 +410,8 @@ int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
             return;
         if (occurrence_priority_roots_.count(rep) > 0)
             pri = std::max(pri, 4);
+        else if (let_poly_dirty_roots_.count(rep) > 0)
+            pri = std::max(pri, 3);
         else if (touched_roots_.count(rep) > 0)
             pri = std::max(pri, 1);
     };
@@ -413,14 +436,17 @@ bool ConstraintSystem::constraint_references_touched(const Constraint& c) const 
 }
 
 bool ConstraintSystem::reverify_clean_constraints_for_touched() {
-    if (touched_roots_.empty() && occurrence_priority_roots_.empty())
+    if (touched_roots_.empty() && occurrence_priority_roots_.empty() &&
+        let_poly_dirty_roots_.empty())
         return true;
 
     const bool saved_record = delta_record_mode_;
     delta_record_mode_ = false;
 
     std::unordered_set<std::size_t> to_check;
-    to_check.reserve((touched_roots_.size() + occurrence_priority_roots_.size()) * 2);
+    to_check.reserve(
+        (touched_roots_.size() + occurrence_priority_roots_.size() + let_poly_dirty_roots_.size()) *
+        2);
     auto collect_clean_for_root = [&](std::uint32_t root) {
         auto it = var_to_constraints_.find(root);
         if (it == var_to_constraints_.end())
@@ -440,6 +466,9 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     // only touched unrelated roots.
     for (auto root : occurrence_priority_roots_)
         collect_clean_for_root(root);
+    // Issue #1617: Let-Poly dirty roots force re-generalize checks.
+    for (auto root : let_poly_dirty_roots_)
+        collect_clean_for_root(root);
 
     const auto scan_limit = effective_reverify_limit();
     const bool truncated = to_check.size() > scan_limit;
@@ -454,6 +483,9 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                     1, std::memory_order_relaxed);
             }
         }
+        if (!let_poly_dirty_roots_.empty()) {
+            m->let_poly_regeneralize_check_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (!truncated && to_check.size() > kReverifyCleanScanLimit && metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
@@ -467,14 +499,26 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     std::sort(ordered.begin(), ordered.end(),
               [](const auto& a, const auto& b) { return a.first > b.first; });
 
-    std::size_t scanned = 0;
-    for (const auto& [pri, idx] : ordered) {
-        if (scanned++ >= scan_limit)
-            break;
+    auto refs_let_poly = [&](const Constraint& c) {
+        auto check = [&](TypeId id) {
+            if (!id.valid() || !reg_.is_var(id))
+                return false;
+            const auto rep = union_find_rep_index(id);
+            return rep != UINT32_MAX && let_poly_dirty_roots_.count(rep) > 0;
+        };
+        return check(c.lhs) || check(c.rhs);
+    };
+
+    auto reverify_one = [&](int pri, std::size_t idx) -> bool {
         const auto& c = constraints_[idx];
         if (pri >= 4 && metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
             m->constraint_reverify_narrow_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #1617: count clean reverify on Let-Poly dirty roots.
+        if (metrics_ && refs_let_poly(c)) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->let_poly_priority_reverify_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         bool ok = false;
         if (c.kind == Constraint::EQUAL)
@@ -487,10 +531,49 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
                 m->delta_conflict_detected_total.fetch_add(1, std::memory_order_relaxed);
             }
             record_cross_delta_blame_hit();
+            return false;
+        }
+        return true;
+    };
+
+    std::size_t scanned = 0;
+    std::unordered_set<std::size_t> scanned_set;
+    for (const auto& [pri, idx] : ordered) {
+        if (scanned >= scan_limit)
+            break;
+        ++scanned;
+        scanned_set.insert(idx);
+        if (!reverify_one(pri, idx)) {
             delta_record_mode_ = saved_record;
             return false;
         }
     }
+
+    // Issue #1617: when reverify was truncated, force a targeted
+    // fallback pass over remaining Let-Poly / occurrence-priority
+    // constraints so generalization + ADT narrowing are not dropped.
+    if (truncated && (!let_poly_dirty_roots_.empty() || !occurrence_priority_roots_.empty())) {
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->let_poly_truncation_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        constexpr std::size_t kLetPolyFallbackCap = 128;
+        std::size_t fallback_n = 0;
+        for (const auto& [pri, idx] : ordered) {
+            if (scanned_set.count(idx) > 0)
+                continue;
+            // Only force remaining high-priority (occurrence / Let-Poly).
+            if (pri < 3)
+                continue;
+            if (fallback_n++ >= kLetPolyFallbackCap)
+                break;
+            if (!reverify_one(pri, idx)) {
+                delta_record_mode_ = saved_record;
+                return false;
+            }
+        }
+    }
+
     delta_record_mode_ = saved_record;
     return true;
 }
@@ -753,6 +836,12 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
                 occurrence_priority_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
                 occurrence_priority_roots_.insert(static_cast<std::uint32_t>(r1));
                 occurrence_priority_roots_.erase(static_cast<std::uint32_t>(r2));
+            }
+            // Issue #1617: preserve Let-Poly dirty priority across merges.
+            if (let_poly_dirty_roots_.count(static_cast<std::uint32_t>(r2)) > 0 ||
+                let_poly_dirty_roots_.count(static_cast<std::uint32_t>(r1)) > 0) {
+                let_poly_dirty_roots_.insert(static_cast<std::uint32_t>(r1));
+                let_poly_dirty_roots_.erase(static_cast<std::uint32_t>(r2));
             }
             note_touched_var(TypeId{static_cast<std::uint32_t>(r1), 1});
             note_touched_var(TypeId{static_cast<std::uint32_t>(r2), 1});
@@ -1049,11 +1138,12 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         seen[idx] = true;
     };
 
-    const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty();
+    const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty() ||
+                                  !let_poly_dirty_roots_.empty();
 
     if (have_local_roots && !var_to_constraints_.empty()) {
-        // Issue #1528: primary worklist = dirty constraints on
-        // occurrence-priority roots first, then touched roots.
+        // Issue #1528 / #1617: primary worklist = dirty constraints on
+        // occurrence-priority + Let-Poly roots first, then touched roots.
         auto collect_for_root = [&](std::uint32_t root) {
             auto it = var_to_constraints_.find(root);
             if (it == var_to_constraints_.end())
@@ -1062,6 +1152,8 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 push_dirty(idx);
         };
         for (auto root : occurrence_priority_roots_)
+            collect_for_root(root);
+        for (auto root : let_poly_dirty_roots_)
             collect_for_root(root);
         for (auto root : touched_roots_)
             collect_for_root(root);
@@ -1075,18 +1167,21 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                 push_dirty(i);
                 continue;
             }
-            // Occurrence-priority roots not in touched_roots_ yet.
-            bool occ = false;
-            auto check_occ = [&](TypeId id) {
+            // Occurrence / Let-Poly priority roots not in touched_roots_ yet.
+            bool priority = false;
+            auto check_pri = [&](TypeId id) {
                 if (!id.valid() || !reg_.is_var(id))
                     return;
                 const auto rep = union_find_rep_index(id);
-                if (rep != UINT32_MAX && occurrence_priority_roots_.count(rep) > 0)
-                    occ = true;
+                if (rep == UINT32_MAX)
+                    return;
+                if (occurrence_priority_roots_.count(rep) > 0 ||
+                    let_poly_dirty_roots_.count(rep) > 0)
+                    priority = true;
             };
-            check_occ(constraints_[i].lhs);
-            check_occ(constraints_[i].rhs);
-            if (occ)
+            check_pri(constraints_[i].lhs);
+            check_pri(constraints_[i].rhs);
+            if (priority)
                 push_dirty(i);
             else
                 ++pruned; // dirty but not local to this delta
@@ -1136,12 +1231,21 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         if (pruned > 0) {
             m->solve_delta_worklist_pruned_total.fetch_add(pruned, std::memory_order_relaxed);
         }
+        // Issue #1617: track peak worklist size for mutation-load tuning.
+        const auto wl = static_cast<std::uint64_t>(worklist.size());
+        auto peak = m->solve_delta_worklist_size_peak.load(std::memory_order_relaxed);
+        while (wl > peak && !m->solve_delta_worklist_size_peak.compare_exchange_weak(
+                                peak, wl, std::memory_order_relaxed)) {
+        }
         // Issue #1336: soft-cap is a metrics threshold only — never
         // truncate the worklist (incomplete delta solves break typed
         // mutate / nested-closure rebind under multi-define).
         const auto cap = m->solve_delta_worklist_soft_cap.load(std::memory_order_relaxed);
         if (cap > 0 && worklist.size() > cap) {
             m->solve_delta_worklist_limited_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!let_poly_dirty_roots_.empty()) {
+            m->let_poly_regeneralize_check_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     std::size_t max_passes = 10;
@@ -1339,9 +1443,10 @@ void ConstraintSystem::clear() {
     dirty_count_ = 0;
     // Issue #409: reset the reverse map.
     var_to_constraints_.clear();
-    // Issue #466 / #745: reset touched-root + occurrence-priority tracking.
+    // Issue #466 / #745 / #1617: reset touched + occurrence + Let-Poly roots.
     touched_roots_.clear();
     occurrence_priority_roots_.clear();
+    let_poly_dirty_roots_.clear();
     // Issue #1529: reset blame provenance context (keep last dump
     // readable until next conflict — only clear active stamps).
     active_predicate_cond_node_ = 0;
@@ -3781,6 +3886,66 @@ void InferenceEngine::propagate_narrowing_to_uses(FlatAST& flat, StringPool& poo
             collect_var_uses(if_v.child(1), *target_sym);
         if (if_v.children.size() >= 3 && if_v.child(2) != NULL_NODE)
             collect_var_uses(if_v.child(2), *target_sym);
+
+        // Issue #1617: when the if lives under a Let/LetRec, also
+        // pull uses of the Let-bound name from the enclosing body so
+        // occurrence narrowing under Let-Poly bindings re-infers
+        // polymorphic use-sites.
+        NodeId cur = flat.parent_of(id);
+        std::size_t safety = 0;
+        while (cur != NULL_NODE && cur < flat.size() && safety++ < 32) {
+            const auto pv = flat.get(cur);
+            if (pv.tag == NodeTag::Let || pv.tag == NodeTag::LetRec) {
+                if (pv.sym_id != INVALID_SYM) {
+                    // Body is typically child 1 (value, body).
+                    if (pv.children.size() >= 2 && pv.child(1) != NULL_NODE)
+                        collect_var_uses(pv.child(1), pv.sym_id);
+                    // Also collect uses of the narrowed var in the Let body.
+                    if (pv.children.size() >= 2 && pv.child(1) != NULL_NODE)
+                        collect_var_uses(pv.child(1), *target_sym);
+                    // Stamp Let-bound type as Let-Poly dirty when present.
+                    const auto raw = flat.type_id(cur);
+                    if (raw != 0) {
+                        TypeId tid{raw, 1};
+                        if (reg_.is_var(tid))
+                            cs_.mark_let_poly_dirty(tid);
+                    }
+                }
+                break; // nearest enclosing Let is enough
+            }
+            if (pv.tag == NodeTag::Define || pv.tag == NodeTag::Lambda)
+                break;
+            cur = flat.parent_of(cur);
+        }
+    }
+
+    // Issue #1617: Let/LetRec in the affected set → pull body uses of
+    // the bound name so poly instantiation sites re-check after mutate.
+    for (auto id : snapshot) {
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        const auto v = flat.get(id);
+        if (v.tag != NodeTag::Let && v.tag != NodeTag::LetRec)
+            continue;
+        if (v.sym_id == INVALID_SYM)
+            continue;
+        if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+            collect_var_uses(v.child(1), v.sym_id);
+        const auto raw = flat.type_id(id);
+        if (raw != 0) {
+            TypeId tid{raw, 1};
+            if (reg_.is_var(tid))
+                cs_.mark_let_poly_dirty(tid);
+        }
+        // Free-var-ish: value subtree may hold generalized type vars.
+        if (!v.children.empty() && v.child(0) != NULL_NODE) {
+            const auto val_raw = flat.type_id(v.child(0));
+            if (val_raw != 0) {
+                TypeId val_tid{val_raw, 1};
+                if (reg_.is_var(val_tid))
+                    cs_.mark_let_poly_dirty(val_tid);
+            }
+        }
     }
 }
 
@@ -4307,6 +4472,10 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
             // Let-Polymorphism: generalize over free type variables
             TypeId poly = val_norm;
             for (auto& fv_id : fvs) {
+                // Issue #1617: stamp free vars as Let-Poly dirty roots so
+                // subsequent mutation-driven solve_delta prioritizes
+                // re-generalization of this binding.
+                cs_.mark_let_poly_dirty(fv_id);
                 poly = reg_.register_forall(fv_id, poly);
             }
             env_.bind(var_name, poly);
@@ -7001,6 +7170,55 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     // Issue #260: nested match exhaustiveness + conservative fallback.
     recheck_match_exhaustiveness_in_dirty_scope(flat, pool, reg, dirty_nodes, rec, notes_out,
                                                 metrics);
+
+    // Issue #1617: Let-Poly / ADT targeted fallback when dirty scope
+    // contains Let/LetRec (or reverify was truncated under guard).
+    // Complements solve_delta's let_poly_truncation_fallback path.
+    {
+        std::vector<NodeId> let_poly_scopes;
+        let_poly_scopes.reserve(8);
+        for (auto nid : dirty_nodes) {
+            if (nid >= flat.size())
+                continue;
+            const auto tag = flat.get(nid).tag;
+            if (tag == NodeTag::Let || tag == NodeTag::LetRec)
+                let_poly_scopes.push_back(nid);
+        }
+        const bool truncated_under_guard =
+            metrics && static_cast<struct CompilerMetrics*>(metrics)
+                               ->type_incremental_reverify_truncated_under_guard_total.load(
+                                   std::memory_order_relaxed) > 0;
+        if (!let_poly_scopes.empty() || truncated_under_guard) {
+            if (metrics) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics);
+                m->let_poly_post_mutation_scope_total.fetch_add(
+                    std::max<std::size_t>(1, let_poly_scopes.size()), std::memory_order_relaxed);
+                m->let_poly_regeneralize_check_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Expand dirty with Let descendants so occurrence + ADT
+            // rechecks cover poly instantiation / match under Let.
+            std::vector<NodeId> expanded = dirty_nodes;
+            std::unordered_set<NodeId> seen(dirty_nodes.begin(), dirty_nodes.end());
+            for (auto lid : let_poly_scopes) {
+                std::vector<NodeId> sub;
+                collect_descendants(flat, lid, sub);
+                for (auto s : sub) {
+                    if (seen.insert(s).second)
+                        expanded.push_back(s);
+                }
+            }
+            if (expanded.size() > dirty_nodes.size()) {
+                find_occurrence_contexts(flat, pool, reg, expanded, notes_out);
+                recheck_match_exhaustiveness_in_dirty_scope(flat, pool, reg, expanded, rec,
+                                                            notes_out, metrics);
+                revalidate_adt_typed_mutation_scope(flat, pool, reg, let_poly_scopes, rec,
+                                                    /*cache_epoch=*/0, metrics);
+            } else if (!let_poly_scopes.empty()) {
+                revalidate_adt_typed_mutation_scope(flat, pool, reg, let_poly_scopes, rec,
+                                                    /*cache_epoch=*/0, metrics);
+            }
+        }
+    }
 
     for (auto& note : notes_out) {
         if (!note.source_mutation_id)

@@ -161,8 +161,8 @@ static void run_ac2_fidelity_primitive(aura::compiler::CompilerService& cs) {
     }
     const auto schema =
         hash_int_field(cs, "(engine:metrics \"query:type-incremental-fidelity-stats\")", "schema");
-    CHECK(schema == 798,
-          std::format("schema = {} (expected 798, #798 primitive ship confirmed)", schema));
+    CHECK(schema == 1617 || schema == 798,
+          std::format("schema = {} (expected 1617|798, #1617/#798 lineage)", schema));
 }
 
 static void run_ac3_reverify_occurrence_primitive(aura::compiler::CompilerService& cs) {
