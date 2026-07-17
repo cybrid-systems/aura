@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**66** `export module` declarations in `src/**/*.ixx`.
+**67** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -63,6 +63,7 @@
 | `aura.core.workspace_isolation` | `src/core/workspace_isolation.ixx` |
 | `aura.core.zero_copy_output` | `src/core/zero_copy_output.ixx` |
 | `aura.diag` | `src/compiler/diag.ixx` |
+| `aura.orch` | `src/orch/orch.ixx` |
 | `aura.parser.lexer` | `src/parser/lexer.ixx` |
 | `aura.parser.parser` | `src/parser/parser.ixx` |
 | `aura.reflect` | `src/reflect/reflect.ixx` |

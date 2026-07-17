@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**522** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**525** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 99 primitives (19%)
-- **core**: 372 primitives (71%)
+- **core**: 375 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
 
@@ -547,9 +547,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (1)
+## Orch: (4)
 
+- `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:spawn-agent` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
 ## Orchestration: (1)
 
@@ -779,7 +782,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (372)
+### Core builtins (must remain primitive) (375)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -982,7 +985,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `null?` — `src/compiler/evaluator_primitives_list.cpp`
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
+- `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `orch:spawn-agent` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orchestration:tune-gc-frequency` — `src/compiler/evaluator_primitives_query.cpp`
 - `pair?` — `src/compiler/evaluator_primitives_pair.cpp`
 - `parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
