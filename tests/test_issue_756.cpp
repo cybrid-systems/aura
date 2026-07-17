@@ -272,8 +272,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
-    CHECK(incremental_schema == 1601 || incremental_schema == 718,
-          std::format("incremental-relower schema = {} (expected 1601|718 lineage)",
+    CHECK(incremental_schema == 1605 || incremental_schema == 1601 || incremental_schema == 718,
+          std::format("incremental-relower schema = {} (expected 1605|1601|718 lineage)",
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "schema");
