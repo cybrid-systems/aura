@@ -35,7 +35,7 @@
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
-| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+13) | Aura standard list library |
+| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+14) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` | Aura std/llm -- LLM 交互模块 |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+52) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |

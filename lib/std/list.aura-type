@@ -1,4 +1,5 @@
 foldr: Any Any Any -> Any
+foldl: Any Any Any -> Any
 for-each: Any Any -> Any
 member?: Any Any -> Any
 zip: Any Any -> Any
@@ -15,3 +16,6 @@ product: Any -> Any
 last: Any -> Any
 flatten: Any -> Any
 intersperse: Any Any -> Any
+intersperse-iterative: Any Any -> Any
+any: Any Any -> Any
+all: Any Any -> Any

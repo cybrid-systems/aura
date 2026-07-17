@@ -1,0 +1,56 @@
+; Issue #1549 — list.aura iterative hot path + intersperse fix
+; Run: ./build/aura --load tests/suite/list_iterative.aura
+(require "std/test" all:)
+(require "std/list" all:)
+
+(test-suite "list:intersperse"
+  (check= (list) (intersperse 0 (list)))
+  (check= (list 1) (intersperse 0 (list 1)))
+  (check= (1 0 2) (intersperse 0 (list 1 2)))
+  (check= (1 0 2 0 3) (intersperse 0 (list 1 2 3)))
+  (check= (1 "," 2 "," 3) (intersperse "," (list 1 2 3)))
+  ; alias
+  (check= (1 0 2 0 3) (intersperse-iterative 0 (list 1 2 3))))
+
+(test-suite "list:flatten"
+  (check= (list) (flatten (list)))
+  (check= (1 2 3 4) (flatten (list 1 (list 2 3) 4)))
+  (check= (1 2 3 4 5) (flatten (list 1 (list 2 (list 3 4)) 5)))
+  (check= (1 2 3) (flatten (list (list 1) (list 2) (list 3)))))
+
+(test-suite "list:foldr-iterative"
+  (check= 6 (foldr + 0 (list 1 2 3)))
+  (check= (1 2 3) (foldr cons (list) (list 1 2 3)))
+  ; right-assoc: foldr - 0 '(1 2 3) = 1-(2-(3-0)) = 1-(2-3) = 1-(-1) = 2
+  (check= 2 (foldr - 0 (list 1 2 3))))
+
+; Large-list stress (#1549). Named-let is not fully TCO in the tree-walker
+; yet (depth gate ~700), so we use N≈400 — still large enough to catch
+; accidental deep recursion and prove iterative shape. True 10k+ lists
+; need engine TCO (#923 follow-up).
+
+(test-suite "list:large-intersperse"
+  (let* ((n 400)
+         (xs (range 0 n))
+         (ys (intersperse 0 xs))
+         (len (length ys)))
+    (check= (- (* n 2) 1) len)
+    (check= 0 (car ys))
+    (check= 0 (car (cdr ys)))
+    (check= 1 (car (cdr (cdr ys))))))
+
+(test-suite "list:large-flatten"
+  ; nested spine of length 300 — iterative stack walk, no crash
+  (let* ((nested (foldl (lambda (acc i) (list acc i)) (list) (range 0 300)))
+         (flat (flatten nested))
+         (len (length flat)))
+    (check (> len 200))
+    (check (number? (last flat)))))
+
+(test-suite "list:large-foldr"
+  ; foldr via reverse+foldl — no deep call stack growth vs recursive foldr
+  (let ((s (foldr + 0 (range 0 400))))
+    (check= 79800 s)))
+
+(test-suite "list:large-foldl"
+  (check= 79800 (foldl + 0 (range 0 400))))

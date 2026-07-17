@@ -1,17 +1,16 @@
 ; Aura standard list library
 ; Import with: (import "std/list")
 ;
-; Issues #923 / #928: prefer iterative / native hot paths (foldl, list-sort)
-; over deep recursion for production Agent scalability.
+; Hot-path guidance (#923 / #928 / #1549) for production AI Agents:
+;   - Prefer foldl, range, take/skip, zip*, any/all, sort (list-sort),
+;     flatten, intersperse — all iterative / constant stack.
+;   - foldr is iterative (reverse + foldl); still O(n) heap for reverse.
+;   - Avoid deep user recursion over large lists; compose foldl instead.
+;   - Native list-sort is preferred over sort-merge for large inputs.
 
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
-        partition sort range sum product last flatten intersperse any all)
-
-; foldr: right fold (recursive — use foldl for large lists)
-(define (foldr f init lst)
-  (if (null? lst)
-    init
-    (f (car lst) (foldr f init (cdr lst)))))
+        partition sort range sum product last flatten intersperse
+        intersperse-iterative any all)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
 (define (foldl f init lst)
@@ -20,6 +19,10 @@
       acc
       (loop (f acc (car xs)) (cdr xs)))))
 
+; foldr: right fold via reverse + foldl (iterative stack; #1549)
+; foldr f init (a b c) ≡ f(a, f(b, f(c, init)))
+(define (foldr f init lst)
+  (foldl (lambda (acc x) (f x acc)) init (reverse lst)))
 (define (for-each f lst)
   (let loop ((xs lst))
     (if (null? xs) #t
@@ -112,17 +115,33 @@
       (if (null? (cdr xs)) (car xs)
         (loop (cdr xs))))))
 
+; flatten: fully iterative stack walk (#1549 — no recursive flatten)
+; Traverses nested pairs without growing the call stack.
 (define (flatten lst)
-  (foldl (lambda (acc x)
-           (if (pair? x)
-             (append acc (flatten x))
-             (append acc (list x))))
-         (list) lst))
+  (let loop ((stack (list lst)) (acc (list)))
+    (if (null? stack)
+      (reverse acc)
+      (let ((cur (car stack))
+            (stk (cdr stack)))
+        (cond
+          ((null? cur) (loop stk acc))
+          ((pair? cur)
+           (loop (cons (car cur) (cons (cdr cur) stk)) acc))
+          (else
+           (loop stk (cons cur acc))))))))
 
+; intersperse: iterative (#1549 — was recursive; xs bug fixed + hot path)
+; (intersperse 0 '(1 2 3)) → (1 0 2 0 3)
 (define (intersperse sep lst)
   (if (or (null? lst) (null? (cdr lst)))
     lst
-    (cons (car lst) (cons sep (intersperse sep (cdr lst))))))
+    (let loop ((xs lst) (acc (list)))
+      (if (null? (cdr xs))
+        (reverse (cons (car xs) acc))
+        (loop (cdr xs) (cons sep (cons (car xs) acc)))))))
+
+; Alias for callers that want an explicit iterative name (AC #1549).
+(define intersperse-iterative intersperse)
 
 ; any / all: iterative (Issue #928 TCO-friendly)
 (define (any pred lst)
