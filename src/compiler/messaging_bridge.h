@@ -251,10 +251,11 @@ extern MutationBoundaryHeldFn g_mutation_boundary_held;
 //      any per-fiber storage. No-op when no pending checkpoint.
 //   3. g_block_gc_for_pending_checkpoint() — called by Fiber::yield
 //      when reason == MutationBoundary AND a pending checkpoint
-//      exists. Bumps `gc_blocked_by_pending_panic_`; the actual
-//      GC defer is a follow-up to #453 (requires scheduler.cpp +
-//      gc_coordinator.cpp integration; out of scope for the P0
-//      scope-limited ship).
+//      exists. Issue #1489: arms process-wide GC defer
+//      (gc_hooks::g_gc_defer_pending_panic_depth), bumps
+//      `gc_blocked_by_pending_panic_` + metrics, so
+//      GCCollector::collect / compact_sweep skip destructive
+//      reclaim until commit/restore releases the arm.
 //
 // All three are set by evaluator_fiber_mutation.cpp at static init.
 // nullptr means "not in evaluator module context" — callers

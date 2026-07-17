@@ -122,6 +122,58 @@ inline void note_safepoint_yield_on_mutation() noexcept {
     return g_safepoint_yield_on_mutation_total.load(std::memory_order_relaxed);
 }
 
+// ── Pending PanicCheckpoint GC defer (Issue #1489 / #651) ───
+// Process-wide depth: armed when an Evaluator holds a live
+// PanicCheckpoint (save) and released on commit/restore.
+// Scheduler GCCollector::collect and Evaluator::compact_sweep
+// consult this so STW sweep does not reclaim pinned COW /
+// StableNodeRef / EnvFrame state during the recovery window.
+// Depth (not a bool) so nested evaluators / multi-checkpoint
+// windows compose correctly.
+inline std::atomic<std::uint32_t> g_gc_defer_pending_panic_depth{0};
+// Signals from Fiber::yield → block_gc_for_pending_checkpoint
+// trampoline (may fire many times per armed window).
+inline std::atomic<std::uint64_t> g_gc_defer_pending_panic_signals{0};
+// compact_sweep / collect aborted because defer was armed.
+inline std::atomic<std::uint64_t> g_gc_sweep_skipped_pending_panic{0};
+
+inline void arm_gc_defer_pending_panic() noexcept {
+    g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+inline void release_gc_defer_pending_panic() noexcept {
+    auto prev = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
+                prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+            return;
+    }
+}
+
+[[nodiscard]] inline bool gc_deferred_for_pending_panic() noexcept {
+    return g_gc_defer_pending_panic_depth.load(std::memory_order_acquire) > 0;
+}
+
+[[nodiscard]] inline std::uint32_t gc_defer_pending_panic_depth() noexcept {
+    return g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
+}
+
+inline void note_gc_defer_pending_panic_signal() noexcept {
+    g_gc_defer_pending_panic_signals.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t gc_defer_pending_panic_signals() noexcept {
+    return g_gc_defer_pending_panic_signals.load(std::memory_order_relaxed);
+}
+
+inline void note_gc_sweep_skipped_pending_panic() noexcept {
+    g_gc_sweep_skipped_pending_panic.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t gc_sweep_skipped_pending_panic() noexcept {
+    return g_gc_sweep_skipped_pending_panic.load(std::memory_order_relaxed);
+}
+
 // ── Arena auto-compact notification (Issue #743) ────────────
 // Called from arena.ixx when allocate_raw auto-compact fires
 // or fiber-safe compact/defrag coordinates a safepoint.

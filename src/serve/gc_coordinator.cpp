@@ -67,6 +67,15 @@ bool GCCollector::collect() {
     if (!gc_in_progress_.load(std::memory_order_acquire))
         return false;
 
+    // Issue #1489: defer full GC while a PanicCheckpoint recovery
+    // window is open (arm on save / block_gc trampoline; release on
+    // commit/restore). Avoid compact_sweep of pinned state.
+    if (aura::gc_hooks::gc_deferred_for_pending_panic()) {
+        aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+        gc_in_progress_.store(false, std::memory_order_release);
+        return false;
+    }
+
     auto start = std::chrono::steady_clock::now();
 
     // ── Phase 1a: Broadcast safepoint ─────────────────
