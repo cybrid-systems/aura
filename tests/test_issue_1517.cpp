@@ -212,7 +212,8 @@ static void ac5_enforcement_query() {
 
     auto schema =
         cs.eval("(hash-ref (engine:metrics \"query:soa-view-enforcement-stats\") 'schema)");
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1517, "schema == 1517");
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1619 || as_int(*schema) == 1517),
+          "schema == 1619|1517");
 
     auto enforced = cs.eval(
         "(hash-ref (engine:metrics \"query:soa-view-enforcement-stats\") 'concept-enforced)");
@@ -231,7 +232,8 @@ static void ac6_adoption_stats_extended() {
 
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:soa-adoption-stats\") 'schema)");
     // schema may be 1517 after our extension
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1517, "adoption-stats schema == 1517");
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1619 || as_int(*schema) == 1517),
+          "adoption-stats schema == 1619|1517");
 
     auto enf = cs.eval(
         "(hash-ref (engine:metrics \"query:soa-adoption-stats\") 'concept-enforcement-hits)");

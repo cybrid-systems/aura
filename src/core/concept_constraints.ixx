@@ -168,12 +168,16 @@ concept JITFriendlyPass = Pass<P> && requires(const P& p) {
 // ── SoAViewAwarePass ───────────────────────────────────────────
 //
 // Pass that can report whether its hot path uses SoAView / columnar
-// IR (DOD). Used for soft metrics and #1517 concept enforcement.
+// IR (DOD). Used for soft metrics and #1517/#1619 concept enforcement.
 //
 // Requirements:
 //   - bool uses_soa_view() const
 //
-// Issue #1241 Phase 1.
+// Related: aura.compiler.soa_view::SoAView / SoAViewFull (IR column views
+// with columnar_accessor + shape_id + linear_ownership). Pass pipeline
+// enforces kRequireSoAView → SoAViewAwarePass via static_assert (#1619).
+//
+// Issue #1241 Phase 1 · #1619 refine.
 template <typename P>
 concept SoAViewAwarePass = Pass<P> && requires(const P& p) {
     { p.uses_soa_view() } -> std::convertible_to<bool>;

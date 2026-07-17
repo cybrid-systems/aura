@@ -42,10 +42,12 @@ import aura.diag;
 
 namespace aura::compiler {
 
-// Issue #1517: forward declare so analysis/full pipelines can share
+// Issue #1517 / #1619: forward declare so analysis/full pipelines can share
 // the same SoAView enforcement (defined below with SoAViewAwarePass).
 // Pass / AnalysisPass / … concepts: see aura.core.concept_constraints (#1577).
 export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
+export template <typename P> consteval void check_pass_dod_compliance();
+export template <typename... Passes> consteval void check_pipeline_dod_compliance();
 
 // ── run_analysis_pipeline — fold over analysis passes ────────────
 //
@@ -56,7 +58,8 @@ export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
 // the type system enforces the separation.
 export template <AnalysisPass... Passes>
 bool run_analysis_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
-    // Issue #1517: same SoAView enforcement as run_pipeline.
+    // Issue #1517 / #1619: SoAView DOD pack enforcement at analysis entry.
+    check_pipeline_dod_compliance<Passes...>();
     (note_pass_soa_enforcement(passes), ...);
     return (run_analysis_one(mod, passes) && ...);
 }
@@ -206,17 +209,27 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
-// Issue #1517: compile-time DOD compliance check.
+// Issue #1517 / #1619: compile-time DOD compliance check.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
 // - Soft metrics always: SoA aware → concept_enforcement_hits;
 //   legacy/unmarked → soa_view_pass_skipped.
+// - #1619: pack-level check_pipeline_dod_compliance at every pipeline entry.
 export template <typename P> consteval void check_pass_dod_compliance() {
     using T = std::remove_cvref_t<P>;
     if constexpr (RequiresSoAViewPass<T>) {
         static_assert(SoAViewAwarePass<T>,
                       "Hot pass declared kRequireSoAView must implement uses_soa_view() "
-                      "for zero-overhead DOD (#1517)");
+                      "for zero-overhead DOD (#1517/#1619)");
+        // Explicit LegacyPass + kRequireSoAView is contradictory.
+        static_assert(!LegacyPass<T>,
+                      "Pass cannot declare both kRequireSoAView and kLegacyPass (#1619)");
     }
+}
+
+// Issue #1619: fold-expression pack enforcement at pipeline entry
+// (run_pipeline / run_analysis_pipeline / incremental variants).
+export template <typename... Passes> consteval void check_pipeline_dod_compliance() {
+    (check_pass_dod_compliance<Passes>(), ...);
 }
 
 // Metric: pipeline stages that report SoAView awareness (#1241).
@@ -279,7 +292,9 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
     // here (NOT gated on dirty awareness) so it captures the
     // whole-pipeline-run rate including compact / pure-run cases.
     pass_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #1241 / #1517: SoAView concept enforcement for the pack.
+    // Issue #1241 / #1517 / #1619: SoAView concept pack enforcement.
+    // static_assert via check_pipeline_dod_compliance for kRequireSoAView.
+    check_pipeline_dod_compliance<Passes...>();
     (note_pass_soa_enforcement(passes), ...);
     return (run_one(mod, passes) && ...);
 }
@@ -360,7 +375,8 @@ export void set_fn_shape_stable_probe(FnShapeStableProbeFn probe) noexcept {
 // committing to that equivalence.
 export template <IncrementalPass P>
 bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
-    // Issue #1517: enforce DOD compliance at incremental entry.
+    // Issue #1517 / #1619: enforce DOD compliance at incremental entry.
+    check_pipeline_dod_compliance<P>();
     note_pass_soa_enforcement(pass);
     for (auto& func : mod.functions) {
         pass.run(func);
@@ -385,7 +401,8 @@ export template <IncrementalPass P>
     requires DirtyAwarePass<P>
 bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                                     const DefineDirtyMaskView* define_cache = nullptr) {
-    // Issue #1517: enforce DOD compliance at dirty-incremental entry.
+    // Issue #1517 / #1619: enforce DOD compliance at dirty-incremental entry.
+    check_pipeline_dod_compliance<P>();
     note_pass_soa_enforcement(pass);
 
     // AC3 (#1574): early-skip whole pass when define-level mask is clean.
@@ -819,6 +836,9 @@ public:
     std::size_t folded_count() const { return folded_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
+    // Issue #1619: SoAViewAwarePass — const-fold prefers dirty short-circuit
+    // over full AoS walk when block_dirty_fn is set (DOD progressive path).
+    [[nodiscard]] bool uses_soa_view() const noexcept { return static_cast<bool>(block_dirty_fn_); }
 
 private:
     // Legacy per-instance known-map (kept for fold_block callers
@@ -1699,6 +1719,9 @@ public:
     std::uint64_t elapsed_us() const { return elapsed_us_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
+    // Issue #1619: SoAViewAwarePass — elision walks type_id / narrow_evidence
+    // columns (parent-type stamp path is DOD-friendly).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -2427,6 +2450,9 @@ public:
     std::size_t extended_ops_propagated() const { return extended_ops_propagated_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
+    // Issue #1619: SoAViewAwarePass — propagates type_id / narrow_evidence
+    // instruction columns (columnar hot path).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
     // Issue #1530: original #1457 set + extended pure/ownership/pair ops.
     static bool should_propagate(aura::ir::IROpcode op) {
@@ -2639,6 +2665,10 @@ static_assert(JITFriendlyPass<TypePropagationPass>,
               "TypePropagationPass exposes pipeline_epoch_hint");
 static_assert(DirtyAwarePass<TypePropagationPass>,
               "TypePropagationPass is DirtyAware for define-mask wiring (#1574)");
+static_assert(SoAViewAwarePass<TypePropagationPass>, "TypePropagationPass is SoAViewAware (#1619)");
+static_assert(SoAViewAwarePass<DeadCoercionEliminationPass>,
+              "DeadCoercionEliminationPass is SoAViewAware (#1619)");
+static_assert(SoAViewAwarePass<ConstantFoldingWrap>, "ConstantFoldingWrap is SoAViewAware (#1619)");
 static_assert(IncrementalPass<TypePropagationPass>,
               "TypePropagationPass is IncrementalPass (#1574)");
 static_assert(DirtyAwarePass<ComputeKindWrap>,
