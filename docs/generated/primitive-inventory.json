@@ -3,12 +3,12 @@
     "compile": 23,
     "engine": 8,
     "mutate": 5,
-    "other": 406,
+    "other": 407,
     "query": 49,
     "stats-like": 1,
     "workspace": 24
   },
-  "count": 516,
+  "count": 517,
   "frozen_count": 433,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -719,6 +719,7 @@
     "panic-checkpoint",
     "panic-restore",
     "panic-safe-source",
+    "parallel-intend",
     "pow",
     "prim-cold-dispatch-fallback",
     "prim-hot-dispatch-hits",

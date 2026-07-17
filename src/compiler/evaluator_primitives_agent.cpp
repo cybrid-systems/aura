@@ -13,8 +13,14 @@ module;
 #include "hash_meta.h" // FNV constants (#901)
 #include "core/gc_hooks.h"
 #include "security_capabilities.h"
+#include "serve/fiber.h"
+#include "serve/scheduler.h"
+#include "serve/parallel_orch.h"
+#include <atomic>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
+#include <thread>
 
 module aura.compiler.evaluator;
 
@@ -2043,6 +2049,308 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto sid = ev.string_heap_.size();
         ev.string_heap_.push_back(evolved.name);
         return types::make_string(sid);
+    });
+
+    // ── parallel-intend — Issue #1587: Aura surface for parallel_orch (#1586) ──
+    //
+    // (parallel-intend tasks
+    //    [:max-concurrency n] [:timeout-ms ms] [:fail-fast bool] [:collect-errors bool])
+    //
+    // tasks: vector or list of 0-arg closures (thunks).
+    // Returns a hash:
+    //   status, ok-count, err-count, aborted-count, wait-us, results
+    // where results is a vector of per-task hashes {ok, index, value|error}.
+    //
+    // Wires to aura::serve::parallel_orch::parallel_intend (Fiber::join +
+    // concurrency gate). Closure evaluation is mutex-serialized for Evaluator
+    // safety; orchestration/join/policy still exercise the C++ parallel path.
+    add("parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(std::max<std::size_t>(16, kv.size() * 2));
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = key_ev.val;
+                        vals[slot] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+
+        auto heap_str = [&](const EvalValue& v) -> std::string {
+            if (types::is_string(v))
+                return heap_str_from(ev.string_heap_, v);
+            if (types::is_keyword(v)) {
+                auto kidx = types::as_keyword_idx(v);
+                if (kidx < ev.keyword_table_.size())
+                    return ev.keyword_table_[kidx];
+            }
+            return {};
+        };
+
+        if (a.empty()) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "parallel-intend: usage (parallel-intend tasks ...)",
+                                        ev.primitive_error_counter_ptr());
+        }
+
+        // Collect 0-arg closure ids from vector or list.
+        std::vector<std::uint64_t> cids;
+        if (types::is_vector(a[0])) {
+            auto vidx = types::as_vector_idx(a[0]);
+            if (vidx >= ev.vector_heap_.size()) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "parallel-intend: bad vector",
+                                            ev.primitive_error_counter_ptr());
+            }
+            for (auto& e : ev.vector_heap_[vidx]) {
+                if (!types::is_closure(e)) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "parallel-intend: tasks must be closures",
+                                                ev.primitive_error_counter_ptr());
+                }
+                cids.push_back(types::as_closure_id(e));
+            }
+        } else if (types::is_pair(a[0]) || types::is_void(a[0])) {
+            EvalValue cur = a[0];
+            while (types::is_pair(cur)) {
+                auto pidx = types::as_pair_idx(cur);
+                if (pidx >= ev.pairs_.size())
+                    break;
+                auto& e = ev.pairs_[pidx].car;
+                if (!types::is_closure(e)) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "parallel-intend: tasks must be closures",
+                                                ev.primitive_error_counter_ptr());
+                }
+                cids.push_back(types::as_closure_id(e));
+                cur = ev.pairs_[pidx].cdr;
+            }
+        } else {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "parallel-intend: tasks must be vector or list",
+                                        ev.primitive_error_counter_ptr());
+        }
+
+        using aura::serve::parallel_orch::ParallelPolicy;
+        ParallelPolicy policy{};
+        // Keyword / optional positional policy args after tasks.
+        for (std::size_t i = 1; i < a.size();) {
+            if (i + 1 < a.size() && (types::is_string(a[i]) || types::is_keyword(a[i]))) {
+                auto k = heap_str(a[i]);
+                // Normalize ":max-concurrency" / "max-concurrency" forms.
+                while (!k.empty() && k[0] == ':')
+                    k = k.substr(1);
+                auto& val = a[i + 1];
+                if ((k == "max-concurrency" || k == "max_concurrency") && types::is_int(val)) {
+                    policy.max_concurrency =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
+                    policy.timeout_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "fail-fast" || k == "fail_fast") && types::is_bool(val)) {
+                    policy.fail_fast = types::as_bool(val);
+                } else if ((k == "collect-errors" || k == "collect_errors") &&
+                           types::is_bool(val)) {
+                    policy.collect_errors = types::as_bool(val);
+                }
+                i += 2;
+                continue;
+            }
+            // Positional: max-concurrency, timeout-ms, fail-fast
+            if (types::is_int(a[i]) && i == 1) {
+                policy.max_concurrency =
+                    static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(a[i])));
+                ++i;
+                continue;
+            }
+            if (types::is_int(a[i]) && i == 2) {
+                policy.timeout_ms =
+                    static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(a[i])));
+                ++i;
+                continue;
+            }
+            if (types::is_bool(a[i]) && i == 3) {
+                policy.fail_fast = types::as_bool(a[i]);
+                ++i;
+                continue;
+            }
+            ++i;
+        }
+
+        if (!aura::serve::parallel_orch::validate_policy(policy)) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "parallel-intend: invalid policy",
+                                        ev.primitive_error_counter_ptr());
+        }
+
+        if (cids.empty()) {
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"status",
+                 [&] {
+                     auto sidx = ev.string_heap_.size();
+                     ev.string_heap_.push_back("ok");
+                     return make_string(sidx);
+                 }()},
+                {"ok-count", make_int(0)},
+                {"err-count", make_int(0)},
+                {"aborted-count", make_int(0)},
+                {"wait-us", make_int(0)},
+                {"results",
+                 [&] {
+                     auto vidx = ev.vector_heap_.size();
+                     ev.vector_heap_.push_back({});
+                     return make_vector(vidx);
+                 }()},
+                {"schema", make_int(1587)},
+            };
+            return build_hash(kv);
+        }
+
+        struct AuraShared {
+            std::mutex eval_mu;
+            std::vector<EvalValue> values;
+            std::vector<std::string> errors;
+        };
+        auto ash = std::make_shared<AuraShared>();
+        ash->values.assign(cids.size(), make_void());
+        ash->errors.assign(cids.size(), {});
+
+        std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
+        tasks.reserve(cids.size());
+        for (std::size_t i = 0; i < cids.size(); ++i) {
+            const auto cid = cids[i];
+            tasks.push_back(aura::serve::parallel_orch::TaskSpec{
+                .body = [&ev, ash, cid, i]() -> aura::serve::parallel_orch::TaskResult {
+                    aura::serve::parallel_orch::TaskResult tr;
+                    tr.task_index = i;
+                    try {
+                        std::lock_guard lock(ash->eval_mu);
+                        auto opt = ev.apply_closure(cid, {});
+                        if (!opt) {
+                            tr.ok = false;
+                            tr.error = "apply-failed";
+                            ash->errors[i] = tr.error;
+                        } else {
+                            ash->values[i] = *opt;
+                            if (types::is_error(*opt)) {
+                                tr.ok = false;
+                                tr.error = "task-error";
+                                ash->errors[i] = tr.error;
+                            } else {
+                                tr.ok = true;
+                                tr.value = "ok";
+                            }
+                        }
+                    } catch (const std::exception& ex) {
+                        tr.ok = false;
+                        tr.error = ex.what();
+                        ash->errors[i] = tr.error;
+                    } catch (...) {
+                        tr.ok = false;
+                        tr.error = "unknown-exception";
+                        ash->errors[i] = tr.error;
+                    }
+                    return tr;
+                },
+                .name = "aura-task-" + std::to_string(i),
+            });
+        }
+
+        const int workers = static_cast<int>(
+            std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
+        aura::serve::Scheduler sched(workers);
+        std::thread runner([&sched] { sched.run(); });
+        auto batch = aura::serve::parallel_orch::parallel_intend(sched, tasks, policy);
+        sched.stop();
+        if (runner.joinable())
+            runner.join();
+
+        using aura::serve::parallel_orch::BatchStatus;
+        const char* status_str = "invalid";
+        switch (batch.status) {
+            case BatchStatus::Ok:
+                status_str = "ok";
+                break;
+            case BatchStatus::Partial:
+                status_str = "partial";
+                break;
+            case BatchStatus::Timeout:
+                status_str = "timeout";
+                break;
+            case BatchStatus::FailFast:
+                status_str = "fail-fast";
+                break;
+            case BatchStatus::Invalid:
+                status_str = "invalid";
+                break;
+        }
+
+        std::vector<EvalValue> result_elems;
+        result_elems.reserve(batch.results.size());
+        for (std::size_t i = 0; i < batch.results.size(); ++i) {
+            const auto& tr = batch.results[i];
+            std::vector<std::pair<std::string, EvalValue>> tkv;
+            tkv.push_back({"ok", make_bool(tr.ok)});
+            tkv.push_back({"index", make_int(static_cast<std::int64_t>(i))});
+            if (tr.ok) {
+                EvalValue val = (i < ash->values.size()) ? ash->values[i] : make_void();
+                tkv.push_back({"value", val});
+            } else {
+                std::string err =
+                    tr.error.empty() && i < ash->errors.size() ? ash->errors[i] : tr.error;
+                if (err.empty())
+                    err = "error";
+                auto eidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(err);
+                tkv.push_back({"error", make_string(eidx)});
+            }
+            result_elems.push_back(build_hash(tkv));
+        }
+        auto rvidx = ev.vector_heap_.size();
+        ev.vector_heap_.push_back(std::move(result_elems));
+
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(status_str);
+
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"status", make_string(sidx)},
+            {"ok-count", make_int(static_cast<std::int64_t>(batch.ok_count))},
+            {"err-count", make_int(static_cast<std::int64_t>(batch.err_count))},
+            {"aborted-count", make_int(static_cast<std::int64_t>(batch.aborted_count))},
+            {"wait-us", make_int(static_cast<std::int64_t>(batch.wait_us))},
+            {"results", make_vector(rvidx)},
+            {"schema", make_int(1587)},
+        };
+        return build_hash(kv);
     });
 }
 

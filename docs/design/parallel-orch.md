@@ -55,8 +55,26 @@ Process-wide `g_parallel_orch_stats` + `query:parallel-orch-stats` (schema **158
 `tests/test_parallel_orch.cpp` — policy, parallel vs sequential, fail-fast,
 timeout, mailbox fan-in, concurrency cap, stats surface.
 
+## Aura surface (#1587)
+
+```scheme
+;; tasks: vector or list of 0-arg thunks
+(parallel-intend
+  (vector
+    (lambda () (intend "goal-a" gen ver))
+    (lambda () (intend "goal-b" gen ver)))
+  :max-concurrency 8
+  :timeout-ms 60000
+  :fail-fast #f
+  :collect-errors #t)
+;; → hash: status ok-count err-count aborted-count wait-us results schema=1587
+```
+
+Closure bodies are mutex-serialized for Evaluator safety; spawn/join/policy
+still use the C++ `parallel_orch` path (`Fiber::join`, concurrency gate).
+
 ## Related
 
 - #1584 Fiber::join  
 - #1585 MultiFiberMailbox  
-- #1587 Aura primitive surface for parallel-intend (follow-up)
+- #1587 Aura `(parallel-intend)` primitive (this surface)
