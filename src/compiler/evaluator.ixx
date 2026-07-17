@@ -9244,6 +9244,106 @@ public:
         }
         return 0;
     }
+
+    // Issue #1583 / #1207: recovery latency stall budget (µs). Default 5000.
+    enum class RecoveryLatencyKind : std::uint8_t { PanicRestore = 0, QuotaReject = 1 };
+    void set_recovery_stall_budget_us(std::uint64_t us) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->longrunning_recovery_stall_budget_us.store(us, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t recovery_stall_budget_us() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_recovery_stall_budget_us.load(std::memory_order_relaxed);
+        }
+        return 5000;
+    }
+    // Record one recovery sample; bumps histogram, max, and stall violations.
+    void record_recovery_latency_us(std::uint64_t us, RecoveryLatencyKind kind) noexcept {
+        if (!compiler_metrics_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->longrunning_recovery_latency_us_total.fetch_add(us, std::memory_order_relaxed);
+        m->longrunning_recovery_samples.fetch_add(1, std::memory_order_relaxed);
+        if (kind == RecoveryLatencyKind::PanicRestore)
+            m->longrunning_recovery_panic_samples.fetch_add(1, std::memory_order_relaxed);
+        else
+            m->longrunning_recovery_quota_samples.fetch_add(1, std::memory_order_relaxed);
+        // 9-bucket histogram (same edges as mutation hold #1375).
+        std::size_t bucket = 8;
+        if (us < 100)
+            bucket = 0;
+        else if (us < 500)
+            bucket = 1;
+        else if (us < 1000)
+            bucket = 2;
+        else if (us < 5000)
+            bucket = 3;
+        else if (us < 10000)
+            bucket = 4;
+        else if (us < 50000)
+            bucket = 5;
+        else if (us < 100000)
+            bucket = 6;
+        else if (us < 1000000)
+            bucket = 7;
+        m->longrunning_recovery_histogram[bucket].fetch_add(1, std::memory_order_relaxed);
+        auto prev_max = m->longrunning_recovery_latency_us_max.load(std::memory_order_relaxed);
+        while (us > prev_max && !m->longrunning_recovery_latency_us_max.compare_exchange_weak(
+                                    prev_max, us, std::memory_order_relaxed)) {
+        }
+        const auto budget = m->longrunning_recovery_stall_budget_us.load(std::memory_order_relaxed);
+        if (us > budget)
+            m->longrunning_recovery_stall_violations_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_recovery_stall_violations() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_recovery_stall_violations_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_recovery_latency_samples() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->longrunning_recovery_samples.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    // Approximate p50/p99 from the 9-bucket recovery histogram (upper edges).
+    [[nodiscard]] std::uint64_t recovery_latency_p50_us() const noexcept {
+        return recovery_latency_percentile_us(50);
+    }
+    [[nodiscard]] std::uint64_t recovery_latency_p99_us() const noexcept {
+        return recovery_latency_percentile_us(99);
+    }
+    [[nodiscard]] std::uint64_t recovery_latency_percentile_us(int pct) const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        std::uint64_t counts[CompilerMetrics::kLongrunningRecoveryHistBuckets]{};
+        std::uint64_t total = 0;
+        for (std::size_t i = 0; i < CompilerMetrics::kLongrunningRecoveryHistBuckets; ++i) {
+            counts[i] = m->longrunning_recovery_histogram[i].load(std::memory_order_relaxed);
+            total += counts[i];
+        }
+        if (total == 0)
+            return 0;
+        // Upper edges of buckets (µs).
+        static constexpr std::uint64_t kEdges[CompilerMetrics::kLongrunningRecoveryHistBuckets] = {
+            100, 500, 1000, 5000, 10000, 50000, 100000, 1000000, 2000000};
+        const std::uint64_t target = (total * static_cast<std::uint64_t>(pct) + 99) / 100; // ceil
+        std::uint64_t cum = 0;
+        for (std::size_t i = 0; i < CompilerMetrics::kLongrunningRecoveryHistBuckets; ++i) {
+            cum += counts[i];
+            if (cum >= target)
+                return kEdges[i];
+        }
+        return kEdges[CompilerMetrics::kLongrunningRecoveryHistBuckets - 1];
+    }
+
     // Issue #754: LLM-bottleneck orchestration GC safepoint self-tuning.
     void bump_orchestration_llm_gc_safepoint_adapted(std::uint64_t n = 1) noexcept {
         if (compiler_metrics_) {

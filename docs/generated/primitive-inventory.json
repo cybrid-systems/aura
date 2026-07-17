@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 516,
-  "frozen_count": 430,
+  "frozen_count": 431,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -215,6 +215,7 @@
     "query:load-or-zero-helper-stats",
     "query:longrunning-ai-infra-stats",
     "query:longrunning-infra-stats",
+    "query:longrunning-recovery-stats",
     "query:longrunning-stable-ref-dirty-stats",
     "query:macro-hygiene-contract-stats",
     "query:macro-hygiene-fiber-panic-stats",
@@ -963,7 +964,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 407,
+  "stats_count": 408,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1160,6 +1161,7 @@
     "query:load-or-zero-helper-stats",
     "query:longrunning-ai-infra-stats",
     "query:longrunning-infra-stats",
+    "query:longrunning-recovery-stats",
     "query:longrunning-stable-ref-dirty-stats",
     "query:macro-hygiene-contract-stats",
     "query:macro-hygiene-fiber-panic-stats",

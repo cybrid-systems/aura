@@ -4890,6 +4890,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> longrunning_resource_trend_total{0};
     std::atomic<std::uint64_t> longrunning_deployment_slo_hits_total{0};
 
+    // Issue #1583 / #1207: recovery latency stall budget + SLO surface.
+    // Instrumented on panic-restore and quota-reject hot paths.
+    // Default stall budget 5000 µs (5 ms) — commercial zero-stall target.
+    static constexpr std::size_t kLongrunningRecoveryHistBuckets = 9;
+    std::atomic<std::uint64_t> longrunning_recovery_stall_budget_us{5000};
+    std::atomic<std::uint64_t> longrunning_recovery_latency_us_total{0};
+    std::atomic<std::uint64_t> longrunning_recovery_samples{0};
+    std::atomic<std::uint64_t> longrunning_recovery_latency_us_max{0};
+    std::atomic<std::uint64_t> longrunning_recovery_stall_violations_total{0};
+    std::atomic<std::uint64_t> longrunning_recovery_panic_samples{0};
+    std::atomic<std::uint64_t> longrunning_recovery_quota_samples{0};
+    std::atomic<std::uint64_t> longrunning_recovery_histogram[kLongrunningRecoveryHistBuckets]{};
+
     // Issue #754: LLM-bottleneck orchestration adaptive stats
     // (P0 runtime orchestration; refines #730, non-duplicative with
     // #706 scheduler-stealbudget-adaptive-stats and #646 gc-deferral).
