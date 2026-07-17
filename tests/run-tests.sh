@@ -131,8 +131,11 @@ run_test "stdlib:sort"   "$(printf '(import \"std/list\")(sort (list 3 1 4 1 5))
 run_test "stdlib:range"  "$(printf '(import \"std/list\")(range 1 5)')" "(1 2 3 4)"
 run_test "stdlib:sum"    "$(printf '(import \"std/list\")(sum (list 1 2 3))')" "6"
 run_test "stdlib:foldl"  "$(printf '(import \"std/list\")(foldl + 0 (range 1 6))')" "15"
+run_test "stdlib:foldr"  "$(printf '(import \"std/list\")(foldr + 0 (list 1 2 3))')" "6"
 run_test "stdlib:last"   "$(printf '(import \"std/list\")(last (list 1 2 3))')" "3"
 run_test "stdlib:zip"    "$(printf '(import \"std/list\")(zip (list 1 2) (list 3 4))')" "((1 3) (2 4))"
+run_test "stdlib:intersperse" "$(printf '(import \"std/list\")(intersperse 0 (list 1 2 3))')" "(1 0 2 0 3)"
+run_test "stdlib:flatten" "$(printf '(import \"std/list\")(flatten (list 1 (list 2 3) 4))')" "(1 2 3 4)"
 
 run_test "stdlib:square" "$(printf '(import \"std/math\")(square 5)')" "25"
 run_test "stdlib:sqrt"   "$(printf '(import \"std/math\")(>= (sqrt 16) 4.0)')" "#t"
