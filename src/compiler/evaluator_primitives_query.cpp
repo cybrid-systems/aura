@@ -731,23 +731,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1470: query:ai-closedloop-readiness-stats — consolidated
-    // 5-counter health score for AI editing loops. Aggregates wraps +
-    // invalidations + batch_commits + hygiene_skips + dirty_prunes into
-    // a single hash with a recommendation int for AI decision-making.
-    // Complements #457 / #527 / #738 (stable-ref family) by exposing
-    // the cross-cutting readiness view those leave scattered. Replaces
-    // the need to call 5 separate stats primitives in the AI Agent loop.
-    // Recommendation priority (most severe first):
-    //   0 = healthy (all counters below thresholds)
-    //   1 = wraps detected (generation wraparound in stable_ref gen counter)
-    //   2 = high invalidation rate (>= 10 stable_ref_invalidations)
-    //   3 = high hygiene-skip rate (>= 100 macro_hygiene_skipped)
-    //   4 = high dirty-prune rate (>= 50 mark_dirty_boundary_prunes)
+    // Issue #1470 / #1499: query:ai-closedloop-readiness-stats —
+    // consolidated health for AI editing loops.
+    //
+    // #1470: wraps / invalidations / batch-commits / hygiene-skips /
+    // dirty-prunes + recommendation [0..4].
+    // #1499: production breakdown (linear post-mutate, cascade depth,
+    // steal auto-refresh, epoch invalidation, quota rejects, relower,
+    // per-fiber depth) + health-score 0..100 + action + schema 1499.
+    //
+    // Recommendation priority (most severe first, #1470 contract):
+    //   0 = healthy  1 = wraps  2 = high invalidations  3 = hygiene
+    //   4 = dirty-prunes
+    // Action (#1499 orchestration hint, independent of recommendation):
+    //   0 = ok  1 = investigate-refs  2 = throttle-mutate
+    //   3 = raise-quota  4 = check-cascade
     ObservabilityPrims::register_stats_impl(
         "query:ai-closedloop-readiness-stats",
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
+            (void)pairs;
             std::uint64_t wraps = 0;
             std::uint64_t invalidations = 0;
             std::uint64_t batch_commits = 0;
@@ -768,7 +771,94 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 rec_int = 3;
             else if (dirty_prunes >= 50)
                 rec_int = 4;
-            auto* ht = FlatHashTable::create(16);
+
+            // Issue #1499: production counters from CompilerMetrics.
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto load =
+                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
+                if (!m)
+                    return 0;
+                return (m->*field).load(std::memory_order_relaxed);
+            };
+            const std::uint64_t linear_enforce =
+                load(&CompilerMetrics::linear_post_mutate_enforcements_total);
+            const std::uint64_t linear_enforce_per =
+                load(&CompilerMetrics::linear_post_mutate_enforcements);
+            const std::uint64_t cascade_max = load(&CompilerMetrics::invalidate_cascade_depth_max);
+            const std::uint64_t cascade_total =
+                load(&CompilerMetrics::invalidate_cascade_depth_total);
+            const std::uint64_t protocol =
+                load(&CompilerMetrics::unified_invalidation_protocol_total);
+            const std::uint64_t steal_refresh =
+                load(&CompilerMetrics::stable_ref_steal_auto_refresh_total);
+            const std::uint64_t boundary_refresh =
+                load(&CompilerMetrics::boundary_pinned_refresh_count);
+            const std::uint64_t live_stale =
+                load(&CompilerMetrics::compiler_live_closure_stale_prevented_total);
+            const std::uint64_t rollbacks =
+                load(&CompilerMetrics::mutation_boundary_yield_rollback_total);
+            const std::uint64_t quota_rejects =
+                load(&CompilerMetrics::resource_quota_rejects_total);
+            const std::uint64_t relower_blocks =
+                load(&CompilerMetrics::incremental_relower_blocks_total);
+            const std::uint64_t full_relower = load(&CompilerMetrics::relower_full_called_count);
+            const std::uint64_t per_fn_relower =
+                load(&CompilerMetrics::relower_per_function_called_count);
+            const std::uint64_t fiber_depth_max = ev.get_per_fiber_mutation_stack_depth_max();
+            const std::uint64_t live_depth =
+                static_cast<std::uint64_t>(Evaluator::mutation_boundary_depth());
+            const std::uint64_t bridge_bumps = load(&CompilerMetrics::bridge_epoch_bumps_total);
+
+            // Cascade avg (bp for integer: total*100 / protocol when >0).
+            std::int64_t cascade_avg_x100 = 0;
+            if (protocol > 0)
+                cascade_avg_x100 = static_cast<std::int64_t>((cascade_total * 100u) / protocol);
+
+            // Relower partial ratio in basis points (partial / (partial+full)).
+            std::int64_t relower_partial_bp = 10000;
+            {
+                const auto sum = per_fn_relower + full_relower;
+                if (sum > 0)
+                    relower_partial_bp = static_cast<std::int64_t>((per_fn_relower * 10000u) / sum);
+            }
+
+            // Health score 0..100 (higher is better). Start at 100 and
+            // apply capped penalties so agents get a single ordinal signal.
+            std::int64_t health = 100;
+            auto penalize = [&](std::int64_t pts) {
+                health -= pts;
+                if (health < 0)
+                    health = 0;
+            };
+            if (wraps > 0)
+                penalize(20);
+            if (invalidations >= 10)
+                penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(invalidations / 5)));
+            if (rollbacks >= 5)
+                penalize(std::min<std::int64_t>(20, static_cast<std::int64_t>(rollbacks / 5)));
+            if (cascade_max >= 8)
+                penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(cascade_max)));
+            if (quota_rejects >= 5)
+                penalize(std::min<std::int64_t>(15, static_cast<std::int64_t>(quota_rejects / 5)));
+            if (relower_partial_bp < 5000 && (full_relower + per_fn_relower) >= 10)
+                penalize(10); // mostly full re-lower under load
+            if (hygiene_skips >= 100)
+                penalize(10);
+            if (dirty_prunes >= 50)
+                penalize(5);
+
+            // Orchestration action (independent of #1470 recommendation).
+            std::int64_t action = 0;
+            if (quota_rejects >= 5)
+                action = 3; // raise-quota
+            else if (cascade_max >= 8)
+                action = 4; // check-cascade
+            else if (rollbacks >= 5 || invalidations >= 20)
+                action = 2; // throttle-mutate
+            else if (wraps > 0 || invalidations >= 10 || boundary_refresh + steal_refresh >= 50)
+                action = 1; // investigate-refs
+
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
@@ -795,12 +885,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
+            // #1470 fields (stable contract)
             insert_kv("wraps", static_cast<std::int64_t>(wraps));
             insert_kv("invalidations", static_cast<std::int64_t>(invalidations));
             insert_kv("batch-commits", static_cast<std::int64_t>(batch_commits));
             insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene_skips));
             insert_kv("dirty-prunes", static_cast<std::int64_t>(dirty_prunes));
             insert_kv("recommendation", rec_int);
+            // #1499 production health + breakdown
+            insert_kv("health-score", health);
+            insert_kv("action", action);
+            insert_kv("linear-enforcements", static_cast<std::int64_t>(linear_enforce));
+            insert_kv("linear-enforcements-per-frame",
+                      static_cast<std::int64_t>(linear_enforce_per));
+            insert_kv("cascade-depth-max", static_cast<std::int64_t>(cascade_max));
+            insert_kv("cascade-depth-avg-x100", cascade_avg_x100);
+            insert_kv("invalidation-protocol", static_cast<std::int64_t>(protocol));
+            insert_kv("bridge-epoch-bumps", static_cast<std::int64_t>(bridge_bumps));
+            insert_kv("steal-auto-refresh", static_cast<std::int64_t>(steal_refresh));
+            insert_kv("boundary-pinned-refresh", static_cast<std::int64_t>(boundary_refresh));
+            insert_kv("live-closure-stale-prevented", static_cast<std::int64_t>(live_stale));
+            insert_kv("yield-rollbacks", static_cast<std::int64_t>(rollbacks));
+            insert_kv("quota-rejects", static_cast<std::int64_t>(quota_rejects));
+            insert_kv("relower-blocks", static_cast<std::int64_t>(relower_blocks));
+            insert_kv("full-relower", static_cast<std::int64_t>(full_relower));
+            insert_kv("partial-relower", static_cast<std::int64_t>(per_fn_relower));
+            insert_kv("relower-partial-bp", relower_partial_bp);
+            insert_kv("fiber-depth-max", static_cast<std::int64_t>(fiber_depth_max));
+            insert_kv("live-mutation-depth", static_cast<std::int64_t>(live_depth));
+            insert_kv("schema", 1499);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
