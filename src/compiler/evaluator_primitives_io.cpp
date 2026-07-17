@@ -1508,6 +1508,20 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Full Phase 4 rewrites lib/std/fs.aura etc. to use these; Phase 1 lands
     // the syscall surface with capability gates (sandbox denies without cap).
     auto deny_sys = [&ev](const char* cap, const char* msg) -> EvalValue {
+        // Issue #1565: effect-level FFI/IO check (Write for open/write paths).
+        {
+            using aura::compiler::security::kEffectWrite;
+            using aura::compiler::security::kEffectFfi;
+            const auto bits = static_cast<std::uint16_t>(kEffectWrite | kEffectFfi);
+            if (!ev.check_and_record_effect(kEffectWrite, bits, cap, 0, ev.capability_tenant_id(),
+                                            0)) {
+                // check_and_record_effect already bumps capability_denial_count_.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->cap_denial_total.fetch_add(1, std::memory_order_relaxed);
+                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                            ev.primitive_error_counter_ptr());
+            }
+        }
         if (!ev.sandbox_mode() || ev.has_capability(cap) ||
             ev.has_capability(aura::compiler::security::kCapIo) ||
             ev.has_capability(aura::compiler::security::kCapWildcard))

@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**514** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**517** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 99 primitives (19%)
-- **core**: 364 primitives (71%)
+- **core**: 367 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
 
@@ -577,9 +577,12 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 - `scheduler:pin` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Security: (2)
+## Security: (5)
 
+- `security:check-effect` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-capability!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
+- `security:grant-effect!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
+- `security:set-effect-sandbox-mode!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-sandbox-mode!` *[core]* — `src/compiler/evaluator_primitives_security.cpp`
 
 ## Seva: (5)
@@ -771,7 +774,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (364)
+### Core builtins (must remain primitive) (367)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1017,7 +1020,10 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `run-tests` — `src/compiler/evaluator_primitives_test.cpp`
 - `runtime:self-heal-on-drift` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
 - `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `security:check-effect` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-capability!` — `src/compiler/evaluator_primitives_security.cpp`
+- `security:grant-effect!` — `src/compiler/evaluator_primitives_security.cpp`
+- `security:set-effect-sandbox-mode!` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:set-sandbox-mode!` — `src/compiler/evaluator_primitives_security.cpp`
 - `send` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `serialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`

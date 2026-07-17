@@ -5942,17 +5942,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_memory_profiling_supported{1}; // #1184
     std::atomic<std::uint64_t> provenance_rollback_scaffold{1};      // #1185
     std::atomic<std::uint64_t> capability_effects_scaffold{1};       // #1187/#1192
-    std::atomic<std::uint64_t> render_ci_slo_scaffold{1};            // #1188
-    std::atomic<std::uint64_t> mutation_audit_tenant_scaffold{1};    // #1189
-    std::atomic<std::uint64_t> render_obs_schema_scaffold{1};        // #1190/#1193
-    std::atomic<std::uint64_t> hotpath_contract_gates_scaffold{1};   // #1194
-    std::atomic<std::uint64_t> seva_closed_loop_scaffold{1};         // #1195
-    std::atomic<std::uint64_t> panic_quota_checkpoint_scaffold{1};   // #1196
-    std::atomic<std::uint64_t> instruction_dirty_short_circuit{1};   // #1197
-    std::atomic<std::uint64_t> fiber_join_structured{1};             // #1198
-    std::atomic<std::uint64_t> aura_result_migration_scaffold{1};    // #1199
-    std::atomic<std::uint64_t> mailbox_multi_fiber_scaffold{1};      // #1200
-    std::atomic<std::uint64_t> optimization_passes_registry{1};      // #1201
+    // Issue #1565: capability effect enforcement mirrors (process-wide)
+    std::atomic<std::uint64_t> capability_effect_enforced_total{0};
+    std::atomic<std::uint64_t> capability_effect_denied_total{0};
+    std::atomic<std::uint64_t> capability_provenance_mismatch_total{0};
+    std::atomic<std::uint64_t> capability_effect_grant_total{0};
+    std::atomic<std::uint64_t> capability_effect_check_total{0};
+    std::atomic<std::uint64_t> render_ci_slo_scaffold{1};          // #1188
+    std::atomic<std::uint64_t> mutation_audit_tenant_scaffold{1};  // #1189
+    std::atomic<std::uint64_t> render_obs_schema_scaffold{1};      // #1190/#1193
+    std::atomic<std::uint64_t> hotpath_contract_gates_scaffold{1}; // #1194
+    std::atomic<std::uint64_t> seva_closed_loop_scaffold{1};       // #1195
+    std::atomic<std::uint64_t> panic_quota_checkpoint_scaffold{1}; // #1196
+    std::atomic<std::uint64_t> instruction_dirty_short_circuit{1}; // #1197
+    std::atomic<std::uint64_t> fiber_join_structured{1};           // #1198
+    std::atomic<std::uint64_t> aura_result_migration_scaffold{1};  // #1199
+    std::atomic<std::uint64_t> mailbox_multi_fiber_scaffold{1};    // #1200
+    std::atomic<std::uint64_t> optimization_passes_registry{1};    // #1201
 
     // ── Issues #1202–#1228: orchestration / heal / memory / observability Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1202_1228_active{1};

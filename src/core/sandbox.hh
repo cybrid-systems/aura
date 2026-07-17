@@ -1,14 +1,13 @@
-// sandbox.ixx — Issues #1180/#1565: sandbox modes linked to capability effects.
+// sandbox.hh — Issues #1180/#1565: header form for evaluator TUs.
 
-module;
+#ifndef AURA_CORE_SANDBOX_HH
+#define AURA_CORE_SANDBOX_HH
 
-export module aura.core.sandbox;
+#include <cstdint>
 
-import std;
+namespace aura::core::sandbox {
 
-export namespace aura::core::sandbox {
-
-inline constexpr int kSandboxPhase = 2; // #1565 effect linkage
+inline constexpr int kSandboxPhase = 2;
 inline constexpr int kSandboxIssue = 1565;
 
 enum class SandboxMode : std::uint8_t {
@@ -25,18 +24,21 @@ struct SandboxState {
     std::uint64_t effect_denials = 0;
 };
 
-inline SandboxState g_sandbox_state{};
+inline SandboxState& g_sandbox_state() noexcept {
+    static SandboxState s;
+    return s;
+}
 
 [[nodiscard]] inline bool is_sandbox_active() noexcept {
-    return g_sandbox_state.mode != SandboxMode::Off;
+    return g_sandbox_state().mode != SandboxMode::Off;
 }
-
 [[nodiscard]] inline bool is_strict() noexcept {
-    return g_sandbox_state.mode == SandboxMode::Strict;
+    return g_sandbox_state().mode == SandboxMode::Strict;
 }
-
 inline void set_mode(SandboxMode m) noexcept {
-    g_sandbox_state.mode = m;
+    g_sandbox_state().mode = m;
 }
 
 } // namespace aura::core::sandbox
+
+#endif // AURA_CORE_SANDBOX_HH

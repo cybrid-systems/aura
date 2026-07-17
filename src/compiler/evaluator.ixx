@@ -3672,6 +3672,8 @@ private:
     // Issue #676: sandbox mode — when true, sensitive primitives
     // require matching capabilities (io/mutate/exec).
     bool sandbox_mode_ = false;
+    // Issue #1565: multi-tenant id for capability effect checks.
+    std::uint64_t capability_tenant_id_ = 0;
     static constexpr std::size_t kMutationAuditRingSize = 64;
     struct MutationAuditEntry {
         std::uint64_t seq = 0;
@@ -3681,6 +3683,11 @@ private:
         std::uint32_t epoch_delta = 0;
         std::uint32_t target_node = 0;
         char op[48]{};
+        // Issue #1565: capability effect + provenance audit fields
+        std::uint16_t effect_bits = 0;
+        std::uint64_t tenant_id = 0;
+        std::uint64_t provenance_mutation_id = 0;
+        bool effect_denied = false;
     };
     std::array<MutationAuditEntry, kMutationAuditRingSize> mutation_audit_ring_{};
     std::atomic<std::uint64_t> mutation_audit_seq_{0};
@@ -3778,6 +3785,22 @@ public:
     }
     void emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
                              std::string_view op, ast::NodeId target_node) noexcept;
+    // Issue #1565: capability effect check + audit (returns true if allowed).
+    // Integrates sandbox Strict/Restricted + grant matrix + provenance.
+    [[nodiscard]] bool check_and_record_effect(std::uint16_t required_effect_bits,
+                                               std::uint16_t actual_effect_bits,
+                                               std::string_view op, ast::NodeId target_node = 0,
+                                               std::uint64_t tenant_id = 0,
+                                               std::uint64_t provenance_mutation_id = 0) noexcept;
+    void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
+                                 std::uint16_t effect_bits,
+                                 std::uint64_t provenance_mutation_id = 0) noexcept;
+    void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
+    [[nodiscard]] std::uint8_t effect_sandbox_mode() const noexcept;
+    void set_capability_tenant_id(std::uint64_t tenant) noexcept { capability_tenant_id_ = tenant; }
+    [[nodiscard]] std::uint64_t capability_tenant_id() const noexcept {
+        return capability_tenant_id_;
+    }
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with

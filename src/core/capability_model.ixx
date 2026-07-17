@@ -1,4 +1,5 @@
-// capability_model.ixx — Issues #1180/#1187/#1192 Phase 1: Capability + Effect scaffold.
+// capability_model.ixx — Issues #1180/#1187/#1192/#1565: Capability + Effect model.
+// Full check_and_record_effect lives in capability_model.hh (header form).
 
 module;
 
@@ -8,9 +9,9 @@ import std;
 
 export namespace aura::core::capability {
 
-inline constexpr int kCapabilityModelPhase = 1;
+inline constexpr int kCapabilityModelPhase = 2;
+inline constexpr int kCapabilityModelIssue = 1565;
 
-// First-class effects bound to capabilities (Phase 1 enum; grant matrix follows).
 enum class Effect : std::uint16_t {
     None = 0,
     Read = 1 << 0,
@@ -30,6 +31,7 @@ enum class Effect : std::uint16_t {
     return (static_cast<std::uint16_t>(set) & static_cast<std::uint16_t>(bit)) != 0;
 }
 
+// Layout-stable core fields (name/effects/tenant_id).
 struct CapabilityGrant {
     std::string_view name;
     Effect effects = Effect::None;

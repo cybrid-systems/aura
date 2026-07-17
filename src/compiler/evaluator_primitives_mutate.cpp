@@ -333,10 +333,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // by comparing outermost-wrap counter before/after.
     auto add_mutate = [&](std::string name, auto fn) {
         add(std::move(name), [&ev, mev, fn](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #676: legacy string capability gate.
             if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapMutate) &&
                 !ev.has_capability(aura::compiler::security::kCapWildcard)) {
                 ev.bump_capability_denial();
                 return mev("capability-denied", "mutate capability required in sandbox mode");
+            }
+            // Issue #1565: effect matrix + provenance audit (Strict always; Restricted when
+            // sandboxed).
+            {
+                using aura::compiler::security::kEffectMutate;
+                if (!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate", 0,
+                                                ev.capability_tenant_id(), 0)) {
+                    return mev("capability-denied",
+                               "mutate effect denied by capability effect model (#1565)");
+                }
             }
             std::uint64_t wraps_before = 0;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
