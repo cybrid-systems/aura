@@ -4579,9 +4579,10 @@ public:
     // entry point.
     int request_gc_safepoint() noexcept {
         bump_gc_safepoint_request();
-        // Issue #1489 / #651 AC2: defer while PanicCheckpoint recovery
-        // window is open (process-wide arm or live panic_safe_source_).
-        if (aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint()) {
+        // Issue #1489 / #651 / #1581 AC2: defer while PanicCheckpoint
+        // recovery window is open (process-wide arm or live checkpoint).
+        if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint() ||
+            has_panic_checkpoint()) {
             bump_gc_safepoint_deferred();
             bump_gc_blocked_by_pending_panic();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))

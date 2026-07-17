@@ -578,11 +578,12 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     if (!marks)
         return nullptr;
 
-    // Issue #1489: skip destructive reclaim while a PanicCheckpoint
-    // recovery window is open (process-wide gc_hooks depth or live
-    // panic_safe_source_ on this evaluator). Re-pin path remains
-    // available via on_arena_compact_hook after the window closes.
-    if (aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint()) {
+    // Issue #1489 / #1581: skip destructive reclaim while a
+    // PanicCheckpoint recovery window is open (process-wide gc_hooks
+    // depth or live panic_safe_source_ on this evaluator). Re-pin
+    // path remains available via on_arena_compact_hook after the
+    // window closes.
+    if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint() || has_panic_checkpoint()) {
         aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);

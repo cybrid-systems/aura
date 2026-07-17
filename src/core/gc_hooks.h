@@ -138,10 +138,10 @@ inline void note_safepoint_wait_while_mutation(std::uint64_t wait_us) noexcept {
     return g_safepoint_wait_while_mutation_held_count.load(std::memory_order_relaxed);
 }
 
-// ── Pending PanicCheckpoint GC defer (Issue #1489 / #651) ───
+// ── Pending PanicCheckpoint GC defer (Issue #1489 / #651 / #1581) ───
 // Process-wide depth: armed when an Evaluator holds a live
 // PanicCheckpoint (save) and released on commit/restore.
-// Scheduler GCCollector::collect and Evaluator::compact_sweep
+// Scheduler GCCollector::request/collect and Evaluator::compact_sweep
 // consult this so STW sweep does not reclaim pinned COW /
 // StableNodeRef / EnvFrame state during the recovery window.
 // Depth (not a bool) so nested evaluators / multi-checkpoint
@@ -152,6 +152,13 @@ inline std::atomic<std::uint32_t> g_gc_defer_pending_panic_depth{0};
 inline std::atomic<std::uint64_t> g_gc_defer_pending_panic_signals{0};
 // compact_sweep / collect aborted because defer was armed.
 inline std::atomic<std::uint64_t> g_gc_sweep_skipped_pending_panic{0};
+// Issue #1581: GCCollector::request() refused because defer was armed
+// (scheduler-facing early-out before arming gc_in_progress).
+inline std::atomic<std::uint64_t> g_gc_request_deferred_pending_panic{0};
+// Provenance of the last scheduler defer signal (fiber id + checkpoint
+// epoch). Written by send_defer_gc_signal; read by tests/metrics.
+inline std::atomic<std::uint64_t> g_gc_defer_last_fiber_id{0};
+inline std::atomic<std::uint64_t> g_gc_defer_last_checkpoint_epoch{0};
 
 inline void arm_gc_defer_pending_panic() noexcept {
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
@@ -182,12 +189,43 @@ inline void note_gc_defer_pending_panic_signal() noexcept {
     return g_gc_defer_pending_panic_signals.load(std::memory_order_relaxed);
 }
 
+// Issue #1581: scheduler-facing defer signal. Records fiber/epoch
+// provenance so GCCollector and observability can attribute skips.
+// Always bumps the signal counter; callers still arm depth separately.
+inline void send_defer_gc_signal(std::uint64_t fiber_id, std::uint64_t checkpoint_epoch) noexcept {
+    g_gc_defer_last_fiber_id.store(fiber_id, std::memory_order_relaxed);
+    g_gc_defer_last_checkpoint_epoch.store(checkpoint_epoch, std::memory_order_relaxed);
+    note_gc_defer_pending_panic_signal();
+}
+
+[[nodiscard]] inline std::uint64_t gc_defer_last_fiber_id() noexcept {
+    return g_gc_defer_last_fiber_id.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t gc_defer_last_checkpoint_epoch() noexcept {
+    return g_gc_defer_last_checkpoint_epoch.load(std::memory_order_relaxed);
+}
+
 inline void note_gc_sweep_skipped_pending_panic() noexcept {
     g_gc_sweep_skipped_pending_panic.fetch_add(1, std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline std::uint64_t gc_sweep_skipped_pending_panic() noexcept {
     return g_gc_sweep_skipped_pending_panic.load(std::memory_order_relaxed);
+}
+
+inline void note_gc_request_deferred_pending_panic() noexcept {
+    g_gc_request_deferred_pending_panic.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t gc_request_deferred_pending_panic() noexcept {
+    return g_gc_request_deferred_pending_panic.load(std::memory_order_relaxed);
+}
+
+// True when compact_sweep / collect / request must skip destructive GC.
+// Alias kept for scheduler call sites (#1581 AC naming).
+[[nodiscard]] inline bool should_defer_compact_for_pending_checkpoint() noexcept {
+    return gc_deferred_for_pending_panic();
 }
 
 // ── Arena auto-compact notification (Issue #743) ────────────
