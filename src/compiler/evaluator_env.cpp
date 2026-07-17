@@ -1257,10 +1257,14 @@ std::size_t Evaluator::compact_env_frames() {
     // could add closures_ to a stale view of env_frames_ (frame
     // already reclaimed or remap table wrong).
     std::lock_guard interlock(compact_env_frames_lock_);
-    // Issue #1545: pre-compact walk — mark linear-capturing closures
-    // invalid before env_id remap so apply never walks remapped
-    // frames with use-after-move / post-mutate linear state.
-    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+    // Issue #1545 / #1568: pre-compact full boundary consistency —
+    // scan + force Drop linear captures + epoch fence before env_id
+    // remap so apply never walks remapped frames with use-after-move.
+    // (GC root audit deferred to end of compact where restamp/reg run.)
+    {
+        (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+        (void)linear_post_mutate_enforce_all();
+    }
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {

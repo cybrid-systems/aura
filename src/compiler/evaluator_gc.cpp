@@ -372,49 +372,158 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
     return ok;
 }
 
-void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
-    // Issue #1557: proactive live-closure linear scan before the
-    // epoch probe — mark Moved/linear captures invalid (bridge_epoch=0)
-    // so apply_closure takes safe_fallback after steal, not only after
-    // invalidate_function / compact. only_if_moved=false: any linear
-    // capture is force-invalidated across the steal boundary (parity
-    // with invalidate_function scan). Locks are taken inside the scan.
-    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
-                                                 /*only_if_moved=*/false);
+void Evaluator::record_linear_violation_audit(std::uint8_t path, std::uint8_t reason,
+                                              std::uint32_t env_id,
+                                              std::uint64_t closure_id) noexcept {
+    const auto seq = linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
+    auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+    slot.seq = seq;
+    slot.path = path;
+    slot.reason = reason;
+    slot.epoch = current_bridge_epoch();
+    slot.defuse_version = defuse_version_snapshot();
+    slot.env_id = env_id;
+    slot.closure_id = closure_id;
+    linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
+}
 
-    const auto current_ver = defuse_version_snapshot();
-    const auto current_bridge = current_bridge_epoch();
-    bool violation = false;
+void Evaluator::force_drop_or_mark_invalid(ClosureId id) noexcept {
+    std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    auto it = closures_.find(id);
+    if (it == closures_.end())
+        return;
+    if (it->second.bridge_epoch == 0)
+        return;
+    it->second.bridge_epoch = 0;
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+        m->linear_live_closures_marked_invalid_total.fetch_add(1, std::memory_order_relaxed);
+        m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+    record_linear_violation_audit(kLinearGcRootAuditManual, kLinearViolReasonForceDrop,
+                                  static_cast<std::uint32_t>(it->second.env_id),
+                                  static_cast<std::uint64_t>(id));
+}
+
+// Issue #1568: single entry for mutation / compact / JIT / fiber / Guard
+// consistency — scan + enforce_all + epoch fence + GC root audit.
+Evaluator::LinearBoundaryEnforceResult
+Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_linear) noexcept {
+    LinearBoundaryEnforceResult out;
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (m)
+        m->linear_boundary_consistency_total.fetch_add(1, std::memory_order_relaxed);
+
+    // 1) Scan live closures; force Drop (bridge_epoch=0) on linear / Moved.
+    const auto scan = scan_live_closures_for_linear_captures(
+        /*mark_invalid=*/true, /*only_if_moved=*/!mark_all_linear);
+    out.closures_scanned = scan.examined;
+    out.marked_invalid = scan.marked_invalid;
+    out.moved_violations = scan.with_moved_capture;
+    if (scan.with_moved_capture > 0 || scan.marked_invalid > 0)
+        out.all_safe = false;
+    // Provenance audit for Moved captures marked this scan.
+    if (scan.with_moved_capture > 0) {
+        record_linear_violation_audit(path, kLinearViolReasonMoved, 0, 0);
+    }
+
+    // 2) EnvFrame SoA sweep — use-after-move intercept.
+    const auto sweep = linear_post_mutate_enforce_all();
+    out.frames_checked = sweep.frames_checked;
+    if (!sweep.all_safe) {
+        out.all_safe = false;
+        if (m)
+            m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+        record_linear_violation_audit(path, kLinearViolReasonMoved, 0, 0);
+    }
+
+    // 3) Epoch fence: non-zero but stale bridge_epoch → force Drop.
+    //    Dual-check EnvFrame.version_ under defuse snapshot.
     {
-        // Scoped locks: release before #1543 audit (collect takes
-        // closures_mtx_ again; shared_mutex is not recursive).
+        const auto cur_bridge = current_bridge_epoch();
+        const auto cur_ver = defuse_version_snapshot();
+        // Lock order: closures unique → env shared (same as scan_live).
+        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
-        for (const auto& [id, cl] : closures_) {
-            (void)id;
+        for (auto& [id, cl] : closures_) {
             if (cl.bridge_epoch == 0)
                 continue;
-            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-                continue;
-            const auto& fr = env_frames_[cl.env_id];
-            if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                                 current_bridge)) {
-                violation = true;
-                break;
+            bool drop = false;
+            std::uint8_t reason = kLinearViolReasonEpochStale;
+            if (cl.bridge_epoch != cur_bridge) {
+                drop = true;
+            } else if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+                const auto& fr = env_frames_[cl.env_id];
+                // Stale frame version under concurrent mutate/compact.
+                if (fr.version_ != INVALID_VERSION && fr.version_ < cur_ver) {
+                    // Only force-drop if frame has linear state (avoid
+                    // over-invalidating pure non-linear captures).
+                    bool has_linear = false;
+                    for (const auto s : fr.bindings_linear_ownership_state_) {
+                        if (s != linear_rt::Untracked) {
+                            has_linear = true;
+                            break;
+                        }
+                    }
+                    if (has_linear) {
+                        drop = true;
+                        reason = kLinearViolReasonEpochStale;
+                    }
+                }
             }
+            if (!drop)
+                continue;
+            cl.bridge_epoch = 0;
+            ++out.epoch_fence_hits;
+            ++out.marked_invalid;
+            out.all_safe = false;
+            if (m) {
+                m->linear_epoch_fence_enforce_total.fetch_add(1, std::memory_order_relaxed);
+                m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->linear_live_closures_marked_invalid_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
+            // Record under locks is fine (audit ring is independent).
+            const auto seq = linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
+            auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+            slot.seq = seq;
+            slot.path = path;
+            slot.reason = reason;
+            slot.epoch = cur_bridge;
+            slot.defuse_version = cur_ver;
+            slot.env_id = static_cast<std::uint32_t>(cl.env_id);
+            slot.closure_id = static_cast<std::uint64_t>(id);
+            linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+            if (m)
+                m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+
+    // 4) GC root registration consistency audit (monotonicity + balance).
+    (void)run_linear_gc_root_audit(path);
+
+    // 5) Mirror issue metrics aliases used by query surface.
+    if (m) {
+        // linear_post_mutate_enforcements already bumped per-frame in enforce;
+        // also bump the aggregate total once for boundary entry visibility.
+        m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return out;
+}
+
+void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
+    // Issue #1557 / #1568: full boundary consistency (scan all linear +
+    // epoch fence + enforce_all + GC root audit).
+    const auto r =
+        enforce_linear_boundary_consistency(kLinearGcRootAuditFiberSteal, /*mark_all_linear=*/true);
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
-    record_linear_gc_probe(*this, violation, site);
-    // Issue #673: cross-module correlation — when the steal
-    // probe actually caught a violation, bump the
-    // "ownership-violation-during-steal" correlation counter.
-    // Safe to call with compiler_metrics_ == nullptr (no-op).
-    if (violation) {
+    record_linear_gc_probe(*this, !r.all_safe, site);
+    if (!r.all_safe) {
         bump_runtime_observability_steal_ownership_violation_correlated();
-
-        // Issue #1525: fiber-steal path is a multi-fiber race surface.
         if (m) {
             m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
             m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
@@ -422,8 +531,7 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     }
     // Issue #1473 / #1497: unified auto-restamp at fiber-steal time.
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
-    // Issue #1543: fiber-steal mutation path audit.
-    (void)run_linear_gc_root_audit(kLinearGcRootAuditFiberSteal);
+    // Note: GC root audit already ran inside enforce_linear_boundary_consistency.
 }
 
 void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
