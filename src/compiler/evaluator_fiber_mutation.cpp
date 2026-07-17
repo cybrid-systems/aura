@@ -1057,6 +1057,8 @@ extern "C" void aura_evaluator_bump_mutation_steal_attempt() {
 }
 
 // Issue #485: transfer mutation stack on Fiber::resume.
+// Issue #1490: transfer_mutation_stack_to_current_fiber now also
+// runs refresh_stale_frames_after_steal + probe_and_repin_linear.
 extern "C" void aura_evaluator_resume_fiber_migration() {
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
@@ -1068,6 +1070,18 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
     // Issue #818: steal/resume auto-refresh of Workspace-active StableRefs.
     // Marks that migration completed with provenance-aware restamp hooks.
     ev->bump_stable_ref_steal_auto_refresh();
+}
+
+// Issue #1490: post-yield / post-resume refresh (called from Fiber::resume
+// after g_fiber_resume_validate_). Ensures EnvFrame/bridge_epoch stay
+// consistent after a slice even when the pre-swap migration path ran
+// under a different worker.
+extern "C" void aura_evaluator_post_resume_refresh() {
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    (void)ev->refresh_stale_frames_after_steal(/*hint_env_id=*/0, /*expected_epoch=*/0);
+    ev->probe_and_repin_linear_on_steal();
 }
 
 // Issue #683: linear ownership enforcement on work-steal.
@@ -1091,7 +1105,8 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     if (!ev)
         return;
     ev->probe_arena_auto_policy_on_fiber_transition();
-    ev->probe_linear_ownership_on_fiber_steal();
+    // Issue #1490: full linear + re-pin path (includes probe_linear).
+    ev->probe_and_repin_linear_on_steal();
     ev->bump_steal_linear_probe_on_success();
     ev->bump_concurrent_safety_steal_boundary_success();
     // Issue #1127: paired snapshot under acquire fence.
@@ -1102,6 +1117,97 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
         aura_aot_record_deopt_on_steal();
         ev->bump_concurrent_safety_aot_reload_at_guard();
     }
+}
+
+// Issue #1490: refresh EnvFrame.version_ / bridge_epoch after fiber steal.
+// See declaration in evaluator.ixx. Implementation walks live closures,
+// refreshes stale frames, repairs dual-path drift, optionally compact.
+std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_id,
+                                                        std::uint64_t expected_epoch) noexcept {
+    post_steal_refresh_count_.fetch_add(1, std::memory_order_relaxed);
+    const auto current_defuse = defuse_version_snapshot();
+    const auto current_bridge = current_bridge_epoch();
+    const auto epoch_target = expected_epoch != 0 ? expected_epoch : current_bridge;
+
+    std::size_t refreshed = 0;
+    std::size_t version_mismatch = 0;
+    std::size_t bridge_mismatch = 0;
+    std::size_t invalid_or_oob = 0;
+    bool need_compact = false;
+
+    {
+        // Shared locks while inspecting; refresh_stale_frame_in_walk needs
+        // the env shared lock held by the caller contract.
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
+
+        auto consider_frame = [&](EnvId id) {
+            if (id == NULL_ENV_ID)
+                return;
+            if (id >= env_frames_.size()) {
+                ++invalid_or_oob;
+                need_compact = true;
+                return;
+            }
+            const EnvFrame& fr = env_frames_[id];
+            if (fr.version_ == INVALID_VERSION) {
+                ++invalid_or_oob;
+                need_compact = true;
+                return;
+            }
+            if (fr.version_ < current_defuse) {
+                ++version_mismatch;
+                refresh_stale_frame_in_walk(id, "refresh_stale_frames_after_steal");
+                ++refreshed;
+            }
+        };
+
+        if (hint_env_id != 0 && hint_env_id != static_cast<std::uint64_t>(NULL_ENV_ID))
+            consider_frame(static_cast<EnvId>(hint_env_id));
+
+        for (const auto& [cid, cl] : closures_) {
+            (void)cid;
+            if (cl.bridge_epoch != 0) {
+                // Prefer current epoch; honor explicit expected_epoch when set.
+                if (is_bridge_stale(cl.bridge_epoch, current_bridge) ||
+                    (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
+                    ++bridge_mismatch;
+            }
+            consider_frame(cl.env_id);
+        }
+    }
+
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics());
+    if (version_mismatch > 0 || bridge_mismatch > 0) {
+        if (m) {
+            m->envframe_version_mismatch_post_steal_total.fetch_add(
+                version_mismatch + bridge_mismatch, std::memory_order_relaxed);
+            if (refreshed > 0)
+                m->envframe_dualpath_repair_total.fetch_add(refreshed, std::memory_order_relaxed);
+            if (invalid_or_oob > 0)
+                m->envframe_cross_fiber_stale_total.fetch_add(invalid_or_oob,
+                                                              std::memory_order_relaxed);
+        }
+        bump_envframe_concurrent_steal_resync();
+    }
+
+    // Heavy path: reclaim dead frames / rewrite orphan env_ids when
+    // OOB or INVALID frames were observed (true drift, not soft stale).
+    if (need_compact) {
+        (void)compact_env_frames();
+        if (m)
+            m->envframe_dualpath_repair_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    return refreshed;
+}
+
+void Evaluator::probe_and_repin_linear_on_steal() noexcept {
+    probe_linear_ownership_on_fiber_steal();
+    (void)re_pin_cow_children_from_snapshot();
+    // restamp already runs inside probe_linear for pins; keep explicit
+    // restamp for atomic-batch registry coverage on dual-path steal.
+    (void)restamp_pinned_stable_refs();
 }
 
 extern "C" {

@@ -27,6 +27,7 @@ static std::atomic<std::uint64_t> g_scheduler_init_aura_result_ok{0};
 static std::atomic<std::uint64_t> g_scheduler_init_aura_result_err{0};
 
 extern "C" void aura_evaluator_resume_fiber_migration();
+extern "C" void aura_evaluator_post_resume_refresh(); // Issue #1490
 
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
@@ -329,6 +330,11 @@ void Fiber::resume() {
         aura::messaging::g_transfer_panic_checkpoint) {
         aura::messaging::g_transfer_panic_checkpoint();
     }
+
+    // Issue #1490: force EnvFrame / bridge_epoch refresh + linear
+    // re-pin after resume validate (pairs with pre-swap migration
+    // refresh in aura_evaluator_resume_fiber_migration).
+    aura_evaluator_post_resume_refresh();
 
     if (g_fiber_setter_)
         g_fiber_setter_(prev_fiber_void);
