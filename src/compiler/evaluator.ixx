@@ -1970,13 +1970,18 @@ public:
     // Untracked). When mark_invalid: stamp Closure::bridge_epoch = 0 so
     // apply_closure takes safe_fallback (is_bridge_stale). Bumps
     // linear_live_closure_scans_total (+ marked_invalid_total).
+    // only_if_moved (#1486 mutation-boundary): mark only when any
+    // binding is Moved (use-after-move); invalidate/compact keep
+    // only_if_moved=false (mark all linear captures).
     struct LinearLiveClosureScanResult {
         std::size_t examined = 0;
         std::size_t with_linear_capture = 0;
+        std::size_t with_moved_capture = 0;
         std::size_t marked_invalid = 0;
     };
     LinearLiveClosureScanResult
-    scan_live_closures_for_linear_captures(bool mark_invalid = true) noexcept;
+    scan_live_closures_for_linear_captures(bool mark_invalid = true,
+                                           bool only_if_moved = false) noexcept;
     // Test/helper: register a Closure in closures_ (stamps bridge_epoch).
     ClosureId register_active_closure(Closure cl);
     // Test/helper: snapshot a live Closure by id (nullopt if missing).
@@ -10421,6 +10426,14 @@ public:
             if (outermost && !success)
                 ev_->bump_mutation_boundary_rollback();
             ev_->exit_mutation_boundary(success);
+            // Issue #1486 / #1545: post-boundary linear closed-loop.
+            // Scan live closures; mark invalid only when a capture is
+            // already Moved (use-after-move). Full mark-all stays on
+            // invalidate_function / compact / JIT ResourceTracker.
+            if (outermost) {
+                (void)ev_->scan_live_closures_for_linear_captures(
+                    /*mark_invalid=*/true, /*only_if_moved=*/true);
+            }
             // Issue #1500: after restamp_all_node_generations inside
             // exit_mutation_boundary, pinned StableNodeRefs still hold
             // the pre-boundary gen — batch refresh them under the

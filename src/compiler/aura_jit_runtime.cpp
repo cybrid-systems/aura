@@ -518,12 +518,23 @@ static std::vector<std::string> g_closure_names;
 static std::vector<std::uint64_t> g_closure_bridge_epochs;
 static std::vector<std::uint64_t> g_closure_defuse_versions;
 
+// Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
+// g_closure_freed[i]==1 means slot i is free (must not call/capture).
+static std::vector<std::uint8_t> g_closure_freed;
+static std::vector<size_t> g_closure_free_list;
+static std::atomic<std::uint64_t> g_closure_free_total{0};
+static std::atomic<std::uint64_t> g_closure_reuse_total{0};
+// Always-on table lock: workspace write hooks are NO-OPs until
+// aura_set_lock_hooks installs them (stdin / unit tests). Without
+// this mutex, concurrent free/alloc races (double-free).
+static std::shared_mutex g_closure_table_mtx;
+
 // Issue #1485 C2: per-closure provenance accessors (extern "C") for
 // JIT emit-side freshness probe infrastructure. Reads under shared lock
 // so concurrent alloc/free (which resize these vectors under
 // g_closure_table_mtx unique_lock) don't race. Out-of-range closure_id
-// returns 0 — the same convention as the inline read at
-// aura_jit_runtime.cpp:888 in the aura_closure_call C wrapper.
+// returns 0 — the same convention as the inline read in aura_closure_call.
+// Declared AFTER g_closure_table_mtx (fix-scope static must precede use).
 extern "C" std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
@@ -539,17 +550,6 @@ extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id
     const auto cid = static_cast<std::size_t>(closure_id);
     return cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
 }
-
-// Issue #1361: free bitmap + free-list for per-closure free + ID reuse.
-// g_closure_freed[i]==1 means slot i is free (must not call/capture).
-static std::vector<std::uint8_t> g_closure_freed;
-static std::vector<size_t> g_closure_free_list;
-static std::atomic<std::uint64_t> g_closure_free_total{0};
-static std::atomic<std::uint64_t> g_closure_reuse_total{0};
-// Always-on table lock: workspace write hooks are NO-OPs until
-// aura_set_lock_hooks installs them (stdin / unit tests). Without
-// this mutex, concurrent free/alloc races (double-free).
-static std::shared_mutex g_closure_table_mtx;
 
 // ── Closure inline cache (monomorphic, direct-mapped) ──
 // Caches the resolved function pointer + metadata for recently-accessed closures.

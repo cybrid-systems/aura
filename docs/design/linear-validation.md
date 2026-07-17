@@ -1,10 +1,11 @@
 # Linear Validation Pipeline (Post-Mutation)
 
-**Issues:** #1458, #1478, #1538
+**Issues:** #1486 (closed-loop parent), #1458, #1478, #1538–#1545
 
 ## Summary
 
-Post-mutation linear ownership safety is a **dual-half pipeline**:
+Post-mutation linear ownership safety is a **dual-half pipeline** plus
+**entry-point / invalidate / GC-root** enforcement (#1486):
 
 | Half | API | Layer | What it checks |
 |------|-----|-------|----------------|
@@ -12,6 +13,16 @@ Post-mutation linear ownership safety is a **dual-half pipeline**:
 | Runtime | `Evaluator::linear_post_mutate_enforce` / `linear_post_mutate_enforce_all` | EnvFrame | Captured linear values on live env frames (Moved scan via SoA; #1539) |
 
 Issue **#1538** unifies them so every successful `typed_mutate` / `typed_mutate_atomic` runs **both** halves and surfaces combined diagnostics on `MutationResult` and mutation-log JSON.
+
+### #1486 closed-loop map
+
+| AC | Surface | Shipped |
+|----|---------|---------|
+| 1 Entry validation | `apply_closure` / `materialize_call_env` / JIT Apply | #1478, #1542, #1540 |
+| 2 Invalidate + boundary scan | `scan_live_closures_for_linear_captures` on invalidate/compact/JIT + outermost Guard exit (Moved-only mark) | #1545, #1486 |
+| 3 GC root consistency | `docs/design/linear-gc-roots.md` + audit ring | #1543 |
+| 4 Metrics | `linear_post_mutate_enforcements`, `linear_ownership_violation_prevented` | #1478 |
+| 5 Tests | use-after-move + stress | #1539, #1544, `test_issue_1486` |
 
 ## Call graph
 
