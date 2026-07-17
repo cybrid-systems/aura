@@ -27,7 +27,7 @@ Fiber::resume()
                     └─ linear_post_mutate_enforce(hint) | enforce_all(if drift)
 ```
 
-## Metrics (`query:post-steal-closed-loop-stats`, schema **1592**)
+## Metrics (`query:post-steal-closed-loop-stats`, schema **1608** (lineage 1592))
 
 | Field | Source |
 |-------|--------|
@@ -41,6 +41,7 @@ Fiber::resume()
 
 ## Tests
 
+- `tests/test_fiber_resume_post_steal_1608.cpp` — **#1608** AC + stress  
 - `tests/test_post_steal_closed_loop_1592.cpp` — API + 1000-iter stress  
 - `tests/test_issue_1490.cpp`, `tests/test_issue_1497.cpp`,  
   `tests/test_fiber_resume_post_steal_refresh.cpp` — prior coverage  

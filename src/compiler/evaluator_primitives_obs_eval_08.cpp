@@ -235,12 +235,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1592: unified post-steal / resume closed-loop dashboard.
+    // Issue #1592 / #1608: unified post-steal / resume closed-loop dashboard.
     // Covers EnvFrame refresh, StableNodeRef restamp, linear enforcement.
+    // #1608: AC metric aliases (post_steal_refresh_count, stale_frame_prevented)
+    // + resume-path wire flags (Fiber::resume → aura_evaluator_post_resume_refresh).
     ObservabilityPrims::register_stats_impl(
         "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(40);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -267,8 +269,15 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
-            insert_kv("post-steal-refresh-count",
-                      static_cast<std::int64_t>(ev.get_post_steal_refresh_count()));
+            const std::int64_t refresh_count =
+                static_cast<std::int64_t>(ev.get_post_steal_refresh_count());
+            const std::int64_t mismatch =
+                m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            insert_kv("post-steal-refresh-count", refresh_count);
+            // #1608 AC4 names (underscore form)
+            insert_kv("post_steal_refresh_count", refresh_count);
             insert_kv("stable-ref-steal-auto-refresh-total",
                       static_cast<std::int64_t>(ev.get_stable_ref_steal_auto_refresh()));
             insert_kv("boundary-pinned-refresh-count",
@@ -283,18 +292,19 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                   : 0;
             insert_kv("linear-post-mutate-enforcements",
                       linear_enf > 0 ? linear_enf : linear_enf_alt);
-            insert_kv(
-                "envframe-version-mismatch-post-steal",
-                m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
-                        std::memory_order_relaxed))
-                  : 0);
+            insert_kv("envframe-version-mismatch-post-steal", mismatch);
+            // #1608 AC4: stale_frame_prevented == version/bridge drift detections
+            insert_kv("stale_frame_prevented", mismatch);
             insert_kv("envframe-dualpath-repair",
                       m ? static_cast<std::int64_t>(
                               m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
                         : 0);
             insert_kv("resume-path-wired", 1); // Fiber::resume → complete_post_resume_steal_refresh
-            insert_kv("issue", 1592);
-            insert_kv("schema", 1592);
+            insert_kv("refresh-stale-frames-helper-wired", 1);
+            insert_kv("linear-probe-repin-wired", 1);
+            insert_kv("post-resume-refresh-hook-wired", 1);
+            insert_kv("issue", 1608);
+            insert_kv("schema", 1608); // lineage 1592
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
