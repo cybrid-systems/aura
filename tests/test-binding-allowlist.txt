@@ -55,3 +55,15 @@ tests/test_env_symid_primary_path.cpp
 # (CAS-capped at 1024), should_adapt_safepoint_threshold() pressure
 # signal, request_gc_safepoint() force-defer when pressure > threshold.
 # If link fails: verification deferred to follow-up #1538 batch.
+# Issue #1485: stale-closure defense in depth — 2 new atomics on
+# CompilerMetrics (stale_closure_prevented, closure_epoch_mismatch_fallback)
+# + Evaluator accessor / bump helpers (C1: 3d7f861f) + per-closure
+# provenance accessors (aura_get_closure_bridge_epoch,
+# aura_get_closure_defuse_version, C2: 632add22) + C-side bridge wire
+# (service.ixx::bump_bridge_epoch now also calls aura_set_current_bridge_epoch,
+# C2-wire fix-up: 7b03974f). Test uses AOT bridge C-linkage API + Evaluator
+# atomic bump helpers; pure C-linkage + Evaluator helpers, no CompilerService,
+# no LLVM JIT. 10 ACs covering initial state, bump idempotency, out-of-range
+# provenance reads (negative + beyond table), and C-side bridge wire
+# roundtrip. If link fails: verification deferred to follow-up #1538 batch.
+tests/test_issue_1485.cpp
