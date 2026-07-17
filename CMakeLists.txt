@@ -158,6 +158,8 @@ target_sources(aura PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
+    # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
+    src/renderer/render_primitives.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
@@ -492,6 +494,8 @@ add_library(aura_test_objects STATIC
     # for Fiber::check_gc_safepoint + the
     # (query:orchestration-metrics) primitive.
     src/compiler/fiber_bridge.cpp
+    # Issue #1559: present_batch / draw_batch engine.
+    src/renderer/render_primitives.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp

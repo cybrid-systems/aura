@@ -110,12 +110,18 @@ int main() {
         CHECK(id && is_int(*id), "buf for metrics");
         const auto bid = as_int(*id);
         (void)cs.eval(std::format("(terminal-set-cell {} 0 0 88 9 0)", bid));
-        (void)cs.eval(std::format("(terminal-present-batch {})", bid));
+        auto p1 = cs.eval(std::format("(terminal-present-batch {})", bid));
+        CHECK(p1 && is_int(*p1) && as_int(*p1) > 0, "dirty present returns positive byte count");
         auto s = cs.eval("(hash-ref (engine:metrics \"query:production-sweep-1316-1320-stats\") "
                          "\"terminal-present-batch-total\")");
-        // Fallback: present returns non-negative bytes
+        (void)s;
+        // Issue #1559: clean present short-circuits (0 bytes); re-dirty for another full present.
+        auto p_skip = cs.eval(std::format("(terminal-present-batch {})", bid));
+        CHECK(p_skip && is_int(*p_skip) && as_int(*p_skip) == 0,
+              "clean present short-circuits → 0");
+        (void)cs.eval(std::format("(terminal-set-cell {} 1 0 89 9 0)", bid));
         auto p = cs.eval(std::format("(terminal-present-batch {})", bid));
-        CHECK(p && is_int(*p) && as_int(*p) > 0, "present returns positive byte count");
+        CHECK(p && is_int(*p) && as_int(*p) > 0, "re-dirty present returns positive byte count");
     }
 
     // Existing alias still works

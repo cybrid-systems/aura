@@ -5,6 +5,7 @@
 #define AURA_COMPILER_TERMINAL_BUFFER_REGISTRY_HH
 
 #include "renderer/batch_terminal.hh"
+#include "renderer/render_pass.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -22,6 +23,8 @@ namespace term_registry {
         std::int32_t w = 0;
         std::int32_t h = 0;
         std::vector<TermCell> cells;
+        // Issue #1559: per-buffer dirty region for present_batch short-circuit.
+        aura::renderer::DirtyRegion dirty{};
         mutable std::shared_mutex rwlock;
     };
 
