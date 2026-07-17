@@ -73,8 +73,17 @@ timeout, mailbox fan-in, concurrency cap, stats surface.
 Closure bodies are mutex-serialized for Evaluator safety; spawn/join/policy
 still use the C++ `parallel_orch` path (`Fiber::join`, concurrency gate).
 
+## Stress (#1602)
+
+E2E concurrent mutate + parallel agent + join + GC:
+
+- Suite: `tests/suite/parallel_orchestration_stress.aura`
+- C++: `tests/test_parallel_orchestration_stress_1602.cpp`
+- Design: `docs/design/parallel-orchestration-stress-1602.md`
+
 ## Related
 
 - #1584 Fiber::join  
 - #1585 MultiFiberMailbox  
 - #1587 Aura `(parallel-intend)` primitive (this surface)
+- #1602 parallel orchestration stress suite

@@ -1,0 +1,190 @@
+; suite/parallel_orchestration_stress.aura — Issue #1602
+; End-to-end stress: concurrent mutate + parallel-intend + fiber join + GC.
+;
+; Covers production orch stack from #1584–#1588 / #1595 / #1597 / #1600:
+;   (parallel-intend …)  Fiber::join batch path under max-concurrency
+;   mutate:set-body / set-code + eval-current under parallel thunks
+;   fiber:spawn / fiber:join nested inside and outside batches
+;   (gc-heap) mid-flight + post-batch survival
+;   query:parallel-orch-stats + query:ai-closedloop-readiness-stats
+;
+; Run:
+;   ./build/aura --load tests/suite/parallel_orchestration_stress.aura
+;   ./build.py test suite   # picks up all suite/*.aura (timeout 120s)
+;
+; Pass criteria: process exit 0 (no crash) and printed PASS lines for
+; each section. C++ companion: tests/test_parallel_orchestration_stress_1602.cpp
+
+(require "std/test" all:)
+
+(define (section name ok?)
+  (display "[")(display name)(display "] ")
+  (if ok? (display "PASS\n") (display "FAIL\n"))
+  ok?)
+
+(define (safe-int h key default)
+  (let ((v (hash-ref h key default)))
+    (if (number? v) v default)))
+
+;; ── Seed function for mutate paths ───────────────────────────
+;; Prefer top-level define so the name is always in the env; also
+;; mirror into workspace so mutate:set-body / eval-current apply.
+(define (stress-f x) (+ x 1))
+(set-code "(define (stress-f x) (+ x 1))")
+(eval-current)
+(define seed-ok (number? (stress-f 0)))
+(section "seed-workspace" seed-ok)
+
+;; ── T1: parallel-intend basic batch ──────────────────────────
+(define t1
+  (parallel-intend
+    (vector (lambda () 1)
+            (lambda () 2)
+            (lambda () 3)
+            (lambda () (+ 10 20)))
+    :max-concurrency 2
+    :timeout-ms 15000
+    :fail-fast #f))
+(define t1-ok
+  (and (hash? t1)
+       (= (safe-int t1 "ok-count" -1) 4)
+       (string=? (hash-ref t1 "status" "") "ok")))
+(section "parallel-intend-basic" t1-ok)
+
+;; ── T2: concurrent mutate + eval + gc inside thunks ──────────
+;; Evaluator serializes body closures (#1587), but the batch still
+;; exercises spawn/join/concurrency gate + GC mid-batch.
+(define (mk-mutator n)
+  (lambda ()
+    (mutate:set-body "stress-f" (string-append "(+ x " (number->string n) ")"))
+    (eval-current)
+    (gc-heap)
+    (stress-f 0)))
+
+(define t2
+  (parallel-intend
+    (vector (mk-mutator 1)
+            (mk-mutator 2)
+            (mk-mutator 3)
+            (mk-mutator 4)
+            (lambda () (begin (gc-heap) (gc-heap) 1))
+            (lambda () (begin (gc-heap) 2))
+            (lambda () (fiber:join (fiber:spawn (lambda () 77))))
+            (lambda () (fiber:join (fiber:spawn (lambda () 88)))))
+    :max-concurrency 4
+    :timeout-ms 30000
+    :fail-fast #f))
+(define t2-ok
+  (and (hash? t2)
+       (>= (safe-int t2 "ok-count" -1) 6)
+       (or (string=? (hash-ref t2 "status" "") "ok")
+           (string=? (hash-ref t2 "status" "") "partial"))))
+(section "mutate-gc-fiber-batch" t2-ok)
+
+;; ── T3: larger concurrency stress (N=32) ─────────────────────
+(define (mk-id i)
+  (lambda ()
+    (if (= (modulo i 7) 0) (gc-heap) #t)
+    (if (= (modulo i 5) 0)
+        (begin
+          (mutate:set-body "stress-f" (string-append "(+ x " (number->string i) ")"))
+          (eval-current)
+          i)
+        i)))
+
+(define t3-tasks
+  (vector (mk-id 0)  (mk-id 1)  (mk-id 2)  (mk-id 3)
+          (mk-id 4)  (mk-id 5)  (mk-id 6)  (mk-id 7)
+          (mk-id 8)  (mk-id 9)  (mk-id 10) (mk-id 11)
+          (mk-id 12) (mk-id 13) (mk-id 14) (mk-id 15)
+          (mk-id 16) (mk-id 17) (mk-id 18) (mk-id 19)
+          (mk-id 20) (mk-id 21) (mk-id 22) (mk-id 23)
+          (mk-id 24) (mk-id 25) (mk-id 26) (mk-id 27)
+          (mk-id 28) (mk-id 29) (mk-id 30) (mk-id 31)))
+(define t3
+  (parallel-intend t3-tasks
+                   :max-concurrency 8
+                   :timeout-ms 45000
+                   :fail-fast #f
+                   :collect-errors #t))
+(define t3-ok
+  (and (hash? t3)
+       (>= (safe-int t3 "ok-count" -1) 28)
+       (<= (safe-int t3 "err-count" 99) 4)))
+(section "stress-32-tasks" t3-ok)
+
+;; ── T4: outer fiber join storm ───────────────────────────────
+(define f0 (fiber:spawn (lambda () 100)))
+(define f1 (fiber:spawn (lambda () 200)))
+(define f2 (fiber:spawn (lambda () 300)))
+(define f3 (fiber:spawn (lambda () 400)))
+(define jsum (+ (fiber:join f0) (fiber:join f1) (fiber:join f2) (fiber:join f3)))
+(define t4-ok (= jsum 1000))
+(section "fiber-join-storm" t4-ok)
+
+;; ── T5: orch:parallel-intend alias (#1588) ───────────────────
+(define t5
+  (orch:parallel-intend
+    (list (lambda () 1) (lambda () 2))
+    :timeout-ms 10000))
+(define t5-ok
+  (and (hash? t5) (>= (safe-int t5 "ok-count" -1) 2)))
+(section "orch-parallel-intend-alias" t5-ok)
+
+;; ── T6: metrics surfaces (sample ints BEFORE gc-heap) ────────
+;; FlatHashTable keys/values are heap-allocated; aggressive gc-heap
+;; can invalidate live hash handles — always copy out scalars first.
+(define po (engine:metrics "query:parallel-orch-stats"))
+(define cl (engine:metrics "query:ai-closedloop-readiness-stats"))
+(define po-schema (safe-int po "schema" -1))
+(define po-batches (safe-int po "batches" 0))
+(define po-joined (safe-int po "joined" 0))
+(define po-ok (safe-int po "ok" 0))
+(define cl-schema (safe-int cl "schema" -1))
+(define cl-orch-health (safe-int cl "orch-health-score" -1))
+(define cl-avg-join (safe-int cl "avg-join-latency-us" -1))
+;; Schema lineage always present; counters may be 0 if process-wide
+;; atomics were not linked in this binary path — still require schema.
+(define t6-ok
+  (and (hash? po)
+       (= po-schema 1586)
+       (hash? cl)
+       (>= cl-schema 1593)
+       (>= cl-orch-health 0)))
+(section "metrics-parallel-orch+closedloop" t6-ok)
+
+;; ── T7: binding survives post-stress GC ──────────────────────
+(gc-heap)
+(gc-heap)
+(define t7-ok (number? (stress-f 1)))
+(section "post-gc-binding" t7-ok)
+
+;; ── T8: re-query closed-loop after GC (fresh hash) ────────────
+(define cl2 (engine:metrics "query:ai-closedloop-readiness-stats"))
+(define cl2-schema (safe-int cl2 "schema" -1))
+(define cl2-health (safe-int cl2 "orch-health-score" -1))
+(define cl2-join (safe-int cl2 "avg-join-latency-us" -1))
+(define t8-ok
+  (and (hash? cl2)
+       (>= cl2-schema 1593)
+       (>= cl2-health 0)
+       (>= cl2-join 0)))
+(section "closedloop-readiness-keys" t8-ok)
+
+;; ── Summary ──────────────────────────────────────────────────
+(define all-ok
+  (and seed-ok t1-ok t2-ok t3-ok t4-ok t5-ok t6-ok t7-ok t8-ok))
+(display "\nparallel_orchestration_stress (#1602): ")
+(if all-ok (display "ALL PASS\n") (display "SOME FAIL\n"))
+(display "  parallel-orch schema=")(display po-schema)
+(display " batches=")(display po-batches)
+(display " joined=")(display po-joined)
+(display " ok=")(display po-ok)(newline)
+(display "  closedloop schema=")(display cl-schema)
+(display " orch-health=")(display cl-orch-health)
+(display " avg-join-us=")(display cl-avg-join)(newline)
+(if (>= po-batches 1)
+    (display "  note: process-wide orch batches advanced\n")
+    (display "  note: batches counter not advanced (batch result path still exercised)\n"))
+
+(if all-ok 1 (assert #f "parallel_orchestration_stress failed"))
