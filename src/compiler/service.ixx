@@ -4404,10 +4404,14 @@ public:
             // when present (finer grain ready for partial re-lower).
             it->second.mark_all_instruction_dirty();
             metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #598: post-mutate linear runtime enforcement hook
+            // Issue #598 / #1494: post-mutate linear runtime enforcement
             // on mutate:rebind / set-body paths (ir_cache_v2 dirty).
+            // Scan Moved captures so long-lived closures cannot apply
+            // through stale linear EnvFrame state after dirty mark.
             metrics_.linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
             metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
+            (void)evaluator_.scan_live_closures_for_linear_captures(
+                /*mark_invalid=*/true, /*only_if_moved=*/true);
             // Issue #1261: nested lambdas (irs[2..]) require full dirty
             // — body-only cascade would under-invalidate.
             if (it->second.irs.size() > 2) {
@@ -8417,10 +8421,13 @@ private:
         OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
 
-        // Issue #1545: pre-cascade walk of live TW closures capturing
-        // linear values — mark invalid (bridge_epoch=0) so apply takes
-        // safe_fallback before IR/JIT teardown races with linear state.
+        // Issue #1545 / #1494: pre-cascade walk of live TW closures
+        // capturing linear values — mark invalid (bridge_epoch=0) so
+        // apply takes safe_fallback before IR/JIT teardown races with
+        // linear state. Then EnvFrame enforce so Moved frames bump
+        // linear_ownership_violation_prevented (AC1 closed-loop).
         (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+        (void)evaluator_.linear_post_mutate_enforce_all();
 
         // Issue #166 Phase 1: bump the global mutation epoch under the lock.
         // Release ordering so apply_closure / JIT / interpreter paths that
@@ -9791,10 +9798,16 @@ public:
     // mutation_log JSON exposure.
     void apply_linear_post_mutate_pipeline_(MutationResult& res, std::uint64_t mutation_id) {
         const auto sweep = evaluator_.linear_post_mutate_enforce_all();
+        // Issue #1494: after EnvFrame Moved scan, actively mark live
+        // closures that capture Moved linear state so apply_closure
+        // takes safe_fallback (bridge_epoch=0) without waiting for
+        // a later invalidate_function.
+        const auto scan = evaluator_.scan_live_closures_for_linear_captures(
+            /*mark_invalid=*/true, /*only_if_moved=*/true);
         res.linear_post_mutate_enforced = true;
         res.linear_post_mutate_frames_checked = sweep.frames_checked;
-        res.linear_post_mutate_safe = sweep.all_safe;
-        res.linear_post_mutate_status = sweep.all_safe ? "Ok" : "Unsafe";
+        res.linear_post_mutate_safe = sweep.all_safe && scan.with_moved_capture == 0;
+        res.linear_post_mutate_status = res.linear_post_mutate_safe ? "Ok" : "Unsafe";
         if (mutation_id > 0) {
             mutation_linear_status_[mutation_id] = res.linear_post_mutate_status;
         }
@@ -9813,16 +9826,17 @@ public:
         }
         // When runtime half reports unsafe under Strict mode, surface as
         // failure if invariant path did not already fail.
-        if (!sweep.all_safe && invariant_check_mode_ == InvariantCheckMode::Strict && res.success) {
+        if (!res.linear_post_mutate_safe && invariant_check_mode_ == InvariantCheckMode::Strict &&
+            res.success) {
             res.success = false;
             res.error = "linear post-mutate enforce reported unsafe env frames";
         }
         metrics_.linear_post_mutate_pipeline_total.fetch_add(1, std::memory_order_relaxed);
-        if (!sweep.all_safe) {
+        if (!res.linear_post_mutate_safe) {
             metrics_.linear_post_mutate_pipeline_unsafe_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         }
-        // Issue #1543: typed_mutate path audit (after enforce sweep).
+        // Issue #1543: typed_mutate path audit (after enforce + scan).
         (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditTypedMutate);
     }
 
