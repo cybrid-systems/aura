@@ -10,6 +10,7 @@ orch:pipeline: Any Any -> Any
 orch:if: Any Any Any -> Any
 orch:retry: Any Any -> Any
 orch:parallel: Any Any -> Any
+orch:parallel-with-yield: Any Any -> Any
 orch:conduct: Any Any -> Any
 orch:role: Any Any -> Any
 orch:step*: Any -> Any

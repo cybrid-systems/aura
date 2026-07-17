@@ -6,6 +6,30 @@ Issue #250 made the batch **strongly atomic** at the generation /
 observability layer: intermediate per-op bumps are suppressed and
 consolidated into one commit-time bump.
 
+## Stdlib safety bridge (Issue #1553)
+
+Engine P0 mechanisms (`MutationBoundaryGuard::try_acquire` + quota
+#1547, safe yield #1504, arena quota #1546) are exposed to Agents via
+`lib/std/mutate.aura`:
+
+| API | Role |
+|-----|------|
+| `(mutate:boundary-depth)` | Guard nesting (0 = yield/steal safe) |
+| `(mutate:boundary-safe?)` | `#t` when depth==0 and not held |
+| `(mutate:safe-yield)` | Wraps `(ast:yield-at-boundary)` / safe-yield stats |
+| `(mutate:quota-ok?)` | Soft `resource:quota-check` probe |
+| `(mutate:safety-snapshot)` | Alist of boundary / yield / fiber / quota signals |
+| `(mutate:atomic-batch-safe ops [summary])` | Refuse if not boundary-safe; yield then atomic-batch |
+
+**Agent rule:** prefer `mutate:atomic-batch-safe` (or `std/agent`
+closed-loop, which already uses it) over raw `mutate:atomic-batch` in
+multi-fiber / orchestrator loops. Never call cooperative yield while a
+Guard is held — the engine skips (`skipped-held`); stdlib checks
+`boundary-safe?` first.
+
+See also `docs/design/agent-decision-metrics.md` (#1553 fold-ins) and
+`orch:parallel` / `orch:parallel-with-yield` in `lib/std/orchestrator.aura`.
+
 ## Strong atomicity guarantee
 
 When `(mutate:atomic-batch ops summary)` runs successfully:

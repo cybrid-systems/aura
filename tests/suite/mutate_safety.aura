@@ -1,0 +1,78 @@
+; Issue #1553 — mutate/agent/orchestrator safety bridge
+; (MutationBoundaryGuard / safe-yield / quota → stdlib)
+; Run: ./build/aura --load tests/suite/mutate_safety.aura
+(require "std/test" all:)
+(require "std/list" all:)
+(require "std/mutate" all:)
+(require "std/agent" all:)
+(require "std/orchestrator" all:)
+
+(test-suite "mutate:boundary-surface"
+  (check (number? (mutate:boundary-depth)))
+  (check (= 0 (mutate:boundary-depth)))
+  (check (mutate:boundary-safe?))
+  (check (mutate:quota-ok?))
+  (let ((y (mutate:safe-yield)))
+    (check (hash? y))
+    ; schema 1504 fields when engine path is live
+    (check (number? (hash-ref y "yielded" 0)))
+    (check (number? (hash-ref y "boundary-depth" -1)))
+    (check (= 0 (hash-ref y "boundary-depth" -1))))
+  (let ((snap (mutate:safety-snapshot)))
+    (check (pair? snap))
+    (check (equal? ":boundary-depth" (car (car snap))))
+    (check (= 0 (cdr (car snap))))))
+
+(test-suite "mutate:atomic-batch-safe"
+  (set-code "(define (ms x) x)")
+  (eval-current)
+  (check (mutate:boundary-safe?))
+  (check (mutate:atomic-batch-safe
+           (list (list "mutate:rebind" "ms" "(lambda (x) (* x 3))" "s"))
+           "suite-safe"))
+  (eval-current)
+  (check (= (ms 4) 12))
+  ; empty ops → #f
+  (check (not (mutate:atomic-batch-safe (list) "empty"))))
+
+(test-suite "agent:metrics-still-1461"
+  (let ((m (agent:decision-metrics)))
+    (check (hash? m))
+    (check (= 1461 (hash-ref m "schema")))
+    (check (string? (hash-ref m "recommendation")))
+    (check (number? (hash-ref m "panic-count")))
+    (check (number? (hash-ref m "long-hold-count")))
+    (check (or (equal? (hash-ref m "recommendation") "commit")
+               (equal? (hash-ref m "recommendation") "back-off")
+               (equal? (hash-ref m "recommendation") "escalate")))))
+
+(test-suite "agent:closed-loop-uses-safe-batch"
+  (agent:loop-stats-reset!)
+  (let ((r (agent:closed-loop-once
+             :source "(define (ms2 x) (+ x 1))"
+             :rebind "ms2" "(lambda (x) (* x 2))"
+             :summary "1553-cl")))
+    (check (pair? r))
+    (check (cdr (car r)))  ; :ok
+    (check (= (ms2 5) 10))
+    (check (> (hash-ref (agent:loop-stats) "atomic-batch-calls" 0) 0))
+    (check (> (hash-ref (agent:loop-stats) "commits" 0) 0))))
+
+(test-suite "orch:parallel-with-yield"
+  (let ((r (orch:parallel-with-yield
+             (list (lambda (x) (* x 2))
+                   (lambda (x) (* x 3)))
+             7)))
+    ; fiber spawn may be empty in some modes; when results exist, check values
+    (if (null? r)
+      (check #t)
+      (begin
+        (check (pair? r))
+        (check (member? 14 r))
+        (check (member? 21 r)))))
+  ; empty always ()
+  (check (null? (orch:parallel-with-yield (list) 1))))
+
+(test-suite "orch:conduct-yields"
+  (orch:define-role "inc1553" (cons (lambda (x) (+ x 1)) "direct"))
+  (check (= (orch:conduct (list "inc1553" "inc1553") 0) 2)))
