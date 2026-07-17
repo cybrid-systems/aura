@@ -6106,8 +6106,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261
     std::atomic<std::uint64_t> dep_graph_nested_lambda_full_dirty{0}; // #1261
-    // Issue #1514 / #1505: nested-lambda dependents marked body-only
-    // (irs[1]) instead of full-entry dirty.
+    // Issue #1514 / #1505: nested-lambda dependents marked via
+    // body-only + free-var scan of irs[2..N] (not full-entry dirty).
+    // Bumped once per dependent cascade hit on the targeted path.
     std::atomic<std::uint64_t> dep_graph_nested_lambda_targeted_dirty_total{0};
     std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0}; // #1261
     // Issue #1376: dep_graph_ record_dependency lock observability
