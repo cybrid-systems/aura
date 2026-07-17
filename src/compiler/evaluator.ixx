@@ -10752,48 +10752,57 @@ public:
         bool suppress_bump_ = false;
         // Issue #1253: outermost mutation hold-time tracking.
         bool is_outermost_ = false;
+        // Issue #1590: inert guard after legacy-ctor mutation-quota reject
+        // (no lock, no depth, dtor is a no-op). try_acquire returns AuraError
+        // instead of constructing inert.
+        bool inert_ = false;
         std::chrono::steady_clock::time_point enter_ts_{};
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
         [[nodiscard]] bool is_outermost() const noexcept { return is_outermost_; }
+        // Issue #1590: true when legacy ctor soft-failed on mutation quota.
+        [[nodiscard]] bool is_inert() const noexcept { return inert_; }
         // Issue #266: enable fine-grained column snapshots for the
         // next guard on this evaluator (call before construction).
         static void enable_fine_rollback(Evaluator& ev) noexcept {
             ev.request_fine_rollback_for_next_boundary();
         }
 
-        // Issue #1547 / #1556: typed-error factory — check_mutation_quota then
-        // construct. Replaces panic/throw paths with AuraResult. On pass, bumps
-        // mutation_quota_used_ by pending_count. Prefer this over the legacy ctor.
+        // Issue #1547 / #1556 / #1590: typed-error factory — check_mutation_quota
+        // then construct. Replaces panic/throw paths with AuraResult. On pass,
+        // bumps mutation_quota_used_ by pending_count. Prefer this over legacy ctor.
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                     bool fine_rollback = false) noexcept {
             if (auto err = ev.check_mutation_quota(pending_count))
                 return std::unexpected(std::move(*err));
             ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
-            // Construct via private AcquireTag path (not the deprecated public ctor).
+            // Construct via private AcquireTag path (quota already checked).
             return std::unique_ptr<MutationBoundaryGuard>(
-                new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{}));
+                new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
+                                          /*quota_prechecked=*/true));
         }
 
-        // Issue #1547 / #1556: legacy RAII ctor — does NOT enforce mutation quota.
-        // Prefer try_acquire() for typed ResourceQuotaExceeded (typed_mutate,
-        // eval_on_current, mutate:rebind / set-body hot paths).
+        // Issue #1547 / #1556 / #1590: legacy RAII ctor — now enforces mutation
+        // quota via soft-fail (success_flag=false, inert guard) because ctors
+        // cannot return AuraResult. Prefer try_acquire() for typed errors.
         // Marked [[deprecated]] per #1556 AC2; project uses
-        // -Wno-deprecated-declarations so remaining call-sites still compile
-        // while agents / new code are steered to try_acquire.
+        // -Wno-deprecated-declarations so remaining call-sites still compile.
         [[deprecated("use MutationBoundaryGuard::try_acquire for typed ResourceQuotaExceeded "
-                     "(#1547/#1556)")]]
+                     "(#1547/#1556/#1590)")]]
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag,
                               bool fine_rollback = false) noexcept
-            : MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{}) {}
+            : MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},
+                                    /*quota_prechecked=*/false) {}
 
     private:
         struct AcquireTag {};
         // Shared implementation for try_acquire + legacy ctor.
-        MutationBoundaryGuard(Evaluator& ev, bool* success_flag, bool fine_rollback,
-                              AcquireTag) noexcept
+        // quota_prechecked=true: caller already ran check_mutation_quota + bump.
+        // quota_prechecked=false (#1590 legacy): check here; on reject → inert_.
+        MutationBoundaryGuard(Evaluator& ev, bool* success_flag, bool fine_rollback, AcquireTag,
+                              bool quota_prechecked = true) noexcept
             : fine_rollback_(fine_rollback)
             , ev_(&ev)
             , flag_(success_flag)
@@ -10818,6 +10827,17 @@ public:
             // The depth is shared (static thread_local) so
             // nested guards in the same thread cooperate.
             lock_(ev.workspace_mtx_, std::defer_lock) {
+            if (!quota_prechecked) {
+                // Issue #1590: soft-fail mutation quota on legacy ctor path.
+                if (auto err = ev.check_mutation_quota(1)) {
+                    (void)err;
+                    inert_ = true;
+                    if (flag_)
+                        *flag_ = false;
+                    return;
+                }
+                ev.mutation_quota_used_.fetch_add(1, std::memory_order_relaxed);
+            }
             if (flag_)
                 *flag_ = true; // optimistic default
             // Issue #236 fix-up: thread_local depth counter
@@ -10879,8 +10899,8 @@ public:
 
     public:
         ~MutationBoundaryGuard() {
-            if (!ev_)
-                return;
+            if (!ev_ || inert_)
+                return; // Issue #1590: quota soft-reject never entered a boundary
             bool success = flag_ ? *flag_ : true;
             // exit_mutation_boundary runs under the lock for
             // the outermost guard; lockless for nested guards
