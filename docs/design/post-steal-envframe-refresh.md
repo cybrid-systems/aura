@@ -1,6 +1,7 @@
-# Post-steal EnvFrame / bridge_epoch refresh (#1490)
+# Post-steal EnvFrame / bridge_epoch refresh (#1490 / #1592)
 
-**Related:** #1479 (version/epoch sync), #1475 (`is_env_frame_stale`), #1489 (GC defer), #683 (linear probe)
+**Related:** #1479 (version/epoch sync), #1475 (`is_env_frame_stale`), #1489 (GC defer),
+#683 (linear probe), **#1592** (resume closed loop + query dashboard)
 
 ## Problem
 

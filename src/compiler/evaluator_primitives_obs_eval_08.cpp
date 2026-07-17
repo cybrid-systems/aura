@@ -234,6 +234,71 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
+    // Issue #1592: unified post-steal / resume closed-loop dashboard.
+    // Covers EnvFrame refresh, StableNodeRef restamp, linear enforcement.
+    ObservabilityPrims::register_stats_impl(
+        "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("post-steal-refresh-count",
+                      static_cast<std::int64_t>(ev.get_post_steal_refresh_count()));
+            insert_kv("stable-ref-steal-auto-refresh-total",
+                      static_cast<std::int64_t>(ev.get_stable_ref_steal_auto_refresh()));
+            insert_kv("boundary-pinned-refresh-count",
+                      static_cast<std::int64_t>(ev.get_boundary_pinned_refresh_count()));
+            const std::int64_t linear_enf =
+                m ? static_cast<std::int64_t>(
+                        m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t linear_enf_alt =
+                m ? static_cast<std::int64_t>(
+                        m->linear_post_mutate_enforcements.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("linear-post-mutate-enforcements",
+                      linear_enf > 0 ? linear_enf : linear_enf_alt);
+            insert_kv(
+                "envframe-version-mismatch-post-steal",
+                m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
+                        std::memory_order_relaxed))
+                  : 0);
+            insert_kv("envframe-dualpath-repair",
+                      m ? static_cast<std::int64_t>(
+                              m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("resume-path-wired", 1); // Fiber::resume → complete_post_resume_steal_refresh
+            insert_kv("issue", 1592);
+            insert_kv("schema", 1592);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #1564: unified StableNodeRef full-provenance enforcement stats.
     // Contract: all holders of StableNodeRef must call ensure_valid_or_refresh
     // (or validate_or_refresh) on query/mutate/GC/steal/JIT boundaries.
