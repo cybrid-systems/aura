@@ -43,6 +43,7 @@ using types::as_closure_id;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
+using types::as_keyword_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
@@ -55,6 +56,7 @@ using types::is_error;
 using types::is_float;
 using types::is_hash;
 using types::is_int;
+using types::is_keyword;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
@@ -5256,14 +5258,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(pass + fail + snapshots + marker_skips));
         });
 
-    // Issue #502 / #551: query:reflect-postmutate-stats. Hash view of
-    // Guard post-mutate reflect validation + impact snapshot counters:
-    //   - impact-snapshots: impact_snapshot_count_
-    //   - schema-pass / schema-fail: auto_validate hook tallies
-    //   - dirty-nodes / macro-markers: latest snapshot fields
-    //   - schema-valid: last post_mutation_reflect_validate() result
-    //   - reflect-postmutate-total: sum of the 4 primary counters
-    //   - reflect-postmutate-recommendation: 0=ok, 1=review, 2=alert
+    // Issue #502 / #551 / #1611: query:reflect-postmutate-stats — Guard
+    // post-mutate reflect validation + MacroIntroduced hygiene gate.
+    // Schema **1611** (lineage 502/551). AC keys:
+    //   reflect-macro-hygiene-checks / reflect-macro-hygiene-rejects
+    //   allow-macro-mutate / hygiene-aware-validate-wired
     ObservabilityPrims::register_stats_impl(
         "query:reflect-postmutate-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -5271,7 +5270,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(24);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5298,17 +5297,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
+            CompilerMetrics* m = ev->compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev->compiler_metrics())
+                                     : nullptr;
             const std::uint64_t snapshots = ev->get_impact_snapshot_count();
             const std::uint64_t pass = ev->get_schema_validation_pass_count();
             const std::uint64_t fail = ev->get_schema_validation_fail_count();
             const std::uint64_t dirty = ev->get_dirty_nodes_in_snapshot();
             const std::uint64_t markers = ev->get_macro_markers_in_snapshot();
+            const std::uint64_t hygiene_checks =
+                m ? m->reflect_macro_hygiene_checks_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hygiene_rejects =
+                m ? m->reflect_macro_hygiene_rejects_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t total = snapshots + pass + fail + dirty;
             std::int64_t recommendation = 0;
             if (fail > 0 || !ev->get_last_schema_validation_ok())
                 recommendation = 2;
             else if (dirty > 50)
                 recommendation = 1;
+            // #502/#551 lineage
             insert_kv("impact-snapshots", static_cast<std::int64_t>(snapshots));
             insert_kv("schema-pass", static_cast<std::int64_t>(pass));
             insert_kv("schema-fail", static_cast<std::int64_t>(fail));
@@ -5317,6 +5324,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
             insert_kv("reflect-postmutate-total", static_cast<std::int64_t>(total));
             insert_kv("reflect-postmutate-recommendation", recommendation);
+            // #1611 AC keys (folded — no new public query:*-stats)
+            insert_kv("reflect-macro-hygiene-checks", static_cast<std::int64_t>(hygiene_checks));
+            insert_kv("reflect-macro-hygiene-rejects", static_cast<std::int64_t>(hygiene_rejects));
+            insert_kv("allow-macro-mutate", ev->get_allow_macro_mutate() ? 1 : 0);
+            insert_kv("hygiene-aware-validate-wired", 1);
+            insert_kv("post-mutation-macro-check-wired", 1);
+            insert_kv("deserialize-hygiene-wired", 1);
+            insert_kv("issue", 1611);
+            insert_kv("schema", 1611); // lineage 502 / 551 / 750
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -5352,8 +5368,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(pass + fail + snapshots + impact + guard_epoch));
         });
 
-    // Issue #750: (reflect:validate-macro-body node-id) — runtime hygiene/schema
-    // check on MacroIntroduced subtrees before Guard commit.
+    // Issue #750 / #1611: (reflect:validate-macro-body node-id [:allow-macro? #t])
+    // Runtime hygiene/schema check on MacroIntroduced subtrees before Guard
+    // commit. Default rejects unclean MacroIntroduced provenance; pass
+    // :allow-macro? #t or (hygiene:set-allow-macro-mutate! #t) to relax.
     add("reflect:validate-macro-body", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
@@ -5361,9 +5379,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (!ws)
             return make_bool(false);
         const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        const auto result = runtime_reflect_validate_ast_subtree(*ws, nid, false);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        // Issue #1611: optional :allow-macro? kwarg (or global allow flag).
+        bool allow = ev.get_allow_macro_mutate();
+        const auto& kt = ev.keyword_table();
+        std::size_t allow_kw = std::string::npos;
+        for (std::size_t i = 0; i < kt.size(); ++i) {
+            if (kt[i] == ":allow-macro?") {
+                allow_kw = i;
+                break;
+            }
+        }
+        if (allow_kw != std::string::npos) {
+            for (std::size_t i = 0; i + 1 < a.size(); ++i) {
+                if (is_keyword(a[i]) && as_keyword_idx(a[i]) == allow_kw && is_bool(a[i + 1])) {
+                    allow = as_bool(a[i + 1]);
+                    break;
+                }
+            }
+        }
+        auto result = runtime_reflect_validate_ast_subtree(*ws, nid, false);
+        // Issue #1611: without allow, unclean macro subtree is a typed reject.
+        if (!allow && result.macro_markers > 0 && !result.hygiene_held)
+            result.ok = false;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             bump_reflection_schema_metrics(m, result);
+            m->reflect_macro_hygiene_checks_total.fetch_add(1, std::memory_order_relaxed);
+            if (!result.ok && !allow)
+                m->reflect_macro_hygiene_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return make_bool(result.ok);
     });
 

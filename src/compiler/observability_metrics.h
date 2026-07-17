@@ -5452,6 +5452,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> reflection_schema_violations_total{0};
     std::atomic<std::uint64_t> reflection_stale_validation_prevented_total{0};
     std::atomic<std::uint64_t> reflection_macro_provenance_held_total{0};
+    // Issue #1611: reflect.hh MacroIntroduced hygiene gate (post_mutation
+    // + auto_validate_with_marker path). Exposed via
+    // query:reflect-postmutate-stats schema 1611.
+    std::atomic<std::uint64_t> reflect_macro_hygiene_checks_total{0};
+    std::atomic<std::uint64_t> reflect_macro_hygiene_rejects_total{0};
     // Issue #688: graceful safe-fallback on GC/fiber linear probe violation.
     std::atomic<std::uint64_t> linear_typed_mutate_safe_fallbacks{0};
 
