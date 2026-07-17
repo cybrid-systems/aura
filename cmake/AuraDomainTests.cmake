@@ -249,6 +249,11 @@ aura_add_issue_test(test_render_hotpath_stability_under_mutation)
 aura_issue_test_link_llvm_jit(test_render_hotpath_stability_under_mutation)
 add_dependencies(all_test_issue_targets test_render_hotpath_stability_under_mutation)
 
+# Issue #1564: full StableNodeRef provenance enforcement across paths
+aura_add_issue_test(test_stable_ref_full_provenance_enforcement)
+aura_issue_test_link_llvm_jit(test_stable_ref_full_provenance_enforcement)
+add_dependencies(all_test_issue_targets test_stable_ref_full_provenance_enforcement)
+
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
 aura_issue_test_link_llvm_jit(test_render_ffi_hotpath)

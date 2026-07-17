@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/provenance_tracker.hh"
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
@@ -228,6 +229,74 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
             insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
             insert_kv("schema", 818);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1564: unified StableNodeRef full-provenance enforcement stats.
+    // Contract: all holders of StableNodeRef must call ensure_valid_or_refresh
+    // (or validate_or_refresh) on query/mutate/GC/steal/JIT boundaries.
+    ObservabilityPrims::register_stats_impl(
+        "query:stable-ref-provenance-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto snap = aura::core::provenance::snapshot_provenance_enforcement();
+            if (m) {
+                m->stable_ref_auto_refresh_total.store(snap.auto_refresh,
+                                                       std::memory_order_relaxed);
+                m->stable_ref_epoch_fence_hit_total.store(snap.epoch_fence_hit,
+                                                          std::memory_order_relaxed);
+                m->cross_layer_provenance_mismatch_total.store(snap.cross_layer_mismatch,
+                                                               std::memory_order_relaxed);
+            }
+            auto* ws = ev.workspace_flat();
+            const auto flat_auto = ws ? ws->stale_ref_auto_refresh_count() : 0;
+            auto* ht = FlatHashTable::create(24);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1564);
+            insert_kv("active", 1);
+            insert_kv("phase", snap.phase);
+            insert_kv("auto-refresh-policy", ev.stable_ref_auto_refresh_policy() ? 1 : 0);
+            insert_kv("stable-ref-auto-refresh-total",
+                      static_cast<std::int64_t>(snap.auto_refresh));
+            insert_kv("flat-stale-ref-auto-refresh", static_cast<std::int64_t>(flat_auto));
+            insert_kv("stable-ref-epoch-fence-hit-total",
+                      static_cast<std::int64_t>(snap.epoch_fence_hit));
+            insert_kv("cross-layer-provenance-mismatch-total",
+                      static_cast<std::int64_t>(snap.cross_layer_mismatch));
+            insert_kv("ensure-valid-calls", static_cast<std::int64_t>(snap.ensure_calls));
+            insert_kv("ensure-valid-success", static_cast<std::int64_t>(snap.ensure_success));
+            insert_kv("ensure-valid-fail", static_cast<std::int64_t>(snap.ensure_fail));
+            insert_kv("fiber-id-mismatch", static_cast<std::int64_t>(snap.fiber_mismatch));
+            insert_kv("policy-enforced", static_cast<std::int64_t>(snap.policy_enforced));
+            insert_kv("hot-path-auto-refresh", static_cast<std::int64_t>(snap.hot_path_refresh));
+            insert_kv("provenance-mismatch",
+                      static_cast<std::int64_t>(ev.get_provenance_mismatch()));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

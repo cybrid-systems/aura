@@ -199,6 +199,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:seva-longrunning-concurrent-slo",
     // Issue #818 — StableNodeRef full provenance + cross-COW enforcement
     "query:stable-ref-cross-cow-provenance-stats",
+    "query:stable-ref-provenance-stats",
     // Issues #809–#817 Phase 1 unified production/error/macro surfaces
     "query:error-handling-policy-stats",
     "query:fiber-scheduler-init-stats",

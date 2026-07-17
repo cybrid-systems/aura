@@ -51,6 +51,7 @@
 module;
 
 #include <cstring>
+#include "core/provenance_tracker.hh"
 
 module aura.core.ast;
 import std;
@@ -132,7 +133,7 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
     return ok;
 }
 
-// Issue #1500: full-provenance auto-refresh.
+// Issue #1500/#1564: full-provenance auto-refresh + process-wide enforcement counters.
 //
 // Prior behavior required is_valid_id_gen(id, gen, wrap_epoch) — i.e.
 // the slot still carried the *captured* gen. That fails after any
@@ -148,6 +149,11 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
 //
 // Hard failures (return false): NULL/OOR id, free slot, wrap_epoch
 // mismatch with a non-zero captured epoch (second wrap cycle).
+//
+// Contract (#1564): every refresh that restamps gen/cow is counted on
+// both FlatAST::stale_ref_auto_refresh and process-wide
+// provenance::stable_ref_auto_refresh_total. Epoch-fence style wrap
+// mismatches bump stable_ref_epoch_fence_hit_total (no restamp).
 bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     if (is_valid_in(ast)) {
         validate_with_provenance(ast);
@@ -156,11 +162,20 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     if (id == NULL_NODE || id >= ast.size())
         return false;
     // wrap_epoch == 0 means pre-#368 / brace-init legacy: allow
-    // refresh into the current wrap cycle. Non-zero mismatch is fatal.
-    if (wrap_epoch != 0 && wrap_epoch != ast.wrap_epoch())
+    // refresh into the current wrap cycle. Non-zero mismatch is fatal
+    // (epoch fence hit — second wrap cycle).
+    if (wrap_epoch != 0 && wrap_epoch != ast.wrap_epoch()) {
+        aura::core::provenance::record_epoch_fence_hit();
         return false;
+    }
     if (ast.is_free_slot(id) || !ast.is_live_node(id))
         return false;
+
+    // Cross-layer COW without pin: count mismatch before restamp.
+    if (!boundary_pinned && cow_epoch_at_capture != 0 &&
+        cow_epoch_at_capture != ast.workspace_cow_epoch()) {
+        aura::core::provenance::record_cross_layer_mismatch();
+    }
 
     // Preserve cross-fiber / cross-layer / pin provenance across refresh.
     const auto preserved_fiber = fiber_id;
@@ -185,13 +200,16 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     boundary_pinned = preserved_pin;
 
     ast.record_stale_ref_auto_refresh();
+    aura::core::provenance::record_auto_refresh();
     return is_valid_in(ast);
 }
 
 std::optional<NodeView> FlatAST::StableNodeRef::validate_or_refresh(FlatAST& ast) noexcept {
-    // Issue #1346: lock-free hot path — pure atomic reads of generation /
+    // Issue #1346/#1564: lock-free hot path — pure atomic reads of generation /
     // free-slot / provenance fields; no workspace_mtx_ acquisition.
     // Contended mutation paths still take MutationBoundaryGuard elsewhere.
+    // Contract: all EDSL/query/mutate paths that hold StableNodeRef must
+    // prefer this entry (or Evaluator::ensure_valid_or_refresh).
     if (!refresh_if_stale(ast))
         return std::nullopt;
     // Stale-refresh already bumped stale_ref_auto_refresh when remap needed;
