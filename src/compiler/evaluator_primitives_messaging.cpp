@@ -9,6 +9,7 @@ module;
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "serve/multi_fiber_mailbox.h"
+#include "serve/parallel_orch.h"
 #include "observability_metrics.h"
 #include "hash_meta.h"
 
@@ -285,6 +286,57 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("attaches", static_cast<std::int64_t>(attaches));
             insert_kv("phase", static_cast<std::int64_t>(kMultiFiberMailboxPhase));
             insert_kv("schema", 1585);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1586: process-global parallel_orch / parallel_intend stats.
+    // Full spawn/join/aggregate API is C++ (parallel_orch.h); agent EDSL
+    // surface for (parallel-intend ...) is #1587.
+    ObservabilityPrims::register_stats_impl(
+        "query:parallel-orch-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::serve::parallel_orch;
+            std::uint64_t batches = 0, spawned = 0, joined = 0, ok = 0, err = 0, ff = 0, to = 0,
+                          mb = 0;
+            snapshot_global(batches, spawned, joined, ok, err, ff, to, mb);
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("batches", static_cast<std::int64_t>(batches));
+            insert_kv("spawned", static_cast<std::int64_t>(spawned));
+            insert_kv("joined", static_cast<std::int64_t>(joined));
+            insert_kv("ok", static_cast<std::int64_t>(ok));
+            insert_kv("err", static_cast<std::int64_t>(err));
+            insert_kv("fail-fast-aborts", static_cast<std::int64_t>(ff));
+            insert_kv("timeouts", static_cast<std::int64_t>(to));
+            insert_kv("mailbox-posts", static_cast<std::int64_t>(mb));
+            insert_kv("phase", static_cast<std::int64_t>(kParallelOrchPhase));
+            insert_kv("schema", 1586);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

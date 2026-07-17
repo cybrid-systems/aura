@@ -5160,6 +5160,9 @@ aura_issue_test_link_llvm_jit(test_fiber_join)
 # Issue #1585: MultiFiberMailbox multi-attach / broadcast / backpressure.
 aura_add_issue_test(test_multi_fiber_mailbox)
 aura_issue_test_link_llvm_jit(test_multi_fiber_mailbox)
+# Issue #1586: parallel_orch / parallel_intend spawn+join+aggregate.
+aura_add_issue_test(test_parallel_orch)
+aura_issue_test_link_llvm_jit(test_parallel_orch)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
