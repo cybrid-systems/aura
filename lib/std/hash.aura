@@ -12,8 +12,11 @@
 
 (define (hash-set h k v) (hash-set! h k v) h)
 
-(define (hash-ref h k)
-  (hash-ref h k))
+; Note: hash-ref is the C++ primitive; do NOT redefine it here.
+; The previous (define (hash-ref h k) (hash-ref h k)) was a self-recursive
+; shadow that broke hash-ref for every importer of std/hash. Found via
+; surface audit 2026-07-17 (eval_flat path failed with "unbound variable: k"
+; because the body referenced the just-defined binding instead of the primitive).
 
 (define (hash-get h k)
   (hash-ref h k))
