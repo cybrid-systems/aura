@@ -25,4 +25,11 @@
   (string-append (hs 8) (hs 4) "4" (hs 3)
     (list->string (list (string-ref "89ab" (rnd 4)))) (hs 3) (hs 12)))
 
-(define (uuid-nil) "00000000-0000-0000-0000-000000000000")
+;; B-uuid-2026-07-18-A fix: wrap in let-bind so the string is
+;; NOT parsed as a doc-string by the module evaluator. Module-level
+;; (define (f) "literal") gets the literal treated as the function's
+;; doc-string (Common Lisp convention); the function body ends up
+;; empty and the call returns "". Let-binding forces a body expression
+;; that returns the literal at call time. Top-level (define (f) "...")
+;; outside of a require'd module is unaffected (different eval path).
+(define (uuid-nil) (let ((s "00000000-0000-0000-0000-000000000000")) s))
