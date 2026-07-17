@@ -11,12 +11,15 @@
 ./build.py build
 ./build.py gate              # 静态门栅 = CI job `gate`
 ./build.py gate --fix         # #1572：auto-regen docs/registry + lint/format --fix
+./build.py gate --scripts-only  # #1573：跨平台（跳过 clang-format；Windows CI）
 ./build.py test-registry --fix  # 仅刷新 docs/generated/test-registry.json
 ./build.py check              # gate + build + CI 测试矩阵
 ./build.py test unit          # test_ir
 ./build.py test integ         # .aura 端到端
 ./build.py bench --strict     # #1569：编译器流水线 benchmark SLO 硬门栅
 ```
+
+多平台 CI（Linux 生产门栅 + macOS core + Windows scripts）见 **[ci-platforms.md](ci-platforms.md)**（#1573）。
 
 ### 路径对照（Issue #1570 — 避免 404 / 幽灵模块）
 

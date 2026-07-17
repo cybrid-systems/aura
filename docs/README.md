@@ -7,6 +7,7 @@
 | 我想… | 去看 |
 |------|------|
 | macOS 开发 | [../README.md — Platform Notes](../README.md#platform-notes) |
+| CI 多平台 (Win/macOS) | [ci-platforms.md](ci-platforms.md) (#1573) |
 | 快速上手 | [tutorial.md](tutorial.md) |
 | 有哪些原语 | `(api-reference)` 或 [generated/primitives.md](generated/primitives.md) |
 | 新 primitive vs stdlib? | [design/primitive-governance-policy.md](design/primitive-governance-policy.md) · [decision-framework](design/primitive-vs-stdlib-decision-framework.md) |

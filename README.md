@@ -72,10 +72,13 @@ Aura 遵循三个原则：
 
 ## Platform Notes
 
-| 平台 | 核心功能 | 限制 |
-|------|---------|------|
-| **Linux** | 全功能可用 | — |
-| **macOS (Apple Silicon / Homebrew GCC)** | REPL、evaluator、IR、type-checker、JIT fallback 均可用 | `--serve-async`、`--concurrent-metrics`、`--serve-async-bench` 不可用（缺少 eventfd / epoll）；fiber scheduler 编译但不运行 |
+| 平台 | 核心功能 | 限制 | CI (#1573) |
+|------|---------|------|------------|
+| **Linux** | 全功能可用 | — | 生产门栅：`gate` + `build-test` + sanitizers + bench SLO |
+| **macOS (Apple Silicon / Homebrew GCC)** | REPL、evaluator、IR、type-checker、JIT fallback 均可用 | `--serve-async`、`--concurrent-metrics`、`--serve-async-bench` 不可用（缺少 eventfd / epoll）；fiber scheduler 编译但不运行 | `platform-gates` / macos-core（preset + REPL smoke；main 加 `test_ir`） |
+| **Windows** | 脚本/DX 工具链 | 原生 MSVC C++ **尚未** production-supported（C++26 modules + GCC contracts） | `platform-gates` / windows-scripts（`build.py gate --scripts-only`） |
+
+详情：[docs/ci-platforms.md](docs/ci-platforms.md)。
 
 macOS 构建需 Homebrew GCC ≥ 14（推荐 gcc@16，C++20 module 支持最完善）：
 
