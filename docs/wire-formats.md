@@ -547,14 +547,21 @@ See `docs/design/mutation-boundary-fairness.md` and
 
 ### AI closed-loop readiness (Issue #1593 / #1597)
 
-`query:ai-closedloop-readiness-stats` — schema **1599** (lineage 1597/1593/1499):
+`query:ai-closedloop-readiness-stats` — schema **1613** (lineage 1599/1597/1593/1499):
 `health-score`, `slo-breach`, `health-trend`, `action`, `recommendation`,
 sibling counters (quota, steal, post-steal, safe-yield), orchestration
 (`orch-health-score`, `join_latency_histogram`, `mailbox_backpressure_p99`,
 `parallel_task_throughput`, `orchestration_starvation_mitigated`,
-`adaptive-concurrency-recommended`), plus linear GC linkage
+`adaptive-concurrency-recommended`), linear GC linkage
 (`linear-gc-root-audit-checks`, `linear-live-closure-scans`,
-`mutation_stack_depth_histogram`). See `docs/design/ai-closedloop-readiness.md`.
+`mutation_stack_depth_histogram`), plus **#1613 macro hygiene submodule**
+(`macro-health-score`, `macro-hygiene-violations`, `macro-audit-blocked`, …).
+See `docs/design/ai-closedloop-readiness.md` and
+`docs/design/macro-hygiene-closedloop-health-1613.md`.
+
+`query:macro-hygiene-stats` — schema **1613** (lineage 1609/1501/486):
+consolidated MacroIntroduced hygiene health (`health-score`, `recommendation`,
+query skips, IR stamps, fiber repin, reflect gate, TypedMutationAudit trail).
 
 ---
 
@@ -655,7 +662,8 @@ See `docs/design/orch-resource-quota-1600.md`.
 
 | Surface | Schema | Role |
 |---------|--------|------|
-| `query:ai-closedloop-readiness-stats` | 1599 | `orch-health-score`, join latency, parallel throughput |
+| `query:ai-closedloop-readiness-stats` | 1613 | macro-health-score + orch + linear GC lineage |
+| `query:macro-hygiene-stats` | 1613 | Consolidated macro hygiene health + audit |
 | `query:mf-mailbox-stats` | 1585 | Mailbox depth / backpressure |
 | `query:post-steal-closed-loop-stats` | 1592 | Post-steal resume safety |
 

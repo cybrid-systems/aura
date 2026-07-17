@@ -33,6 +33,7 @@ enum class MutationKind : std::uint8_t {
     ReplaceValue = 3,
     RecordPatch = 4,
     Other = 5,
+    MacroHygiene = 6, // Issue #1613: hygiene-protected / macro-aware mutate
 };
 
 enum class AuditOutcome : std::uint8_t {
@@ -67,6 +68,10 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint32_t> strategy{static_cast<std::uint32_t>(AuditStrategy::Sampled)};
     std::atomic<std::uint32_t> sample_ratio{4}; // every Nth id when Sampled (N>=1)
     std::atomic<std::uint64_t> trail_seq{0};
+    // Issue #1613: macro hygiene audit trail (hygiene-protected blocks + allowed macro mutates).
+    std::atomic<std::uint64_t> macro_hygiene_events{0};
+    std::atomic<std::uint64_t> macro_hygiene_blocked{0};
+    std::atomic<std::uint64_t> macro_hygiene_allowed{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -124,6 +129,8 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline MutationKind classify_kind(std::string_view op) noexcept {
     if (op.empty())
         return MutationKind::Unknown;
+    if (op.find("hygiene") != std::string_view::npos || op.find("macro") != std::string_view::npos)
+        return MutationKind::MacroHygiene;
     if (op.find("replace-type") != std::string_view::npos || op == "replace-type")
         return MutationKind::ReplaceType;
     if (op.find("replace-value") != std::string_view::npos || op == "replace-value")
@@ -176,6 +183,26 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
         g_typed_mutation_audit_counters.rollbacks.fetch_add(1, std::memory_order_relaxed);
     if (outcome == AuditOutcome::Error)
         g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1613: always-on macro hygiene audit (bypasses Sampled gate so
+// blocked macro mutates are never lost from the trail).
+inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outcome,
+                                        std::uint32_t target_node = 0,
+                                        std::int64_t fiber_id = 0) noexcept {
+    g_typed_mutation_audit_counters.macro_hygiene_events.fetch_add(1, std::memory_order_relaxed);
+    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback)
+        g_typed_mutation_audit_counters.macro_hygiene_blocked.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.macro_hygiene_allowed.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    const auto prev = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    capture_audit_event(/*mutation_id=*/0, name, MutationKind::MacroHygiene,
+                        /*before_epoch=*/0, /*after_epoch=*/0, outcome, target_node,
+                        /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
+    set_strategy(prev);
 }
 
 // Convenience for mutation boundary integration.

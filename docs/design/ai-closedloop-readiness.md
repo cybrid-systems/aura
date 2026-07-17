@@ -55,10 +55,12 @@ Single high-frequency query for AI agents before/after self-mutation batches.
 | `adaptive-safepoint-recommended` | 1 when orchestrators should back off |
 | `adaptive-soft-triggers` | Times soft adapt ran (health &lt; 50) |
 | `adaptive-safepoint-threshold` | Current adaptive threshold |
-| `schema` | **1599** (Agents may still accept 1597 / 1593 / 1499) |
+| `schema` | **1613** (Agents may still accept 1599 / 1597 / 1593 / 1499) |
 | `linear-gc-root-audit-checks` | `#1543` audit invocations (#1599) |
 | `linear-live-closure-scans` | Proactive linear live-closure scans |
 | `mutation_stack_depth_histogram` | Sum of Guard depth hist buckets |
+| `macro-health-score` | Macro hygiene subscore 0–100 (#1613) |
+| `macro-hygiene-violations` / `macro-audit-*` | Macro submodule (#1613) |
 
 ### #1597 parallel orchestration
 

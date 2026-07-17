@@ -213,6 +213,11 @@ namespace {
                 // mutate without :allow-macro? / global opt-out.
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1613: TypedMutationAudit trail for macro hygiene block.
+                typed_audit::capture_macro_hygiene_audit(
+                    "hygiene-protected", typed_audit::AuditOutcome::Error,
+                    static_cast<std::uint32_t>(id),
+                    static_cast<std::int64_t>(aura_fiber_current_id()));
                 return mev("hygiene-protected",
                            "target node " + std::to_string(id) +
                                " was produced by a hygienic macro expansion; "

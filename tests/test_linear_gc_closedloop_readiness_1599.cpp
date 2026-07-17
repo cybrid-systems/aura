@@ -113,8 +113,8 @@ static void ac4_closedloop_readiness() {
     auto h = cs.eval("(engine:metrics \"query:ai-closedloop-readiness-stats\")");
     CHECK(h && is_hash(*h), "readiness hash");
     const auto schema = href(cs, "query:ai-closedloop-readiness-stats", "schema");
-    CHECK(schema == 1599 || schema == 1597 || schema == 1593 || schema == 1499,
-          "schema 1599 lineage");
+    CHECK(schema == 1613 || schema == 1599 || schema == 1597 || schema == 1593 || schema == 1499,
+          "schema 1613|1599 lineage");
     CHECK(href(cs, "query:ai-closedloop-readiness-stats", "health-score") >= 0 &&
               href(cs, "query:ai-closedloop-readiness-stats", "health-score") <= 100,
           "health-score");

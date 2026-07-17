@@ -15,6 +15,7 @@ module;
 #include "serve/multi_fiber_mailbox.h" // #1597 orch readiness
 #include "serve/parallel_orch.h"       // #1597 orch readiness
 #include "hash_meta.h"                 // FNV constants (#901)
+#include "typed_mutation_audit.h"      // Issue #1613 macro hygiene audit trail
 
 module aura.compiler.evaluator;
 
@@ -742,8 +743,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1470 / #1499 / #1593 / #1597 / #1599: query:ai-closedloop-readiness-stats —
-    // consolidated health for AI editing loops.
+    // Issue #1470 / #1499 / #1593 / #1597 / #1599 / #1613:
+    // query:ai-closedloop-readiness-stats — consolidated health for AI editing loops.
     //
     // #1470: wraps / invalidations / batch-commits / hygiene-skips /
     // dirty-prunes + recommendation [0..4].
@@ -753,7 +754,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // #1597: parallel orchestration (join latency / mailbox backpressure /
     // parallel throughput / starvation mitigated) folded into health.
     // #1599: linear GC root audit + live-closure scans + mutation depth hist
-    // linked into readiness (schema 1599).
+    // linked into readiness.
+    // #1613: macro hygiene submodule (macro-health-score + audit trail linkage).
+    // Schema **1613** (Agents may still accept 1599|1597|1593|1499).
     //
     // Recommendation priority (most severe first, #1470 contract):
     //   0 = healthy  1 = wraps  2 = high invalidations  3 = hygiene
@@ -894,6 +897,37 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 penalize(10);
             if (dirty_prunes >= 50)
                 penalize(5);
+            // #1613: macro hygiene submodule pressure on overall health.
+            const std::uint64_t macro_viol =
+                static_cast<std::uint64_t>(ev.get_hygiene_violation_count());
+            const std::uint64_t naked_macro = load(&CompilerMetrics::naked_macro_mutate_attempt);
+            const std::uint64_t macro_stale_refs = ev.get_macro_stale_ref_prevented();
+            const std::uint64_t reflect_macro_rej =
+                load(&CompilerMetrics::reflect_macro_hygiene_rejects_total);
+            const std::uint64_t macro_query_skips = ev.get_macro_introduced_skipped_in_query() +
+                                                    ev.get_pattern_recursive_macro_skipped();
+            const std::uint64_t macro_audit_blocked =
+                typed_audit::g_typed_mutation_audit_counters.macro_hygiene_blocked.load(
+                    std::memory_order_relaxed);
+            // Macro health subscore 0..100 (mirrored on macro-hygiene-stats).
+            std::int64_t macro_health = 100;
+            auto macro_pen = [&](std::int64_t pts) {
+                macro_health -= pts;
+                if (macro_health < 0)
+                    macro_health = 0;
+            };
+            if (macro_viol > 0)
+                macro_pen(std::min<std::int64_t>(40, static_cast<std::int64_t>(macro_viol) * 5));
+            if (naked_macro > 0)
+                macro_pen(std::min<std::int64_t>(25, static_cast<std::int64_t>(naked_macro) * 3));
+            if (reflect_macro_rej > 0)
+                macro_pen(
+                    std::min<std::int64_t>(15, static_cast<std::int64_t>(reflect_macro_rej) * 2));
+            if (macro_stale_refs > 20)
+                macro_pen(
+                    std::min<std::int64_t>(10, static_cast<std::int64_t>(macro_stale_refs) / 10));
+            if (macro_health < 80)
+                penalize(std::min<std::int64_t>(15, (80 - macro_health) / 2));
             // #1593: long holds / safepoint wait under mutation pressure.
             if (avg_hold_us >= 5000)
                 penalize(std::min<std::int64_t>(10, avg_hold_us / 5000));
@@ -1143,8 +1177,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(mut_depth_hist_sum));
             insert_kv("mutation-stack-depth-hist-sum",
                       static_cast<std::int64_t>(mut_depth_hist_sum));
-            insert_kv("issue", 1599);
-            insert_kv("schema", 1599); // Agents may still accept 1597|1593|1499
+            // #1613: macro hygiene submodule (ai-closedloop-macro-health)
+            insert_kv("macro-health-score", macro_health);
+            insert_kv("macro-hygiene-violations", static_cast<std::int64_t>(macro_viol));
+            insert_kv("macro-naked-mutate-attempts", static_cast<std::int64_t>(naked_macro));
+            insert_kv("macro-stale-ref-prevented", static_cast<std::int64_t>(macro_stale_refs));
+            insert_kv("macro-query-skips", static_cast<std::int64_t>(macro_query_skips));
+            insert_kv("macro-reflect-rejects", static_cast<std::int64_t>(reflect_macro_rej));
+            insert_kv("macro-audit-blocked", static_cast<std::int64_t>(macro_audit_blocked));
+            insert_kv("macro-audit-events",
+                      static_cast<std::int64_t>(
+                          typed_audit::g_typed_mutation_audit_counters.macro_hygiene_events.load(
+                              std::memory_order_relaxed)));
+            insert_kv("macro-hygiene-submodule-wired", 1);
+            insert_kv("issue", 1613);
+            insert_kv("schema", 1613); // lineage 1599|1597|1593|1499
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -2075,16 +2122,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #486 / #1501 / #1609: query:macro-hygiene-stats — same fields
-    // as pattern-hygiene-stats (lineage schema 1609|1501) for agents that
-    // already bind this name.
+    // Issue #486 / #1501 / #1609 / #1613: query:macro-hygiene-stats —
+    // consolidated MacroIntroduced hygiene health for AI self-evo.
+    // Schema **1613** (lineage 1609/1501). Aggregates query skips,
+    // reflect gate, IR stamps, fiber refresh, TypedMutationAudit trail.
+    // Also serves as the ai-closedloop-macro-health surface (no extra
+    // public primitive — #1448 freeze).
     ObservabilityPrims::register_stats_impl(
         "query:macro-hygiene-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(20);
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2111,18 +2161,109 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
-            insert_kv("root-skips",
-                      static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query()));
-            insert_kv("recursive-skips",
-                      static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped()));
-            insert_kv("hygiene-violations",
-                      static_cast<std::int64_t>(ev->get_hygiene_violation_count()));
-            insert_kv("macro-markers",
-                      static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
-            insert_kv("hygiene-index-served",
-                      static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served()));
-            insert_kv("schema", 1609); // lineage 1501
-            insert_kv("issue", 1609);
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            const auto load_m =
+                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
+                return m ? (m->*field).load(std::memory_order_relaxed) : 0;
+            };
+            const std::int64_t root_skips =
+                static_cast<std::int64_t>(ev->get_macro_introduced_skipped_in_query());
+            const std::int64_t recursive_skips =
+                static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped());
+            const std::int64_t violations =
+                static_cast<std::int64_t>(ev->get_hygiene_violation_count());
+            const std::int64_t markers =
+                static_cast<std::int64_t>(workspace_marker_macro_introduced(ev));
+            const std::int64_t index_served =
+                static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served());
+            const std::int64_t inline_skips =
+                static_cast<std::int64_t>(ir_inline_hygiene_skipped(ev));
+            const std::int64_t ir_stamped =
+                static_cast<std::int64_t>(aura_hygiene_ir_macro_marker_total());
+            const std::int64_t macro_stale =
+                static_cast<std::int64_t>(ev->get_macro_stale_ref_prevented());
+            const std::int64_t macro_repin =
+                static_cast<std::int64_t>(ev->get_macro_provenance_repin_total());
+            const std::int64_t reflect_checks = static_cast<std::int64_t>(
+                load_m(&CompilerMetrics::reflect_macro_hygiene_checks_total));
+            const std::int64_t reflect_rejects = static_cast<std::int64_t>(
+                load_m(&CompilerMetrics::reflect_macro_hygiene_rejects_total));
+            const std::int64_t naked_attempts =
+                static_cast<std::int64_t>(load_m(&CompilerMetrics::naked_macro_mutate_attempt));
+            const std::int64_t audit_events = static_cast<std::int64_t>(
+                typed_audit::g_typed_mutation_audit_counters.macro_hygiene_events.load(
+                    std::memory_order_relaxed));
+            const std::int64_t audit_blocked = static_cast<std::int64_t>(
+                typed_audit::g_typed_mutation_audit_counters.macro_hygiene_blocked.load(
+                    std::memory_order_relaxed));
+            const std::int64_t audit_allowed = static_cast<std::int64_t>(
+                typed_audit::g_typed_mutation_audit_counters.macro_hygiene_allowed.load(
+                    std::memory_order_relaxed));
+            const std::int64_t trail_writes = static_cast<std::int64_t>(
+                typed_audit::g_typed_mutation_audit_counters.trail_writes.load(
+                    std::memory_order_relaxed));
+
+            // Health score 0..100 (higher better). Penalties for violations /
+            // naked mutate attempts / stale refs / high skip pressure.
+            std::int64_t health = 100;
+            auto penalize = [&](std::int64_t pts) {
+                health -= pts;
+                if (health < 0)
+                    health = 0;
+            };
+            if (violations > 0)
+                penalize(std::min<std::int64_t>(40, violations * 5));
+            if (naked_attempts > 0)
+                penalize(std::min<std::int64_t>(25, naked_attempts * 3));
+            if (reflect_rejects > 0)
+                penalize(std::min<std::int64_t>(15, reflect_rejects * 2));
+            if (macro_stale > 20)
+                penalize(std::min<std::int64_t>(10, macro_stale / 10));
+            if (root_skips + recursive_skips >= 500)
+                penalize(10);
+            if (audit_blocked >= 10)
+                penalize(5);
+
+            // Recommendation: 0=ok 1=review-skips 2=throttle-macro-mutate
+            // 3=enable-allow-with-care 4=hygiene-critical
+            std::int64_t recommendation = 0;
+            if (violations > 0 || naked_attempts >= 5)
+                recommendation = 4;
+            else if (naked_attempts > 0 || reflect_rejects > 0)
+                recommendation = 3;
+            else if (root_skips + recursive_skips >= 200)
+                recommendation = 2;
+            else if (root_skips + recursive_skips >= 50 || macro_stale > 0)
+                recommendation = 1;
+
+            // #486/#1501/#1609 lineage
+            insert_kv("root-skips", root_skips);
+            insert_kv("recursive-skips", recursive_skips);
+            insert_kv("hygiene-violations", violations);
+            insert_kv("macro-markers", markers);
+            insert_kv("hygiene-index-served", index_served);
+            // #1613 consolidated breakdown + health
+            insert_kv("inline-hygiene-skipped", inline_skips);
+            insert_kv("ir-hygiene-stamped-count", ir_stamped);
+            insert_kv("macro-stale-ref-prevented", macro_stale);
+            insert_kv("macro-provenance-repin-total", macro_repin);
+            insert_kv("reflect-macro-hygiene-checks", reflect_checks);
+            insert_kv("reflect-macro-hygiene-rejects", reflect_rejects);
+            insert_kv("naked-macro-mutate-attempts", naked_attempts);
+            insert_kv("macro-audit-events", audit_events);
+            insert_kv("macro-audit-blocked", audit_blocked);
+            insert_kv("macro-audit-allowed", audit_allowed);
+            insert_kv("audit-trail-writes", trail_writes);
+            insert_kv("allow-macro-mutate", ev->get_allow_macro_mutate() ? 1 : 0);
+            insert_kv("health-score", health);
+            insert_kv("hygiene-health-score", health); // AC alias
+            insert_kv("recommendation", recommendation);
+            // 0=ok 1=investigate 2=throttle 3=review-allow 4=critical
+            insert_kv("action", recommendation);
+            insert_kv("ai-closedloop-macro-health-wired", 1);
+            insert_kv("audit-trail-wired", 1);
+            insert_kv("issue", 1613);
+            insert_kv("schema", 1613); // lineage 1609 / 1501 / 486
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

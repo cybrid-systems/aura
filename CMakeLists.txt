@@ -5235,6 +5235,9 @@ aura_issue_test_link_llvm_jit(test_reflect_macro_hygiene_1611)
 # Issue #1612: fiber resume/steal/GC MacroIntroduced marker + provenance.
 aura_add_issue_test(test_fiber_macro_hygiene_refresh_1612)
 aura_issue_test_link_llvm_jit(test_fiber_macro_hygiene_refresh_1612)
+# Issue #1613: macro hygiene closed-loop health + audit trail.
+aura_add_issue_test(test_macro_hygiene_closedloop_health_1613)
+aura_issue_test_link_llvm_jit(test_macro_hygiene_closedloop_health_1613)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
