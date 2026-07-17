@@ -1,0 +1,304 @@
+;; tests/commercial_readiness_stdlib_vector_math_ds.aura
+;;
+;; Sixth-pass audit: vector-math + stack + queue + pipeline.
+;; These modules are pure-functional data structure / numeric primitives
+;; never audited in depth. Per Anqi 16:30 原语最小化原则, any bugs surfaced
+;; here are stdlib composition fixes (not engine primitive gaps).
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_vector_math_ds.aura
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Custom inline check framework
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+(define (expect-true label actual)
+  (if (and (not (null? actual)) (not (equal? actual #f)) (not (equal? actual 0)))
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " actual=") (display actual)
+        (newline))))
+
+;; empty-list check (engine: `(list)` returns int 0, `'()` returns void;
+;; null? unifies both, equal? does not at top-level per #1137 design)
+(define (empty-list? x) (null? x))
+
+(define (expect-no-error label thunk)
+  ;; try/catch: (try <thunk> (catch <default>)) returns default on error
+  (let ((result (try (thunk) (catch 'threw-error))))
+    (if (not (eq? result 'threw-error))
+        (begin (display "PASS: ") (display label) (newline))
+        (begin
+          (display "FAIL: ") (display label)
+          (display " (threw error)")
+          (newline)))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/vector-math — numerical vector / matrix operations
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/vector-math")
+
+;; ── vec:range ──
+(expect "vm-range-basic" (vec:range 0 5) (vector 0 1 2 3 4))
+(expect "vm-range-singleton" (vec:range 7 8) (vector 7))
+(expect "vm-range-empty-start-eq-end" (vec:range 3 3) (vector))
+(expect "vm-range-start-gt-end" (vec:range 5 3) (vector))
+;; negative range
+(expect "vm-range-negative" (vec:range -2 2) (vector -2 -1 0 1))
+
+;; ── list <-> vec ──
+(expect "vm-list->vec-empty" (list->vec '()) (vector))
+(expect "vm-list->vec-trivial" (list->vec '(1 2 3)) (vector 1 2 3))
+(expect "vm-vec->list-empty" (vec->list (vector)) '())
+(expect "vm-vec->list-trivial" (vec->list (vector 1 2 3)) '(1 2 3))
+(expect "vm-roundtrip" (vec->list (list->vec '(7 8 9))) '(7 8 9))
+
+;; ── vec:map / vec:zip ──
+(expect "vm-map-empty" (vec:map (lambda (x) (* x 2)) (vector)) (vector))
+(expect "vm-map-trivial" (vec:map (lambda (x) (* x 2)) (vector 1 2 3)) (vector 2 4 6))
+(expect "vm-zip-empty" (vec:zip + (vector) (vector 1 2)) (vector))
+(expect "vm-zip-mismatch-len" (vec:zip + (vector 1 2 3) (vector 10 20)) (vector 11 22))
+(expect "vm-zip-equal" (vec:zip * (vector 2 3 4) (vector 5 6 7)) (vector 10 18 28))
+
+;; ── vec:add / vec:sub / vec:mul / vec:div ──
+(expect "vm-add-trivial" (vec:add (vector 1 2) (vector 3 4)) (vector 4 6))
+(expect "vm-sub-trivial" (vec:sub (vector 5 3) (vector 2 1)) (vector 3 2))
+(expect "vm-mul-trivial" (vec:mul (vector 2 3) (vector 4 5)) (vector 8 15))
+;; div with zero in divisor (catches div-by-zero crash if zip doesn't guard)
+(expect-no-error "vm-div-no-crash-on-empty"
+  (lambda () (vec:div (vector) (vector))))
+(expect "vm-div-trivial" (vec:div (vector 10 20) (vector 2 4)) (vector 5 5))
+
+;; ── vec:scale / vec:abs / vec:sq ──
+(expect "vm-scale-trivial" (vec:scale (vector 1 2 3) 5) (vector 5 10 15))
+(expect "vm-scale-zero" (vec:scale (vector 1 2 3) 0) (vector 0 0 0))
+(expect "vm-abs-trivial" (vec:abs (vector -1 2 -3)) (vector 1 2 3))
+(expect "vm-abs-empty" (vec:abs (vector)) (vector))
+(expect "vm-sq-trivial" (vec:sq (vector 2 3 4)) (vector 4 9 16))
+(expect "vm-sq-empty" (vec:sq (vector)) (vector))
+
+;; ── vec:fold / vec:sum / vec:prod ──
+(expect "vm-fold-empty" (vec:fold + 99 (vector)) 99)
+(expect "vm-fold-trivial" (vec:fold + 0 (vector 1 2 3 4)) 10)
+(expect "vm-sum-empty" (vec:sum (vector)) 0)
+(expect "vm-sum-trivial" (vec:sum (vector 1 2 3 4 5)) 15)
+(expect "vm-prod-empty" (vec:prod (vector)) 1)
+(expect "vm-prod-trivial" (vec:prod (vector 2 3 4)) 24)
+
+;; ── vec:mean ──
+(expect "vm-mean-empty" (vec:mean (vector)) 0)
+(expect "vm-mean-trivial" (vec:mean (vector 2 4 6)) 4)
+(expect "vm-mean-singleton" (vec:mean (vector 7)) 7)
+
+;; ── vec:dot ──
+(expect "vm-dot-empty" (vec:dot (vector) (vector)) 0)
+(expect "vm-dot-trivial" (vec:dot (vector 1 2 3) (vector 4 5 6)) 32)
+(expect "vm-dot-orthogonal" (vec:dot (vector 1 0) (vector 0 1)) 0)
+
+;; ── vec:norm / vec:normalize ──
+(expect "vm-norm-empty" (vec:norm (vector)) 0)
+(expect "vm-norm-trivial" (vec:norm (vector 3 4)) 5)
+(expect-no-error "vm-normalize-zero-no-crash"
+  (lambda () (vec:normalize (vector 0 0 0))))
+(expect "vm-normalize-zero" (vec:normalize (vector 0 0 0)) (vector 0 0 0))
+(expect "vm-normalize-trivial" (vec:normalize (vector 3 4)) (vector (/ 3.0 5.0) (/ 4.0 5.0)))
+;; normalization of empty: norm=0 → returns v as-is
+(expect "vm-normalize-empty" (vec:normalize (vector)) (vector))
+
+;; ── vec:argmin / vec:argmax ──
+(expect "vm-argmin-empty" (vec:argmin (vector)) -1)
+(expect "vm-argmax-empty" (vec:argmax (vector)) -1)
+(expect "vm-argmin-trivial" (vec:argmin (vector 3 1 4 1 5 9 2 6)) 1)
+(expect "vm-argmax-trivial" (vec:argmax (vector 3 1 4 1 5 9 2 6)) 5)
+(expect "vm-argmin-singleton" (vec:argmin (vector 42)) 0)
+(expect "vm-argmin-neg" (vec:argmin (vector -3 -1 -4 -1 -5)) 4)
+(expect "vm-argmin-ties-first" (vec:argmin (vector 5 1 1 1)) 1)
+
+;; ── vec:slice ──
+(expect "vm-slice-trivial" (vec:slice (vector 0 1 2 3 4 5) 1 4) (vector 1 2 3))
+(expect "vm-slice-full" (vec:slice (vector 0 1 2) 0 3) (vector 0 1 2))
+(expect "vm-slice-empty-result" (vec:slice (vector 1 2 3) 1 1) (vector))
+;; out-of-range end should clamp
+(expect "vm-slice-end-oob" (vec:slice (vector 1 2 3) 0 99) (vector 1 2 3))
+;; start > length: empty
+(expect "vm-slice-start-oob" (vec:slice (vector 1 2 3) 10 20) (vector))
+;; negative start is a likely bug
+(expect-no-error "vm-slice-neg-start-no-crash"
+  (lambda () (vec:slice (vector 1 2 3) -1 2)))
+(expect "vm-slice-zero-len" (vec:slice (vector 1 2 3) 2 2) (vector))
+
+;; ── vec:concat ──
+(expect "vm-concat-both-empty" (vec:concat (vector) (vector)) (vector))
+(expect "vm-concat-left-empty" (vec:concat (vector) (vector 1 2)) (vector 1 2))
+(expect "vm-concat-right-empty" (vec:concat (vector 1 2) (vector)) (vector 1 2))
+(expect "vm-concat-trivial" (vec:concat (vector 1 2) (vector 3 4 5)) (vector 1 2 3 4 5))
+
+;; ── Matrix constructors ──
+(expect "vm-mat-zeros-1x1" (mat:zeros 1 1) (vector (vector 0)))
+(expect "vm-mat-zeros-2x3" (mat:zeros 2 3) (vector (vector 0 0 0) (vector 0 0 0)))
+(expect "vm-mat-ones-2x2" (mat:ones 2 2) (vector (vector 1 1) (vector 1 1)))
+(expect "vm-mat-identity-1" (mat:identity 1) (vector (vector 1)))
+(expect "vm-mat-identity-3" (mat:identity 3)
+  (vector (vector 1 0 0) (vector 0 1 0) (vector 0 0 1)))
+
+;; ── mat:shape / mat:rows / mat:cols ──
+(expect "vm-mat-shape-trivial" (mat:shape (mat:zeros 2 3)) (vector 2 3))
+(expect "vm-mat-rows-trivial" (mat:rows (mat:zeros 2 3)) 2)
+(expect "vm-mat-cols-trivial" (mat:cols (mat:zeros 2 3)) 3)
+;; 1x1
+(expect "vm-mat-shape-1x1" (mat:shape (mat:ones 1 1)) (vector 1 1))
+;; empty matrix (likely bug: `zero?` check on a vector)
+(expect-no-error "vm-mat-shape-empty-no-crash"
+  (lambda () (mat:shape (mat:zeros 0 0))))
+(expect-no-error "vm-mat-rows-empty-no-crash"
+  (lambda () (mat:rows (mat:zeros 0 0))))
+(expect-no-error "vm-mat-cols-empty-no-crash"
+  (lambda () (mat:cols (mat:zeros 0 0))))
+;; ragged row (should it be guarded?)
+(expect-no-error "vm-mat-shape-ragged-no-crash"
+  (lambda () (mat:shape (vector (vector 1 2) (vector 3 4 5)))))
+
+;; ── mat:ref ──
+(expect "vm-mat-ref-trivial" (mat:ref (mat:identity 3) 1 1) 1)
+(expect "vm-mat-ref-off" (mat:ref (mat:identity 3) 0 1) 0)
+
+;; ── mat:transpose ──
+(expect "vm-mat-transpose-trivial"
+  (mat:transpose (vector (vector 1 2 3) (vector 4 5 6)))
+  (vector (vector 1 4) (vector 2 5) (vector 3 6)))
+(expect "vm-mat-transpose-1x3"
+  (mat:transpose (vector (vector 1 2 3)))
+  (vector (vector 1) (vector 2) (vector 3)))
+(expect "vm-mat-transpose-3x1"
+  (mat:transpose (vector (vector 1) (vector 2) (vector 3)))
+  (vector (vector 1 2 3)))
+
+;; ── mat:mul ──
+(expect "vm-mat-mul-identity"
+  (mat:mul (mat:identity 2) (mat:identity 2))
+  (mat:identity 2))
+(expect "vm-mat-mul-trivial"
+  (mat:mul (vector (vector 1 2) (vector 3 4))
+           (vector (vector 5 6) (vector 7 8)))
+  (vector (vector 19 22) (vector 43 50)))
+;; scalar * matrix (1x2 * 2x1 → 1x1)
+(expect "vm-mat-mul-1x2-times-2x1"
+  (mat:mul (vector (vector 1 2))
+           (vector (vector 3) (vector 4)))
+  (vector (vector 11)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/stack — LIFO stack (pair-based)
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/stack")
+
+(define s0 (make-stack))
+(expect-true "stk-empty-initially" (stack-empty? s0))
+(expect "stk-pop-empty-returns-list-pair"
+  (stack-pop s0) (list () ()))
+(expect "stk-top-empty-returns-nil" (stack-top s0) ())
+(expect "stk-length-empty" (stack-length s0) 0)
+(expect-true "stk->list-empty" (empty-list? (stack->list s0)))
+
+(define s1 (stack-push s0 'a))
+(expect "stk-push-length-1" (stack-length s1) 1)
+(expect-true "stk-not-empty-after-push" (not (stack-empty? s1)))
+(expect "stk-top-after-push" (stack-top s1) 'a)
+(expect "stk-pop-after-push" (stack-pop s1) (list 'a '()))
+(expect-true "stk-empty-after-pop" (stack-empty? (cadr (stack-pop s1))))
+
+;; multi-element
+(define s3 (stack-push (stack-push (stack-push s0 'a) 'b) 'c))
+;; top should be c (LIFO)
+(expect "stk-multi-top" (stack-top s3) 'c)
+(expect "stk-multi-length" (stack-length s3) 3)
+;; pop sequence: c, b, a
+(define pop1 (stack-pop s3))
+(expect "stk-multi-pop-1" (car pop1) 'c)
+(define pop2 (stack-pop (cadr pop1)))
+(expect "stk-multi-pop-2" (car pop2) 'b)
+(define pop3 (stack-pop (cadr pop2)))
+(expect "stk-multi-pop-3" (car pop3) 'a)
+(expect-true "stk-multi-empty-final" (stack-empty? (cadr pop3)))
+
+;; list <-> stack (identity: list->stack and stack->list are both identity)
+(expect "stk-list->stack-identity" (list->stack '(1 2 3)) '(1 2 3))
+(expect "stk-stack->list-identity" (stack->list '(1 2 3)) '(1 2 3))
+(expect "stk-list->stack-empty" (list->stack '()) '())
+(expect-true "stk-stack->list-of-empty" (empty-list? (stack->list (make-stack))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/queue — FIFO queue (pair-based, immutable)
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/queue")
+
+(define q0 (make-queue))
+(expect-true "que-empty-initially" (queue-empty? q0))
+(expect "que-dequeue-empty" (dequeue q0) (list () ()))
+(expect-true "que-front-empty" (empty-list? (queue-front q0)))
+(expect-true "que-rest-empty" (empty-list? (queue-rest q0)))
+(expect "que-length-empty" (queue-length q0) 0)
+(expect-true "que->list-empty" (empty-list? (queue->list q0)))
+
+(define q1 (enqueue q0 'a))
+(expect "que-enqueue-length-1" (queue-length q1) 1)
+(expect-true "que-not-empty-after-enqueue" (not (queue-empty? q1)))
+(expect "que-front-after-enqueue" (queue-front q1) 'a)
+(expect "que-rest-after-enqueue" (queue-rest q1) '())
+(define dq1 (dequeue q1))
+(expect "que-dequeue-value" (car dq1) 'a)
+(expect-true "que-empty-after-dequeue" (queue-empty? (cadr dq1)))
+
+;; FIFO ordering
+(define q3 (enqueue (enqueue (enqueue q0 'a) 'b) 'c))
+(expect "que-fifo-front" (queue-front q3) 'a)
+(expect "que-fifo-length" (queue-length q3) 3)
+(define dq-fifo-1 (dequeue q3))
+(expect "que-fifo-dq-1" (car dq-fifo-1) 'a)
+(define dq-fifo-2 (dequeue (cadr dq-fifo-1)))
+(expect "que-fifo-dq-2" (car dq-fifo-2) 'b)
+(define dq-fifo-3 (dequeue (cadr dq-fifo-2)))
+(expect "que-fifo-dq-3" (car dq-fifo-3) 'c)
+(expect-true "que-fifo-empty-final" (queue-empty? (cadr dq-fifo-3)))
+
+;; list <-> queue
+(expect "que-list->queue-trivial" (list->queue '(1 2 3)) '(1 2 3))
+(expect "que-queue->list-roundtrip" (queue->list (list->queue '(1 2 3))) '(1 2 3))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/pipeline — code-gen pipeline
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/pipeline")
+
+;; Pipeline with no steps should succeed
+(expect-true "pipe-empty-steps-succeed" (synthesize:pipeline "empty"))
+
+;; Pipeline with a single trivially-true step should succeed
+(expect-true "pipe-single-true-step"
+  (synthesize:pipeline "single-true" #t))
+
+;; Pipeline with a false step should fail (and rollback)
+(expect-true "pipe-false-step-fails"
+  (not (synthesize:pipeline "false-step" #f)))
+
+;; Pipeline with multiple true steps should succeed
+(expect-true "pipe-multi-true-steps"
+  (synthesize:pipeline "multi-true" #t #t #t))
+
+;; Pipeline with first failure short-circuits
+(expect-true "pipe-fail-mid"
+  (not (synthesize:pipeline "fail-mid" #t #f #t)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Summary
+;; ═════════════════════════════════════════════════════════════════════════
+(display "\n=== vector-math + stack + queue + pipeline audit done ===\n")
