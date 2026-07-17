@@ -19,13 +19,14 @@
 ; ── Construction ──────────────────────────────────────────────
 
 (define (vec:range start end)
-  (let* ((n (- end start))
-         (v (make-vector n 0)))
-    (let loop ((i 0))
-      (if (< i n)
-        (begin (vector-set! v i (+ start i))
-               (loop (+ i 1)))
-        v))))
+  (let* ((n (- end start)))
+    (if (<= n 0) (vector)
+      (let ((v (make-vector n 0)))
+        (let loop ((i 0))
+          (if (< i n)
+            (begin (vector-set! v i (+ start i))
+                   (loop (+ i 1)))
+            v))))))
 
 (define (list->vec lst)
   (apply vector lst))
