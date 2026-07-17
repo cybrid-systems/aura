@@ -1498,6 +1498,10 @@ public:
     mutable std::atomic<std::uint64_t> auto_restamp_on_wrap_count_{0};
     // Issue #1281: children topology restore via PCV snapshot count.
     mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
+    // Issue #1502: parent_ column restored (snapshot or rebuild-from-children)
+    // after failed atomic-batch / MutationBoundary. Pairs with
+    // children_topology_restore_count_ for full topology fidelity.
+    mutable std::atomic<std::uint64_t> parent_topology_restore_count_{0};
     // Issue #1299/#1300: orphan ghost nodes freed on rollback.
     mutable std::atomic<std::uint64_t> ghost_orphan_nodes_freed_{0};
     // Issue #370: lifetime-safe view counter. Bumped in
@@ -3683,6 +3687,11 @@ public:
     // The passed-in vector is moved (its shared_ptrs are now bound
     // to children_; back-references to the old PCVs in the
     // snapshot are released as the snapshot goes out of scope).
+    //
+    // Issue #1502: after reinstalling children_, rebuild parent_
+    // from the restored child lists so children_/parent_ topology
+    // cannot diverge when MutationRecord inverse ops partially
+    // fail or when restore runs without a full inverse walk.
     void restore_children(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
         // Issue #487: pad the snapshot up to children_'s current
         // size before the move. Without padding, if the in-flight
@@ -3713,9 +3722,48 @@ public:
             free_orphan_nodes_from(static_cast<NodeId>(pre_size));
         // Issue #1281: every PCV topology restore is a fidelity event.
         children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1502: full parent_ topology restore from children_.
+        rebuild_parent_links_from_children();
         bump_generation();
         // Issue #1282: if a wrap was observed mid-mutation, restamp now.
         maybe_auto_restamp_on_wrap();
+    }
+
+    // Issue #1502: capture parent_ SoA column for strong topology
+    // rollback (pairs with snapshot_children). O(n) vector copy.
+    std::pmr::vector<NodeId> snapshot_parent() const { return parent_; }
+
+    // Issue #1502: restore parent_ from a pre-captured snapshot.
+    // Pads if the live flat grew during a failed mutation (same
+    // ghost-node safety as restore_children). Prefer
+    // rebuild_parent_links_from_children() after restore_children
+    // for fidelity; this path supports dual restore (snapshot +
+    // rebuild) and fine-grained checkpoints.
+    void restore_parent(std::pmr::vector<NodeId>&& snapshot) {
+        if (snapshot.size() < parent_.size())
+            snapshot.resize(parent_.size(), NULL_NODE);
+        parent_ = std::move(snapshot);
+        parent_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #1502: recompute parent_[cid] = id for every live
+    // children_[id] entry. Clears parent_ first so detached /
+    // reattached nodes cannot keep a stale back-link after
+    // children_ restore without a matching inverse MutationRecord.
+    // O(nodes + edges). Safe under structural / workspace lock.
+    void rebuild_parent_links_from_children() {
+        if (parent_.size() < size())
+            parent_.resize(size(), NULL_NODE);
+        for (NodeId id = 0; id < parent_.size(); ++id)
+            parent_[id] = NULL_NODE;
+        const std::size_t n = std::min(children_.size(), parent_.size());
+        for (NodeId id = 0; id < static_cast<NodeId>(n); ++id) {
+            for (NodeId cid : children_[id]) {
+                if (cid != NULL_NODE && cid < parent_.size())
+                    parent_[cid] = id;
+            }
+        }
+        parent_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #1299/#1300: mark nodes [begin, size()) as free (node_gen_=0)
@@ -6209,6 +6257,10 @@ public:
     // Issue #1281: children_ PCV topology restores (snapshot path).
     [[nodiscard]] std::uint64_t children_topology_restore_count() const noexcept {
         return children_topology_restore_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1502: parent_ topology restores (snapshot or rebuild).
+    [[nodiscard]] std::uint64_t parent_topology_restore_count() const noexcept {
+        return parent_topology_restore_count_.load(std::memory_order_relaxed);
     }
     // Issue #1282: auto-restamp after generation wrap.
     [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {

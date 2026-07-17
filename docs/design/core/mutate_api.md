@@ -35,19 +35,50 @@ state.
 
 The Aura primitive currently routes:
 
-| Sub-op | Lockless helper | Status |
-|--------|-----------------|--------|
-| `mutate:rebind` | `eval_flat_apply_mutate_rebind` | #250 |
-| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` | #250 (stub: falls back to error) |
-| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` | #250 (stub: falls back to error) |
-| `mutate:remove-node` | `eval_flat_apply_mutate_remove_node` | **#396 Phase 2** |
-| `mutate:insert-child` | `eval_flat_apply_mutate_insert_child` | **#396 Phase 2** |
+| Sub-op | Lockless helper | Topology atomicity | Status |
+|--------|-----------------|--------------------|--------|
+| `mutate:rebind` | `eval_flat_apply_mutate_rebind` | **Full** (MutationRecord inverse + Guard `restore_children` + parent rebuild) | #250 / #1441 / #1502 |
+| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` | n/a (errors out) | #250 stub |
+| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` | n/a (errors out) | #250 stub |
+| `mutate:remove-node` | `eval_flat_apply_mutate_remove_node` | **Full** (structural inverse + Guard topology) | **#396 Phase 2** / #1502 |
+| `mutate:insert-child` | `eval_flat_apply_mutate_insert_child` | **Full** (structural inverse + Guard topology) | **#396 Phase 2** / #1502 |
 
 Other mutate primitives still return `batch-unsupported-op` rather than
 deadlocking on a nested guard. `mutate:replace-value` and
 `mutate:tweak-literal` are intentional stubs (would need lockless
 extraction from the wrapper primitives — the existing
 `eval_flat_apply_mutate_*` stubs are TODO and not part of #396 scope).
+
+## Structural topology rollback (Issue #1502)
+
+On batch failure (sub-op error or unsupported op), atomicity is enforced
+at **three layers**:
+
+1. **MutationRecord inverse** — `rollback_since` / `rollback_to_size`
+   walks the log in reverse and applies
+   `try_rollback_structural_child_op` / `try_rollback_rebind_op`, which
+   restore both `children_` slots and `parent_` back-links for logged ops.
+2. **Explicit parent rebuild** — before Guard exit, the batch fail path
+   calls `FlatAST::rebuild_parent_links_from_children()` so
+   `parent_of()` cannot diverge from `children()` even if an inverse
+   partially fails.
+3. **Guard `restore_children`** — `MutationBoundaryGuard` dtor with
+   `success=false` reinstalls the pre-batch PCV snapshot and **again**
+   rebuilds `parent_` from the restored child lists
+   (`children_topology_restore_count_` + `parent_topology_restore_count_`).
+
+Also on fail: `linear_post_mutate_enforce_all()` so EnvFrame linear
+ownership is not left half-applied after AI multi-step aborts.
+
+**Fully atomic (topology):** `rebind`, `remove-node`, `insert-child`
+(under atomic-batch + Guard).  
+**Best-effort / not batchable yet:** `replace-value`, `tweak-literal`,
+and any unextracted mutate op → fail-fast `batch-unsupported-op` with
+full topology restore of prior successful sub-ops in the same batch.
+
+Observability: `(stats:get "atomic-batch:stats")` exposes
+`children-topology-restore`, `parent-topology-restore`, and `schema` 1502;
+`(stats:get "ast:generation-stats")` also has `parent-topology-restore`.
 
 ## Observability — `(atomic-batch:stats)`
 

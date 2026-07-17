@@ -3073,6 +3073,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // guard acquire.
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
+                // Issue #1502: full parent_ topology + linear enforce
+                // on unsupported-op abort (same as batch-failed path).
+                ev.workspace_flat_->rebuild_parent_links_from_children();
+                (void)ev.linear_post_mutate_enforce_all();
                 ev.atomic_batch_domain_.rollbacks++;
                 ev.bump_edsl_nested_atomic_rollback();
                 if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
@@ -3080,12 +3084,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.bump_atomic_batch_snapshot_rollback();
                 ev.rollback_atomic_batch_pinning();
                 guard_ok = false;
-                return ev.make_merr(
-                    "batch-unsupported-op",
-                    ("mutate:atomic-batch does not yet support '" + op_name +
-                     "' (only :rebind / :replace-value / :tweak-literal; the others "
-                     "need lockless helper extraction)")
-                        .c_str());
+                return ev.make_merr("batch-unsupported-op",
+                                    ("mutate:atomic-batch does not yet support '" + op_name +
+                                     "' (only :rebind / :replace-value / :tweak-literal / "
+                                     ":remove-node / :insert-child; the others "
+                                     "need lockless helper extraction)")
+                                        .c_str());
             }
             if (!sub_result) {
                 ok = false;
@@ -3100,8 +3104,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ++op_count;
         }
         if (!ok) {
+            // Issue #250: reverse MutationRecord inverses (incl.
+            // structural children_/parent_ via try_rollback_*).
             ev.workspace_flat_->rollback_since(initial_log_size);
             ev.workspace_flat_->rollback_atomic_batch();
+            // Issue #1502: MutationRecord inverse is best-effort for
+            // some ops; rebuild parent_ from live children_ so
+            // parent_of / children stay consistent even when a
+            // mid-batch structural inverse partially fails. Guard
+            // dtor also restore_children (full topology) next.
+            ev.workspace_flat_->rebuild_parent_links_from_children();
+            // Issue #1502: linear ownership post-mutate enforce so
+            // dual-epoch / EnvFrame SoA state is not left half-applied
+            // after AI multi-step batch abort.
+            (void)ev.linear_post_mutate_enforce_all();
             ev.atomic_batch_domain_.rollbacks++;
             ev.bump_edsl_nested_atomic_rollback();
             if (batch_snap_id >= 0 &&

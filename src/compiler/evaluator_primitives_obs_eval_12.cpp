@@ -567,9 +567,9 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
     // rollback-count, ops-per-batch (avg).
     ObservabilityPrims::register_stats_impl("atomic-batch:stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Issue #394 / #258: capacity 32 (was 8). This primitive
-            // returns 5 keys; cap-8 + FNV-1a probing occasionally
-            // failed to insert a key, so hash-ref returned void.
+            // Issue #394 / #258: capacity 32 (was 8). #1502 adds
+            // topology + schema keys (~11 total); cap-8 + FNV-1a
+            // probing occasionally failed to insert a key.
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -634,6 +634,14 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
             {"pinned-refs-last-batch",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_pinned_ref_count()))},
             {"rollback-triggers", make_int(static_cast<std::int64_t>(ev.atomic_batch_rollbacks()))},
+            // Issue #1502: topology restore counters (children_ + parent_).
+            {"children-topology-restore",
+             make_int(static_cast<std::int64_t>(
+                 ev.workspace_flat_ ? ev.workspace_flat_->children_topology_restore_count() : 0))},
+            {"parent-topology-restore",
+             make_int(static_cast<std::int64_t>(
+                 ev.workspace_flat_ ? ev.workspace_flat_->parent_topology_restore_count() : 0))},
+            {"schema", make_int(1502)},
         };
         return build_hash(kv);
     });
