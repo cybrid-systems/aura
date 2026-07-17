@@ -32,6 +32,12 @@ CRITICAL: (display (your-function args)) — if you only (define (f x) ...)\
       (let ((mods (string-join-modules stdlib)))
         (set! parts (append parts
           (list (string-append "Available stdlib: " mods ". Use (require std/name all:) to load them.\n"))))))
+    ; Add task-name banner (Issue #1583 — task-name was a dead parameter
+    ; before; bound by the lambda but never referenced in the body).
+    (if (and (string? task-name) (> (string-length task-name) 0))
+      (set! parts (append parts
+        (list "\n========================================\n"
+              "TASK: " task-name "\n"))))
     ; Add task hints
     (if (and (string? hints) (> (string-length hints) 0))
       (set! parts (append parts
