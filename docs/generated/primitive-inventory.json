@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 520,
-  "frozen_count": 434,
+  "frozen_count": 435,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -415,6 +415,7 @@
     "query:typed-mutate-coercion-stats",
     "query:typed-mutation-audit-pass-stats",
     "query:typed-mutation-audit-stats",
+    "query:typed-mutation-audit-trail",
     "query:typed-mutation-stats",
     "query:typed-mutation-stats-task1",
     "query:typesystem-typed-mutate-stats",
@@ -971,7 +972,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 411,
+  "stats_count": 412,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1368,6 +1369,7 @@
     "query:typed-mutate-coercion-stats",
     "query:typed-mutation-audit-pass-stats",
     "query:typed-mutation-audit-stats",
+    "query:typed-mutation-audit-trail",
     "query:typed-mutation-stats",
     "query:typed-mutation-stats-task1",
     "query:typesystem-typed-mutate-stats",

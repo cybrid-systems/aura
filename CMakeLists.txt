@@ -5169,6 +5169,9 @@ aura_issue_test_link_llvm_jit(test_parallel_intend_primitive)
 # Issue #1588: unified src/orch module + agent_spawn abstraction.
 aura_add_issue_test(test_orch_agent_spawn)
 aura_issue_test_link_llvm_jit(test_orch_agent_spawn)
+# Issue #1589: TypedMutationAudit production trail + strategy gate.
+aura_add_issue_test(test_typed_mutation_audit)
+aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)
