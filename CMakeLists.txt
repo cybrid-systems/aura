@@ -5199,6 +5199,9 @@ aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness_1597)
 # Issue #1598: apply_closure / JIT / post-steal dual-epoch hotpath refine.
 aura_add_issue_test(test_epoch_apply_hotpath_1598)
 aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
+# Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
+aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
+aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

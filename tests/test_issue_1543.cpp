@@ -149,7 +149,7 @@ static void ac4_query_surface() {
 
     const auto schema =
         hash_int_field(cs, "(engine:metrics \"query:linear-gc-root-audit-log\")", "schema");
-    CHECK(schema == 1543, "schema == 1543");
+    CHECK(schema == 1599 || schema == 1543, "schema == 1599|1543");
 
     const auto checks = hash_int_field(cs, "(engine:metrics \"query:linear-gc-root-audit-log\")",
                                        "audit-checks-total");

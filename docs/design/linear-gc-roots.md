@@ -1,8 +1,8 @@
 # Linear GC Root Registration Contract
 
-**Issue:** #1543 (parent #1478 AC #3) · **#1568** boundary consistency · **#1596** runtime refine  
-**Related:** #763 (counters + `query:linear-ownership-gc-compiler-stats`), #1515 (unified sync), #740 (JIT L2 resync), #1510/#1526 (compact dual-epoch), #1545/#1557 (live-closure scan)  
-**Refine map:** `docs/design/linear-ownership-runtime-1596.md`
+**Issue:** #1543 (parent #1478 AC #3) · **#1568** boundary consistency · **#1596** runtime refine · **#1599** closed-loop readiness  
+**Related:** #763 (counters + `query:linear-ownership-gc-compiler-stats`), #1515 (unified sync), #740 (JIT L2 resync), #1510/#1526 (compact dual-epoch), #1545/#1557 (live-closure scan), #1483/#1493 (adaptive safepoint)  
+**Refine maps:** `docs/design/linear-ownership-runtime-1596.md`, `docs/design/linear-gc-closedloop-readiness-1599.md`
 
 ## Summary
 
@@ -113,8 +113,12 @@ probe_linear_ownership_on_fiber_steal
 - **C++:** `Evaluator::run_linear_gc_root_audit(path)` → `bool ok`  
   Snapshots counters, checks monotonicity + `resync ≤ reg`, appends ring entry, bumps `linear_gc_root_audit_checks_total`.
 - **Query:** `(engine:metrics "query:linear-gc-root-audit-log")`  
-  Optional arg: max recent log lines under `log`. Schema `1543`.
+  Optional arg: max recent log lines under `log`. Schema **1599** (lineage 1543).
 - **Ring:** `kLinearGcRootAuditRingSize` (32).
+- **Readiness linkage (#1599):** `query:ai-closedloop-readiness-stats` exports
+  `linear-gc-root-audit-checks`, `linear-live-closure-scans`, and
+  `mutation_stack_depth_histogram`. Adaptive surface:
+  `query:gc-safepoint-adaptive-stats` (schema 1599).
 
 ### Linear violation provenance audit (#1568)
 
