@@ -43,6 +43,8 @@ On stale → **safe fallback** (bridge re-dispatch / interpreter) or **JIT deopt
 | File | Role |
 |------|------|
 | `tests/test_issue_1491.cpp` | Parent closed-loop (all entries + concurrent) |
+| `tests/test_stale_closure_fallback.cpp` | **#1604** concurrent fiber mutate → old apply |
+| `tests/test_epoch_apply_hotpath_1598.cpp` | Hotpath dashboard (schema 1604 lineage) |
 | `tests/test_issue_1475.cpp` | Pure `is_env_frame_stale` helper |
 | `tests/test_issue_1508.cpp` | JIT dual-check unit |
 | `tests/test_issue_1511.cpp` | Bridge-entry dual-check |

@@ -5199,6 +5199,9 @@ aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness_1597)
 # Issue #1598: apply_closure / JIT / post-steal dual-epoch hotpath refine.
 aura_add_issue_test(test_epoch_apply_hotpath_1598)
 aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
+# Issue #1604: stale closure fallback on apply_closure + JIT aura_closure_call.
+aura_add_issue_test(test_stale_closure_fallback)
+aura_issue_test_link_llvm_jit(test_stale_closure_fallback)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
 aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
 aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)

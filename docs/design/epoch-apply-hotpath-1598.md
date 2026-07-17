@@ -55,15 +55,16 @@ compact_env_frames
 release fence + `bridge_epoch` / `defuse_version_` / `mutation_epoch` +
 JIT `notify_batch_deopt_and_remove` / walk_active_closures.
 
-## Metrics (`query:epoch-apply-hotpath-stats`, schema **1598**)
+## Metrics (`query:epoch-apply-hotpath-stats`, schema **1604** lineage 1598)
 
 | Key | Source |
 |-----|--------|
-| `stale_closure_prevented` | CompilerMetrics |
-| `closure_epoch_mismatch_fallback` | CompilerMetrics |
+| `stale_closure_prevented` | CompilerMetrics (+ JIT deopt, #1604) |
+| `closure_epoch_mismatch_fallback` | CompilerMetrics (+ JIT deopt, #1604) |
 | `post_steal_refresh_count` | Evaluator |
 | `bridge_epoch_bumps` | `bridge_epoch_bumps_total` |
 | `invalidate_cascade_depth` | `invalidate_cascade_depth_total` |
+| `jit_closure_*` | JIT dual-check / deopt (#1604) |
 | path-wired flags | constants 1 |
 
 ## Tests
@@ -71,6 +72,7 @@ JIT `notify_batch_deopt_and_remove` / walk_active_closures.
 | File | Role |
 |------|------|
 | `tests/test_epoch_apply_hotpath_1598.cpp` | **#1598** AC consolidation + 1000 stress |
+| `tests/test_stale_closure_fallback.cpp` | **#1604** named concurrent mutate → apply |
 | `tests/test_issue_1491.cpp` / `test_issue_1558.cpp` | apply + JIT dual-check |
 | `tests/test_issue_1490.cpp` / `test_post_steal_closed_loop_1592.cpp` | post-steal |
 | `tests/test_issue_1496*.cpp` | invalidate unify + concurrent |
@@ -78,6 +80,7 @@ JIT `notify_batch_deopt_and_remove` / walk_active_closures.
 ## Related docs
 
 - `docs/design/apply-closure-epoch-safety.md`
+- `docs/design/stale-closure-fallback-1604.md`
 - `docs/design/closure-dual-epoch-apply.md`
 - `docs/design/unified-invalidation-epoch-protocol.md`
 - `docs/design/post-steal-closed-loop-1592.md`

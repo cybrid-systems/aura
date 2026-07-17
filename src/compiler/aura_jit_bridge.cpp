@@ -596,6 +596,11 @@ extern "C" void aura_jit_closure_record_stale_deopt(void) {
     if (aot_metrics()) {
         aot_metrics()->jit_closure_stale_deopt_total.fetch_add(1, std::memory_order_relaxed);
         aot_metrics()->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1604: AC-named metrics on JIT aura_closure_call deopt path
+        // (parity with apply_closure → bump_stale_closure_prevented /
+        // bump_closure_epoch_mismatch_fallback).
+        aot_metrics()->stale_closure_prevented.fetch_add(1, std::memory_order_relaxed);
+        aot_metrics()->closure_epoch_mismatch_fallback.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

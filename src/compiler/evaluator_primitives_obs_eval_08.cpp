@@ -300,12 +300,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1598: apply_closure / JIT / post-steal / invalidate dual-epoch
-    // hotpath closed-loop dashboard (refine #1475–#1496 / #1558).
+    // Issue #1598 / #1604: apply_closure / JIT / post-steal / invalidate
+    // dual-epoch hotpath closed-loop dashboard (refine #1475–#1496 / #1558).
+    // #1604: JIT aura_closure_call deopt also bumps AC-named
+    // stale_closure_prevented + closure_epoch_mismatch_fallback.
     ObservabilityPrims::register_stats_impl(
         "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(24);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -347,12 +349,18 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       m ? L(&m->unified_invalidation_protocol_total) : 0);
             insert_kv("compiler_closure_safe_fallbacks",
                       m ? L(&m->compiler_closure_safe_fallbacks) : 0);
+            // #1604: JIT-side dual-check counters (same dashboard).
+            insert_kv("jit_closure_dual_check_total", m ? L(&m->jit_closure_dual_check_total) : 0);
+            insert_kv("jit_closure_stale_deopt_total",
+                      m ? L(&m->jit_closure_stale_deopt_total) : 0);
+            insert_kv("jit_closure_safe_fallbacks", m ? L(&m->jit_closure_safe_fallbacks) : 0);
             insert_kv("apply-path-wired", 1);
             insert_kv("jit-path-wired", 1);
+            insert_kv("jit-deopt-bumps-ac-metrics", 1); // #1604
             insert_kv("post-steal-path-wired", 1);
             insert_kv("compact-refresh-wired", 1);
-            insert_kv("issue", 1598);
-            insert_kv("schema", 1598);
+            insert_kv("issue", 1604);
+            insert_kv("schema", 1604); // lineage 1598
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
