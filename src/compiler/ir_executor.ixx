@@ -58,6 +58,11 @@ export struct IRClosure {
     // current defuse_version_ or apply takes safe fallback.
     std::uint32_t env_id = std::numeric_limits<std::uint32_t>::max();
     std::uint64_t env_version = 0;
+    // Issue #1616: SyntaxMarker + AST provenance from IRFunction /
+    // ClosureBridge (0=User, 1=MacroIntroduced). Consulted by
+    // ir_closure_needs_safe_fallback for hygiene-aware dispatch.
+    std::uint8_t source_marker = 0;
+    std::uint32_t provenance = 0;
 };
 
 // Returned by run_function's Call handler to signal a new call is needed.

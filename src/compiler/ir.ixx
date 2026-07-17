@@ -612,6 +612,10 @@ export struct ClosureBridgeData {
     // the closure. Default 0 = "unset" (legacy bridge); Cycle 1
     // captures the current epoch explicitly via set_closure_bridge.
     std::uint64_t bridge_epoch = 0;
+    // Issue #1616: SyntaxMarker + provenance from lambda/macro body AST
+    // (0=User, 1=MacroIntroduced). Propagated into IRClosure at MakeClosure.
+    std::uint8_t source_marker = 0;
+    std::uint32_t provenance = 0;
 };
 
 export struct IRModule {
@@ -641,7 +645,19 @@ export struct IRModule {
                             std::shared_ptr<const ast::StringPool> pool, ast::NodeId body_id,
                             std::uint64_t epoch = 0) {
         if (func_id < functions.size()) {
-            closure_bridge[func_id] = {std::move(flat), std::move(pool), body_id, "", epoch};
+            ClosureBridgeData bd;
+            bd.flat = std::move(flat);
+            bd.pool = std::move(pool);
+            bd.body_id = body_id;
+            bd.bridge_epoch = epoch;
+            // Issue #1616: stamp SyntaxMarker + provenance from body AST.
+            if (bd.flat && body_id != ast::NULL_NODE && body_id < bd.flat->size()) {
+                bd.source_marker = static_cast<std::uint8_t>(bd.flat->marker(body_id));
+                bd.provenance = bd.flat->provenance(body_id);
+            } else if (func_id < functions.size()) {
+                bd.source_marker = functions[func_id].marker;
+            }
+            closure_bridge[func_id] = std::move(bd);
         }
     }
 
@@ -653,7 +669,19 @@ export struct IRModule {
                                 std::shared_ptr<const ast::StringPool> pool, ast::NodeId body_id,
                                 std::uint64_t epoch = 0) {
         if (func_id < closure_bridge.size()) {
-            closure_bridge[func_id] = {std::move(flat), std::move(pool), body_id, "", epoch};
+            ClosureBridgeData bd;
+            bd.flat = std::move(flat);
+            bd.pool = std::move(pool);
+            bd.body_id = body_id;
+            bd.bridge_epoch = epoch;
+            // Issue #1616: stamp SyntaxMarker + provenance from body AST.
+            if (bd.flat && body_id != ast::NULL_NODE && body_id < bd.flat->size()) {
+                bd.source_marker = static_cast<std::uint8_t>(bd.flat->marker(body_id));
+                bd.provenance = bd.flat->provenance(body_id);
+            } else if (func_id < functions.size()) {
+                bd.source_marker = functions[func_id].marker;
+            }
+            closure_bridge[func_id] = std::move(bd);
         }
     }
 

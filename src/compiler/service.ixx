@@ -270,8 +270,9 @@ export struct EscapeAnalysisWrap {
                      instr.type_id,
                      instr.linear_ownership_state,
                      0,
-                     // Issue #1610: IR→JIT marker propagation
-                     instr.source_marker});
+                     // Issue #1610 / #1616: IR→JIT marker + provenance
+                     instr.source_marker,
+                     instr.provenance});
             }
         }
         aura::jit::run_escape_analysis(flat_instrs, func.local_count, maps[func.id]);
@@ -2891,16 +2892,18 @@ public:
                             if (gi < inst_dirty->size())
                                 dirty = (*inst_dirty)[gi];
                         }
-                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                                   {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]},
-                                                   shape,
-                                                   instr.narrow_evidence,
-                                                   instr.type_id,
-                                                   instr.linear_ownership_state,
-                                                   dirty,
-                                                   // Issue #1610: IR→JIT marker propagation
-                                                   instr.source_marker});
+                        flat_instrs[bi].push_back(
+                            {static_cast<std::uint32_t>(instr.opcode),
+                             {instr.operands[0], instr.operands[1], instr.operands[2],
+                              instr.operands[3]},
+                             shape,
+                             instr.narrow_evidence,
+                             instr.type_id,
+                             instr.linear_ownership_state,
+                             dirty,
+                             // Issue #1610 / #1616: IR→JIT marker + provenance
+                             instr.source_marker,
+                             instr.provenance});
                         ++inst_off;
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
@@ -10341,16 +10344,18 @@ public:
                         if (final_shape_map && instr.operands[0] < ir_fn.local_count) {
                             shape = final_shape_map[instr.operands[0]];
                         }
-                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                                   {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]},
-                                                   shape,
-                                                   instr.narrow_evidence,
-                                                   instr.type_id,
-                                                   instr.linear_ownership_state,
-                                                   0,
-                                                   // Issue #1610: IR→JIT marker propagation
-                                                   instr.source_marker});
+                        flat_instrs[bi].push_back(
+                            {static_cast<std::uint32_t>(instr.opcode),
+                             {instr.operands[0], instr.operands[1], instr.operands[2],
+                              instr.operands[3]},
+                             shape,
+                             instr.narrow_evidence,
+                             instr.type_id,
+                             instr.linear_ownership_state,
+                             0,
+                             // Issue #1610 / #1616: IR→JIT marker + provenance
+                             instr.source_marker,
+                             instr.provenance});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};

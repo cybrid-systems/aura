@@ -5244,6 +5244,9 @@ aura_issue_test_link_llvm_jit(test_typed_mutation_invariant_audit_1614)
 # Issue #1615: linear ownership + coercion synergy / post-coercion reval.
 aura_add_issue_test(test_linear_coercion_synergy_1615)
 aura_issue_test_link_llvm_jit(test_linear_coercion_synergy_1615)
+# Issue #1616: IRClosure/ClosureBridge MacroIntroduced provenance (refine #1047).
+aura_add_issue_test(test_ir_closure_provenance_1616)
+aura_issue_test_link_llvm_jit(test_ir_closure_provenance_1616)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
