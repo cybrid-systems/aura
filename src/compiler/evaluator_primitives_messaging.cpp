@@ -8,6 +8,9 @@ module;
 #include "security_capabilities.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
+#include "serve/multi_fiber_mailbox.h"
+#include "observability_metrics.h"
+#include "hash_meta.h"
 
 module aura.compiler.evaluator;
 
@@ -239,6 +242,53 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0);
         return make_int(static_cast<std::int64_t>(aura::messaging::g_mailbox_count(svc)));
     });
+
+    // Issue #1585: process-global MultiFiberMailbox stats surface.
+    // Full attach/broadcast/recv API is C++ (multi_fiber_mailbox.h);
+    // agent frameworks bind via this dashboard + serve hooks.
+    ObservabilityPrims::register_stats_impl(
+        "query:mf-mailbox-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::serve::mf_mailbox;
+            std::uint64_t pushes = 0, pops = 0, broadcasts = 0, bp = 0, attaches = 0;
+            MultiFiberMailbox::snapshot_global(pushes, pops, broadcasts, bp, attaches);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("pushes", static_cast<std::int64_t>(pushes));
+            insert_kv("pops", static_cast<std::int64_t>(pops));
+            insert_kv("broadcasts", static_cast<std::int64_t>(broadcasts));
+            insert_kv("backpressure-rejects", static_cast<std::int64_t>(bp));
+            insert_kv("attaches", static_cast<std::int64_t>(attaches));
+            insert_kv("phase", static_cast<std::int64_t>(kMultiFiberMailboxPhase));
+            insert_kv("schema", 1585);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // (fiber:spawn fn) — Spawn a fiber (async)
     // fn is a closure taking no arguments.
