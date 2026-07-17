@@ -2,6 +2,8 @@
 // Header form (like multi_fiber_mailbox.h) so serve + tests can include
 // without module churn. Spawns fibers under a concurrency cap, joins via
 // Fiber::join (#1584), optional MultiFiberMailbox result routing (#1585).
+// #1595: join Ok bumps linear enforcement counters; host refresh via
+// complete_post_join_linear_enforcement.
 
 #ifndef AURA_SERVE_PARALLEL_ORCH_H
 #define AURA_SERVE_PARALLEL_ORCH_H
@@ -253,6 +255,7 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
     if (policy.timeout_ms > 0)
         join_timeout = static_cast<std::uint64_t>(policy.timeout_ms);
 
+    // Fiber::join Ok path bumps join_linear_enforcement_total per target (#1595).
     JoinResult jr = Fiber::join(std::span<Fiber* const>(fibers), join_timeout);
     out.join_status = jr.status;
     out.wait_us = jr.wait_us;

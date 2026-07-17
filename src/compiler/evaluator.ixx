@@ -2033,8 +2033,33 @@ public:
     // linear/StableNodeRef, transfer panic checkpoint. Uses fiber resume
     // hints when fiber_void is a Fiber*.
     void complete_post_resume_steal_refresh(void* fiber_void = nullptr) noexcept;
+    // Issue #1595: after Fiber::join / parallel child completion — linear
+    // ownership probe + StableNodeRef restamp (joiner-side enforcement).
+    // joined_fiber_void may be null (uses current fiber / full scan).
+    void complete_post_join_linear_enforcement(void* joined_fiber_void = nullptr) noexcept;
+    // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
+    // Returns false when a linear claim in payload fails ownership checks
+    // (caller must not deliver). Always runs light StableNodeRef probe.
+    [[nodiscard]] bool probe_mailbox_linear_and_stable_refs(std::uint64_t from_fiber,
+                                                            std::uint64_t to_fiber,
+                                                            std::string_view payload) noexcept;
     [[nodiscard]] std::uint64_t get_post_steal_refresh_count() const noexcept {
         return post_steal_refresh_count_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_linear_join_enforcement_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->linear_join_enforcement_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mailbox_linear_violation_count() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->mailbox_linear_violation_count.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_stable_ref_post_join_repin_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->stable_ref_post_join_repin_total.load(std::memory_order_relaxed);
+        return 0;
     }
     // Alias of get_panic_checkpoint_transfer_count for #1580 AC naming.
     [[nodiscard]] std::uint64_t get_panic_transfer_on_steal_count() const noexcept {
@@ -4665,6 +4690,7 @@ public:
         GcSafepoint = 1,
         CompactOrRepin = 2,
         YieldResume = 3,
+        Join = 4, // Issue #1595: Fiber::join / parallel_intend post-join
     };
     // Unified sweep: restamp_pinned_stable_refs + site counters.
     // Force-calls validate_or_refresh semantics via refresh_if_stale.

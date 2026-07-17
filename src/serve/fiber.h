@@ -366,12 +366,14 @@ public:
         return cancel_requested_.load(std::memory_order_acquire);
     }
 
-    // Process-wide join metrics (#1584).
+    // Process-wide join metrics (#1584 / #1595).
     [[nodiscard]] static std::uint64_t join_total() noexcept;
     [[nodiscard]] static std::uint64_t join_timeout_total() noexcept;
     [[nodiscard]] static std::uint64_t join_cancel_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_total() noexcept;
     [[nodiscard]] static std::uint64_t join_wait_us_max() noexcept;
+    // Issue #1595: times join Ok path invoked linear/StableNodeRef enforcement.
+    [[nodiscard]] static std::uint64_t join_linear_enforcement_total() noexcept;
 
     // Issue #213 Cycle 3: per-fiber mutation stack. The
     // Evaluator's enter/exit_mutation_boundary reads/writes
@@ -488,12 +490,13 @@ private:
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};
 
-    // Issue #1584 join metrics (process-wide).
+    // Issue #1584 / #1595 join metrics (process-wide).
     static std::atomic<std::uint64_t> join_total_;
     static std::atomic<std::uint64_t> join_timeout_total_;
     static std::atomic<std::uint64_t> join_cancel_total_;
     static std::atomic<std::uint64_t> join_wait_us_total_;
     static std::atomic<std::uint64_t> join_wait_us_max_;
+    static std::atomic<std::uint64_t> join_linear_enforcement_total_;
 };
 
 // Issue #213 Cycle 3: function pointers that the Evaluator

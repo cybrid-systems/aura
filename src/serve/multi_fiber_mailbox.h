@@ -1,5 +1,6 @@
-// multi_fiber_mailbox.h — Issue #1585 / #1211: MultiFiberMailbox with
+// multi_fiber_mailbox.h — Issue #1585 / #1211 / #1595: MultiFiberMailbox with
 // multi-attach, broadcast, blocking recv, priority, and backpressure.
+// #1595: linear-claim payload prefix filter (linear-viol:) + process counters.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
 
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
@@ -50,6 +51,9 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> attaches{0};
     std::atomic<std::uint64_t> recv_waits{0};
     std::atomic<std::uint64_t> recv_timeouts{0};
+    // Issue #1595: linear claim checks / violations (prefix filter on push).
+    std::atomic<std::uint64_t> linear_checks{0};
+    std::atomic<std::uint64_t> linear_violations{0};
 };
 
 // Process-wide aggregate (tests / observability).
@@ -106,7 +110,15 @@ public:
     }
 
     // Push with backpressure: when size >= high_water, reject.
+    // Issue #1595: reject payloads with "linear-viol:" prefix (fiber-stack safe,
+    // no Evaluator call on hot path). Deeper StableNodeRef/linear probe is via
+    // aura_evaluator_mailbox_linear_check / complete_post_join on host paths.
     [[nodiscard]] PushStatus push(MailMessage msg) {
+        g_mf_mailbox_stats.linear_checks.fetch_add(1, std::memory_order_relaxed);
+        if (msg.payload.size() >= 12 && msg.payload.compare(0, 12, "linear-viol:") == 0) {
+            g_mf_mailbox_stats.linear_violations.fetch_add(1, std::memory_order_relaxed);
+            return PushStatus::Closed;
+        }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;

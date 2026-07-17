@@ -50,4 +50,4 @@ work-steal and GC safepoints remain available.
 ## Related
 
 - EDSL `(fiber:join)` — evaluator_primitives_messaging.cpp (#119)
-- #1595 linear ownership on join path (follow-up)
+- #1595 linear ownership on join path — **shipped** (`join-linear-enforcement-1595.md`)
