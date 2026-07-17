@@ -1,7 +1,18 @@
-# Aura CI
+# Aura CI — canonical workflow (Issue #1570 path map)
+#
+# THIS IS THE ONLY PR/main CI entrypoint.
+# There is NO `.github/ci_pipeline.yml` (that path 404s / never existed).
+# Nightly / release live beside this file: nightly.yml, release.yml.
+#
+# Developer map: docs/test_harness_pattern.md
+#   - Benchmark gate → tests/benchmark.py + ./build.py bench --strict
+#     (NOT src/test/benchmark_gate.ixx)
+#   - Issue tests    → tests/test_*.cpp + aura_add_issue_test +
+#     tests/run_issue_tests.py (NOT src/test/test_issue_pattern.ixx)
 #
 # Wall-time layout (approx):
 #   gate (~1m) ──► build-test (~12–18m → target <8m, see docs/ci-performance.md)
+#                  └── final step: ./build.py bench --strict (#1569 SLO)
 #   asan-build (~10m, parallel with gate+build-test) ──► asan-verify (~5m)
 #
 # Issue #873/#874 CI performance: mold linker + link job pool + phase

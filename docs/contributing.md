@@ -9,11 +9,26 @@
 ```bash
 ./scripts/install-githooks.sh   # 一次性：启用 pre-commit（含 docs 自动 regen）
 ./build.py build
-./build.py check          # CI 默认
+./build.py gate           # 静态门栅 = CI job `gate`（docs/lint/format/fixtures/surface/binding）
+./build.py check          # gate + build + CI 测试矩阵
 ./build.py test unit      # test_ir
 ./build.py test integ     # .aura 端到端
 ./build.py bench --strict # #1569：编译器流水线 benchmark SLO 硬门栅
 ```
+
+### 路径对照（Issue #1570 — 避免 404 / 幽灵模块）
+
+完整表与 new-dev checklist 见 **[test_harness_pattern.md](test_harness_pattern.md)**。
+
+| 错误引用 | 正确位置 |
+|----------|----------|
+| `.github/ci_pipeline.yml` | `.github/workflows/ci.yml` |
+| `src/test/benchmark_gate.ixx` | `tests/benchmark.py` + `./build.py bench` |
+| `src/test/test_issue_pattern.ixx` | `tests/test_harness.hpp` + `tests/templates/test_issue_pattern.cpp` |
+| `src/test/` | `tests/` · `tests/domain/` · `cmake/AuraDomainTests.cmake` |
+
+写 `test_issue_*`：复制模板 → `aura_add_issue_test` → `cmake --build build --target …`。  
+跑 issue 矩阵：`python3 tests/run_issue_tests.py --tier fast` 或 `./build.py test issues-fast`。
 
 ### Benchmark SLO 硬门栅（Issue #1569）
 

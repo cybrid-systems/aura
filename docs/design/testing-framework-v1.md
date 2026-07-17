@@ -37,6 +37,11 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
+**Path map / onboarding (#1570):** see [../test_harness_pattern.md](../test_harness_pattern.md)
+for real CI paths (`.github/workflows/ci.yml`), benchmark gate location
+(`tests/benchmark.py`, not `src/test/benchmark_gate.ixx`), and the
+copy-paste issue-test template under `tests/templates/`.
+
 ---
 
 ## 2. EDSL harness (`lib/std/edsl-test-harness.aura`)

@@ -13,10 +13,11 @@
 | Agent 提示词 / 红线 | [agent-prompt-template.md](agent-prompt-template.md) |
 | 模块 / 管线 | [architecture.md](architecture.md) |
 | 改 evaluator | [contributing.md](contributing.md) |
+| **写 issue 测试 / 跑 gate·bench** | [test_harness_pattern.md](test_harness_pattern.md)（#1570 路径图 + 模板） |
 | Agent JSON 协议 | [wire-formats.md](wire-formats.md) |
 | 自修改示例 | `tests/suite/mutate-structured.aura` |
 | 标准库 | [generated/stdlib-index.md](generated/stdlib-index.md) · `lib/std/*.aura` |
-| 构建测试 | `./build.py check` |
+| 构建测试 | `./build.py gate` · `./build.py check` |
 | 路线图 | [roadmap.md](roadmap.md) |
 | 历史设计 | `git show docs-archive-pre-2026-06:docs/design/...` |
 
@@ -29,9 +30,12 @@
 | [generated/](generated/) | 从源码生成：primitives / modules / stdlib |
 | [architecture.md](architecture.md) | 模块地图与数据流 |
 | [contributing.md](contributing.md) | FlatAST 不变式、加 primitive |
+| [test_harness_pattern.md](test_harness_pattern.md) | CI/bench/issue-test 真实路径 + 模板（#1570） |
+| [design/testing-framework-v1.md](design/testing-framework-v1.md) | 分层测试 / binding / pets |
 | [wire-formats.md](wire-formats.md) | `--serve` / `--serve-async` |
 | [roadmap.md](roadmap.md) | P 系列规划 |
 | [benchmark.md](benchmark.md) | EDSL benchmark（源：`tests/benchmark.py`） |
+| [ci-performance.md](ci-performance.md) | CI 墙钟与 mold/link pool |
 
 ## 构建
 

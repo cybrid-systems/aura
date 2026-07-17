@@ -55,10 +55,20 @@ Aura 遵循三个原则：
 
 ```bash
 ./build.py build    # 构建
-./build.py check    # CI：构建 + 核心测试
+./build.py gate     # 静态门栅（与 CI job `gate` 相同）
+./build.py check    # gate + 构建 + 核心测试矩阵
+./build.py bench --strict  # 编译器 benchmark SLO 硬门栅（#1569）
 ```
 
-贡献运行时：[`docs/contributing.md`](docs/contributing.md)。
+**CI 与测试路径（#1570）** — 勿在文档/issue 中引用不存在的路径：
+
+| 话题 | 真实位置 |
+|------|----------|
+| GitHub Actions CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（**不是** `.github/ci_pipeline.yml`） |
+| Benchmark / SLO gate | [`tests/benchmark.py`](tests/benchmark.py) · `./build.py bench --strict`（**不是** `src/test/benchmark_gate.ixx`） |
+| Issue-test 模式 | [`docs/test_harness_pattern.md`](docs/test_harness_pattern.md) · [`tests/test_harness.hpp`](tests/test_harness.hpp) · 模板 [`tests/templates/test_issue_pattern.cpp`](tests/templates/test_issue_pattern.cpp) |
+
+贡献运行时：[`docs/contributing.md`](docs/contributing.md)。测试上手：[`docs/test_harness_pattern.md`](docs/test_harness_pattern.md)。
 
 ## Platform Notes
 
