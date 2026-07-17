@@ -2,6 +2,7 @@ module;
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <expected>
 #include <format>
 #include <functional>
 #include <memory>
@@ -15,6 +16,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 export module aura.core.arena;
 import std;
+import aura.core.error;
 
 // Issue #1390: one-shot stderr warning when request_defrag() is
 // called with no GC safepoint registered. Exported as free
@@ -922,10 +924,40 @@ public:
     // Issue #1518 / test seam: raw allocate without dtor tracking
     // (SmallObjectPool path when size <= 64). Used by live-compact
     // stress tests and legacy #1467 harness.
+    // Issue #1546/#1554: quota-bound when arena_owner_ is set (via set_arena).
     [[nodiscard]] void* try_allocate(std::size_t size) noexcept {
         if (size == 0)
             return nullptr;
         return allocate_raw(size, alignof(std::max_align_t));
+    }
+
+    // Issue #1554: typed factory — quota check once, then allocate_raw_impl.
+    // Prefer this (or Evaluator::allocate_checked) over bare try_allocate when
+    // the caller needs ResourceQuotaExceeded as AuraError rather than nullptr.
+    // Orphan arenas (no owner): still allocates; no ResourceQuotaExceeded.
+    [[nodiscard]] aura::core::AuraResult<void*>
+    allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept {
+        if (size == 0) {
+            return std::unexpected(
+                aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
+                                      std::string("ASTArena::allocate_checked size==0")});
+        }
+        if (quota_allow_fn_ && arena_owner_) {
+            if (!quota_allow_fn_(arena_owner_, size)) {
+                return std::unexpected(aura::core::AuraError{
+                    aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                    std::string("ASTArena::allocate_checked: resource quota exceeded (") +
+                        std::to_string(size) + " bytes)"});
+            }
+        }
+        // Quota already enforced (or unbound) — do not re-enter allow_fn.
+        void* ptr = allocate_raw_impl(size, alignment);
+        if (!ptr) {
+            return std::unexpected(
+                aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
+                                      std::string("ASTArena::allocate_checked: OOM")});
+        }
+        return ptr;
     }
 
 private:
@@ -984,11 +1016,12 @@ private:
     // Issue #1519: post(ptr != nullptr) on success path — pmr allocate
     // throws on OOM rather than returning null; small-pool path returns
     // non-null on hit.
-    // Issue #1546: when arena_owner_ + quota_allow_fn_ reject, returns
-    // nullptr without allocating (typed path: Evaluator::allocate_checked).
+    // Issue #1546 / #1554: when arena_owner_ + quota_allow_fn_ reject,
+    // returns nullptr without allocating. Typed path:
+    // ASTArena::allocate_checked / Evaluator::allocate_checked.
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
         pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
-        // ── Resource quota (Issue #1546 / #1481) ─────────
+        // ── Resource quota (Issue #1546 / #1481 / #1554) ──
         // Owner-threaded Evaluator::check_arena_quota (or equivalent).
         // Orphan arenas skip this branch entirely.
         if (quota_allow_fn_ && arena_owner_) {
@@ -997,7 +1030,11 @@ private:
                 return nullptr;
             }
         }
+        return allocate_raw_impl(size, alignment);
+    }
 
+    // Body of allocate_raw after quota gate (Issue #1554 split).
+    void* allocate_raw_impl(std::size_t size, std::size_t alignment) {
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
@@ -1177,6 +1214,29 @@ public:
     }
     [[nodiscard]] double compact_threshold() const noexcept { return compact_threshold_; }
 
+    // Issue #1554: propagate default quota owner to every module arena
+    // (existing + future module_arena creates). Same C-style callback
+    // pattern as ASTArena::set_arena_owner — no Evaluator import.
+    void set_default_arena_owner(void* owner, ASTArena::ArenaQuotaAllowFn allow_fn) noexcept {
+        default_owner_ = owner;
+        default_allow_fn_ = allow_fn;
+        for (auto& [_, arena] : arenas_) {
+            if (owner && allow_fn)
+                arena->set_arena_owner(owner, allow_fn);
+            else
+                arena->clear_arena_owner();
+        }
+    }
+    void clear_default_arena_owner() noexcept {
+        default_owner_ = nullptr;
+        default_allow_fn_ = nullptr;
+        for (auto& [_, arena] : arenas_)
+            arena->clear_arena_owner();
+    }
+    [[nodiscard]] bool has_default_arena_owner() const noexcept {
+        return default_owner_ != nullptr && default_allow_fn_ != nullptr;
+    }
+
     // Get or create an arena for a module
     ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024)
         pre(!name.empty()) pre(initial_size >= 1024) {
@@ -1184,6 +1244,9 @@ public:
         if (it != arenas_.end())
             return *it->second;
         auto [inserted, ok] = arenas_.emplace(name, std::make_unique<ASTArena>(initial_size));
+        // #1554: new module arenas inherit group default quota owner.
+        if (default_owner_ && default_allow_fn_)
+            inserted->second->set_arena_owner(default_owner_, default_allow_fn_);
         return *inserted->second;
     }
 
@@ -1502,6 +1565,9 @@ public:
 private:
     std::unordered_map<std::string, std::unique_ptr<ASTArena>> arenas_;
     double compact_threshold_ = 0.50; // Issue #187: default 50% fragmentation triggers compact
+    // Issue #1554: default quota owner for module arenas.
+    void* default_owner_ = nullptr;
+    ASTArena::ArenaQuotaAllowFn default_allow_fn_ = nullptr;
 
     // Issue #335: adaptive auto-compact heuristics.
     //

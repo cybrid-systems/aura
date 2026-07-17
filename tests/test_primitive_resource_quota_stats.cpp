@@ -105,9 +105,10 @@ static void ac3_rejects_total_matches(CompilerService& cs) {
 }
 
 static void ac4_schema_1481(CompilerService& cs) {
-    std::println("\n--- AC4: schema == 1498 (legacy 1481 ok) ---");
+    std::println("\n--- AC4: schema == 1554 (legacy 1498/1481 ok) ---");
     const auto schema = hash_int_field(cs, "schema");
-    CHECK(schema == 1498 || schema == 1481, std::format("schema == 1498 or 1481 (got {})", schema));
+    CHECK(schema == 1554 || schema == 1498 || schema == 1481,
+          std::format("schema == 1554 or 1498 or 1481 (got {})", schema));
 }
 
 } // namespace aura_issue_1548_prim_detail
