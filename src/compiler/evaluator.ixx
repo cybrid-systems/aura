@@ -2021,6 +2021,15 @@ public:
     // (full scan / current epoch). Returns # frames refreshed.
     std::size_t refresh_stale_frames_after_steal(std::uint64_t hint_env_id = 0,
                                                  std::uint64_t expected_epoch = 0) noexcept;
+    // Issue #1612: MacroIntroduced marker / provenance refresh after
+    // fiber resume, steal, or GC compact. Restamps Atomic/COW pins that
+    // target MacroIntroduced nodes; repairs marker drift when expansion
+    // provenance was lost. Returns # of macro-related repairs.
+    std::size_t refresh_stale_macro_frames(std::uint64_t hint_env_id = 0,
+                                           std::uint64_t expected_epoch = 0) noexcept;
+    // Issue #1612: probe + repin MacroIntroduced provenance on pinned
+    // StableNodeRefs (pairs with probe_and_repin_linear_on_steal).
+    void probe_and_repin_macro_provenance() noexcept;
     // Issue #1490: linear ownership probe + COW/StableNodeRef re-pin
     // after fiber steal/resume (wraps probe_linear + re_pin).
     void probe_and_repin_linear_on_steal() noexcept;
@@ -2045,6 +2054,20 @@ public:
                                                             std::string_view payload) noexcept;
     [[nodiscard]] std::uint64_t get_post_steal_refresh_count() const noexcept {
         return post_steal_refresh_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1612: macro-specific post-steal / resume refresh counters.
+    [[nodiscard]] std::uint64_t get_macro_stale_ref_prevented() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->macro_stale_ref_prevented_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_macro_provenance_repin_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->macro_provenance_repin_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_macro_refresh_invoke_count() const noexcept {
+        return macro_refresh_invoke_count_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_linear_join_enforcement_total() const noexcept {
         if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
@@ -3377,6 +3400,8 @@ private:
     // Issue #1490: lifetime # of post-steal EnvFrame refresh passes
     // (Fiber::resume migration + post-yield validate path).
     std::atomic<std::uint64_t> post_steal_refresh_count_{0};
+    // Issue #1612: refresh_stale_macro_frames invocation count.
+    std::atomic<std::uint64_t> macro_refresh_invoke_count_{0};
     // Issue #439: safepoint wait time (sum of all
     // wait_for_safepoint call durations, in ns). P0
     // returns 0; the follow-up adds the actual

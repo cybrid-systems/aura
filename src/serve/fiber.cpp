@@ -360,12 +360,13 @@ void Fiber::resume() {
         aura::messaging::g_transfer_panic_checkpoint();
     }
 
-    // Issue #1490 / #1580 / #1592 / #1608: force EnvFrame / bridge_epoch
-    // refresh + linear re-pin + StableNodeRef auto-restamp + linear ownership
-    // enforce after resume validate (pairs with pre-swap migration refresh in
+    // Issue #1490 / #1580 / #1592 / #1608 / #1612: force EnvFrame / bridge_epoch
+    // refresh + linear re-pin + MacroIntroduced marker/provenance refresh after
+    // resume validate (pairs with pre-swap migration refresh in
     // aura_evaluator_resume_fiber_migration → complete_post_resume_steal_refresh).
     // Path: aura_evaluator_post_resume_refresh → complete_post_resume_steal_refresh
-    //   → refresh_stale_frames_after_steal + probe_and_repin_linear_on_steal.
+    //   → refresh_stale_frames_after_steal + probe_and_repin_linear_on_steal
+    //   → refresh_stale_macro_frames + probe_and_repin_macro_provenance (#1612).
     aura_evaluator_post_resume_refresh();
 
     if (g_fiber_setter_)

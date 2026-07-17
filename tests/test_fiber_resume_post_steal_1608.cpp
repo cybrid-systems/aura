@@ -109,13 +109,14 @@ static void ac4_query_schema_1608() {
     auto h = cs.eval("(engine:metrics \"query:post-steal-closed-loop-stats\")");
     CHECK(h && is_hash(*h), "hash");
     const auto schema = href(cs, "schema");
-    CHECK(schema == 1608 || schema == 1592, std::format("schema 1608|1592 (got {})", schema));
+    CHECK(schema == 1612 || schema == 1608 || schema == 1592,
+          std::format("schema 1612|1608|1592 (got {})", schema));
     CHECK(href(cs, "post_steal_refresh_count") >= 1 || href(cs, "post-steal-refresh-count") >= 1,
           "post_steal_refresh_count");
     CHECK(href(cs, "stale_frame_prevented") >= 0 ||
               href(cs, "envframe-version-mismatch-post-steal") >= 0,
           "stale_frame_prevented");
-    CHECK(href(cs, "issue") == 1608 || href(cs, "issue") == 1608 || href(cs, "issue") == 1592,
+    CHECK(href(cs, "issue") == 1612 || href(cs, "issue") == 1608 || href(cs, "issue") == 1592,
           "issue lineage");
 }
 
