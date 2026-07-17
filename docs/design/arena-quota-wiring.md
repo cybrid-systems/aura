@@ -1,6 +1,6 @@
 # Arena allocate_raw ↔ Resource Quota Wiring
 
-**Issues:** #1498 (production parent), #1487, #1546, #1481, #1547, #1548  
+**Issues:** #1498 (production parent), #1487, #1546, **#1554**, #1481, #1547, #1548  
 **Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `try_acquire`, `query:resource-quota-stats`
 
 ## #1498 production closed-loop
@@ -35,39 +35,49 @@
 | Site | Classification | Notes |
 |------|----------------|-------|
 | `ASTArena::allocate_raw` (definition) | **[quota-bound]** | Owner callback consulted first (#1546) |
+| `ASTArena::allocate_raw_impl` | **[non-quota]** | Post-gate body; used by typed `allocate_checked` (#1554) |
 | `ASTArena::try_allocate` | **[quota-bound]** | Forwards to `allocate_raw` |
+| `ASTArena::allocate_checked` | **[quota-bound]** | Typed `AuraResult`; single allow_fn call (#1554) |
 | `ASTArena::create<T>` | **[quota-bound]** | Via `allocate_raw`; returns `nullptr` on reject |
 | `SmallObjectPool::try_allocate` | **[non-quota]** | Internal tier; main path still gates at `allocate_raw` entry |
 | Orphan `ASTArena` (no `set_arena`) | **[unbound-alloc]** | `arena_owner_ == nullptr` → unlimited |
 | Pre-`set_arena` service bootstrap | **[unbound-alloc]** | No owner until Evaluator binds |
 | Hot-path create after owner set | **[quota-bound]** | Same as create |
+| `set_temp_arena` | **[quota-bound]** | Same owner callback as primary (#1554) |
 | JIT / AOT prewarm buffers | **[unbound-alloc]** | Separate allocators, not ASTArena |
-| Module `ArenaGroup` child arenas | **[unbound-alloc]** until group/owner wired | Future: bind owner per module arena |
+| Module `ArenaGroup` child arenas | **[quota-bound]** when group default owner set | `set_default_arena_owner` on `set_arena` (#1554) |
 
-Callers outside `arena.ixx` never invoke `allocate_raw` directly (it is **private**). Production paths enter via `create` / `try_allocate` / `Evaluator::allocate_checked`.
+Callers outside `arena.ixx` never invoke `allocate_raw` directly (it is **private**). Production paths enter via `create` / `try_allocate` / `ASTArena::allocate_checked` / `Evaluator::allocate_checked`.
 
 ## Contract
 
 ```
 set_arena(ASTArena*)
   └─ set_arena_owner(this, allow_fn)
-       allow_fn → !check_arena_quota(size).has_value()
+  └─ arena_group_->set_default_arena_owner(this, allow_fn)   // #1554
+
+set_temp_arena(ASTArena*)
+  └─ set_arena_owner(this, allow_fn)                         // #1554
 
 allocate_raw(size, align)
   if owner && !allow_fn(owner, size) → return nullptr   // no stats.used bump
-  else → small-pool / pmr allocate (unchanged)
+  else → allocate_raw_impl (small-pool / pmr)
 
-allocate_checked(size, align)   // typed surface
-  check_arena_quota → AuraError{ResourceQuotaExceeded} on reject
-  try_allocate → nullptr only if OOM / other failure after quota pass
+ASTArena::allocate_checked(size, align)   // typed surface #1554
+  allow_fn once → ResourceQuotaExceeded
+  allocate_raw_impl → ArenaOutOfMemory only on true OOM
+
+Evaluator::allocate_checked
+  delegates to ASTArena::allocate_checked when owner wired (no double-count)
 ```
 
-- `resource_quota_memory_ == 0` → unlimited (default).
-- Limit is **per-request size** (not cumulative heap), matching #1481 helpers.
+- `resource_quota_memory_ == 0` → unlimited (default) per-request.
+- `resource_quota_memory_total_ != 0` → cumulative `used + request` (#1498).
+- `query:resource-quota-stats` schema **1554**: `current_usage`, `exceeded_total`/`exceeded_count`, `primary_arena_wired`, `temp_arena_wired`, `group_owner_wired`.
 
 ## Tests
 
 | File | Role |
 |------|------|
 | `tests/test_resource_quota.cpp` | Helper isolation (#1481) |
-| `tests/test_arena_quota_wired.cpp` | Owner wiring + reject path (#1546) |
+| `tests/test_arena_quota_wired.cpp` | Owner wiring + reject + temp/group/boundary (#1546/#1554) |

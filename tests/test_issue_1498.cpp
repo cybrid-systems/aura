@@ -91,7 +91,9 @@ static void ac2_stats_fields() {
     auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(r && is_hash(*r), "stats hash");
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'schema)");
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1498, "schema == 1498");
+    // Schema 1498 → 1554 (#1554 temp/group wiring fields); accept both.
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1554 || as_int(*schema) == 1498),
+          "schema == 1554 (or legacy 1498)");
 
     for (const auto* k : {"current_usage", "memory_quota", "memory_quota_total", "exceeded_count",
                           "checks_total", "rejects_total", "mutations_used"}) {

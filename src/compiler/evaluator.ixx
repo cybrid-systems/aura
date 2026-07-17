@@ -1107,6 +1107,14 @@ public:
     // Without this, arena-allocated Envs leak at process exit (the
     // arena's bump-allocator doesn't run destructors).
     ~Evaluator();
+    // Issue #1546 / #1554: C-style allow_fn for ASTArena / ArenaGroup owners.
+    // Shared by set_arena, set_temp_arena, and arena_group default owner.
+    static bool arena_quota_allow(void* owner, std::size_t size) noexcept {
+        auto* ev = static_cast<Evaluator*>(owner);
+        // check_arena_quota returns nullopt when allowed.
+        return !ev->check_arena_quota(static_cast<std::uint64_t>(size)).has_value();
+    }
+
     void set_arena(ast::ASTArena* a) {
         // Issue #1546: drop owner link from previous arena if any.
         if (arena_ && arena_ != a)
@@ -1119,18 +1127,24 @@ public:
         // re_pin_cow_children_from_snapshot().
         if (arena_) {
             arena_->set_on_compact_hook([this]() { this->on_arena_compact_hook(); });
-            // Issue #1546: thread this Evaluator as arena_owner_ so
+            // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
             // every allocation (orphan arenas stay unlimited).
-            arena_->set_arena_owner(
-                this, +[](void* owner, std::size_t size) noexcept -> bool {
-                    auto* ev = static_cast<Evaluator*>(owner);
-                    // check_arena_quota returns nullopt when allowed.
-                    return !ev->check_arena_quota(static_cast<std::uint64_t>(size)).has_value();
-                });
+            arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
         }
+        // Issue #1554: also bind ArenaGroup module arenas to the same quota.
+        if (arena_group_)
+            arena_group_->set_default_arena_owner(this, &Evaluator::arena_quota_allow);
     }
-    void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
+    void set_temp_arena(ast::ASTArena* a) {
+        // Issue #1554: wire temp_arena the same way as primary arena so
+        // task-context / gc-temp allocations honor ResourceQuota.
+        if (temp_arena_ && temp_arena_ != a)
+            temp_arena_->clear_arena_owner();
+        temp_arena_ = a;
+        if (temp_arena_)
+            temp_arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
+    }
     // Hot-swap callback (Issue #97 Action 1). Set by CompilerService
     // to enable the (hot-swap:fn "name" "new-source") primitive.
     // Returns true on success.
@@ -8939,31 +8953,25 @@ public:
                                          std::to_string(resource_quota_time_us_) + "us"};
     }
 
-    // Issue #1481 / #1546: typed-error arena allocation (quota first).
-    // When arena_ has arena_owner_ wired (set_arena), allocate_raw also
-    // re-checks quota; the early check here surfaces AuraError cleanly
-    // without a wasted allocate_raw trip on reject.
+    // Issue #1481 / #1546 / #1554: typed-error arena allocation.
+    // Delegates to ASTArena::allocate_checked so quota is enforced once
+    // (no double-count of resource_quota_checks_total on the hot path).
     [[nodiscard]] aura::core::AuraResult<void*>
     allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept {
-        if (auto err = check_arena_quota(static_cast<std::uint64_t>(size))) {
-            return std::unexpected(std::move(*err));
-        }
         if (!arena_) {
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
                                       std::string("allocate_checked called with null arena")});
         }
-        // Public entry: try_allocate → allocate_raw (quota-bound when owner set).
+        // Prefer arena typed factory (owner callback → check_arena_quota once).
+        if (arena_->has_arena_owner())
+            return arena_->allocate_checked(size, alignment);
+        // Orphan / pre-bind path: explicit Evaluator check then try_allocate
+        // (try_allocate has no owner so it will not re-check).
+        if (auto err = check_arena_quota(static_cast<std::uint64_t>(size)))
+            return std::unexpected(std::move(*err));
         void* ptr = arena_->try_allocate(size);
         if (!ptr) {
-            // Distinguishes quota (already counted on the early check path
-            // when limit set) from genuine OOM / failure.
-            if (resource_quota_memory_ > 0 &&
-                static_cast<std::uint64_t>(size) > resource_quota_memory_) {
-                return std::unexpected(
-                    aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
-                                          std::string("allocate_checked: arena quota exceeded")});
-            }
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
                                       std::string("allocate_checked: arena try_allocate failed")});

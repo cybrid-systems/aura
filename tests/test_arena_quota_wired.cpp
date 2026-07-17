@@ -1,5 +1,5 @@
 // @category: unit
-// @reason: Issue #1546 — Arena::allocate_raw ↔ check_arena_quota wiring
+// @reason: Issue #1546 / #1554 — Arena::allocate_raw ↔ check_arena_quota wiring
 //
 //   AC1: set_arena installs arena_owner_ + quota callback
 //   AC2: allocate_checked over limit → ResourceQuotaExceeded; rejects+1; no used bump
@@ -7,6 +7,10 @@
 //   AC4: orphan arena (no owner) still allocates large sizes
 //   AC5: under-limit allocate_checked succeeds when arena set
 //   AC6: create<T> over limit → nullptr (quota-bound family)
+//   AC7 (#1554): set_temp_arena installs owner; temp try_allocate gated
+//   AC8 (#1554): ASTArena::allocate_checked typed path (single quota check)
+//   AC9 (#1554): boundary exact-size == limit ok; limit+1 rejects
+//   AC10 (#1554): ArenaGroup module_arena inherits default owner
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -133,17 +137,96 @@ static void ac6_create_over_limit() {
     CHECK(arena.stats().used == used0, "create reject: used unchanged");
 }
 
+static void ac7_temp_arena_wired() {
+    std::println("\n--- AC7 (#1554): set_temp_arena installs owner + gate ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(cs);
+    ASTArena temp(256 * 1024);
+    ev.set_temp_arena(&temp);
+    CHECK(temp.has_arena_owner(), "set_temp_arena installs owner");
+    CHECK(temp.arena_owner() == static_cast<void*>(&ev), "temp owner is Evaluator*");
+    ev.set_resource_quota_memory(32);
+    const auto rejects0 = load_u64(m->resource_quota_rejects_total);
+    const auto used0 = temp.stats().used;
+    CHECK(temp.try_allocate(4096) == nullptr, "temp try_allocate over quota → nullptr");
+    CHECK(load_u64(m->resource_quota_rejects_total) == rejects0 + 1, "temp path rejects+1");
+    CHECK(temp.stats().used == used0, "temp used unchanged");
+}
+
+static void ac8_arena_allocate_checked() {
+    std::println("\n--- AC8 (#1554): ASTArena::allocate_checked typed ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(cs);
+    ASTArena arena(256 * 1024);
+    ev.set_arena(&arena);
+    ev.set_resource_quota_memory(64);
+    const auto checks0 = load_u64(m->resource_quota_checks_total);
+    const auto rejects0 = load_u64(m->resource_quota_rejects_total);
+    auto bad = arena.allocate_checked(/*size=*/2048, /*align=*/8);
+    CHECK(!bad.has_value(), "ASTArena::allocate_checked over quota fails");
+    if (!bad) {
+        CHECK(bad.error().kind == AuraErrorKind::ResourceQuotaExceeded,
+              "ASTArena kind == ResourceQuotaExceeded");
+    }
+    // Single check (no double-count via allocate_raw re-entry).
+    CHECK(load_u64(m->resource_quota_checks_total) == checks0 + 1,
+          "single check on arena allocate_checked reject");
+    CHECK(load_u64(m->resource_quota_rejects_total) == rejects0 + 1, "rejects+1");
+
+    auto ok = arena.allocate_checked(/*size=*/32, /*align=*/8);
+    CHECK(ok.has_value() && *ok != nullptr, "ASTArena::allocate_checked under limit ok");
+}
+
+static void ac9_boundary_exact_size() {
+    std::println("\n--- AC9 (#1554): exact limit ok; limit+1 reject ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ASTArena arena(256 * 1024);
+    ev.set_arena(&arena);
+    constexpr std::size_t lim = 128;
+    ev.set_resource_quota_memory(lim);
+    auto eq = ev.allocate_checked(lim);
+    CHECK(eq.has_value() && *eq != nullptr, "size==limit succeeds");
+    auto over = ev.allocate_checked(lim + 1);
+    CHECK(!over.has_value(), "size==limit+1 rejects");
+    if (!over)
+        CHECK(over.error().kind == AuraErrorKind::ResourceQuotaExceeded, "boundary typed error");
+}
+
+static void ac10_arena_group_default_owner() {
+    std::println("\n--- AC10 (#1554): ArenaGroup module_arena inherits owner ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = metrics_of(cs);
+    ASTArena primary(64 * 1024);
+    ev.set_arena(&primary); // also binds arena_group_ default owner
+    CHECK(ev.arena_group().has_default_arena_owner(), "group has default owner after set_arena");
+    auto& mod = ev.arena_group().module_arena("1554-mod", /*initial=*/64 * 1024);
+    CHECK(mod.has_arena_owner(), "new module arena inherits owner");
+    CHECK(mod.arena_owner() == static_cast<void*>(&ev), "module owner is Evaluator*");
+    ev.set_resource_quota_memory(16);
+    const auto rejects0 = load_u64(m->resource_quota_rejects_total);
+    CHECK(mod.try_allocate(1024) == nullptr, "module arena quota-gated");
+    CHECK(load_u64(m->resource_quota_rejects_total) == rejects0 + 1, "module rejects+1");
+}
+
 } // namespace aura_arena_quota_wired_detail
 
 int main() {
     using namespace aura_arena_quota_wired_detail;
-    std::println("=== Issue #1546: arena allocate_raw quota wiring ===");
+    std::println("=== Issue #1546/#1554: arena allocate_raw quota wiring ===");
     ac1_set_arena_installs_owner();
     ac2_allocate_checked_quota_reject();
     ac3_try_allocate_quota_gate();
     ac4_orphan_unlimited();
     ac5_under_limit_succeeds();
     ac6_create_over_limit();
+    ac7_temp_arena_wired();
+    ac8_arena_allocate_checked();
+    ac9_boundary_exact_size();
+    ac10_arena_group_default_owner();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

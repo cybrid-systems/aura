@@ -195,11 +195,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1481 / #1498: query:resource-quota-stats.
+    // Issue #1481 / #1498 / #1554: query:resource-quota-stats.
     // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
     // #1498 production fields (AC2): current_usage, memory_quota,
     // memory_quota_total, exceeded_count (=rejects), mutations_used.
-    // schema bumped to 1498 (agents: treat unknown keys as optional).
+    // #1554: exceeded_total alias + temp_arena_wired / group_owner_wired.
+    // schema bumped to 1554 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
         "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_
@@ -255,16 +256,25 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
+            const std::int64_t temp_wired =
+                (ev.temp_arena_ && ev.temp_arena_->has_arena_owner()) ? 1 : 0;
+            const std::int64_t group_wired =
+                (ev.arena_group_ && ev.arena_group_->has_default_arena_owner()) ? 1 : 0;
+            const std::int64_t primary_wired = (ev.arena_ && ev.arena_->has_arena_owner()) ? 1 : 0;
             insert_kv("checks_total", checks_total);
             insert_kv("rejects_total", rejects_total);
             insert_kv("exceeded_count", rejects_total); // #1498 AC2 alias
+            insert_kv("exceeded_total", rejects_total); // #1554 AC alias
             insert_kv("max_fibers", max_fibers);
             insert_kv("max_mutations", max_mutations);
             insert_kv("current_usage", current_usage);
             insert_kv("memory_quota", memory_quota);
             insert_kv("memory_quota_total", memory_quota_total);
             insert_kv("mutations_used", mut_used);
-            insert_kv("schema", 1498);
+            insert_kv("primary_arena_wired", primary_wired);
+            insert_kv("temp_arena_wired", temp_wired);
+            insert_kv("group_owner_wired", group_wired);
+            insert_kv("schema", 1554);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
