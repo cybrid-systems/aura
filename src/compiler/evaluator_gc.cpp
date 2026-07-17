@@ -259,23 +259,11 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     }
     record_linear_gc_probe(*this, violation, nullptr);
 
-    // Issue #1473: also force validate_or_refresh on pinned StableNodeRefs
-    // at GC safepoint. The closure/probe above covers linear ownership,
-    // but pinned StableNodeRefs (boundary_pinned=true) need a separate
-    // refresh sweep — otherwise they can outlive their captured
-    // generation through a GC compact. Walk cow_boundary_pinned_refs_
-    // under the mutex and bump stable_ref_validations_at_gc_safepoint.
-    if (auto* ws = workspace_flat()) {
-        std::size_t validated = 0;
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-        for (auto& pinned : cow_boundary_pinned_refs_) {
-            if (pinned.validate_or_refresh(*ws))
-                ++validated;
-        }
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->stable_ref_validations_at_gc_safepoint.fetch_add(validated,
-                                                                std::memory_order_relaxed);
-    }
+    // Issue #1473 / #1497: force auto-restamp on pinned StableNodeRefs
+    // at GC safepoint (atomic-batch + cow-boundary registries). Unified
+    // helper bumps stable_ref_validations_at_gc_safepoint +
+    // boundary_pinned_refresh_count + stable_ref_steal_auto_refresh_total.
+    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::GcSafepoint);
 }
 
 void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
@@ -423,18 +411,8 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
             m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1473: force validate_or_refresh on pinned StableNodeRefs
-    // at fiber-steal time.
-    if (auto* ws = workspace_flat()) {
-        std::size_t validated = 0;
-        std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-        for (auto& pinned : cow_boundary_pinned_refs_) {
-            if (pinned.validate_or_refresh(*ws))
-                ++validated;
-        }
-        if (auto* mm = static_cast<CompilerMetrics*>(compiler_metrics_))
-            mm->stable_ref_validations_at_steal.fetch_add(validated, std::memory_order_relaxed);
-    }
+    // Issue #1473 / #1497: unified auto-restamp at fiber-steal time.
+    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
     // Issue #1543: fiber-steal mutation path audit.
     (void)run_linear_gc_root_audit(kLinearGcRootAuditFiberSteal);
 }
