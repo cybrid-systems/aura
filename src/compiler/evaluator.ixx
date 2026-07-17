@@ -9073,6 +9073,10 @@ public:
     // Issue #1547: host-set mutation budget for try_acquire / check_mutation_quota.
     void set_resource_quota_mutations(std::uint64_t limit) noexcept {
         resource_quota_mutations_ = limit;
+        // Issue #1618: mirror into process ResourceQuota Mutations dim
+        // so ResourceQuotaManager sees a unified mutation budget.
+        aura::core::resource_quota::process_resource_quota().set_limit(
+            aura::core::resource_quota::Dimension::Mutations, limit);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->resource_quota_max_mutations.store(limit, std::memory_order_relaxed);
     }
@@ -9114,6 +9118,22 @@ public:
     // route through these helpers and propagate the error.
     // Issue #1481: typed-error ResourceQuota helpers.
     // nullopt = within quota (or unlimited); AuraError on reject.
+    // Issue #1618: typed quota reject bookkeeping — ResourceQuotaExceeded
+    // path (not PanicCheckpoint). Distinguishes quota from generic panic
+    // for long-running agent recovery.
+    void note_quota_reject_typed(bool mutation_budget = false) noexcept {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (!m)
+            return;
+        m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        m->quota_violation_total.fetch_add(1, std::memory_order_relaxed);
+        m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+        m->panic_quota_distinguished_total.fetch_add(1, std::memory_order_relaxed);
+        m->longrunning_quota_violations_total.fetch_add(1, std::memory_order_relaxed);
+        if (mutation_budget)
+            m->mutation_budget_rejected_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     [[nodiscard]] std::optional<aura::core::AuraError>
     check_arena_quota(std::uint64_t requested_bytes) noexcept {
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -9121,33 +9141,34 @@ public:
             m->resource_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #1481: per-request size cap (0 = unlimited).
         if (resource_quota_memory_ != 0 && requested_bytes > resource_quota_memory_) {
-            if (m)
-                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            note_quota_reject_typed(false);
             return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
                                          std::string("arena quota exceeded: requested ") +
                                              std::to_string(requested_bytes) + " bytes > limit " +
-                                             std::to_string(resource_quota_memory_)};
+                                             std::to_string(resource_quota_memory_) +
+                                             " [reason=mutation_budget_exceeded dim=memory]"};
         }
         // Issue #1498: cumulative heap budget — production AI loops need
         // total used + request, not only single-allocation size.
         if (resource_quota_memory_total_ != 0 && arena_) {
             const auto used = static_cast<std::uint64_t>(arena_->stats().used);
             if (used + requested_bytes > resource_quota_memory_total_) {
-                if (m)
-                    m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                note_quota_reject_typed(false);
                 return aura::core::AuraError{
                     aura::core::AuraErrorKind::ResourceQuotaExceeded,
                     std::string("arena cumulative quota exceeded: used ") + std::to_string(used) +
                         " + requested " + std::to_string(requested_bytes) + " > total limit " +
-                        std::to_string(resource_quota_memory_total_)};
+                        std::to_string(resource_quota_memory_total_) +
+                        " [reason=mutation_budget_exceeded dim=memory]"};
             }
         }
         return std::nullopt;
     }
 
-    // Issue #1481 / #1547: typed-error mutation budget check.
+    // Issue #1481 / #1547 / #1618: typed-error mutation budget check.
     // pending_count = mutations about to enter (default 1 per try_acquire).
     // resource_quota_mutations_ == 0 → unlimited (default; matches #1481 AC5).
+    // On reject: ResourceQuotaExceeded (typed) — never PanicCheckpoint.
     [[nodiscard]] std::optional<aura::core::AuraError>
     check_mutation_quota(std::uint64_t pending_count = 1) noexcept {
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -9158,13 +9179,26 @@ public:
         const auto used = mutation_quota_used_.load(std::memory_order_relaxed);
         if (used + pending_count <= resource_quota_mutations_)
             return std::nullopt;
-        if (m)
-            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        note_quota_reject_typed(true);
+        // Issue #1618: provenance from process manager (host may set)
+        // + defuse_version of outermost active boundary when present.
+        std::uint64_t mut_id =
+            aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
+        if (mut_id == 0) {
+            auto& stack = active_mutation_stack();
+            if (!stack.empty())
+                mut_id = stack.back().version; // defuse_version at boundary entry
+        }
+        std::string msg = std::string("mutation quota exceeded: used ") + std::to_string(used) +
+                          " + pending " + std::to_string(pending_count) + " > limit " +
+                          std::to_string(resource_quota_mutations_) +
+                          " [reason=mutation_budget_exceeded dim=mutations]";
+        if (mut_id != 0) {
+            msg += " provenance_mutation_id=";
+            msg += std::to_string(mut_id);
+        }
         return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
-                                     std::string("mutation quota exceeded: used ") +
-                                         std::to_string(used) + " + pending " +
-                                         std::to_string(pending_count) + " > limit " +
-                                         std::to_string(resource_quota_mutations_)};
+                                     std::move(msg)};
     }
 
     // Issue #1579: real fiber quota — uses process ResourceQuota fibers_used
@@ -9188,12 +9222,12 @@ public:
             aura::core::resource_quota::Dimension::Fibers);
         if (used < resource_quota_fibers_)
             return std::nullopt;
-        if (m)
-            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        note_quota_reject_typed(false);
         return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
                                      std::string("fiber quota exceeded: used ") +
                                          std::to_string(used) + " >= limit " +
-                                         std::to_string(resource_quota_fibers_)};
+                                         std::to_string(resource_quota_fibers_) +
+                                         " [reason=mutation_budget_exceeded dim=fibers]"};
     }
 
     [[nodiscard]] std::optional<aura::core::AuraError>
@@ -9205,12 +9239,12 @@ public:
             return std::nullopt;
         if (elapsed_us <= resource_quota_time_us_)
             return std::nullopt;
-        if (m)
-            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        note_quota_reject_typed(false);
         return aura::core::AuraError{aura::core::AuraErrorKind::ResourceQuotaExceeded,
                                      std::string("time quota exceeded: elapsed ") +
                                          std::to_string(elapsed_us) + "us > limit " +
-                                         std::to_string(resource_quota_time_us_) + "us"};
+                                         std::to_string(resource_quota_time_us_) + "us" +
+                                         " [reason=mutation_budget_exceeded dim=time_us]"};
     }
 
     // Issue #1481 / #1546 / #1554: typed-error arena allocation.
@@ -10844,9 +10878,18 @@ public:
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                     bool fine_rollback = false) noexcept {
-            if (auto err = ev.check_mutation_quota(pending_count))
+            // Issue #1618: typed ResourceQuotaExceeded path — never PanicCheckpoint.
+            if (auto err = ev.check_mutation_quota(pending_count)) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                    m->manager_enforce_total.fetch_add(1, std::memory_order_relaxed);
                 return std::unexpected(std::move(*err));
+            }
             ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
+            // Mirror consume into process Mutations dim for manager dashboards.
+            if (ev.resource_quota_mutations_ != 0) {
+                (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
+                    aura::core::resource_quota::Dimension::Mutations, pending_count);
+            }
             // Construct via private AcquireTag path (quota already checked).
             return std::unique_ptr<MutationBoundaryGuard>(
                 new MutationBoundaryGuard(ev, success_flag, fine_rollback, AcquireTag{},

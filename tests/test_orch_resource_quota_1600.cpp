@@ -186,7 +186,8 @@ static void ac4_query_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(h && is_hash(*h), "stats hash");
-    CHECK(href(cs, "schema") == 1600 || href(cs, "schema") == 1590, "schema 1600|1590");
+    CHECK(href(cs, "schema") == 1618 || href(cs, "schema") == 1600 || href(cs, "schema") == 1590,
+          "schema 1618|1600|1590");
     CHECK(href(cs, "issue") == 1600 || href(cs, "issue") == 1590, "issue 1600|1590");
     CHECK(href(cs, "fiber_spawn_rejected_total") >= 1, "fiber_spawn_rejected_total");
     CHECK(href(cs, "orchestration_quota_exceeded_count") >= 1, "orchestration_quota_exceeded");

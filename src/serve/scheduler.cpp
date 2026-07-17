@@ -111,12 +111,14 @@ Scheduler::~Scheduler() {
 // Creates the fiber and assigns it to a worker (round-robin).
 
 Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
-    // Issue #1579: process-wide fiber quota before spawn (misbehaving agent isolation).
-    // Returns nullptr when ResourceQuota fibers dimension is exceeded.
-    // Paired release in on_fiber_done.
+    // Issue #1579 / #1618: process-wide fiber quota via ResourceQuotaManager
+    // before spawn (misbehaving agent isolation). Returns nullptr when
+    // fibers dimension is exceeded. Paired release in on_fiber_done.
+    // Typed ResourceQuotaExceeded at orch callers (not PanicCheckpoint).
     using aura::core::resource_quota::Dimension;
     using aura::core::resource_quota::process_resource_quota;
-    if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
+    using aura::core::resource_quota::process_resource_quota_manager;
+    if (auto err = process_resource_quota_manager().check_and_consume_fiber()) {
         (void)err;
         // Issue #1600: orchestration spawn reject metrics (typed error at caller).
         process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
@@ -171,10 +173,10 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
 }
 
 Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t stack_size) {
-    // Issue #1579: same process-wide fiber quota as spawn().
-    using aura::core::resource_quota::Dimension;
+    // Issue #1579 / #1618: same process-wide fiber quota as spawn() via manager.
     using aura::core::resource_quota::process_resource_quota;
-    if (auto err = process_resource_quota().check_and_consume(Dimension::Fibers, 1)) {
+    using aura::core::resource_quota::process_resource_quota_manager;
+    if (auto err = process_resource_quota_manager().check_and_consume_fiber()) {
         (void)err;
         // Issue #1600
         process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);

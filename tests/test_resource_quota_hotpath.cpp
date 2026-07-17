@@ -170,11 +170,13 @@ static void ac5_query_schema() {
     auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(h && is_hash(*h), "stats hash");
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") \"schema\")");
-    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1600 || as_int(*schema) == 1590),
-          "schema 1600|1590");
+    CHECK(schema && is_int(*schema) &&
+              (as_int(*schema) == 1618 || as_int(*schema) == 1600 || as_int(*schema) == 1590),
+          "schema 1618|1600|1590");
     auto issue = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") \"issue\")");
-    CHECK(issue && is_int(*issue) && (as_int(*issue) == 1600 || as_int(*issue) == 1590),
-          "issue 1600|1590");
+    CHECK(issue && is_int(*issue) &&
+              (as_int(*issue) == 1618 || as_int(*issue) == 1600 || as_int(*issue) == 1590),
+          "issue 1618|1600|1590");
     auto checks =
         cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") \"checks_total\")");
     CHECK(checks && is_int(*checks) && as_int(*checks) >= 0, "checks_total");

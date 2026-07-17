@@ -5914,6 +5914,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> resource_quota_rejects_total{0};      // #1013
     std::atomic<std::uint64_t> resource_quota_max_fibers{256};       // #1013
     std::atomic<std::uint64_t> resource_quota_max_mutations{100000}; // #1013
+    // Issue #1618: production ResourceQuota manager AC surface
+    // (query:resource-quota-stats schema 1618). Typed rejects are
+    // ResourceQuotaExceeded (not PanicCheckpoint generic panic).
+    //   - quota_violation_total: all dim rejects (alias-friendly)
+    //   - mutation_budget_rejected_total: mutation-dim rejects
+    //   - quota_reject_typed_total: AuraResult typed path (not panic)
+    //   - panic_quota_distinguished_total: classified as quota≠panic
+    //   - manager_enforce_total: ResourceQuotaManager::check_and_consume
+    std::atomic<std::uint64_t> quota_violation_total{0};           // #1618
+    std::atomic<std::uint64_t> mutation_budget_rejected_total{0};  // #1618
+    std::atomic<std::uint64_t> quota_reject_typed_total{0};        // #1618
+    std::atomic<std::uint64_t> panic_quota_distinguished_total{0}; // #1618
+    std::atomic<std::uint64_t> manager_enforce_total{0};           // #1618
     std::atomic<std::uint64_t> production_hardening_985_1013_active{1};
 
     // ── Issues #1014–#1046: production stability + bugfix batch ──

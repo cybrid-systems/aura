@@ -335,6 +335,92 @@ inline ResourceQuota& process_resource_quota() noexcept {
     return q;
 }
 
+// Issue #1618: explicit ResourceQuota manager facade for production
+// multi-fiber / self-mutating workloads. Surfaces typed rejects with
+// optional mutation provenance (agents map to AuraErrorKind::ResourceQuotaExceeded).
+// Does not throw; never routes through PanicCheckpoint.
+struct ResourceQuotaManager {
+    ResourceQuota* quota = nullptr;
+    std::uint64_t provenance_mutation_id = 0;
+
+    explicit ResourceQuotaManager(ResourceQuota* q = nullptr) noexcept
+        : quota(q ? q : &process_resource_quota()) {}
+
+    void set_provenance(std::uint64_t mutation_id) noexcept {
+        provenance_mutation_id = mutation_id;
+    }
+
+    void set_limit(Dimension d, std::uint64_t lim) noexcept {
+        if (quota)
+            quota->set_limit(d, lim);
+    }
+
+    [[nodiscard]] std::uint64_t limit(Dimension d) const noexcept {
+        return quota ? quota->limit(d) : 0;
+    }
+    [[nodiscard]] std::uint64_t used(Dimension d) const noexcept {
+        return quota ? quota->used(d) : 0;
+    }
+
+    // Format machine-readable reason for AuraError messages / agents.
+    [[nodiscard]] static std::string format_reason(const QuotaError& e,
+                                                   std::uint64_t mutation_id = 0) {
+        std::string msg = e.message.empty() ? (dim_name(e.dim) + " quota exceeded") : e.message;
+        msg += " [dim=";
+        msg += dim_name(e.dim);
+        msg += " requested=";
+        msg += std::to_string(e.requested);
+        msg += " used=";
+        msg += std::to_string(e.used);
+        msg += " limit=";
+        msg += std::to_string(e.limit);
+        msg += "]";
+        if (mutation_id != 0) {
+            msg += " provenance_mutation_id=";
+            msg += std::to_string(mutation_id);
+        }
+        return msg;
+    }
+
+    [[nodiscard]] static std::string dim_name(Dimension d) { return ResourceQuota::dim_name(d); }
+
+    // Check + consume; nullopt = OK. On reject, message includes provenance.
+    [[nodiscard]] std::optional<QuotaError> check_and_consume(Dimension d,
+                                                              std::uint64_t amount) noexcept {
+        if (!quota)
+            return std::nullopt;
+        auto err = quota->check_and_consume(d, amount);
+        if (err && provenance_mutation_id != 0) {
+            err->message = format_reason(*err, provenance_mutation_id);
+        } else if (err) {
+            err->message = format_reason(*err, 0);
+        }
+        return err;
+    }
+
+    // Mutation budget convenience (Dimension::Mutations).
+    [[nodiscard]] std::optional<QuotaError>
+    check_and_consume_mutation(std::uint64_t pending = 1) noexcept {
+        return check_and_consume(Dimension::Mutations, pending);
+    }
+
+    // Fiber admission convenience.
+    [[nodiscard]] std::optional<QuotaError> check_and_consume_fiber() noexcept {
+        return check_and_consume(Dimension::Fibers, 1);
+    }
+
+    // Memory admission convenience.
+    [[nodiscard]] std::optional<QuotaError> check_and_consume_memory(std::uint64_t bytes) noexcept {
+        return check_and_consume(Dimension::Memory, bytes);
+    }
+};
+
+// Process-level manager (Scheduler / Fiber spawn / orch).
+inline ResourceQuotaManager& process_resource_quota_manager() noexcept {
+    static ResourceQuotaManager mgr{&process_resource_quota()};
+    return mgr;
+}
+
 // Test seam: reset process quota completely.
 inline void reset_process_resource_quota_for_test() noexcept {
     auto& q = process_resource_quota();
@@ -345,6 +431,7 @@ inline void reset_process_resource_quota_for_test() noexcept {
     q.reset_usage();
     q.reset_stats();
     q.fiber_reservations_active.store(0, std::memory_order_relaxed);
+    process_resource_quota_manager().set_provenance(0);
 }
 
 } // namespace aura::core::resource_quota
