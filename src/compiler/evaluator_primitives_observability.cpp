@@ -202,6 +202,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:stable-ref-provenance-stats",
     // Issue #1565 — Capability Effects enforcement + provenance binding
     "query:capability-effect-stats",
+    // Issue #1566 — multi-tenant WorkspaceIsolationPolicy
+    "query:tenant-isolation-stats",
     // Issues #809–#817 Phase 1 unified production/error/macro surfaces
     "query:error-handling-policy-stats",
     "query:fiber-scheduler-init-stats",
