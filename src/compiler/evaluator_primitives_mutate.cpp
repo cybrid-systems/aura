@@ -1933,6 +1933,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     return mev("mutation-failed", "mutation rejected: " + ev.last_mutate_error_);
                 }
 
+                // Issue #1506: mark IR cache dirty so eval / eval_ir /
+                // eval-current prefer relower_define_blocks (partial)
+                // over full cache_define. Parity with mutate:rebind.
+                if (ev.mark_define_dirty_fn_)
+                    ev.mark_define_dirty_fn_(name);
+                if (ev.repopulate_workspace_dep_graph_fn_)
+                    ev.repopulate_workspace_dep_graph_fn_();
+
                 return make_bool(true);
             }
         }

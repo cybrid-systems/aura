@@ -5148,6 +5148,9 @@ aura_issue_test_link_llvm_jit(test_issue_1504)
 # Issue #1505: mark_define_dirty cascade nested-lambda free-var scan + targeted dirty.
 aura_add_issue_test(test_issue_1505)
 aura_issue_test_link_llvm_jit(test_issue_1505)
+# Issue #1506: eval/eval_ir prefer relower_define_blocks (partial) over cache_define.
+aura_add_issue_test(test_issue_1506)
+aura_issue_test_link_llvm_jit(test_issue_1506)
 # Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
 aura_add_issue_test(test_arena_quota_wired)
 aura_issue_test_link_llvm_jit(test_arena_quota_wired)
