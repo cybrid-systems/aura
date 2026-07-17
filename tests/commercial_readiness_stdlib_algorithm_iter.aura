@@ -1,0 +1,168 @@
+;; tests/commercial_readiness_stdlib_algorithm_iter.aura
+;;
+;; Fifth-pass audit: stdlib functional primitives — algorithm / iter /
+;; math / data. All four modules are pure-functional and never audited
+;; in depth. Per Anqi 16:30 原语最小化原则, any bugs surfaced here are
+;; stdlib composition fixes (not engine primitive gaps).
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_algorithm_iter.aura
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Custom inline check framework (same pattern as prior audits)
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/algorithm — sorting / searching / merging.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/algorithm")
+;; sorted?
+(expect "alg-sorted-empty" (sorted? '()) #t)
+(expect "alg-sorted-1" (sorted? '(1)) #t)
+(expect "alg-sorted-yes" (sorted? '(1 2 3 4 5)) #t)
+(expect "alg-sorted-no" (sorted? '(3 1 2)) #f)
+;; sort-stable
+(expect "alg-sort-empty" (sort-stable '()) '())
+(expect "alg-sort-singleton" (sort-stable '(1)) '(1))
+(expect "alg-sort-trivial" (sort-stable '(3 1 2)) '(1 2 3))
+(expect "alg-sort-already" (sort-stable '(1 2 3)) '(1 2 3))
+(expect "alg-sort-reverse" (sort-stable '(5 4 3 2 1)) '(1 2 3 4 5))
+;; sort-by
+(expect "alg-sort-by-abs"
+  (sort-by '(-3 1 -2 4) (lambda (x) (abs x)))
+  '(1 -2 -3 4))
+;; unique
+(expect "alg-unique-empty" (unique '()) '())
+(expect "alg-unique-dups" (unique '(1 2 2 3 3 3 4)) '(1 2 3 4))
+(expect "alg-unique-all-same" (unique '(5 5 5)) '(5))
+;; merge (sorted)
+(expect "alg-merge-empty-l" (merge '() '(1 2 3)) '(1 2 3))
+(expect "alg-merge-empty-r" (merge '(1 2 3) '()) '(1 2 3))
+(expect "alg-merge-both" (merge '(1 3 5) '(2 4 6)) '(1 2 3 4 5 6))
+;; min-by / max-by
+(expect "alg-min-by-abs" (min-by (lambda (x) (abs x)) '(-3 1 -2)) -1)
+(expect "alg-max-by-abs" (max-by (lambda (x) (abs x)) '(-3 1 -2)) 3)
+;; binary-search
+(expect "alg-binary-search-hit" (binary-search 3 '(1 2 3 4 5)) 3)
+(expect "alg-binary-search-miss" (binary-search 6 '(1 2 3 4 5)) #f)
+(expect "alg-binary-search-empty" (binary-search 1 '()) #f)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/iter — iterators / hash utilities / vector utilities.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/iter")
+;; any? / every?
+(expect "iter-any-yes" (any? (lambda (x) (> x 3)) '(1 2 3 4 5)) #t)
+(expect "iter-any-no" (any? (lambda (x) (> x 10)) '(1 2 3)) #f)
+(expect "iter-any-empty" (any? (lambda (x) #t) '()) #f)
+(expect "iter-every-yes" (every? (lambda (x) (> x 0)) '(1 2 3)) #t)
+(expect "iter-every-no" (every? (lambda (x) (> x 2)) '(1 2 3)) #f)
+(expect "iter-every-empty" (every? (lambda (x) #t) '()) #t)
+;; count / find / find-index
+(expect "iter-count" (count (lambda (x) (even? x)) '(1 2 3 4 5 6)) 3)
+(expect "iter-count-empty" (count (lambda (x) #t) '()) 0)
+(expect "iter-find-hit" (find (lambda (x) (> x 3)) '(1 2 3 4 5)) 4)
+(expect "iter-find-miss" (find (lambda (x) (> x 10)) '(1 2 3)) #f)
+(expect "iter-find-index" (find-index (lambda (x) (even? x)) '(1 3 5 6 7)) 3)
+;; group-by / frequencies
+(expect "iter-group-by-mod2"
+  (group-by (lambda (x) (modulo x 2)) '(1 2 3 4 5 6))
+  '((1 (1 3 5)) (0 (2 4 6))))
+(expect "iter-frequencies" (frequencies '(a b a c b a)) '((a . 3) (b . 2) (c . 1)))
+;; split-at
+(expect "iter-split-at-2" (split-at 2 '(1 2 3 4 5)) '((1 2) (3 4 5)))
+(expect "iter-split-at-0" (split-at 0 '(1 2 3)) '(() (1 2 3)))
+;; iota / iterate / unfold
+(expect "iter-iota-5" (iota 5) '(0 1 2 3 4))
+(expect "iter-iterate" (iterate (lambda (x) (* x 2)) 1 4) '(1 2 4 8))
+(expect "iter-unfold"
+  (unfold (lambda (n) (= n 0))
+         (lambda (n) n)
+         (lambda (n) (- n 1))
+         5)
+  '(5 4 3 2 1))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/math — constants, basic ops, predicates, combinatorics.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/math")
+;; Constants
+(expect "math-pi" (pi) 3.141592653589793)
+(expect "math-e" (e) 2.718281828459045)
+(expect "math-phi" (phi) 1.618033988749895)
+;; Basic ops
+(expect "math-square-5" (square 5) 25)
+(expect "math-cube-3" (cube 3) 27)
+(expect "math-abs-neg" (abs -7) 7)
+(expect "math-abs-pos" (abs 7) 7)
+(expect "math-abs-zero" (abs 0) 0)
+(expect "math-clamp-low" (clamp 1 5 10) 5)
+(expect "math-clamp-mid" (clamp 7 5 10) 7)
+(expect "math-clamp-high" (clamp 15 5 10) 10)
+(expect "math-avg" (avg 4 6) 5)
+(expect "math-signum-pos" (signum 42) 1)
+(expect "math-signum-neg" (signum -42) -1)
+(expect "math-signum-zero" (signum 0) 0)
+;; Predicates
+(expect "math-odd-yes" (odd? 5) #t)
+(expect "math-odd-no" (odd? 4) #f)
+(expect "math-even-yes" (even? 4) #t)
+(expect "math-even-no" (even? 5) #f)
+(expect "math-positive" (positive? 5) #t)
+(expect "math-negative" (negative? -5) #t)
+(expect "math-zero" (zero? 0) #t)
+(expect "math-prime-yes" (prime? 7) #t)
+(expect "math-prime-no" (prime? 9) #f)
+(expect "math-prime-2" (prime? 2) #t)
+;; Combinatorics
+(expect "math-factorial-5" (factorial 5) 120)
+(expect "math-factorial-0" (factorial 0) 1)
+(expect "math-expt-2-10" (expt 2 10) 1024)
+(expect "math-nCr-5-2" (nCr 5 2) 10)
+(expect "math-nPr-5-2" (nPr 5 2) 20)
+(expect "math-fibonacci-7" (fibonacci 7) 13)
+(expect "math-fibonacci-0" (fibonacci 0) 0)
+(expect "math-gcd-12-8" (gcd 12 8) 4)
+(expect "math-lcm-4-6" (lcm 4 6) 12)
+;; safe-div
+(let ((r1 (safe-div 10 2))
+      (r2 (safe-div 10 0)))
+  (expect "math-safe-div-ok" (car r1) 'ok)
+  (expect "math-safe-div-ok-val" (cdr r1) 5)
+  (expect "math-safe-div-zero-err" (car r2) 'err)
+  (expect "math-safe-div?-ok" (safe-div? r1) #t)
+  (expect "math-safe-div?-err" (safe-div? r2) #f))
+;; Rounding (basic, float comparison loose)
+(expect "math-floor" (floor 3.7) 3)
+(expect "math-ceil" (ceil 3.2) 4)
+(expect "math-round" (round 3.5) 4)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; std/data — trie data structure.
+;; ═════════════════════════════════════════════════════════════════════════
+(require "std/data")
+(let ((t (make-trie)))
+  (trie-insert t "hello")
+  (trie-insert t "help")
+  (trie-insert t "world")
+  (trie-insert t "hell")
+  (expect "data-trie-search-hit" (trie-search t "hello") #t)
+  (expect "data-trie-search-miss" (trie-search t "hellos") #f)
+  (expect "data-trie-search-prefix" (trie-search t "hell") #t)
+  (expect "data-trie-prefix-yes" (trie-prefix? t "hel") #t)
+  (expect "data-trie-prefix-no" (trie-prefix? t "zebra") #f)
+  (expect "data-trie-keys-count" (length (trie-keys t)) 4))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
