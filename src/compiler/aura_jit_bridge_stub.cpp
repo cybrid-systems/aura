@@ -184,6 +184,12 @@ aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t /*fn
 extern "C" __attribute__((weak)) int aura_jit_linear_post_mutate_enforce(std::uint32_t /*env_id*/) {
     return 0;
 }
+extern "C" __attribute__((weak)) void
+aura_set_linear_live_closure_scan_fn(aura_linear_live_closure_scan_fn_t /*fn*/,
+                                     void* /*user_data*/) {}
+extern "C" __attribute__((weak)) int aura_jit_linear_live_closure_scan(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_last_commit_epoch(void) {
     return 0;
 }

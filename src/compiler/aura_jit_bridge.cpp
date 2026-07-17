@@ -819,15 +819,31 @@ extern "C" void aura_jit_clear_linear_env_context(void) {
 }
 
 // Issue #1540: host callback for Evaluator::linear_post_mutate_enforce.
+// Issue #1545: host callback for live-closure linear capture scan.
 namespace {
 aura_linear_post_mutate_enforce_fn_t g_linear_enforce_fn = nullptr;
 void* g_linear_enforce_user = nullptr;
+aura_linear_live_closure_scan_fn_t g_linear_live_scan_fn = nullptr;
+void* g_linear_live_scan_user = nullptr;
 } // namespace
 
 extern "C" void aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t fn,
                                                        void* user_data) {
     g_linear_enforce_fn = fn;
     g_linear_enforce_user = user_data;
+}
+
+extern "C" void aura_set_linear_live_closure_scan_fn(aura_linear_live_closure_scan_fn_t fn,
+                                                     void* user_data) {
+    g_linear_live_scan_fn = fn;
+    g_linear_live_scan_user = user_data;
+}
+
+extern "C" int aura_jit_linear_live_closure_scan(void) {
+    if (!g_linear_live_scan_fn)
+        return 0;
+    g_linear_live_scan_fn(g_linear_live_scan_user);
+    return 1;
 }
 
 extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id) {

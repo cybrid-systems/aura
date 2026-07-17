@@ -1949,6 +1949,26 @@ public:
     // resync linear JIT GC roots under live bridge_epoch then
     // probe EnvFrame.version_ × linear_ownership_state.
     void sync_linear_roots_and_bridge_epoch() noexcept;
+    // Issue #1545: walk tree-walker live closures_ (unique lock while
+    // mutating via callback). Parallel to AuraJIT::walk_active_closures
+    // and IRExecutor::walk_runtime_closures.
+    using ActiveClosureWalkFn = std::function<void(ClosureId, Closure&)>;
+    void walk_active_closures(const ActiveClosureWalkFn& fn);
+    // Scan live closures for linear captures (EnvFrame SoA state !=
+    // Untracked). When mark_invalid: stamp Closure::bridge_epoch = 0 so
+    // apply_closure takes safe_fallback (is_bridge_stale). Bumps
+    // linear_live_closure_scans_total (+ marked_invalid_total).
+    struct LinearLiveClosureScanResult {
+        std::size_t examined = 0;
+        std::size_t with_linear_capture = 0;
+        std::size_t marked_invalid = 0;
+    };
+    LinearLiveClosureScanResult
+    scan_live_closures_for_linear_captures(bool mark_invalid = true) noexcept;
+    // Test/helper: register a Closure in closures_ (stamps bridge_epoch).
+    ClosureId register_active_closure(Closure cl);
+    // Test/helper: snapshot a live Closure by id (nullopt if missing).
+    [[nodiscard]] std::optional<Closure> find_active_closure(ClosureId id) const;
     // Issue #1543: linear GC root registration consistency audit.
     // Path ids match docs/design/linear-gc-roots.md §mutation paths.
     static constexpr std::uint8_t kLinearGcRootAuditTypedMutate = 0;
