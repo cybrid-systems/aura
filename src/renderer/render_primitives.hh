@@ -4,6 +4,7 @@
 #ifndef AURA_RENDERER_RENDER_PRIMITIVES_HH
 #define AURA_RENDERER_RENDER_PRIMITIVES_HH
 
+#include "core/zero_copy_output.hh"
 #include "renderer/batch_terminal.hh"
 #include "renderer/render_pass.hh"
 
@@ -87,6 +88,11 @@ struct FramebufferOwned {
 // copies the ANSI frame into `out` (no write). Returns bytes, 0 skip, -1 invalid.
 [[nodiscard]] std::int64_t present_batch_to_string(const FramebufferSoA& fb, DirtyRegion& dirty,
                                                    std::string& out);
+
+// Issue #1561: present using an explicit frame arena (tests / external callers).
+[[nodiscard]] std::int64_t present_batch_with_arena(const FramebufferSoA& fb, DirtyRegion& dirty,
+                                                    aura::core::zero_copy::FrameBumpArena& arena,
+                                                    int fd = 1);
 
 // draw_batch: write DrawOps into fb, mark dirty AABB. Returns cells written.
 // Enters/exits render hotpath around the loop.
