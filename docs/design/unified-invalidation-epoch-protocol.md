@@ -43,8 +43,8 @@ Readers (`apply_closure`, `aura_is_jit_closure_fresh`) acquire-load either domai
 | `invalidate_cascade_depth_max` / `_total` | BFS depth HWM + sum |
 | `compiler_live_closure_stale_prevented_total` | Walk/active stale marks |
 
-Agent dashboard: `query:unified-invalidation-stats` schema **1607**
-(see `docs/design/unified-invalidation-1607.md`).
+Agent dashboard: `query:epoch-apply-hotpath-stats` schema **1607**
+(AC keys for unified invalidation; see `docs/design/unified-invalidation-1607.md`).
 
 ## Tests
 

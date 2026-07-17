@@ -23,7 +23,10 @@ invalidate_function(name)        // hard: + JIT erase / dep_graph teardown
 Readers (`apply_closure`, `aura_is_jit_closure_fresh`) acquire-load either
 domain and take safe fallback / deopt — never half-updated state.
 
-## Metrics (`query:unified-invalidation-stats`, schema **1607**)
+## Metrics (`query:epoch-apply-hotpath-stats`, schema **1607**)
+
+Folded into the existing dual-epoch dashboard (no new public `query:*-stats`
+name — SlimSurface / #1448 freeze).
 
 | Key | Source |
 |-----|--------|
