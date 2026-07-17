@@ -58,7 +58,7 @@ unsigned long long aura_get_current_bridge_epoch(void) {
     return 0;
 }
 
-#define IS_PAIR(v)  (((v) & 3) == 1)
+#define IS_PAIR(v) (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)
 #define PAIR_INDEX(v) ((v) >> 2)
@@ -66,7 +66,7 @@ unsigned long long aura_get_current_bridge_epoch(void) {
 #define STRING_IDX(v) ((int)(-(int64_t)(v) - 9000000000000000000LL))
 #define MAKE_STRING_SENTINEL(i) (-9000000000000000000LL - (int64_t)(i))
 #define STRING_BIAS_AREA (-9000000000000000000LL)
-#define FLOAT_BIAS  (-10000000000000000LL)
+#define FLOAT_BIAS (-10000000000000000LL)
 #define SPECIAL_TAG(v) (((v) >> 2) & 3)
 
 // ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
@@ -170,7 +170,10 @@ static uint64_t closure_free_count = 0;
 // ═══════════════════════════════════════════════════════════
 
 #define MAX_PAIRS 1048576
-typedef struct { int64_t car, cdr; bool live; } AuraPair;
+typedef struct {
+    int64_t car, cdr;
+    bool live;
+} AuraPair;
 static AuraPair* pairs = NULL;
 static uint64_t pair_count = 0;
 static uint64_t pair_capacity = 0;
@@ -194,7 +197,10 @@ static uint64_t pair_alloc_slot(void) {
     if (pair_count >= pair_capacity) {
         uint64_t new_cap = pair_capacity ? pair_capacity * 2 : 65536;
         pairs = (AuraPair*)realloc(pairs, new_cap * sizeof(AuraPair));
-        if (!pairs) { fprintf(stderr, "runtime: pair OOM\n"); exit(1); }
+        if (!pairs) {
+            fprintf(stderr, "runtime: pair OOM\n");
+            exit(1);
+        }
         memset(pairs + pair_capacity, 0, (new_cap - pair_capacity) * sizeof(AuraPair));
         pair_capacity = new_cap;
     }
@@ -219,13 +225,15 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
 
 int64_t aura_pair_car(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
-    if (id >= pair_count || !pairs[id].live) return 0;
+    if (id >= pair_count || !pairs[id].live)
+        return 0;
     return pairs[id].car;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
-    if (id >= pair_count || !pairs[id].live) return 0;
+    if (id >= pair_count || !pairs[id].live)
+        return 0;
     return pairs[id].cdr;
 }
 
@@ -249,19 +257,22 @@ int64_t aura_pair_cdr(int64_t pair_val) {
 // safe across architectures at the cost of one comparison.
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
-    if (id >= pair_count) return 0;
+    if (id >= pair_count)
+        return 0;
     return pairs[id].car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
-    if (id >= pair_count) return 0;
+    if (id >= pair_count)
+        return 0;
     return pairs[id].cdr;
 }
 
 void aura_drop_pair(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
-    if (id >= pair_count || !pairs[id].live) return;
+    if (id >= pair_count || !pairs[id].live)
+        return;
     // Issue #106: recursively drop the car and cdr if they're
     // pairs. The pair heap is the only heap with low-bit tagging
     // that lets us detect the type from the value alone (cells /
@@ -272,11 +283,13 @@ void aura_drop_pair(int64_t pair_val) {
     // an inconsistent state if a recursive drop itself fails.
     int64_t car = pairs[id].car;
     int64_t cdr = pairs[id].cdr;
-    pairs[id].live = false;  // mark self dead before recursing
+    pairs[id].live = false; // mark self dead before recursing
     if (pair_free_count < FREE_LIST_CAP)
         pair_free_list[pair_free_count++] = (int64_t)id;
-    if (IS_PAIR(car)) aura_drop_pair(car);
-    if (IS_PAIR(cdr)) aura_drop_pair(cdr);
+    if (IS_PAIR(car))
+        aura_drop_pair(car);
+    if (IS_PAIR(cdr))
+        aura_drop_pair(cdr);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -284,7 +297,10 @@ void aura_drop_pair(int64_t pair_val) {
 // ═══════════════════════════════════════════════════════════
 
 #define MAX_CELLS 262144
-typedef struct { int64_t value; bool live; } AuraCell;
+typedef struct {
+    int64_t value;
+    bool live;
+} AuraCell;
 static AuraCell* cell_heap = NULL;
 static uint64_t cell_count = 0;
 static uint64_t cell_capacity = 0;
@@ -309,7 +325,10 @@ int64_t aura_new_cell(void) {
     if (cell_count >= cell_capacity) {
         uint64_t new_cap = cell_capacity ? cell_capacity * 2 : 65536;
         cell_heap = (AuraCell*)realloc(cell_heap, new_cap * sizeof(AuraCell));
-        if (!cell_heap) { fprintf(stderr, "runtime: cell OOM\n"); exit(1); }
+        if (!cell_heap) {
+            fprintf(stderr, "runtime: cell OOM\n");
+            exit(1);
+        }
         memset(cell_heap + cell_capacity, 0, (new_cap - cell_capacity) * sizeof(AuraCell));
         cell_capacity = new_cap;
     }
@@ -320,19 +339,22 @@ int64_t aura_new_cell(void) {
 
 int64_t aura_cell_get(int64_t cell_id) {
     uint64_t id = (uint64_t)cell_id;
-    if (id >= cell_count || !cell_heap[id].live) return 0;
+    if (id >= cell_count || !cell_heap[id].live)
+        return 0;
     return cell_heap[id].value;
 }
 
 void aura_cell_set(int64_t cell_id, int64_t val) {
     uint64_t id = (uint64_t)cell_id;
-    if (id >= cell_count || !cell_heap[id].live) return;
+    if (id >= cell_count || !cell_heap[id].live)
+        return;
     cell_heap[id].value = val;
 }
 
 void aura_drop_cell(int64_t cell_id) {
     uint64_t id = (uint64_t)cell_id;
-    if (id >= cell_count || !cell_heap[id].live) return;
+    if (id >= cell_count || !cell_heap[id].live)
+        return;
     cell_heap[id].live = false;
     if (cell_free_count < FREE_LIST_CAP)
         cell_free_list[cell_free_count++] = (int64_t)id;
@@ -429,8 +451,12 @@ int64_t aura_alloc_closure(int64_t func_id) {
     if (closure_count >= closure_capacity) {
         uint64_t new_cap = closure_capacity ? closure_capacity * 2 : 1024;
         closure_heap = (AuraClosure*)realloc(closure_heap, new_cap * sizeof(AuraClosure));
-        if (!closure_heap) { fprintf(stderr, "runtime: closure OOM\n"); exit(1); }
-        memset(closure_heap + closure_capacity, 0, (new_cap - closure_capacity) * sizeof(AuraClosure));
+        if (!closure_heap) {
+            fprintf(stderr, "runtime: closure OOM\n");
+            exit(1);
+        }
+        memset(closure_heap + closure_capacity, 0,
+               (new_cap - closure_capacity) * sizeof(AuraClosure));
         closure_capacity = new_cap;
     }
     uint64_t id = closure_count++;
@@ -448,14 +474,16 @@ int64_t aura_alloc_closure(int64_t func_id) {
 
 void aura_register_closure_fn(int64_t closure_id, int64_t fn_ptr, int32_t local_count) {
     uint64_t id = (uint64_t)closure_id;
-    if (id >= closure_count || !closure_heap[id].live) return;
+    if (id >= closure_count || !closure_heap[id].live)
+        return;
     closure_heap[id].fn = (ScalarFn)(intptr_t)fn_ptr;
     closure_heap[id].local_count = (uint32_t)local_count;
 }
 
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     uint64_t id = (uint64_t)closure_id;
-    if (id >= closure_count || !closure_heap[id].live) return;
+    if (id >= closure_count || !closure_heap[id].live)
+        return;
     uint32_t eidx = (uint32_t)idx;
     if (eidx < MAX_CLOSURE_ENV) {
         closure_heap[id].env[eidx] = val;
@@ -470,7 +498,7 @@ typedef int64_t (*PrimFn)(int64_t* args, int32_t argc);
 static PrimFn s_prim_fns[MAX_PRIM_SLOTS];
 
 // Env offset for test functions (set before fn call, defined in test harness)
-int g_env_offset = 0;  // env offset for closure calls (used by test fn)
+int g_env_offset = 0; // env offset for closure calls (used by test fn)
 
 // Issue #1485 C2-wire: per-closure captured bridge_epoch +
 // defuse_version_ for the aura_closure_call 2-check.
@@ -527,32 +555,37 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     uint32_t nargs = (uint32_t)argc;
     uint32_t raw_locals = closure_heap[id].local_count;
     uint32_t nlocals = env_count + nargs;
-    if (raw_locals > nlocals) nlocals = raw_locals;
-    if (nlocals < 16) nlocals = 16;
-    
+    if (raw_locals > nlocals)
+        nlocals = raw_locals;
+    if (nlocals < 16)
+        nlocals = 16;
+
     int64_t stack_buf[64];
     int64_t* locals = stack_buf;
     if (nlocals > 64)
         locals = (int64_t*)malloc((size_t)nlocals * sizeof(int64_t));
-    for (uint32_t i = 0; i < nlocals; ++i) locals[i] = 0;
-    
+    for (uint32_t i = 0; i < nlocals; ++i)
+        locals[i] = 0;
+
     for (uint32_t i = 0; i < env_count && i < closure_heap[id].env_count; ++i)
         locals[i] = closure_heap[id].env[i];
-    
+
     for (uint32_t i = 0; i < nargs; ++i)
         locals[env_count + i] = args[i];
-    
+
     // Set env offset for test functions (defined in runtime_test_harness.c)
     g_env_offset = (int)env_count;
     int64_t result = fn(locals, nargs);
-    
-    if (nlocals > 64) free(locals);
+
+    if (nlocals > 64)
+        free(locals);
     return result;
 }
 
 void aura_drop_closure(int64_t closure_id) {
     uint64_t id = (uint64_t)closure_id;
-    if (id >= closure_count || !closure_heap[id].live) return;
+    if (id >= closure_count || !closure_heap[id].live)
+        return;
     // Issue #106 sub-task 3: recurse on env slots before
     // marking self dead. Env slots can hold fixnums, pairs,
     // cells, or other closures. Dispatch by:
@@ -598,7 +631,10 @@ int64_t aura_alloc_string(const char* s) {
     if (string_count >= string_capacity) {
         uint64_t new_cap = string_capacity ? string_capacity * 2 : 1024;
         string_heap = (char**)realloc(string_heap, new_cap * sizeof(char*));
-        if (!string_heap) { fprintf(stderr, "runtime: string OOM\n"); exit(1); }
+        if (!string_heap) {
+            fprintf(stderr, "runtime: string OOM\n");
+            exit(1);
+        }
         memset(string_heap + string_capacity, 0, (new_cap - string_capacity) * sizeof(char*));
         string_capacity = new_cap;
     }
@@ -611,7 +647,8 @@ int64_t aura_alloc_string(const char* s) {
 
 const char* aura_string_ref(int64_t str_id) {
     uint64_t id = (uint64_t)(str_id - STRING_BIAS);
-    if (id >= string_count) return "";
+    if (id >= string_count)
+        return "";
     return string_heap[id] ? string_heap[id] : "";
 }
 
@@ -629,20 +666,23 @@ extern double aura_float_ref(int64_t val);
 extern int64_t aura_alloc_float(double d);
 
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    int is_bool   = (val == 3 || val == 7);
+    int is_bool = (val == 3 || val == 7);
     int is_string = (val <= (int64_t)-9000000000000000000LL);
     int is_fixnum = ((val & 1) == 0 && val > (int64_t)-10000000000000000LL);
     // Issue #613: v2 float encoding — (v&3)==0 + range check.
-    int is_float  = (((val & 3) == 0) && val <= (int64_t)-10000000000000000LL &&
-                     val > (int64_t)-9000000000000000000LL);
+    int is_float = (((val & 3) == 0) && val <= (int64_t)-10000000000000000LL &&
+                    val > (int64_t)-9000000000000000000LL);
 
     switch (type_tag) {
         case 0: { // Coerce to Int
-            if (is_fixnum) return val;
-            if (is_bool)   return (val == 7) ? 2 : 0;
+            if (is_fixnum)
+                return val;
+            if (is_bool)
+                return (val == 7) ? 2 : 0;
             if (is_string) {
                 const char* s = aura_string_ref(val);
-                if (s && *s) return (int64_t)atoll(s) << 1;
+                if (s && *s)
+                    return (int64_t)atoll(s) << 1;
             }
             if (is_float) {
                 // Delegate to aura_float_ref (same TU) to round-trip
@@ -653,7 +693,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
             return 0;
         }
         case 1: { // Coerce to String
-            if (is_string) return val;
+            if (is_string)
+                return val;
             char buf[64];
             if (is_fixnum)
                 snprintf(buf, sizeof(buf), "%lld", (long long)(val >> 1));
@@ -670,7 +711,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
             return (val == 3) ? 3 : 7;
         }
         case 4: { // Coerce to Float
-            if (is_float) return val;
+            if (is_float)
+                return val;
             if (is_fixnum) {
                 // Allocate the float in the pool and return the
                 // biased index. Uses aura_alloc_float (same TU).
@@ -678,7 +720,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
             }
             if (is_string) {
                 const char* s = aura_string_ref(val);
-                if (s && *s) return aura_alloc_float(atof(s));
+                if (s && *s)
+                    return aura_alloc_float(atof(s));
             }
             if (is_bool)
                 return aura_alloc_float((val == 7) ? 1.0 : 0.0);
@@ -715,8 +758,8 @@ static int g_prim_reg_count = 0;
 // (same shape as fixnums; the range check disambiguates). The
 // pool index is stored shifted left by 2, so the max idx drops
 // from 2^62 to 2^60 — still plenty.
-#define FLOAT_BIAS_V2  (-10000000000000000LL)  // low-2-bits == 0
-#define IS_FLOAT(v)  (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 0))
+#define FLOAT_BIAS_V2 (-10000000000000000LL) // low-2-bits == 0
+#define IS_FLOAT(v) (((v) <= FLOAT_BIAS_V2) && ((v) > STRING_BIAS_AREA) && (((v) & 3) == 0))
 #define FLOAT_IDX(v) ((int)((-(int64_t)(v) - 10000000000000000LL) >> 2))
 #define MAKE_FLOAT_RAW(idx) (-10000000000000000LL - ((int64_t)(idx) << 2))
 
@@ -725,7 +768,8 @@ static int float_count = 0;
 static int float_capacity = 0;
 
 double aura_float_ref(int64_t val) {
-    if (!IS_FLOAT(val)) return 0.0;
+    if (!IS_FLOAT(val))
+        return 0.0;
     int idx = FLOAT_IDX(val);
     if (idx >= 0 && idx < float_count)
         return float_pool[idx];
@@ -736,7 +780,8 @@ int64_t aura_alloc_float(double d) {
     if (float_count >= float_capacity) {
         int new_cap = float_capacity == 0 ? 16 : float_capacity * 2;
         double* new_pool = (double*)realloc(float_pool, (size_t)new_cap * sizeof(double));
-        if (!new_pool) return 0;
+        if (!new_pool)
+            return 0;
         float_pool = new_pool;
         float_capacity = new_cap;
     }
@@ -799,7 +844,8 @@ static void aura_display_pair_chain(int64_t val) {
     putchar('(');
     int first = 1;
     while (IS_PAIR(val)) {
-        if (!first) putchar(' ');
+        if (!first)
+            putchar(' ');
         first = 0;
         int64_t car_val = aura_pair_car(val);
         if (IS_PAIR(car_val))
@@ -833,9 +879,12 @@ int64_t aura_display_int(int64_t val) {
         aura_display_pair_chain(val);
     } else if (IS_SPECIAL(val)) {
         int st = SPECIAL_TAG(val);
-        if (st == KWD_TRUE) printf("#t");
-        else if (st == KWD_FALSE) printf("#f");
-        else printf("()");
+        if (st == KWD_TRUE)
+            printf("#t");
+        else if (st == KWD_FALSE)
+            printf("#f");
+        else
+            printf("()");
     } else if (val == 0) {
         printf("()");
     } else if (IS_FIXNUM(val)) {
@@ -930,168 +979,185 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
     // Guard against corrupt prim_id: Aura PrimId has 44 entries (0..43).
     // An out-of-range value would otherwise hit the default branch and
     // hide the bug; bail early with 0 to surface the discrepancy.
-    if (prim_id < 0 || prim_id > 43) return 0;
+    if (prim_id < 0 || prim_id > 43)
+        return 0;
 
     switch (prim_id) {
-    case 5: { // StringAppend
-        const char* s1 = aura_string_ref(a1);
-        const char* s2 = aura_string_ref(a2);
-        size_t len1 = s1 ? strlen(s1) : 0;
-        size_t len2 = s2 ? strlen(s2) : 0;
-        char* buf = (char*)malloc(len1 + len2 + 1);
-        if (s1) memcpy(buf, s1, len1);
-        if (s2) memcpy(buf + len1, s2, len2 + 1);
-        int64_t result = aura_alloc_string(buf);
-        free(buf);
-        return result;
-    }
-    case 6: // StringLength — return fixnum-encoded
-        return ((int64_t)strlen(aura_string_ref(a1))) << 1;
-    case 7: { // StringRef
-        const char* s = aura_string_ref(a1);
-        int64_t idx = a2;
-        if (idx >= 0 && idx < (int64_t)strlen(s))
-            return (int64_t)(unsigned char)s[idx];
-        return 0;
-    }
-    case 8: { // Substring
-        const char* s = aura_string_ref(a1);
-        int64_t start = a2;
-        int64_t end = argc >= 2 ? (int64_t)1 : (int64_t)0; // end default
-        size_t len = strlen(s);
-        if (start < 0) start = 0;
-        if (end <= 0 || end > (int64_t)len) end = (int64_t)len;
-        if (start >= end) return aura_alloc_string("");
-        size_t sub_len = (size_t)(end - start);
-        char* buf = (char*)malloc(sub_len + 1);
-        memcpy(buf, s + start, sub_len);
-        buf[sub_len] = 0;
-        int64_t result = aura_alloc_string(buf);
-        free(buf);
-        return result;
-    }
-    case 9: // StringEq — return pointer-tagged bool
-        return strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0 ? 7 : 3;
-    case 10: // StringLt — return pointer-tagged bool
-        return strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0 ? 7 : 3;
-    case 11: { // NumberToString — decode fixnum, then format
-        char buf[64];
-        long val = IS_FIXNUM(a1) ? (a1 >> 1) : (long)a1;
-        snprintf(buf, sizeof(buf), "%ld", val);
-        return aura_alloc_string(buf);
-    }
-    case 12: { // StringToNumber
-        const char* s = aura_string_ref(a1);
-        if (!s || !*s) return 0;
-        char* end = NULL;
-        long val = strtol(s, &end, 10);
-        return (int64_t)val;
-    }
-    case 13: // Display (fast-pathed, but keep as fallback)
-        aura_display_int(a1);
-        return a1;
-    case 14: // Write
-        printf("%ld", (long)a1);
-        return a1;
-    case 15: // Newline
-        aura_newline();
-        return 0;
-    case 16: // Error
-        fprintf(stderr, "error: %ld\n", (long)a1);
-        fflush(stderr);
-        return 0;
-    case 17: // Assert
-        if (a1 == 0)
-            fprintf(stderr, "assertion failed\n");
-        return a1;
-    case 18: // Read
-        // TODO: real stdin read; AOT path rarely hits this slow-path
-        return 0;
-    case 19: // ReadFile
-        return 0;
-    case 20: // WriteFile
-        return 0;
-    case 21: // FileExists
-        return 3; // #f
-    case 22: { // Gensym
-        static int64_t gensym_counter = 0;
-        char buf[64];
-        snprintf(buf, sizeof(buf), "g%ld", (long)(++gensym_counter));
-        return aura_alloc_string(buf);
-    }
-    case 23: { // Apply: (apply f args) — call f with args from list
-        int64_t f = a1;           // the function/closure/primitive
-        int64_t lst = a2;         // the argument list
-        int64_t buf[256];        // argument buffer
-        int count = 0;
-        while (lst != 0 && IS_PAIR(lst) && count < 256) {
-            buf[count++] = aura_pair_car(lst);
-            lst = aura_pair_cdr(lst);
+        case 5: { // StringAppend
+            const char* s1 = aura_string_ref(a1);
+            const char* s2 = aura_string_ref(a2);
+            size_t len1 = s1 ? strlen(s1) : 0;
+            size_t len2 = s2 ? strlen(s2) : 0;
+            char* buf = (char*)malloc(len1 + len2 + 1);
+            if (s1)
+                memcpy(buf, s1, len1);
+            if (s2)
+                memcpy(buf + len1, s2, len2 + 1);
+            int64_t result = aura_alloc_string(buf);
+            free(buf);
+            return result;
         }
-        // Call the function with the collected arguments
-        int64_t args_array[8] = {0};
-        int i;
-        for (i = 0; i < count && i < 8; i++)
-            args_array[i] = buf[i];
-        return aura_closure_call(f, args_array, count);
-    }
-    case 24: case 25: case 26: case 27: case 28: case 29: // Vector primitives
-        return 0; // AOT path delegates vector ops via generated wrappers; stub
-    case 30: // Import
-        return 11; // void
-    case 31: case 32: case 33: case 34: // Char primitives
-        return a1; // pass through
-    case 35: // Quotient
-        if (a2 == 0) return 0;
-        return a1 / a2;
-    case 36: // Remainder
-        if (a2 == 0) return 0;
-        return a1 % a2;
-    case 37: { // ListLength — count elements in a pair chain (list)
-        int64_t count = 0;
-        int64_t val = a1;
-        while (val != 0 && IS_PAIR(val)) {  // heap pointer with tag=01
-            count++;
-            val = aura_pair_cdr(val);
+        case 6: // StringLength — return fixnum-encoded
+            return ((int64_t)strlen(aura_string_ref(a1))) << 1;
+        case 7: { // StringRef
+            const char* s = aura_string_ref(a1);
+            int64_t idx = a2;
+            if (idx >= 0 && idx < (int64_t)strlen(s))
+                return (int64_t)(unsigned char)s[idx];
+            return 0;
         }
-        return count << 1;  // fixnum-encode
-    }
-    case 38: { // ListRef — nth element of a list
-        int64_t val = a1;
-        int64_t idx = a2 >> 1;  // fixnum-decode
-        int64_t i = 0;
-        while (val != 0 && IS_PAIR(val) && i < idx) {
-            val = aura_pair_cdr(val);
-            i++;
+        case 8: { // Substring
+            const char* s = aura_string_ref(a1);
+            int64_t start = a2;
+            int64_t end = argc >= 2 ? (int64_t)1 : (int64_t)0; // end default
+            size_t len = strlen(s);
+            if (start < 0)
+                start = 0;
+            if (end <= 0 || end > (int64_t)len)
+                end = (int64_t)len;
+            if (start >= end)
+                return aura_alloc_string("");
+            size_t sub_len = (size_t)(end - start);
+            char* buf = (char*)malloc(sub_len + 1);
+            memcpy(buf, s + start, sub_len);
+            buf[sub_len] = 0;
+            int64_t result = aura_alloc_string(buf);
+            free(buf);
+            return result;
         }
-        if (val != 0 && IS_PAIR(val) && i == idx)
-            return aura_pair_car(val);
-        return 0;
-    }
-    case 39: { // ListReverse — reverse a pair chain
-        int64_t input = a1;
-        int64_t result = 0;  // empty list sentinel
-        while (IS_PAIR(input)) {
-            int64_t car_val = aura_pair_car(input);
-            result = aura_alloc_pair(car_val, result);
-            input = aura_pair_cdr(input);
+        case 9: // StringEq — return pointer-tagged bool
+            return strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0 ? 7 : 3;
+        case 10: // StringLt — return pointer-tagged bool
+            return strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0 ? 7 : 3;
+        case 11: { // NumberToString — decode fixnum, then format
+            char buf[64];
+            long val = IS_FIXNUM(a1) ? (a1 >> 1) : (long)a1;
+            snprintf(buf, sizeof(buf), "%ld", val);
+            return aura_alloc_string(buf);
         }
-        return result;
-    }
-    case 40: // Raise
-        fprintf(stderr, "raise: %ld\n", (long)a1);
-        return 0;
-    case 41: // ErrorP
-        // Tag check: raised values are stored as negative sentinels or
-        // a special pair; for now treat any non-zero value as not-error.
-        return a1 ? 3 : 7;
-    case 42: // PairP (reached via OpPrimCall slow-path)
-        return IS_PAIR(a1) ? 7 : 3;
-    case 43: // NullP
-        return (a1 == 0 || a1 == 11) ? 7 : 3;
-    default:
-        // Hash (0-4) and any unhandled prim: return 0 to avoid spurious output.
-        return 0;
+        case 12: { // StringToNumber
+            const char* s = aura_string_ref(a1);
+            if (!s || !*s)
+                return 0;
+            char* end = NULL;
+            long val = strtol(s, &end, 10);
+            return (int64_t)val;
+        }
+        case 13: // Display (fast-pathed, but keep as fallback)
+            aura_display_int(a1);
+            return a1;
+        case 14: // Write
+            printf("%ld", (long)a1);
+            return a1;
+        case 15: // Newline
+            aura_newline();
+            return 0;
+        case 16: // Error
+            fprintf(stderr, "error: %ld\n", (long)a1);
+            fflush(stderr);
+            return 0;
+        case 17: // Assert
+            if (a1 == 0)
+                fprintf(stderr, "assertion failed\n");
+            return a1;
+        case 18: // Read
+            // TODO: real stdin read; AOT path rarely hits this slow-path
+            return 0;
+        case 19: // ReadFile
+            return 0;
+        case 20: // WriteFile
+            return 0;
+        case 21:      // FileExists
+            return 3; // #f
+        case 22: {    // Gensym
+            static int64_t gensym_counter = 0;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "g%ld", (long)(++gensym_counter));
+            return aura_alloc_string(buf);
+        }
+        case 23: {            // Apply: (apply f args) — call f with args from list
+            int64_t f = a1;   // the function/closure/primitive
+            int64_t lst = a2; // the argument list
+            int64_t buf[256]; // argument buffer
+            int count = 0;
+            while (lst != 0 && IS_PAIR(lst) && count < 256) {
+                buf[count++] = aura_pair_car(lst);
+                lst = aura_pair_cdr(lst);
+            }
+            // Call the function with the collected arguments
+            int64_t args_array[8] = {0};
+            int i;
+            for (i = 0; i < count && i < 8; i++)
+                args_array[i] = buf[i];
+            return aura_closure_call(f, args_array, count);
+        }
+        case 24:
+        case 25:
+        case 26:
+        case 27:
+        case 28:
+        case 29:       // Vector primitives
+            return 0;  // AOT path delegates vector ops via generated wrappers; stub
+        case 30:       // Import
+            return 11; // void
+        case 31:
+        case 32:
+        case 33:
+        case 34:       // Char primitives
+            return a1; // pass through
+        case 35:       // Quotient
+            if (a2 == 0)
+                return 0;
+            return a1 / a2;
+        case 36: // Remainder
+            if (a2 == 0)
+                return 0;
+            return a1 % a2;
+        case 37: { // ListLength — count elements in a pair chain (list)
+            int64_t count = 0;
+            int64_t val = a1;
+            while (val != 0 && IS_PAIR(val)) { // heap pointer with tag=01
+                count++;
+                val = aura_pair_cdr(val);
+            }
+            return count << 1; // fixnum-encode
+        }
+        case 38: { // ListRef — nth element of a list
+            int64_t val = a1;
+            int64_t idx = a2 >> 1; // fixnum-decode
+            int64_t i = 0;
+            while (val != 0 && IS_PAIR(val) && i < idx) {
+                val = aura_pair_cdr(val);
+                i++;
+            }
+            if (val != 0 && IS_PAIR(val) && i == idx)
+                return aura_pair_car(val);
+            return 0;
+        }
+        case 39: { // ListReverse — reverse a pair chain
+            int64_t input = a1;
+            int64_t result = 0; // empty list sentinel
+            while (IS_PAIR(input)) {
+                int64_t car_val = aura_pair_car(input);
+                result = aura_alloc_pair(car_val, result);
+                input = aura_pair_cdr(input);
+            }
+            return result;
+        }
+        case 40: // Raise
+            fprintf(stderr, "raise: %ld\n", (long)a1);
+            return 0;
+        case 41: // ErrorP
+            // Tag check: raised values are stored as negative sentinels or
+            // a special pair; for now treat any non-zero value as not-error.
+            return a1 ? 3 : 7;
+        case 42: // PairP (reached via OpPrimCall slow-path)
+            return IS_PAIR(a1) ? 7 : 3;
+        case 43: // NullP
+            return (a1 == 0 || a1 == 11) ? 7 : 3;
+        default:
+            // Hash (0-4) and any unhandled prim: return 0 to avoid spurious output.
+            return 0;
     }
 }
 
@@ -1102,14 +1168,19 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
 // __top__ is the entry function generated by LLVM compilation.
 #ifdef TEST_BUILD
 // Stub for unit test build (no LLVM compiled __top__ available)
-int64_t __top__(int64_t* args, uint32_t argc) { (void)args; (void)argc; return 0; }
+int64_t __top__(int64_t* args, uint32_t argc) {
+    (void)args;
+    (void)argc;
+    return 0;
+}
 #else
 int64_t __top__(int64_t* args, uint32_t argc);
 #endif
 
 #ifndef TEST_BUILD
 int main(int argc, char** argv) {
-    (void)argc; (void)argv;
+    (void)argc;
+    (void)argv;
     aura_bump_init();
     int64_t args[8] = {0};
     int64_t result = __top__(args, 0);
