@@ -1,0 +1,122 @@
+;; tests/commercial_readiness_edsl.aura
+;;
+;; Third-pass audit: EDSL self-modification primitives. These are the
+;; heart of Aura (issue #1438 unified the entry points: set-code →
+;; query → mutate → eval-current). The whole Agent loop runs through
+;; them, so any breakage here blocks commercial readiness harder than
+;; missing stdlib functions.
+;;
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_edsl.aura
+;;
+;; Same pure-print expect helper as the stdlib + eval-path tests.
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; Custom inline check framework
+;; ═════════════════════════════════════════════════════════════════════════
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (display "FAIL: ") (display label)
+        (display "  expected=") (display expected)
+        (display "  actual=") (display actual)
+        (newline))))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; set-code + eval-current: load source and execute
+;; ═════════════════════════════════════════════════════════════════════════
+(expect "set-code-simple"
+  (begin
+    (set-code "(+ 1 2)")
+    (eval-current))
+  3)
+
+(expect "set-code-multi-expr"
+  (begin
+    (set-code "(define x 10) (* x x)")
+    (eval-current))
+  100)
+
+(expect "set-code-then-read-binding"
+  (begin
+    (set-code "(define greeting \"hello\")")
+    (eval-current)
+    (display greeting)
+    (newline)
+    greeting)
+  "hello")
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; query: primitives — navigate the workspace AST
+;; ═════════════════════════════════════════════════════════════════════════
+(set-code "(define (square x) (* x x))")
+(eval-current)
+(let ((root (query :root)))
+  (expect "query:root-not-null" (not (null? root)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; mutate: rebind — the core self-modification primitive
+;; ═════════════════════════════════════════════════════════════════════════
+(set-code "(define answer 0)")
+(eval-current)
+(expect "mutate:rebind-answer"
+  (begin
+    (mutate :rebind "answer" "42" "set the answer")
+    (eval-current)
+    answer)
+  42)
+
+;; Full cycle: load → mutate → eval → use
+(set-code "(define (double x) (* x 2))")
+(eval-current)
+(expect "mutate:cycle-double→triple"
+  (begin
+    (mutate :rebind "double" "(lambda (x) (* x 3))" "double → triple")
+    (eval-current)
+    (double 7))
+  21)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; query:find — locate nodes by name (used heavily by AI agents)
+;; ═════════════════════════════════════════════════════════════════════════
+(set-code "(define alpha 1) (define beta 2) (define gamma 3)")
+(eval-current)
+(let ((found (query :find "alpha")))
+  (expect "query:find-alpha-not-null" (not (null? found)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; query:children — walk the AST tree
+;; ═════════════════════════════════════════════════════════════════════════
+(set-code "(+ 1 (* 2 3))")
+(eval-current)
+(let ((root (query :root)))
+  (let ((kids (query :children root)))
+    (expect "query:children-count" (length kids) 3)))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; query:pattern — named pattern matching (used by issue #548 et al)
+;; ═════════════════════════════════════════════════════════════════════════
+(set-code "(define (factorial n) (if (= n 0) 1 (* n (factorial (- n 1)))))")
+(eval-current)
+(let ((hits (query :pattern "factorial")))
+  (expect "query:pattern-factorial-not-null" (not (null? hits)) #t))
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; define-hygienic-macro* (the macro facility that IS shipped)
+;; ═════════════════════════════════════════════════════════════════════════
+;; Use std/safe-refactor's hygienic-macro facility since define-syntax
+;; is unbound (per eval_paths audit). Test the agent demo pattern.
+(set-code "(define-hygienic-macro* (my-when test:expr body:expr) `(if ,test ,body (void)))")
+(eval-current)
+;; Evaluate a call to the macro to confirm it expands + runs
+(set-code "(my-when #t 42)")
+(expect "hygienic-macro*-expand"
+  (eval-current)
+  42)
+
+;; ═════════════════════════════════════════════════════════════════════════
+;; End marker
+;; ═════════════════════════════════════════════════════════════════════════
+(display "DONE")
+(newline)
