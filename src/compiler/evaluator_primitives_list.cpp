@@ -415,6 +415,24 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         auto v = a[1];
         if (n == 0 || is_end_of_list(v))
             return make_void();
+        // B-list-2026-07-18-A fix: bound n by list length BEFORE the
+        // for-loop so the early-exit path (when n > length) cannot
+        // bypass the post-loop reverse. Without this bound, callers
+        // got the un-reversed accumulator as the return value, e.g.
+        // (take 5 (list 10 20 30 40)) returned (40 30 20 10) instead
+        // of (10 20 30 40). Walk the list once for length, clamp n,
+        // then run the loop body exactly min(n, length) times.
+        {
+            std::size_t len = 0;
+            auto probe = v;
+            while (is_pair(probe)) {
+                auto pidx = as_pair_idx(probe);
+                if (pidx >= pairs.size()) break;
+                ++len;
+                probe = pairs[pidx].cdr;
+            }
+            if (n > len) n = len;
+        }
         EvalValue result = make_void();
         // Build result in reverse then reverse it
         for (std::size_t i = 0; i < n; ++i) {
