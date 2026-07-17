@@ -1,5 +1,5 @@
 // @category: unit
-// @reason: Issue #1547 — MutationBoundaryGuard::try_acquire typed ResourceQuotaExceeded
+// @reason: Issue #1547 / #1594 — MutationBoundaryGuard::try_acquire typed ResourceQuotaExceeded
 //
 //   AC1: try_acquire succeeds under quota → valid unique_ptr
 //   AC2: try_acquire rejects over quota → AuraError{ResourceQuotaExceeded}

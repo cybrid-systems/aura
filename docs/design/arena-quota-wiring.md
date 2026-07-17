@@ -1,7 +1,8 @@
 # Arena allocate_raw ↔ Resource Quota Wiring
 
-**Issues:** #1498 (production parent), #1487, #1546, **#1554**, #1481, #1547, #1548  
-**Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `try_acquire`, `query:resource-quota-stats`
+**Issues:** #1498 (production parent), #1487, #1546, **#1554**, #1481, #1547, #1548, **#1594** (refine inventory)  
+**Related:** `Evaluator::check_arena_quota` / `allocate_checked`, `try_acquire`, `query:resource-quota-stats`  
+**Refine map:** `docs/design/resource-quota-wired-1594.md`
 
 ## #1498 production closed-loop
 
