@@ -34,6 +34,8 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agents_recv{0};
     std::atomic<std::uint64_t> spawn_failures{0};
     std::atomic<std::uint64_t> parallel_batches{0};
+    // Issue #1600
+    std::atomic<std::uint64_t> spawn_quota_rejects{0};
 };
 
 inline OrchModuleStats g_orch_module_stats{};
@@ -56,6 +58,9 @@ struct AgentHandle {
     serve::Fiber* fiber = nullptr;
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
     bool ok = false;
+    // Issue #1600: typed quota failure surface for Agent frameworks.
+    bool quota_exceeded = false;
+    std::string error; // e.g. "ResourceQuotaExceeded: fibers quota exceeded"
 };
 
 struct AgentSpec {
@@ -91,7 +96,11 @@ struct AgentSpec {
     });
 
     if (!f) {
+        // Issue #1600: Scheduler::spawn returns nullptr on fiber ResourceQuota.
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
+        h.quota_exceeded = true;
+        h.error = "ResourceQuotaExceeded: fibers quota exceeded";
         return h;
     }
 

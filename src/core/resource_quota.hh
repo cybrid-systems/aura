@@ -63,6 +63,9 @@ struct ResourceQuota {
     std::atomic<std::uint64_t> releases_total{0};
     std::atomic<std::uint64_t> overflow_guards_total{0};
     std::atomic<std::uint64_t> fiber_reservations_active{0};
+    // Issue #1600: orchestration-layer rejection counters (spawn / parallel_intend).
+    std::atomic<std::uint64_t> fiber_spawn_rejected_total{0};
+    std::atomic<std::uint64_t> orchestration_quota_exceeded_total{0};
 
     void set_limit(Dimension d, std::uint64_t limit) noexcept {
         switch (d) {
@@ -140,6 +143,27 @@ struct ResourceQuota {
             return QuotaError{d, dim_name(d) + std::string(" quota exceeded"), amount, lim, u};
         }
         return std::nullopt;
+    }
+
+    // Issue #1600: remaining capacity for a dimension (0 if unlimited).
+    [[nodiscard]] std::uint64_t remaining(Dimension d) const noexcept {
+        const auto lim = limit(d);
+        if (lim == 0)
+            return std::numeric_limits<std::uint64_t>::max();
+        const auto u = used(d);
+        return u >= lim ? 0 : (lim - u);
+    }
+
+    // Issue #1600: check whether `amount` additional fibers can be admitted
+    // without consuming. nullopt = OK.
+    [[nodiscard]] std::optional<QuotaError>
+    check_orchestration_fibers(std::uint64_t amount) noexcept {
+        auto err = check(Dimension::Fibers, amount);
+        if (err) {
+            orchestration_quota_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            err->message = "orchestration fiber quota exceeded";
+        }
+        return err;
     }
 
     // Check + consume atomically (CAS loop). nullopt = OK and consumed.
@@ -269,6 +293,8 @@ struct ResourceQuota {
         consumes_total.store(0, std::memory_order_relaxed);
         releases_total.store(0, std::memory_order_relaxed);
         overflow_guards_total.store(0, std::memory_order_relaxed);
+        fiber_spawn_rejected_total.store(0, std::memory_order_relaxed);
+        orchestration_quota_exceeded_total.store(0, std::memory_order_relaxed);
     }
 
     [[nodiscard]] static std::string dim_name(Dimension d) {

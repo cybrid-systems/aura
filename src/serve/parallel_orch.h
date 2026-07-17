@@ -11,6 +11,7 @@
 #include "fiber.h"
 #include "multi_fiber_mailbox.h"
 #include "scheduler.h"
+#include "core/resource_quota.hh" // #1600 orchestration fiber quota
 
 #include <atomic>
 #include <chrono>
@@ -53,11 +54,12 @@ struct TaskSpec {
 };
 
 enum class BatchStatus : std::uint8_t {
-    Ok = 0,       // all tasks succeeded
-    Partial = 1,  // some errors, completed without fail-fast abort
-    Timeout = 2,  // overall join deadline hit
-    FailFast = 3, // aborted remaining after first error
-    Invalid = 4,  // bad policy / empty / null scheduler
+    Ok = 0,            // all tasks succeeded
+    Partial = 1,       // some errors, completed without fail-fast abort
+    Timeout = 2,       // overall join deadline hit
+    FailFast = 3,      // aborted remaining after first error
+    Invalid = 4,       // bad policy / empty / null scheduler
+    QuotaExceeded = 5, // Issue #1600: ResourceQuota fibers dimension exhausted
 };
 
 struct BatchResult {
@@ -83,12 +85,23 @@ struct ParallelOrchStats {
     std::atomic<std::uint64_t> mailbox_posts{0};
     std::atomic<std::uint64_t> sequential_baseline_us{0};
     std::atomic<std::uint64_t> parallel_elapsed_us{0};
+    // Issue #1600: ResourceQuota orchestration rejects.
+    std::atomic<std::uint64_t> quota_rejects{0};
+    std::atomic<std::uint64_t> spawn_rejected_quota{0};
 };
 
 inline ParallelOrchStats g_parallel_orch_stats{};
 
 [[nodiscard]] inline bool validate_policy(const ParallelPolicy& p) noexcept {
     return p.max_concurrency > 0 && p.max_concurrency <= 1024;
+}
+
+// Issue #1600: preflight fiber capacity for parallel_intend (check only).
+// Returns nullopt when OK; QuotaError with ResourceQuotaExceeded semantics when not.
+[[nodiscard]] inline std::optional<aura::core::resource_quota::QuotaError>
+check_orchestration_fiber_quota(std::uint64_t estimated_fibers) noexcept {
+    return aura::core::resource_quota::process_resource_quota().check_orchestration_fibers(
+        estimated_fibers);
 }
 
 inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std::uint64_t& joined,
@@ -127,6 +140,24 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
 
     const auto t0 = std::chrono::steady_clock::now();
     g_parallel_orch_stats.intend_batches.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #1600: preflight when process fiber quota cannot admit any more work.
+    // Full-batch precheck: if remaining < 1, refuse whole batch with typed quota error.
+    // Partial capacity still admits until Scheduler::spawn returns nullptr.
+    if (auto pre = check_orchestration_fiber_quota(/*estimated=*/1)) {
+        g_parallel_orch_stats.quota_rejects.fetch_add(1, std::memory_order_relaxed);
+        g_parallel_orch_stats.invalid_batches.fetch_add(1, std::memory_order_relaxed);
+        out.status = BatchStatus::QuotaExceeded;
+        out.results.resize(tasks.size());
+        for (std::size_t i = 0; i < tasks.size(); ++i) {
+            out.results[i].task_index = i;
+            out.results[i].ok = false;
+            out.results[i].error = "ResourceQuotaExceeded: " + pre->message;
+        }
+        out.err_count = static_cast<std::uint32_t>(tasks.size());
+        return out;
+    }
+
     g_parallel_orch_stats.tasks_spawned.fetch_add(tasks.size(), std::memory_order_relaxed);
 
     // Shared so timed-out join does not leave fibers writing into stack out.
@@ -151,6 +182,7 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
     fibers.reserve(tasks.size());
     const auto max_c = policy.max_concurrency;
     const bool fail_fast = policy.fail_fast;
+    bool hit_quota = false;
 
     for (std::size_t i = 0; i < tasks.size(); ++i) {
         auto body = tasks[i].body;
@@ -248,6 +280,33 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
 
             sh->active.fetch_sub(1, std::memory_order_acq_rel);
         });
+        // Issue #1600: spawn returns nullptr when fiber ResourceQuota is exhausted.
+        if (!f) {
+            hit_quota = true;
+            g_parallel_orch_stats.spawn_rejected_quota.fetch_add(1, std::memory_order_relaxed);
+            g_parallel_orch_stats.quota_rejects.fetch_add(1, std::memory_order_relaxed);
+            {
+                std::lock_guard lock(sh->results_mu);
+                if (i < sh->results.size()) {
+                    sh->results[i].ok = false;
+                    sh->results[i].error = "ResourceQuotaExceeded: fibers quota exceeded";
+                    sh->results[i].task_index = i;
+                }
+            }
+            sh->err_n.fetch_add(1, std::memory_order_relaxed);
+            g_parallel_orch_stats.tasks_err.fetch_add(1, std::memory_order_relaxed);
+            // Mark remaining not-started tasks as quota-exceeded (no fiber allocated).
+            for (std::size_t j = i + 1; j < tasks.size(); ++j) {
+                std::lock_guard lock(sh->results_mu);
+                if (j < sh->results.size() && sh->results[j].error == "not-started") {
+                    sh->results[j].ok = false;
+                    sh->results[j].error = "ResourceQuotaExceeded: fibers quota exceeded";
+                    sh->err_n.fetch_add(1, std::memory_order_relaxed);
+                    g_parallel_orch_stats.tasks_err.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            break;
+        }
         fibers.push_back(f);
     }
 
@@ -256,6 +315,7 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
         join_timeout = static_cast<std::uint64_t>(policy.timeout_ms);
 
     // Fiber::join Ok path bumps join_linear_enforcement_total per target (#1595).
+    // Filter nulls (should not be present); join span is only successful spawns.
     JoinResult jr = Fiber::join(std::span<Fiber* const>(fibers), join_timeout);
     out.join_status = jr.status;
     out.wait_us = jr.wait_us;
@@ -291,7 +351,9 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
         }
     }
 
-    if (jr.status == JoinStatus::Timeout) {
+    if (hit_quota) {
+        out.status = BatchStatus::QuotaExceeded;
+    } else if (jr.status == JoinStatus::Timeout) {
         out.status = BatchStatus::Timeout;
     } else if (out.aborted_count > 0 || (policy.fail_fast && out.err_count > 0)) {
         out.status = BatchStatus::FailFast;

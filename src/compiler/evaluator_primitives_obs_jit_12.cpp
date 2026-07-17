@@ -16,10 +16,13 @@ module;
 #include "primitives_meta.h"
 #include "primitives_detail.h"
 #include "serve/metrics.h"
+#include "serve/fiber.h" // #1600 join_resource_wait_us
 #include "core/gc_hooks.h"
-#include "core/resource_quota.hh" // Issue #1579
+#include "core/resource_quota.hh" // Issue #1579 / #1600
 #include "hash_meta.h"
 #include "basis_points.h"
+
+#include <limits>
 
 // aura_gc_frequency_tune_ratio_* declared in runtime_shared.h (#1493)
 
@@ -196,14 +199,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1481 / #1498 / #1554 / #1579 / #1590: query:resource-quota-stats.
+    // Issue #1481 / #1498 / #1554 / #1579 / #1590 / #1600: query:resource-quota-stats.
     // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
     // #1498 production fields (AC2): current_usage, memory_quota,
     // memory_quota_total, exceeded_count (=rejects), mutations_used.
     // #1554: exceeded_total alias + temp_arena_wired / group_owner_wired.
     // #1579: module_phase + process_fibers_* + process_checks/rejects + overflow.
     // #1590: schema 1590 + quota aliases + hot-path closed-loop keys.
-    // schema bumped to 1590 (agents: treat unknown keys as optional).
+    // #1600: orchestration fiber spawn/reject + join_resource_wait_us.
+    // schema bumped to 1600 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
         "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_
@@ -302,8 +306,31 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("group_owner_wired", group_wired);
             insert_kv("hotpath_arena_gated", primary_wired); // #1590: allocate_raw owner path
             insert_kv("hotpath_guard_try_acquire", 1); // #1590: try_acquire is production path
-            insert_kv("issue", 1590);
-            insert_kv("schema", 1590);
+            // Issue #1600: orchestration ResourceQuota surface.
+            insert_kv("fiber_spawn_rejected_total",
+                      static_cast<std::int64_t>(
+                          pq.fiber_spawn_rejected_total.load(std::memory_order_relaxed)));
+            insert_kv("orchestration_quota_exceeded_count",
+                      static_cast<std::int64_t>(
+                          pq.orchestration_quota_exceeded_total.load(std::memory_order_relaxed)));
+            insert_kv("orchestration_quota_exceeded_total",
+                      static_cast<std::int64_t>(
+                          pq.orchestration_quota_exceeded_total.load(std::memory_order_relaxed)));
+            insert_kv("join_resource_wait_us",
+                      static_cast<std::int64_t>(aura::serve::Fiber::join_wait_us_total()));
+            insert_kv("join_wait_us_total",
+                      static_cast<std::int64_t>(aura::serve::Fiber::join_wait_us_total()));
+            insert_kv("join_total", static_cast<std::int64_t>(aura::serve::Fiber::join_total()));
+            insert_kv("process_fibers_remaining",
+                      static_cast<std::int64_t>(
+                          pq.remaining(aura::core::resource_quota::Dimension::Fibers) ==
+                                  std::numeric_limits<std::uint64_t>::max()
+                              ? static_cast<std::int64_t>(-1) // unlimited
+                              : static_cast<std::int64_t>(
+                                    pq.remaining(aura::core::resource_quota::Dimension::Fibers))));
+            insert_kv("orch_spawn_gated", 1); // Scheduler::spawn + parallel_intend wired
+            insert_kv("issue", 1600);
+            insert_kv("schema", 1600); // lineage 1590|1579|…
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
