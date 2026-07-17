@@ -495,6 +495,26 @@ public:
     // reclaims bytes (ShapeProfiler invalidate, dirty cascade).
     void set_on_compact_hook(std::function<void()> hook) { on_compact_hook_ = std::move(hook); }
 
+    // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
+    // When set, allocate_raw consults allow_fn(owner, size) before
+    // allocating; false → return nullptr (no allocation). Orphan arenas
+    // (owner unset) keep the unlimited path. Callback is C-style so
+    // aura.core.arena never imports the compiler Evaluator module.
+    // allow_fn returns true if the allocation is permitted.
+    using ArenaQuotaAllowFn = bool (*)(void* owner, std::size_t size) noexcept;
+    void set_arena_owner(void* owner, ArenaQuotaAllowFn allow_fn) noexcept {
+        arena_owner_ = owner;
+        quota_allow_fn_ = allow_fn;
+    }
+    void clear_arena_owner() noexcept {
+        arena_owner_ = nullptr;
+        quota_allow_fn_ = nullptr;
+    }
+    [[nodiscard]] void* arena_owner() const noexcept { return arena_owner_; }
+    [[nodiscard]] bool has_arena_owner() const noexcept {
+        return arena_owner_ != nullptr && quota_allow_fn_ != nullptr;
+    }
+
     ~ASTArena() {
         // Call all registered destructors in reverse construction
         // order so each T's owned resources (pmr vector fallback
@@ -514,8 +534,11 @@ public:
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...>
     [[nodiscard]] T* create(Args&&... args) pre(sizeof(T) > 0)
-        pre(alignof(T) > 0 && (alignof(T) & (alignof(T) - 1)) == 0) post(r : r != nullptr) {
+        pre(alignof(T) > 0 && (alignof(T) & (alignof(T) - 1)) == 0) {
         void* raw = allocate_raw(sizeof(T), alignof(T));
+        // Issue #1546: quota reject → nullptr (no construct).
+        if (!raw)
+            return nullptr;
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
         dtors_.push_back({result, +[](void* p) { static_cast<T*>(p)->~T(); }});
@@ -958,10 +981,23 @@ private:
         // to buffer_.data() — that triggered the UAF.)
     }
 
-    // Issue #1519: post(ptr != nullptr) — pmr allocate throws on OOM
-    // rather than returning null; small-pool path returns non-null on hit.
+    // Issue #1519: post(ptr != nullptr) on success path — pmr allocate
+    // throws on OOM rather than returning null; small-pool path returns
+    // non-null on hit.
+    // Issue #1546: when arena_owner_ + quota_allow_fn_ reject, returns
+    // nullptr without allocating (typed path: Evaluator::allocate_checked).
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
-        pre(alignment > 0 && (alignment & (alignment - 1)) == 0) post(r : r != nullptr) {
+        pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
+        // ── Resource quota (Issue #1546 / #1481) ─────────
+        // Owner-threaded Evaluator::check_arena_quota (or equivalent).
+        // Orphan arenas skip this branch entirely.
+        if (quota_allow_fn_ && arena_owner_) {
+            if (!quota_allow_fn_(arena_owner_, size)) {
+                // Rejected — no allocation, no stats bump.
+                return nullptr;
+            }
+        }
+
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
@@ -1111,6 +1147,9 @@ private:
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
     std::function<void()> on_compact_hook_;
+    // Issue #1546: optional Evaluator* (void*) + quota allow callback.
+    void* arena_owner_ = nullptr;
+    ArenaQuotaAllowFn quota_allow_fn_ = nullptr;
 };
 
 // Issue #685: aggregate auto-compact policy stats for observability.
