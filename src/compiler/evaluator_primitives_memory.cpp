@@ -955,8 +955,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_pair(ev.pairs_.size()); // empty pair
             const auto trig = ev.arena_group_->auto_compact_trigger_count();
             const auto skip = ev.arena_group_->auto_compact_skip_count();
-            // Issue #1072: return (trigger . skip) as ints only — do NOT
-            // push_string_heap for discarded intermediates (heap pollution).
+            // Issues #1072 / #1488: return (trigger . skip) as ints only —
+            // never string_heap_.push_back discarded intermediates (pollution
+            // on long-running observability poll loops).
             auto car_idx = ev.pairs_.size();
             ev.pairs_.push_back({make_int(static_cast<std::int64_t>(trig)),
                                  make_int(static_cast<std::int64_t>(skip))});
