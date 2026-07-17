@@ -76,8 +76,16 @@
     (let ((pos (string-index output "unbound variable: " 0)))
       (if (not (= pos -1))
         (let* ((fn-start (+ pos (string-length "unbound variable: ")))
-               (fn-str (substring output fn-start (string-length output)))
-               (fn-name (string-trim fn-str)))
+               (fn-rest (substring output fn-start (string-length output)))
+               ;; Issue #1584: take only the first whitespace-delimited
+               ;; token. Real error msgs append " at line N", " in proc foo",
+               ;; etc. — substringing to end-of-string mashed those into the
+               ;; lookup key ("map at line 5" wouldn't match "map" in
+               ;; *stdlib-map*).
+               (sp (string-index fn-rest " " 0))
+               (fn-name (if (= sp -1)
+                          (string-trim fn-rest)
+                          (string-trim (substring fn-rest 0 sp)))))
           (if (> (string-length fn-name) 0)
             (let ((mod (lookup-module fn-name)))
               (if mod
@@ -105,7 +113,13 @@
     (let ((pos (string-index output "type error: cannot call: " 0)))
       (if (not (= pos -1))
         (let* ((fn-start (+ pos (string-length "type error: cannot call: ")))
-               (fn-name (string-trim (substring output fn-start (string-length output)))))
+               (fn-rest (substring output fn-start (string-length output)))
+               ;; Issue #1584: tokenize first whitespace-delimited token
+               ;; (same rationale as Case 2 above).
+               (sp (string-index fn-rest " " 0))
+               (fn-name (if (= sp -1)
+                          (string-trim fn-rest)
+                          (string-trim (substring fn-rest 0 sp)))))
           (if (> (string-length fn-name) 0)
             (begin
               (set! caused "type-error-unbound")
