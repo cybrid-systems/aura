@@ -6172,8 +6172,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> inline_diamond_cfg_fixed{1};         // #1278
     std::atomic<std::uint64_t> stable_ref_boundary_auto_refresh{0}; // #1279
     std::atomic<std::uint64_t> stable_ref_auto_refresh_enforced{1}; // #1279
-    std::atomic<std::uint64_t> pattern_hygiene_default_exclude{0};  // #1280
-    std::atomic<std::uint64_t> pattern_hygiene_end_to_end{1};       // #1280
+    // Issue #1564: full provenance enforcement process mirrors
+    std::atomic<std::uint64_t> stable_ref_auto_refresh_total{0};
+    std::atomic<std::uint64_t> stable_ref_epoch_fence_hit_total{0};
+    std::atomic<std::uint64_t> cross_layer_provenance_mismatch_total{0};
+    std::atomic<std::uint64_t> pattern_hygiene_default_exclude{0}; // #1280
+    std::atomic<std::uint64_t> pattern_hygiene_end_to_end{1};      // #1280
 
     // ── Issues #1281–#1285: children rollback / gen wrap / provenance / fallback / JIT EH ──
     std::atomic<std::uint64_t> production_sweep_1281_1285_active{1};

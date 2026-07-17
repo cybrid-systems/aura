@@ -2723,6 +2723,8 @@ private:
     // Issue #1563: when true, bump_jit_deopt_on_mutate uses render throttle
     // even outside an active render hotpath frame (render-critical mutate).
     mutable std::atomic<bool> prefer_render_critical_deopt_throttle_{false};
+    // Issue #1564: default AutoRefreshOnBoundary for ensure_valid_or_refresh.
+    mutable std::atomic<bool> stable_ref_auto_refresh_policy_{true};
     // Issue #1357: per-slot render prim latency + frame mark.
     // unique_ptr: PrimLatencyStats holds atomics (not movable for vector reallocation).
     std::vector<std::unique_ptr<aura::compiler::render_telemetry::PrimLatencyStats>> prim_latency_;
@@ -4561,6 +4563,19 @@ public:
     // Unified sweep: restamp_pinned_stable_refs + site counters.
     // Force-calls validate_or_refresh semantics via refresh_if_stale.
     std::size_t auto_restamp_pinned_stable_refs_at(StableRefRefreshSite site) noexcept;
+    // Issue #1564: policy-gated ensure — full provenance validate/refresh.
+    // Default AutoRefreshOnBoundary. Bumps process-wide provenance counters.
+    // Returns NodeView on success; nullopt if hard-invalid (fail path).
+    [[nodiscard]] std::optional<aura::ast::NodeView>
+    ensure_valid_or_refresh(aura::ast::FlatAST::StableNodeRef& ref,
+                            bool auto_refresh = true) noexcept;
+    // Policy toggle (default true): when false, only validate (no restamp).
+    void set_stable_ref_auto_refresh_policy(bool on) noexcept {
+        stable_ref_auto_refresh_policy_.store(on, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool stable_ref_auto_refresh_policy() const noexcept {
+        return stable_ref_auto_refresh_policy_.load(std::memory_order_relaxed);
+    }
     // Issue #391: validate a (id . gen) stable-ref pair
     // against the current workspace's generation. Returns
     // true if the ref is still valid (in-range + gen

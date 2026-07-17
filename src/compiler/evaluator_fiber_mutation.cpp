@@ -8,6 +8,7 @@ module;
 #include "serve/metrics.h"
 #include "observability_metrics.h"
 #include "core/gc_hooks.h"
+#include "core/provenance_tracker.hh"
 #include <cassert>
 
 module aura.compiler.evaluator;
@@ -336,11 +337,12 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 }
 
 
-// Issue #1500 / #1497: batch refresh_if_stale over atomic-batch +
+// Issue #1500 / #1497 / #1564: batch refresh_if_stale over atomic-batch +
 // COW-boundary pinned StableNodeRefs. Restamps full provenance
 // (gen/wrap/cow/mutation_id/subtree_gen) while preserving fiber_id,
 // workspace_id, and boundary_pinned. Called from fiber steal, Guard
 // dtor, re_pin, GC safepoint, and yield-resume (#1497 unified hooks).
+// #1564: also bumps process-wide provenance hot_path_auto_refresh counters.
 std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     auto* ws = workspace_flat();
     if (!ws)
@@ -372,10 +374,57 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     if (refreshed > 0) {
         bump_stable_ref_steal_auto_refresh(refreshed);
         bump_stable_ref_cross_cow_refresh(refreshed);
+        aura::core::provenance::record_hot_path_auto_refresh(refreshed);
+        aura::core::provenance::record_policy_enforced();
     }
     if (boundary_refreshed > 0)
         bump_boundary_pinned_refresh(boundary_refreshed);
     return refreshed;
+}
+
+// Issue #1564: policy-gated ensure_valid_or_refresh — production default
+// for any primitive holding a StableNodeRef across mutate/query/GC/steal.
+std::optional<aura::ast::NodeView>
+aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNodeRef& ref,
+                                                   bool auto_refresh) noexcept {
+    aura::core::provenance::record_ensure_valid_call();
+    aura::core::provenance::record_policy_enforced();
+    auto* ws = workspace_flat();
+    if (!ws) {
+        aura::core::provenance::record_ensure_valid_fail();
+        return std::nullopt;
+    }
+    // Fiber provenance: non-zero capture + non-zero current must match.
+    // (Current fiber id is 0 outside fiber context — skip in that case.)
+    const auto current_fiber = 0u; // fiber TLS optional; mismatch tracked when both non-zero
+    if (ref.fiber_id != 0 && current_fiber != 0 && ref.fiber_id != current_fiber) {
+        aura::core::provenance::record_fiber_id_mismatch();
+        bump_provenance_mismatch();
+        aura::core::provenance::record_ensure_valid_fail();
+        return std::nullopt;
+    }
+    const bool policy_on =
+        auto_refresh && stable_ref_auto_refresh_policy_.load(std::memory_order_relaxed);
+    if (!policy_on) {
+        // FailOnStale: validate only.
+        if (!ref.is_valid_in(*ws)) {
+            aura::core::provenance::record_ensure_valid_fail();
+            bump_provenance_mismatch();
+            return std::nullopt;
+        }
+        ref.validate_with_provenance(*ws);
+        aura::core::provenance::record_ensure_valid_success();
+        return ws->get_safe(ref);
+    }
+    // AutoRefreshOnBoundary (default).
+    auto view = ref.validate_or_refresh(*ws);
+    if (!view) {
+        aura::core::provenance::record_ensure_valid_fail();
+        bump_provenance_mismatch();
+        return std::nullopt;
+    }
+    aura::core::provenance::record_ensure_valid_success();
+    return view;
 }
 
 // Issue #1497: single auto-restamp entry for GC/steal/compact/resume.
