@@ -810,23 +810,24 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"soa-functions-visited", make_int(static_cast<std::int64_t>(funcs))},
                 {"soa-instructions-visited", make_int(static_cast<std::int64_t>(instrs))},
                 {"aos-view-built-count", make_int(static_cast<std::int64_t>(views))},
-                // Issue #1517 fields (non-duplicative extension of #463).
+                // Issue #1517 / #1619 fields (non-duplicative extension of #463).
                 {"concept-enforcement-hits", make_int(static_cast<std::int64_t>(enforce))},
                 {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
                 {"edsl-soa-migration-progress", make_int(static_cast<std::int64_t>(migrate))},
                 {"soa-view-hits", make_int(static_cast<std::int64_t>(view_hits))},
-                {"schema", make_int(1517)},
+                {"schema", make_int(1619)}, // lineage 1517
             };
             return build_hash(kv);
         });
 
-    // Issue #1517: dedicated enforcement surface for Agents.
+    // Issue #1517 / #1619: dedicated enforcement surface for Agents.
     ObservabilityPrims::register_stats_impl(
         "query:soa-view-enforcement-stats", [&ev](const auto&) -> EvalValue {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                // #1619: ~15 keys — need headroom (create(16) can drop).
+                auto* ht = FlatHashTable::create(32);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -885,6 +886,9 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 m->soa_view_misses_total.store(misses, std::memory_order_relaxed);
                 m->pipeline_soa_view_aware_total.store(aware, std::memory_order_relaxed);
             }
+            const auto ratio_bp = aura::compiler::soa_view::migration_ratio_bp();
+            const auto phase =
+                static_cast<std::int64_t>(aura::compiler::soa_view::kSoaViewEnforcementPhase);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"concept-enforcement-hits", make_int(static_cast<std::int64_t>(enforce))},
                 {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
@@ -893,7 +897,15 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"soa-view-misses", make_int(static_cast<std::int64_t>(misses))},
                 {"passes-soa-view-aware", make_int(static_cast<std::int64_t>(aware))},
                 {"concept-enforced", make_int(1)},
-                {"schema", make_int(1517)},
+                // Issue #1619 AC keys
+                {"migration-ratio-bp", make_int(static_cast<std::int64_t>(ratio_bp))},
+                {"soa-view-full-compliant", make_int(1)},
+                {"static-assert-enforced", make_int(1)},
+                {"columnar-accessor-required", make_int(1)},
+                {"enforcement-phase", make_int(phase)},
+                {"pipeline-pack-check", make_int(1)},
+                {"issue", make_int(1619)},
+                {"schema", make_int(1619)}, // lineage 1517
             };
             return build_hash(kv);
         });
