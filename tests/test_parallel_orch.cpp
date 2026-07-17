@@ -278,6 +278,42 @@ static void ac8_stats_query() {
     CHECK(batches && is_int(*batches) && as_int(*batches) >= 1, "batches advanced");
 }
 
+// Issue #1602: light multi-round stress (full suite in
+// test_parallel_orchestration_stress_1602 + suite/*.aura).
+static void ac9_stress_multi_round() {
+    std::println("\n--- AC9: multi-round stress (#1602) ---");
+    Scheduler sched(4);
+    SchedRunner runner(sched);
+    constexpr int kRounds = 10;
+    constexpr int kTasks = 16;
+    int ok_rounds = 0;
+    const auto joined0 = g_parallel_orch_stats.tasks_joined.load(std::memory_order_relaxed);
+    for (int r = 0; r < kRounds; ++r) {
+        std::vector<TaskSpec> tasks;
+        tasks.reserve(kTasks);
+        for (int i = 0; i < kTasks; ++i) {
+            tasks.push_back(TaskSpec{
+                .body =
+                    [i] {
+                        Fiber::yield(YieldReason::Explicit);
+                        if ((i % 4) == 0)
+                            Fiber::yield(YieldReason::MutationBoundary);
+                        return TaskResult{.ok = true, .value = std::to_string(i)};
+                    },
+                .name = "s",
+            });
+        }
+        ParallelPolicy p{.max_concurrency = 4, .timeout_ms = 10000};
+        auto batch = parallel_intend(sched, std::span<const TaskSpec>(tasks), p, nullptr);
+        if (batch.ok_count == static_cast<std::uint64_t>(kTasks))
+            ++ok_rounds;
+    }
+    CHECK(ok_rounds >= kRounds - 1, std::format("stable rounds ({}/{})", ok_rounds, kRounds));
+    CHECK(g_parallel_orch_stats.tasks_joined.load() >=
+              joined0 + static_cast<std::uint64_t>((kRounds - 1) * kTasks),
+          "joined advanced under stress");
+}
+
 } // namespace
 
 int main() {
@@ -290,6 +326,7 @@ int main() {
     ac6_mailbox();
     ac7_throughput();
     ac8_stats_query();
+    ac9_stress_multi_round();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

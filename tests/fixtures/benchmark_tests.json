@@ -320,5 +320,17 @@
     "pipeline": "typecheck",
     "expected_type": "Int",
     "typecheck_suite": true
+  },
+  {
+    "name": "parallel_intend_small",
+    "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+    "pipeline": "eval",
+    "expected_val": 2
+  },
+  {
+    "name": "parallel_intend_with_gc",
+    "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+    "pipeline": "eval",
+    "expected_val": 2
   }
 ]
