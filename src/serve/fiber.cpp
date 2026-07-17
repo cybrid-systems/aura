@@ -451,13 +451,12 @@ void Fiber::yield(YieldReason reason) {
         aura::messaging::g_flush_mutation_boundary();
     }
 
-    // Issue #453: when yielding from a mutation boundary AND a
-    // pending panic checkpoint exists, bump the GC-block counter
-    // (the actual GC defer is a follow-up that requires scheduler
-    // integration). The check is cheap (one bridge call, one
-    // thread-local read) and the bump only happens when both
-    // conditions hold — a normal yield from a non-guard context
-    // is a no-op.
+    // Issue #453 / #1489: when yielding from a mutation boundary
+    // AND a pending panic checkpoint exists, arm process-wide GC
+    // defer (via block_gc trampoline → gc_hooks depth) so
+    // GCCollector / compact_sweep skip reclaim until recovery.
+    // Cheap: one bridge call + thread-local read; no-op without
+    // an active guard checkpoint.
     if (reason == YieldReason::MutationBoundary && aura::messaging::g_pending_panic_checkpoint &&
         aura::messaging::g_pending_panic_checkpoint() &&
         aura::messaging::g_block_gc_for_pending_checkpoint) {

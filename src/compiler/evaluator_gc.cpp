@@ -7,6 +7,7 @@ module;
 #include "observability_metrics.h"
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
+#include "core/gc_hooks.h"
 
 module aura.compiler.evaluator;
 
@@ -481,6 +482,24 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     auto* marks = static_cast<aura::serve::GCSweepBuffers*>(sweep_buffers);
     if (!marks)
         return nullptr;
+
+    // Issue #1489: skip destructive reclaim while a PanicCheckpoint
+    // recovery window is open (process-wide gc_hooks depth or live
+    // panic_safe_source_ on this evaluator). Re-pin path remains
+    // available via on_arena_compact_hook after the window closes.
+    if (aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint()) {
+        aura::gc_hooks::note_gc_sweep_skipped_pending_panic();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
+        bump_gc_blocked_by_pending_panic();
+        using SweepResult = aura::messaging::GCSweepResultMsg;
+        auto* result = new SweepResult();
+        result->closures_freed = 0;
+        result->strings_freed = 0;
+        result->pairs_freed = 0;
+        result->fiber_results_freed = 0;
+        return result;
+    }
 
     std::lock_guard<std::mutex> lock(heap_mutex());
     // Issue #963: allocate the shared GCSweepResultMsg layout from

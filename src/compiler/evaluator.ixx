@@ -1718,6 +1718,8 @@ public:
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
+        // Issue #1489: recovery complete — allow GC compact again.
+        release_gc_defer_for_pending_panic();
         // Issue #548: bump panic_checkpoint_commit_count_
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.
@@ -2899,6 +2901,9 @@ private:
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_; // last known good source code
+    // Issue #1489: true while process-wide gc_hooks defer depth was
+    // armed for this evaluator's live PanicCheckpoint (save→commit/restore).
+    bool gc_defer_armed_for_panic_cp_ = false;
 
     // Issue #753: long-running resource quota limits (0 = unlimited).
     std::uint64_t resource_quota_memory_ = 0;
@@ -3704,6 +3709,28 @@ public:
     void bump_gc_blocked_by_pending_panic() noexcept {
         panic_checkpoint_domain_.gc_blocked_by_pending.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1489: arm/release process-wide GC defer while a PanicCheckpoint
+    // is live (save → commit/restore). Idempotent per-evaluator (one arm per
+    // armed window). Scheduler + compact_sweep consult gc_hooks depth.
+    void arm_gc_defer_for_pending_panic() noexcept {
+        if (gc_defer_armed_for_panic_cp_)
+            return;
+        gc_defer_armed_for_panic_cp_ = true;
+        aura::gc_hooks::arm_gc_defer_pending_panic();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_panic_pending_deferral_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void release_gc_defer_for_pending_panic() noexcept {
+        if (!gc_defer_armed_for_panic_cp_)
+            return;
+        gc_defer_armed_for_panic_cp_ = false;
+        aura::gc_hooks::release_gc_defer_pending_panic();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_panic_conflict_resolved_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool gc_defer_armed_for_pending_panic() const noexcept {
+        return gc_defer_armed_for_panic_cp_;
+    }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the
     // (query:panic-checkpoint-lifecycle-stats) primitive
@@ -4332,6 +4359,15 @@ public:
     // entry point.
     int request_gc_safepoint() noexcept {
         bump_gc_safepoint_request();
+        // Issue #1489 / #651 AC2: defer while PanicCheckpoint recovery
+        // window is open (process-wide arm or live panic_safe_source_).
+        if (aura::gc_hooks::gc_deferred_for_pending_panic() || has_panic_checkpoint()) {
+            bump_gc_safepoint_deferred();
+            bump_gc_blocked_by_pending_panic();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
+            return 1;
+        }
         if (mutation_boundary_depth() > 0) {
             bump_gc_safepoint_deferred();
             bump_orchestration_llm_gc_safepoint_adapted();

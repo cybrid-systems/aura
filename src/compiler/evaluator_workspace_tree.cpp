@@ -268,6 +268,10 @@ bool Evaluator::save_panic_checkpoint() {
     panic_safe_pairs_size_ = pairs_.size();
     panic_safe_string_heap_size_ = string_heap_.size();
     panic_safe_env_frames_size_ = env_frames_.size();
+    // Issue #1489: arm process-wide GC defer for the recovery window
+    // (commit/restore releases). Protects pinned COW / StableNodeRef /
+    // EnvFrame from compact_sweep while checkpoint is live.
+    arm_gc_defer_for_pending_panic();
     // Issue #548: bump panic_checkpoint_save_count_ so
     // (query:panic-checkpoint-lifecycle-stats) can report
     // the lifetime save count.
@@ -357,6 +361,8 @@ bool Evaluator::restore_panic_checkpoint() {
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
+        // Issue #1489: recovery complete — restore GC scheduling.
+        release_gc_defer_for_pending_panic();
     }
     return ok;
 }

@@ -7,6 +7,7 @@ module;
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "observability_metrics.h"
+#include "core/gc_hooks.h"
 #include <cassert>
 
 module aura.compiler.evaluator;
@@ -888,18 +889,25 @@ namespace {
         ev->bump_macro_hygiene_panic_restamp_from_workspace();
     }
 
-    // (3) g_block_gc_for_pending_checkpoint: bumps the GC-block
-    // counter. Called by Fiber::yield(MutationBoundary) when a
-    // pending checkpoint exists. The actual GC defer is a
-    // follow-up (requires scheduler.cpp + gc_coordinator.cpp
-    // integration; out of scope for the P0 ship).
+    // (3) g_block_gc_for_pending_checkpoint: Issue #1489 / #651 AC1.
+    // Called by Fiber::yield(MutationBoundary) when a pending
+    // PanicCheckpoint exists. Arms process-wide GC defer (if not
+    // already armed by save), bumps metrics, and signals the
+    // scheduler-facing gc_hooks depth so GCCollector::collect /
+    // compact_sweep skip destructive reclaim until commit/restore.
     void block_gc_for_pending_checkpoint_trampoline() {
         auto* ev = Evaluator::yield_hook_evaluator();
         if (!ev)
             return;
         if (!ev->pending_panic_checkpoint())
             return;
+        // Ensure defer is armed for the recovery window (save usually
+        // arms first; yield re-arms only if save path was skipped).
+        ev->arm_gc_defer_for_pending_panic();
         ev->bump_gc_blocked_by_pending_panic();
+        aura::gc_hooks::note_gc_defer_pending_panic_signal();
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->gc_panic_pending_deferral_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     struct PanicCheckpointRegistrar {
