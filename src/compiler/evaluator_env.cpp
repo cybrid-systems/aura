@@ -851,9 +851,11 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     return ne;
 }
 
-// Issue #1545: walk tree-walker live closures_ under unique lock so
+// Issue #1545 / #1606: walk tree-walker live closures_ under unique lock so
 // callers can mutate (e.g. mark invalid). Parallel to
 // AuraJIT::walk_active_closures / IRExecutor::walk_runtime_closures.
+// Wired from invalidate_function / compact_env_frames / JIT ResourceTracker
+// via scan_live_closures_for_linear_captures.
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
