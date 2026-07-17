@@ -508,7 +508,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->safepoint_frequency_adapt_down_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(32) /* #1141 / #1599 hist buckets */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -545,7 +545,23 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc-frequency-tune-ratio", freq_ratio);
             insert_kv("frequency-adapt-up", adapt_up);
             insert_kv("frequency-adapt-down", adapt_down);
-            insert_kv("schema", 1493);
+            // Issue #1599 AC5: mutation_stack_depth_histogram export.
+            std::int64_t hist_sum = 0;
+            static constexpr const char* kHistKeys[8] = {"hist-b0", "hist-b1", "hist-b2",
+                                                         "hist-b3", "hist-b4", "hist-b5",
+                                                         "hist-b6", "hist-b7"};
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i) {
+                    const auto v = static_cast<std::int64_t>(
+                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed));
+                    hist_sum += v;
+                    if (i < 8)
+                        insert_kv(kHistKeys[i], v);
+                }
+            }
+            insert_kv("mutation_stack_depth_histogram", hist_sum);
+            insert_kv("issue", 1599);
+            insert_kv("schema", 1599); // lineage 1493|1483
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

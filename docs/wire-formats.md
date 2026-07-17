@@ -538,9 +538,11 @@ See `docs/design/mutation-boundary-fairness.md` and
 
 ### AI closed-loop readiness (Issue #1593 / #1597)
 
-`query:ai-closedloop-readiness-stats` — schema **1597** (lineage 1593/1499):
+`query:ai-closedloop-readiness-stats` — schema **1599** (lineage 1597/1593/1499):
 `health-score`, `slo-breach`, `health-trend`, `action`, `recommendation`,
-sibling counters (quota, steal, post-steal, safe-yield), plus orchestration
+sibling counters (quota, steal, post-steal, safe-yield), orchestration
 (`orch-health-score`, `join_latency_histogram`, `mailbox_backpressure_p99`,
 `parallel_task_throughput`, `orchestration_starvation_mitigated`,
-`adaptive-concurrency-recommended`). See `docs/design/ai-closedloop-readiness.md`.
+`adaptive-concurrency-recommended`), plus linear GC linkage
+(`linear-gc-root-audit-checks`, `linear-live-closure-scans`,
+`mutation_stack_depth_histogram`). See `docs/design/ai-closedloop-readiness.md`.

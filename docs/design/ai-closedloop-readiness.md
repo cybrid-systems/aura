@@ -1,7 +1,8 @@
 # AI Closed-Loop Readiness Observability
 
-**Issues:** #1597 (orchestration metrics), #1593 (SLO + trend + adaptive),
-#1499 (production expand), #1470 (MVP), #1483 / #1493 / #1591 / #1592 / #1584–#1586
+**Issues:** #1599 (linear GC audit linkage), #1597 (orchestration metrics),
+#1593 (SLO + trend + adaptive), #1499 (production expand), #1470 (MVP),
+#1483 / #1493 / #1591 / #1592 / #1584–#1586
 
 ## Primitive
 
@@ -54,7 +55,10 @@ Single high-frequency query for AI agents before/after self-mutation batches.
 | `adaptive-safepoint-recommended` | 1 when orchestrators should back off |
 | `adaptive-soft-triggers` | Times soft adapt ran (health &lt; 50) |
 | `adaptive-safepoint-threshold` | Current adaptive threshold |
-| `schema` | **1597** (Agents may still accept 1593 / 1499) |
+| `schema` | **1599** (Agents may still accept 1597 / 1593 / 1499) |
+| `linear-gc-root-audit-checks` | `#1543` audit invocations (#1599) |
+| `linear-live-closure-scans` | Proactive linear live-closure scans |
+| `mutation_stack_depth_histogram` | Sum of Guard depth hist buckets |
 
 ### #1597 parallel orchestration
 
@@ -99,3 +103,4 @@ under severe pressure. Orchestrators should also read
 - `tests/test_issue_1499.cpp` — health-score (schema 1499|1593|1597)
 - `tests/test_ai_closedloop_readiness_1593.cpp` — SLO / trend / adaptive
 - `tests/test_ai_closedloop_orch_readiness_1597.cpp` — orch join/mailbox/parallel
+- `tests/test_linear_gc_closedloop_readiness_1599.cpp` — GC audit + readiness + adaptive

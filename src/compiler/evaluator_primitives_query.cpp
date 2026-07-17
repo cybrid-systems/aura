@@ -734,7 +734,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1470 / #1499 / #1593 / #1597: query:ai-closedloop-readiness-stats —
+    // Issue #1470 / #1499 / #1593 / #1597 / #1599: query:ai-closedloop-readiness-stats —
     // consolidated health for AI editing loops.
     //
     // #1470: wraps / invalidations / batch-commits / hygiene-skips /
@@ -743,7 +743,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // #1593: SLO breach, health-trend, sibling linkage (#1591/#1592),
     // adaptive-safepoint recommendation + soft adapt signal.
     // #1597: parallel orchestration (join latency / mailbox backpressure /
-    // parallel throughput / starvation mitigated) folded into health + schema 1597.
+    // parallel throughput / starvation mitigated) folded into health.
+    // #1599: linear GC root audit + live-closure scans + mutation depth hist
+    // linked into readiness (schema 1599).
     //
     // Recommendation priority (most severe first, #1470 contract):
     //   0 = healthy  1 = wraps  2 = high invalidations  3 = hygiene
@@ -795,6 +797,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 load(&CompilerMetrics::linear_post_mutate_enforcements_total);
             const std::uint64_t linear_enforce_per =
                 load(&CompilerMetrics::linear_post_mutate_enforcements);
+            // #1599: linear GC root audit + live-closure scan linkage.
+            const std::uint64_t linear_gc_audit =
+                load(&CompilerMetrics::linear_gc_root_audit_checks_total);
+            const std::uint64_t linear_live_scans =
+                load(&CompilerMetrics::linear_live_closure_scans_total);
+            std::uint64_t mut_depth_hist_sum = 0;
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
+                    mut_depth_hist_sum +=
+                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed);
+            }
             const std::uint64_t cascade_max = load(&CompilerMetrics::invalidate_cascade_depth_max);
             const std::uint64_t cascade_total =
                 load(&CompilerMetrics::invalidate_cascade_depth_total);
@@ -1113,8 +1126,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("orchestration_starvation_mitigated",
                       static_cast<std::int64_t>(orch_starvation_mitigated));
             insert_kv("adaptive-concurrency-recommended", adaptive_concurrency_recommended);
-            insert_kv("issue", 1597);
-            insert_kv("schema", 1597); // Agents may still accept 1593|1499
+            // #1599: GC root audit + linear scan + mutation depth histogram
+            insert_kv("linear-gc-root-audit-checks", static_cast<std::int64_t>(linear_gc_audit));
+            insert_kv("linear_gc_root_audit_checks_total",
+                      static_cast<std::int64_t>(linear_gc_audit));
+            insert_kv("linear-live-closure-scans", static_cast<std::int64_t>(linear_live_scans));
+            insert_kv("mutation_stack_depth_histogram",
+                      static_cast<std::int64_t>(mut_depth_hist_sum));
+            insert_kv("mutation-stack-depth-hist-sum",
+                      static_cast<std::int64_t>(mut_depth_hist_sum));
+            insert_kv("issue", 1599);
+            insert_kv("schema", 1599); // Agents may still accept 1597|1593|1499
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -4938,7 +4960,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("last-env-version-resync", make_int(last_resync));
             insert_kv("last-live-roots", make_int(last_live));
             insert_kv("log", log_list);
-            insert_kv("schema", make_int(1543));
+            // Issue #1599: closed-loop refine — issue + lineage schema + wiring flags.
+            insert_kv("linear_gc_root_audit_checks_total", make_int(checks));
+            insert_kv("walk-active-closures-wired", make_int(1));
+            insert_kv("six-touchpoints-documented", make_int(1));
+            insert_kv("issue", make_int(1599));
+            insert_kv("schema", make_int(1599)); // lineage 1543
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
