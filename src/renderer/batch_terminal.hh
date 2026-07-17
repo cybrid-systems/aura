@@ -4,6 +4,9 @@
 #ifndef AURA_RENDERER_BATCH_TERMINAL_HH
 #define AURA_RENDERER_BATCH_TERMINAL_HH
 
+#include "renderer/render_pass.hh"
+
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -210,6 +213,80 @@ inline std::uint64_t build_terminal_frame_ansi(std::string& out, std::int32_t w,
     ansi_show_cursor(out);
     ansi_sync_end(out);
     return sgr_emits;
+}
+
+// Issue #1562: dirty-region differential frame.
+// Only emits CSI H + SGR + chars for the inclusive AABB [x0,x1] x [y0,y1].
+// Returns SGR emit count. `cells_emitted` (optional) receives dirty cell count.
+// When AABB covers full frame, equivalent to full build_terminal_frame_ansi.
+struct DirtyFrameEmitResult {
+    std::uint64_t sgr_emits = 0;
+    std::uint64_t cells_emitted = 0;
+    bool partial = false;
+};
+
+inline DirtyFrameEmitResult build_terminal_frame_ansi_dirty(std::string& out, std::int32_t w,
+                                                            std::int32_t h, const TermCell* cells,
+                                                            std::uint32_t x0, std::uint32_t y0,
+                                                            std::uint32_t x1, std::uint32_t y1) {
+    DirtyFrameEmitResult r;
+    if (w <= 0 || h <= 0 || !cells)
+        return r;
+    // Clamp
+    if (x0 >= static_cast<std::uint32_t>(w) || y0 >= static_cast<std::uint32_t>(h))
+        return r;
+    x1 = std::min(x1, static_cast<std::uint32_t>(w - 1));
+    y1 = std::min(y1, static_cast<std::uint32_t>(h - 1));
+    if (x0 > x1 || y0 > y1)
+        return r;
+
+    const bool full = x0 == 0 && y0 == 0 && x1 + 1 >= static_cast<std::uint32_t>(w) &&
+                      y1 + 1 >= static_cast<std::uint32_t>(h);
+    r.partial = !full;
+
+    const auto dirty_w = x1 - x0 + 1;
+    const auto dirty_h = y1 - y0 + 1;
+    out.reserve(out.size() + static_cast<std::size_t>(dirty_w) * dirty_h * 16u + 64u);
+    ansi_sync_begin(out);
+    ansi_hide_cursor(out);
+
+    std::uint64_t last_key = ~0ull;
+    for (std::uint32_t y = y0; y <= y1; ++y) {
+        // CSI H is 1-based: position cursor at start of dirty span on this row.
+        ansi_csi_h(out, static_cast<int>(y + 1), static_cast<int>(x0 + 1));
+        // Reset SGR continuity at row start for sparse patches (cursor jump).
+        last_key = ~0ull;
+        for (std::uint32_t x = x0; x <= x1; ++x) {
+            const auto& cell = cells[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + x];
+            const auto key = cell.color_key();
+            if (key != last_key) {
+                if (cell.mode == 0) {
+                    ansi_sgr_fg_bg(out, cell.fg_r, cell.bg_r);
+                } else {
+                    ansi_sgr_rgb_fg_bg(out, cell.fg_r, cell.fg_g, cell.fg_b, cell.bg_r, cell.bg_g,
+                                       cell.bg_b);
+                }
+                last_key = key;
+                ++r.sgr_emits;
+            }
+            append_utf8(out, cell.ch);
+            ++r.cells_emitted;
+        }
+    }
+    ansi_reset(out);
+    ansi_show_cursor(out);
+    ansi_sync_end(out);
+    return r;
+}
+
+// Overload taking DirtyRegion (by value AABB; does not clear).
+inline DirtyFrameEmitResult build_terminal_frame_ansi_dirty(std::string& out, std::int32_t w,
+                                                            std::int32_t h, const TermCell* cells,
+                                                            const DirtyRegion& dirty) {
+    if (dirty.is_clean())
+        return {};
+    return build_terminal_frame_ansi_dirty(out, w, h, cells, dirty.x0, dirty.y0, dirty.x1,
+                                           dirty.y1);
 }
 
 // Legacy overload: packed u32 cells (ch | fg<<16 | bg<<24) → converted on the fly.

@@ -115,7 +115,8 @@ struct RenderEngineCounters {
     std::uint64_t draw_cells = 0;
     std::uint64_t zero_copy_acquires = 0;
     std::uint64_t sgr_emits = 0;
-    std::uint64_t registered = 0; // set when EDSL registrar runs
+    std::uint64_t dirty_cells_emitted = 0; // #1562
+    std::uint64_t registered = 0;          // set when EDSL registrar runs
 };
 
 [[nodiscard]] RenderEngineCounters& render_engine_counters() noexcept;

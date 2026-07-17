@@ -1,4 +1,4 @@
-// render_pass.ixx — Issues #1179/#1186/#1559 Phase 1: DirtyAware render short-circuit scaffold.
+// render_pass.ixx — Issues #1179/#1186/#1559/#1562: DirtyAware + dirty-region delta scaffold.
 
 module;
 
@@ -8,7 +8,8 @@ import std;
 
 export namespace aura::renderer {
 
-inline constexpr int kRenderPassPhase = 1;
+inline constexpr int kRenderPassPhase = 2;
+inline constexpr int kRenderPassIssue = 1562;
 
 struct DirtyRegion {
     bool clean = true;
@@ -16,7 +17,6 @@ struct DirtyRegion {
     bool empty_aabb = true;
 
     [[nodiscard]] bool is_clean() const noexcept { return clean; }
-    // Issue #1559: AC alias used by present_batch short-circuit.
     [[nodiscard]] bool is_dirty() const noexcept { return !clean; }
 
     void mark_dirty(std::uint32_t x, std::uint32_t y) noexcept {
@@ -51,6 +51,12 @@ struct DirtyRegion {
         empty_aabb = true;
         x0 = y0 = x1 = y1 = 0;
     }
+
+    [[nodiscard]] std::uint64_t cell_count() const noexcept {
+        if (clean || empty_aabb || x1 < x0 || y1 < y0)
+            return 0;
+        return static_cast<std::uint64_t>(x1 - x0 + 1) * static_cast<std::uint64_t>(y1 - y0 + 1);
+    }
 };
 
 struct RenderHotPathStats {
@@ -60,19 +66,20 @@ struct RenderHotPathStats {
     std::uint64_t draw_batch_total = 0;
     std::uint64_t present_bytes_total = 0;
     std::uint64_t zero_copy_acquire_total = 0;
+    std::uint64_t dirty_cells_emitted = 0;
+    std::uint64_t dirty_partial_presents = 0;
 };
 
 inline RenderHotPathStats g_render_hot_path_stats{};
 inline DirtyRegion g_framebuffer_dirty{};
 
-// Phase 1 present_batch gate: short-circuit when dirty region is clean.
 inline bool present_batch_if_dirty() {
     ++g_render_hot_path_stats.present_batch_total;
     if (g_framebuffer_dirty.is_clean()) {
         ++g_render_hot_path_stats.dirty_short_circuit_total;
-        return false; // skipped
+        return false;
     }
-    return true; // would present
+    return true;
 }
 
 } // namespace aura::renderer
