@@ -64,7 +64,8 @@ static void ac2_safe_yield_outside() {
         cs.evaluator().get_safe_yield_ok_total() + cs.evaluator().get_safe_yield_no_fiber_total();
     auto h = cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield\")");
     CHECK(h && is_hash(*h), "safe-yield returns hash");
-    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1504,
+    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1591 ||
+              href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1504,
           "stats schema 1504");
     // Outside Guard: must not count as skipped-held
     CHECK(cs.evaluator().get_safe_yield_skipped_held_total() == skip0,
@@ -101,7 +102,9 @@ static void ac4_ast_alias() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"ast:yield-at-boundary\")");
     CHECK(h && is_hash(*h), "ast:yield-at-boundary returns hash");
-    CHECK(href(cs, "ast:yield-at-boundary", "schema") == 1504, "alias schema 1504");
+    CHECK(href(cs, "ast:yield-at-boundary", "schema") == 1591 ||
+              href(cs, "ast:yield-at-boundary", "schema") == 1504,
+          "alias schema 1591 or 1504");
     CHECK(href(cs, "ast:yield-at-boundary", "skipped-held") == 0 ||
               href(cs, "ast:yield-at-boundary", "yielded") >= 0,
           "alias exposes yielded/skipped keys");
@@ -113,7 +116,9 @@ static void ac5_stats_schema() {
     (void)cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield\")");
     auto h = cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield-stats\")");
     CHECK(h && is_hash(*h), "stats hash");
-    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1504, "schema");
+    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1591 ||
+              href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1504,
+          "schema");
     CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "boundary-depth") >= 0, "depth");
     CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "depth-slot") >= 0, "depth-slot");
     CHECK(

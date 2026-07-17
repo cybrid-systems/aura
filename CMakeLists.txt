@@ -5175,6 +5175,9 @@ aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
 # Issue #1590: ResourceQuota hot-path (arena + Guard + query schema 1590).
 aura_add_issue_test(test_resource_quota_hotpath)
 aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)
+# Issue #1591: mutation-boundary safe-yield + fairness stats (schema 1591).
+aura_add_issue_test(test_mutation_boundary_fairness_1591)
+aura_issue_test_link_llvm_jit(test_mutation_boundary_fairness_1591)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 aura_add_issue_test(test_issue_1496)

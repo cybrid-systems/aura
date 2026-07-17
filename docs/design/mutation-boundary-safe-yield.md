@@ -17,7 +17,9 @@ EDSL surface to:
 | `query:mutation-boundary-depth` | int | `mutation_boundary_depth()` (0 = yield/steal-safe) |
 | `query:mutation-boundary-safe-yield` | hash (side-effect) | Attempt cooperative yield |
 | `ast:yield-at-boundary` | hash (side-effect) | Alias of safe-yield |
-| `query:mutation-boundary-safe-yield-stats` | hash | Lifetime counters + depth (**schema 1504**) |
+| `query:mutation-boundary-safe-yield-stats` | hash | Lifetime counters + depth (**schema 1591**, was 1504) |
+| `query:mutation-boundary-fairness-stats` | hash | Unified fairness dashboard (**schema 1591**) |
+| `query:per-fiber-mutation-depth-stats` | hash | Per-fiber depth alias (**schema 1591**) |
 
 ### Safe-yield algorithm (`Evaluator::try_safe_yield_at_boundary`)
 
@@ -37,13 +39,15 @@ Optional `timeout-ms` argument is reserved (MVP ignored); future soft deadline.
 - `yielded` (0/1), `skipped-held` (0/1)  
 - `boundary-depth`, `depth-slot`, `held-now`  
 - `safe-yield-ok-total`, `safe-yield-skipped-held-total`, `safe-yield-no-fiber-total`  
-- `schema` = **1504**
+- `schema` = **1591** (Agents may still accept 1504)  
+- #1591: `avg-hold-time-us`, `safepoint-wait-while-mutation-held-us`,  
+  `steal-inner-deferred-starvation-mitigated-count`
 
 ### Stats hash fields
 
 - Same lifetime counters  
 - `nested-guard-depth-max`, `per-fiber-stack-depth-max`  
-- `schema` = **1504**
+- `schema` = **1591**
 
 ## Agent usage (multi-step self-edit)
 
@@ -60,4 +64,5 @@ If `skipped-held` is 1, finish the current Guard body first, then yield.
 
 ## Related
 
-#213, #362, #1014, #1373 (hold-stats), #1444 (Guard mandatory), `fiber:yield`
+#213, #362, #1014, #1373 (hold-stats), #1444 (Guard mandatory), #1591 (fairness),
+`fiber:yield`, `docs/design/mutation-boundary-fairness.md`

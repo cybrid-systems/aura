@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/gc_hooks.h" // #1591 safepoint wait while mutation held
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
@@ -390,9 +391,9 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
         });
 
-    // Shared builder for safe-yield action surfaces (#1504).
+    // Shared builder for safe-yield action surfaces (#1504 / #1591).
     auto build_safe_yield_hash = [&ev](int rc) -> EvalValue {
-        auto* ht = FlatHashTable::create(32);
+        auto* ht = FlatHashTable::create(48);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -431,7 +432,31 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                   static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
         insert_kv("safe-yield-no-fiber-total",
                   static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
-        insert_kv("schema", 1504);
+        // Issue #1591: fairness fields Agents use for back-off / interleave.
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const std::int64_t hold_total =
+            m ? static_cast<std::int64_t>(
+                    m->mutation_boundary_hold_time_total_us.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t holds =
+            m ? static_cast<std::int64_t>(
+                    m->mutation_boundary_holds_total.load(std::memory_order_relaxed))
+              : 0;
+        insert_kv("avg-hold-time-us", holds > 0 ? hold_total / holds : 0);
+        insert_kv(
+            "safepoint-wait-while-mutation-held-us",
+            static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
+        insert_kv("per-fiber-stack-depth-max",
+                  static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max()));
+        {
+            auto& s = ::aura::serve::metrics::adaptive_steal_stats();
+            insert_kv(
+                "steal-inner-deferred-starvation-mitigated-count",
+                static_cast<std::int64_t>(s.steal_inner_deferred_starvation_mitigated_count.load(
+                    std::memory_order_relaxed)));
+        }
+        insert_kv("issue", 1591);
+        insert_kv("schema", 1591); // #1591 supersedes 1504; Agents accept both
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
@@ -504,7 +529,106 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
             insert_kv("safe-yield-no-fiber-total",
                       static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
-            insert_kv("schema", 1504);
+            // Issue #1591: hold + safepoint wait for orchestration fairness.
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const std::int64_t hold_total =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_hold_time_total_us.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t holds =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_holds_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("avg-hold-time-us", holds > 0 ? hold_total / holds : 0);
+            insert_kv(
+                "safepoint-wait-while-mutation-held-us",
+                static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
+            insert_kv("issue", 1591);
+            insert_kv("schema", 1591);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1591: unified fairness dashboard (safe-yield + per-fiber depth +
+    // steal starvation + safepoint wait). One hash for multi-Agent orchestrators.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-fairness-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(k_str);
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = make_string(kidx).val;
+                        vals[slot] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto& s = ::aura::serve::metrics::adaptive_steal_stats();
+            insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
+            insert_kv("held-now", ev.mutation_boundary_held() ? 1 : 0);
+            insert_kv("per-fiber-stack-depth-max",
+                      static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_max()));
+            insert_kv(
+                "per-fiber-stack-depth-current-max",
+                static_cast<std::int64_t>(ev.get_per_fiber_mutation_stack_depth_current_max()));
+            insert_kv("safe-yield-ok-total",
+                      static_cast<std::int64_t>(ev.get_safe_yield_ok_total()));
+            insert_kv("safe-yield-skipped-held-total",
+                      static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
+            const std::int64_t hold_total =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_hold_time_total_us.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t holds =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_boundary_holds_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("avg-hold-time-us", holds > 0 ? hold_total / holds : 0);
+            insert_kv("hold-samples", holds);
+            insert_kv(
+                "safepoint-wait-while-mutation-held-us",
+                static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
+            insert_kv("safepoint-wait-while-mutation-held-count",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::safepoint_wait_while_mutation_held_count()));
+            insert_kv(
+                "steal-inner-deferred-starvation-mitigated-count",
+                static_cast<std::int64_t>(s.steal_inner_deferred_starvation_mitigated_count.load(
+                    std::memory_order_relaxed)));
+            insert_kv("steal-deferred-inner-boundary",
+                      static_cast<std::int64_t>(
+                          s.steal_deferred_inner_boundary.load(std::memory_order_relaxed)));
+            insert_kv("starvation-mitigated-count",
+                      static_cast<std::int64_t>(
+                          s.starvation_mitigated_count.load(std::memory_order_relaxed)));
+            std::int64_t hist_total = 0;
+            if (m) {
+                for (std::size_t i = 0; i < CompilerMetrics::kMutationStackDepthHistBuckets; ++i)
+                    hist_total += static_cast<std::int64_t>(
+                        m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed));
+            }
+            insert_kv("mutation-stack-depth-histogram-samples", hist_total);
+            insert_kv("issue", 1591);
+            insert_kv("schema", 1591);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
