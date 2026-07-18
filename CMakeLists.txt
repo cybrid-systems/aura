@@ -5425,6 +5425,9 @@ aura_issue_test_link_llvm_jit(test_closure_capture_bounds_1709)
 # Issue #1710: pair car/cdr unchecked bounds+lock (UAF safety).
 aura_add_issue_test(test_pair_unchecked_safety_1710)
 aura_issue_test_link_llvm_jit(test_pair_unchecked_safety_1710)
+# Issue #1711: aura_prim_call clamps argc to args[3] capacity.
+aura_add_issue_test(test_prim_call_count_clamp_1711)
+aura_issue_test_link_llvm_jit(test_prim_call_count_clamp_1711)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
