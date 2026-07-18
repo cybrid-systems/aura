@@ -5437,6 +5437,9 @@ aura_issue_test_link_llvm_jit(test_auto_evolve_closure_live_1713)
 # Issue #1714: strategy:set-strategy tagged merr on invalid name/args.
 aura_add_issue_test(test_strategy_set_errors_1714)
 aura_issue_test_link_llvm_jit(test_strategy_set_errors_1714)
+# Issue #1715: synthesize:define JSON via json-parse structure walk.
+aura_add_issue_test(test_synthesize_json_parse_1715)
+aura_issue_test_link_llvm_jit(test_synthesize_json_parse_1715)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
