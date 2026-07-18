@@ -395,36 +395,64 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
             const auto sv_reasons =
                 aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
-            aura::compiler::hardware::on_structural_mutation(
-                target, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
-                ws->ppa_dirty_reasons(target));
-            if (auto* pool = ev.workspace_pool()) {
-                const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, target);
-                const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
-                const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
-                    m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
-                    m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
-                    m->sv_verification_structure_mutate_hits_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
-                    if (!diff.empty())
-                        m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
-                    if (validation.ok) {
-                        m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
-                        m->verification_loop_success_total.fetch_add(1, std::memory_order_relaxed);
-                    } else {
-                        m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1902 (refine #1818): wrap throwable external
+            // helpers (hardware::on_structural_mutation,
+            // sv_ir::reemit_sv_node / emit_sv_diff / validate_sv_emit)
+            // in try/catch. Pre-#1902 code did not flip guard_ok
+            // on exception, so Guard dtor would commit_panic_checkpoint
+            // on a partially-mutated workspace → checkpoint drift
+            // + UAF risk on the next mutate call. New contract: any
+            // throw inside the hook block flips guard_ok=false so
+            // the dtor runs restore_panic_checkpoint + bump
+            // eda_guard_exception_handled_total + eda_guard_uncaught_exception_total.
+            try {
+                aura::compiler::hardware::on_structural_mutation(
+                    target,
+                    static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                    ws->ppa_dirty_reasons(target));
+                if (auto* pool = ev.workspace_pool()) {
+                    const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, target);
+                    const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
+                    const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                        m->hardware_backend_hook_calls_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+                        m->feedback_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
+                        m->sv_verification_structure_mutate_hits_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->sv_verification_dirty_reemit_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        if (!diff.empty())
+                            m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
+                        if (validation.ok) {
+                            m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+                            m->verification_loop_success_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        } else {
+                            m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        if (reemit.ppa_savings > 0) {
+                            m->ppa_savings_total.fetch_add(
+                                static_cast<std::uint64_t>(reemit.ppa_savings),
+                                std::memory_order_relaxed);
+                        }
                     }
-                    if (reemit.ppa_savings > 0) {
-                        m->ppa_savings_total.fetch_add(
-                            static_cast<std::uint64_t>(reemit.ppa_savings),
-                            std::memory_order_relaxed);
-                    }
+                    ev.record_sv_commercial_emit_fidelity(validation.ok, true,
+                                                          !reemit.commercial_do_stub.empty());
                 }
-                ev.record_sv_commercial_emit_fidelity(validation.ok, true,
-                                                      !reemit.commercial_do_stub.empty());
+            } catch (const std::exception& e) {
+                guard_ok = false; // Issue #1902: notify Guard dtor to restore.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return make_bool(false);
+            } catch (...) {
+                guard_ok = false;
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return make_bool(false);
             }
         }
         ev.bump_verify_tool_feedback_mutate_success();
@@ -458,29 +486,56 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!aura::compiler::hardware::is_sv_structural_node(*ws, nid))
             return make_bool(false);
-        const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
-        const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
-        if (!validation.ok)
-            return make_bool(false);
-        if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid)) {
-            const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
-            aura::compiler::hardware::on_structural_mutation(
-                nid, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
-                ws->ppa_dirty_reasons(nid));
-        }
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->commercial_simulator_runs_total.fetch_add(1, std::memory_order_relaxed);
-            m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
-            m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
-            m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
-            if (reemit.ppa_savings > 0) {
-                m->ppa_savings_total.fetch_add(static_cast<std::uint64_t>(reemit.ppa_savings),
-                                               std::memory_order_relaxed);
+        // Issue #1902 sibling (#1821): this primitive had NO
+        // MutationBoundaryGuard at all — the throwable calls
+        // (reemit_sv_node + on_structural_mutation) ran raw,
+        // so any throw (bad_alloc, hardware hook fault, etc.)
+        // would unwind past the (absent) Guard dtor and leave
+        // the workspace in a partially-mutated state with no
+        // panic-checkpoint restore. New contract: wrap the
+        // throwable body in Guard + try/catch. On exception,
+        // flip guard_ok=false so dtor restores panic checkpoint,
+        // bump the same 3 metrics as #1902 fix.
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
+            const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
+            if (!validation.ok)
+                return make_bool(false);
+            if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid)) {
+                const auto sv_reasons =
+                    aura::compiler::hardware::sv_structural_dirty_reasons(*ws, nid);
+                aura::compiler::hardware::on_structural_mutation(
+                    nid, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
+                    ws->ppa_dirty_reasons(nid));
             }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->commercial_simulator_runs_total.fetch_add(1, std::memory_order_relaxed);
+                m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
+                m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
+                m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
+                if (reemit.ppa_savings > 0) {
+                    m->ppa_savings_total.fetch_add(static_cast<std::uint64_t>(reemit.ppa_savings),
+                                                   std::memory_order_relaxed);
+                }
+            }
+            ev.record_sv_commercial_emit_fidelity(validation.ok, false,
+                                                  !reemit.commercial_do_stub.empty());
+            return make_bool(true);
+        } catch (const std::exception& e) {
+            guard_ok = false; // Issue #1902/#1821: notify Guard dtor to restore.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(false);
+        } catch (...) {
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(false);
         }
-        ev.record_sv_commercial_emit_fidelity(validation.ok, false,
-                                              !reemit.commercial_do_stub.empty());
-        return make_bool(true);
     });
 
     // Issue #695: (eda:demo-sv-self-evolution example cycles)
