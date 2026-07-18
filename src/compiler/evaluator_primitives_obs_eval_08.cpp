@@ -235,14 +235,16 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1592 / #1608 / #1612: unified post-steal / resume closed-loop
-    // dashboard. EnvFrame refresh + linear repin + MacroIntroduced hygiene.
-    // Schema **1612** (lineage 1608/1592). AC keys:
-    //   macro_stale_ref_prevented, macro_provenance_repin_total
+    // Issue #1592 / #1608 / #1612 / #1631: unified post-steal / resume
+    // closed-loop dashboard. EnvFrame refresh + linear repin + MacroIntroduced
+    // hygiene + mandated Fiber::resume refresh (#1631).
+    // Schema **1631** (lineage 1612/1608/1592). AC keys:
+    //   resume_forced_refresh_total, bridge_epoch_drift_post_steal,
+    //   post_steal_refresh_count (monotonic)
     ObservabilityPrims::register_stats_impl(
         "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(48);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -322,8 +324,30 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("macro-refresh-helper-wired", 1);
             insert_kv("macro-provenance-probe-wired", 1);
             insert_kv("gc-compact-macro-refresh-wired", 1);
-            insert_kv("issue", 1612);
-            insert_kv("schema", 1612); // lineage 1608 / 1592
+            // #1631 AC: mandated resume refresh + bridge drift / deopt walk
+            const std::int64_t resume_forced =
+                m ? static_cast<std::int64_t>(
+                        m->resume_forced_refresh_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t bridge_drift =
+                m ? static_cast<std::int64_t>(
+                        m->bridge_epoch_drift_post_steal_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t bridge_deopt =
+                m ? static_cast<std::int64_t>(
+                        m->bridge_epoch_deopt_walk_post_steal_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("resume_forced_refresh_total", resume_forced);
+            insert_kv("resume-forced-refresh-total", resume_forced);
+            insert_kv("bridge_epoch_drift_post_steal", bridge_drift);
+            insert_kv("bridge-epoch-drift-post-steal", bridge_drift);
+            insert_kv("bridge_epoch_deopt_walk_post_steal", bridge_deopt);
+            insert_kv("bridge-epoch-deopt-walk-post-steal", bridge_deopt);
+            insert_kv("fiber-lifecycle-mandate-active", 1);
+            insert_kv("resume-pre-swap-migration-wired", 1);
+            insert_kv("resume-post-swap-validate-wired", 1);
+            insert_kv("issue", 1631);
+            insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

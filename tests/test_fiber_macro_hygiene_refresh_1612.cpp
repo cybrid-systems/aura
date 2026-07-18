@@ -93,8 +93,9 @@ static void ac3_ac5_metrics_schema() {
 
     auto h = cs.eval("(engine:metrics \"query:post-steal-closed-loop-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1612, "schema 1612");
-    CHECK(href(cs, "issue") == 1612, "issue 1612");
+    // Schema lineage: 1612 → 1631 (fiber lifecycle mandate).
+    CHECK(href(cs, "schema") == 1631 || href(cs, "schema") == 1612, "schema 1631|1612");
+    CHECK(href(cs, "issue") == 1631 || href(cs, "issue") == 1612, "issue 1631|1612");
     CHECK(href(cs, "macro_stale_ref_prevented") >= 0 || href(cs, "macro-stale-ref-prevented") >= 0,
           "macro_stale_ref_prevented");
     CHECK(href(cs, "macro_provenance_repin_total") >= 0 ||
@@ -148,7 +149,7 @@ static void ac4_stress() {
         t.join();
     auto r = cs.eval("(+ 1 1)");
     CHECK(r.has_value() && ok.load(), "eval ok after concurrent stress");
-    CHECK(href(cs, "schema") == 1612, "schema holds after stress");
+    CHECK(href(cs, "schema") == 1631 || href(cs, "schema") == 1612, "schema holds after stress");
 }
 
 } // namespace

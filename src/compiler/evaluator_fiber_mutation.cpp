@@ -18,6 +18,8 @@ import std;
 extern "C" {
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
 void aura_aot_record_deopt_on_steal();
+// Issue #1631: force JIT/active-closure walk on post-steal bridge_epoch drift.
+std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
 }
 
 namespace aura::compiler {
@@ -1279,11 +1281,16 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     return true;
 }
 
-// Issue #1580 / #1592: full post-resume steal closed loop used by Fiber::resume
-// and fiber_resume_validate_impl.
-// AC (#1592): refresh_stale_frames_after_steal + linear repin + StableNodeRef
-// auto-restamp + linear ownership enforce on steal/resume main path.
+// Issue #1580 / #1592 / #1631: full post-resume steal closed loop used by
+// Fiber::resume and fiber_resume_validate_impl.
+// AC (#1592/#1631): refresh_stale_frames_after_steal + linear repin +
+// StableNodeRef auto-restamp + linear ownership enforce on steal/resume
+// main path — mandated on every Fiber::resume (pre-swap migration +
+// post-swap validate + post_resume hook).
 void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+        m->resume_forced_refresh_total.fetch_add(1, std::memory_order_relaxed);
+
     std::uint64_t hint_env = 0;
     std::uint64_t expected_epoch = 0;
     void* fb_void = fiber_void != nullptr ? fiber_void : g_current_fiber_void;
@@ -1451,9 +1458,11 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     }
 }
 
-// Issue #1490: refresh EnvFrame.version_ / bridge_epoch after fiber steal.
-// See declaration in evaluator.ixx. Implementation walks live closures,
-// refreshes stale frames, repairs dual-path drift, optionally compact.
+// Issue #1490 / #1631: refresh EnvFrame.version_ / bridge_epoch after fiber
+// steal. Walks live closures, refreshes stale frames, repairs dual-path
+// drift, optionally compact. Bridge drift triggers JIT active-closure walk
+// (deopt / safe_fallback — not silent restamp) so apply_closure cannot
+// continue with a dangling bridge after steal + concurrent mutate.
 std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_id,
                                                         std::uint64_t expected_epoch) noexcept {
     post_steal_refresh_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1499,12 +1508,12 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
 
         for (const auto& [cid, cl] : closures_) {
             (void)cid;
-            if (cl.bridge_epoch != 0) {
-                // Prefer current epoch; honor explicit expected_epoch when set.
-                if (is_bridge_stale(cl.bridge_epoch, current_bridge) ||
-                    (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
-                    ++bridge_mismatch;
-            }
+            // Issue #1631: detect bridge_epoch drift vs live and vs fiber
+            // yield-time hint (expected_epoch). Count only — repair is via
+            // JIT walk + apply_closure safe_fallback, not silent restamp.
+            if (is_bridge_stale(cl.bridge_epoch, current_bridge) ||
+                (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
+                ++bridge_mismatch;
             consider_frame(cl.env_id);
         }
     }
@@ -1514,6 +1523,9 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         if (m) {
             m->envframe_version_mismatch_post_steal_total.fetch_add(
                 version_mismatch + bridge_mismatch, std::memory_order_relaxed);
+            if (bridge_mismatch > 0)
+                m->bridge_epoch_drift_post_steal_total.fetch_add(bridge_mismatch,
+                                                                 std::memory_order_relaxed);
             if (refreshed > 0)
                 m->envframe_dualpath_repair_total.fetch_add(refreshed, std::memory_order_relaxed);
             if (invalid_or_oob > 0)
@@ -1521,6 +1533,17 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                                                               std::memory_order_relaxed);
         }
         bump_envframe_concurrent_steal_resync();
+    }
+
+    // Issue #1631: bridge drift → force active-closure walk (deopt/rebuild
+    // fallback). Weak/stub no-ops when JIT is not linked.
+    if (bridge_mismatch > 0) {
+        const auto deopted = aura_jit_walk_active_closures(current_bridge);
+        if (m && deopted > 0)
+            m->bridge_epoch_deopt_walk_post_steal_total.fetch_add(deopted,
+                                                                  std::memory_order_relaxed);
+        if (deopted > 0)
+            aura_aot_record_deopt_on_steal();
     }
 
     // Heavy path: reclaim dead frames / rewrite orphan env_ids when
