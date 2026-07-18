@@ -1177,6 +1177,9 @@ public:
     }
 
     void set_arena(ast::ASTArena* a) {
+        // Issue #1663: serialize set_arena transitions (rare path).
+        // ASTArena::owner_mtx_ separately atomicizes owner+fn vs allocate_raw.
+        std::lock_guard<std::mutex> lock(arena_set_mtx_);
         // Issue #1546: drop owner link from previous arena if any.
         // Issue #1662: also clear compact hook (captures `this`).
         if (arena_ && arena_ != a) {
@@ -1195,6 +1198,7 @@ public:
             // ASTArena::allocate_raw consults check_arena_quota before
             // every allocation (orphan arenas stay unlimited).
             // Issue #1662: ~Evaluator MUST clear_arena_owner + clear hook.
+            // Issue #1663: set_arena_owner is atomic (owner_mtx_) vs allocate.
             arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
         }
         // Issue #1554: also bind ArenaGroup module arenas to the same quota.
@@ -1204,7 +1208,8 @@ public:
     void set_temp_arena(ast::ASTArena* a) {
         // Issue #1554: wire temp_arena the same way as primary arena so
         // task-context / gc-temp allocations honor ResourceQuota.
-        // Issue #1662: clear previous owner before rebind.
+        // Issue #1662 / #1663: clear previous owner under arena_set_mtx_.
+        std::lock_guard<std::mutex> lock(arena_set_mtx_);
         if (temp_arena_ && temp_arena_ != a)
             temp_arena_->clear_arena_owner();
         temp_arena_ = a;
@@ -2760,6 +2765,9 @@ private:
 
     Env top_;
     Primitives primitives_;
+    // Issue #1663: serializes set_arena / set_temp_arena (rare path).
+    // Pair with ASTArena::owner_mtx_ for allocate_raw atomicity.
+    mutable std::mutex arena_set_mtx_;
     ast::ASTArena* arena_ = nullptr;
     ast::ASTArena* temp_arena_ = nullptr;
     // Owned multi-arena manager. Created in ctor so load_module_file can
