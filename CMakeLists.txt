@@ -5455,6 +5455,9 @@ aura_issue_test_link_llvm_jit(test_intend_closure_live_1719)
 # Issue #1720: strategy/intend/timeline shared_mutex concurrent access.
 aura_add_issue_test(test_strategy_intend_mutex_1720)
 aura_issue_test_link_llvm_jit(test_strategy_intend_mutex_1720)
+# Issue #1721: intend reuses fixed string_heap slots for intermediates.
+aura_add_issue_test(test_intend_heap_slots_1721)
+aura_issue_test_link_llvm_jit(test_intend_heap_slots_1721)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
