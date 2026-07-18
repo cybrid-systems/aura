@@ -311,6 +311,9 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
                     auto rec = aura::ast::mutation::wire_read_mutation_record(blob.raw, pos);
                     log.push_back(std::move(rec));
                 } catch (...) {
+                    // [SILENCE-PRIM-#615] truncated/corrupt mutation wire
+                    // record — stop loading trail; partial audit is best
+                    // effort (#1669 class B intentional-state).
                     break;
                 }
             }

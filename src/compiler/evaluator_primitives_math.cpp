@@ -116,6 +116,8 @@ void register_math_regex_and_arithmetic_primitives(
             std::regex re(string_heap[pi]);
             return make_int(std::regex_search(string_heap[si], re) ? 1 : 0);
         } catch (...) {
+            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
+            // bump_regex_error (#668 / #1669 class A).
             return bump_regex_error("regex-match?", "invalid regular expression");
         }
     });
@@ -136,6 +138,8 @@ void register_math_regex_and_arithmetic_primitives(
                 return make_string(id);
             }
         } catch (...) {
+            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
+            // bump_regex_error (#668 / #1669 class A).
             return bump_regex_error("regex-find", "invalid regular expression");
         }
         return make_void();
@@ -155,6 +159,8 @@ void register_math_regex_and_arithmetic_primitives(
             string_heap.push_back(std::move(result));
             return make_string(id);
         } catch (...) {
+            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
+            // bump_regex_error (#668 / #1669 class A).
             return bump_regex_error("regex-replace", "invalid regular expression");
         }
     });
@@ -183,6 +189,8 @@ void register_math_regex_and_arithmetic_primitives(
             }
             return result;
         } catch (...) {
+            // [SILENCE-PRIM-#615] invalid regex → PRIM_ERROR via
+            // bump_regex_error (#668 / #1669 class A).
             return bump_regex_error("regex-split", "invalid regular expression");
         }
     });

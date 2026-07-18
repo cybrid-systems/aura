@@ -447,6 +447,8 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
             return r;
         }
     } catch (...) {
+        // [SILENCE-PRIM-#615] stoll non-integer token → empty
+        // ReplaceTemplate; caller handles nullish (#1669 class A).
     }
     return {};
 }

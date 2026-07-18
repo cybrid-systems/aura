@@ -28,7 +28,9 @@ Usage:
   ./build.py test-registry --fix  # 重新生成 test-registry.json
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
   ./build.py dead-heap-push    # dead string_heap_ push audit --strict（#1668）
+  ./build.py catch-silent-swallow  # catch(...) SILENCE-PRIM audit --strict（#1669）
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
+
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
   ./build.py security          # 依赖/文件系统漏洞扫描（#675）
   ./build.py bench [--strict]  # Benchmark 基线 + 回归检测（#1569 SLO gate）
@@ -1568,6 +1570,30 @@ def cmd_dead_heap_push():
     return 0
 
 
+def cmd_catch_silent_swallow():
+    """Issue #1669 / #615: catch(...) must carry SILENCE-PRIM marker (strict)."""
+    print(f"{B}═══ catch(...) SILENCE-PRIM audit (#1669) ═══{N}")
+    script = ROOT / "scripts" / "audit_catch_silent_swallow.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    ut = ROOT / "tests" / "test_audit_catch_silent_swallow.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
+        if r0.returncode != 0:
+            fail("test_audit_catch_silent_swallow unit tests failed")
+            return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "unmarked catch(...) found — add [SILENCE-PRIM-#615] (or fix silent swallow) "
+            "(see docs/design/catch-silent-swallow-audit-1669.md)"
+        )
+        return 1
+    ok("catch silent-swallow audit clean")
+    return 0
+
+
 def cmd_gate():
     """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
 
@@ -1580,6 +1606,7 @@ def cmd_gate():
     toolchain is not yet production-supported.
 
     Issue #1668: also runs dead string_heap_ push audit (--strict).
+    Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1602,7 +1629,12 @@ def cmd_gate():
         if rc:
             return rc
     return (
-        cmd_fixtures() or cmd_primitive_surface() or cmd_test_registry() or cmd_test_binding() or cmd_dead_heap_push()
+        cmd_fixtures()
+        or cmd_primitive_surface()
+        or cmd_test_registry()
+        or cmd_test_binding()
+        or cmd_dead_heap_push()
+        or cmd_catch_silent_swallow()
     )
 
 
@@ -2000,6 +2032,7 @@ def main():
         "format": cmd_format,
         "test-registry": cmd_test_registry,
         "dead-heap-push": cmd_dead_heap_push,
+        "catch-silent-swallow": cmd_catch_silent_swallow,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
