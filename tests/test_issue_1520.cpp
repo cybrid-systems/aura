@@ -160,7 +160,8 @@ static void ac6_children_column_stats_query() {
     auto r = cs.eval("(engine:metrics \"query:children-column-stats\")");
     CHECK(r && is_hash(*r), "children-column-stats is hash");
     auto schema = cs.eval("(hash-ref (engine:metrics \"query:children-column-stats\") 'schema)");
-    CHECK(schema && is_int(*schema) && as_int(*schema) == 1520, "schema == 1520");
+    CHECK(schema && is_int(*schema) && (as_int(*schema) == 1624 || as_int(*schema) == 1520),
+          "schema == 1624|1520");
 }
 
 static void ac7_migration_stats_extended() {

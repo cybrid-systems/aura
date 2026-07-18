@@ -5257,6 +5257,10 @@ aura_issue_test_link_llvm_jit(test_resource_quota_manager_1618)
 aura_add_issue_test(test_soa_view_enforcement_1619)
 aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1619)
 
+# Issue #1624: PCV / pmr SoAColumnarFull DOD + Contracts
+aura_add_issue_test(test_soa_dod_pcv_pmr_1624)
+aura_issue_test_link_llvm_jit(test_soa_dod_pcv_pmr_1624)
+
 aura_add_issue_test(test_cpp26_contracts_hotpath_1620)
 aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_1620)
 

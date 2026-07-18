@@ -426,4 +426,33 @@ concept ChildColumnar = SoAColumnar<C> && requires(const C& c) {
     { c.end() };
 };
 
+// ── SoAColumnarFull (Issue #1624) ──────────────────────────────
+//
+// Full DOD / SoA layout contract for PCV + SafePCVSpan + IR SoA
+// columns. Extends SoAColumnar with:
+//   - columnar_accessor(): explicit contiguous column view
+//   - stable_shape_id(): arity / shape stamp for cache locality
+//     (children count for PCV; column length for SoA tables)
+//
+// Used by:
+//   - PersistentChildVector / SafePCVSpan (#1624 PCV DOD)
+//   - FlatAST hot accessors (static_assert at call sites)
+//   - pmr::vector SoA columns when wrapped with adapters
+export template <typename C>
+concept SoAColumnarFull = SoAColumnar<C> && requires(const C& c) {
+    { c.columnar_accessor() };
+    { c.stable_shape_id() } -> std::integral;
+};
+
+// Compile-time enforcement helpers (#1624 AC1).
+export template <typename C> consteval void assert_soa_columnar() {
+    static_assert(SoAColumnar<C>, "type must satisfy SoAColumnar (#431/#1624)");
+}
+export template <typename C> consteval void assert_soa_columnar_full() {
+    static_assert(SoAColumnarFull<C>, "type must satisfy SoAColumnarFull (#1624)");
+}
+export template <typename C> consteval void assert_child_columnar() {
+    static_assert(ChildColumnar<C>, "type must satisfy ChildColumnar (#1520/#1624)");
+}
+
 } // namespace aura::core

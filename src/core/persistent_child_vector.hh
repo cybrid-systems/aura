@@ -179,6 +179,12 @@ public:
     constexpr size_type size() const noexcept { return size_; }
     constexpr bool empty() const noexcept { return size_ == 0; }
     constexpr const_pointer data() const noexcept { return data_ ? data_->data.get() : nullptr; }
+    // Issue #1624: SoAColumnarFull — contiguous column view + shape stamp
+    // (arity = children count for PCV cache locality / shape matching).
+    [[nodiscard]] std::span<const T> columnar_accessor() const noexcept {
+        return std::span<const T>(data(), size_);
+    }
+    [[nodiscard]] constexpr size_type stable_shape_id() const noexcept { return size_; }
     // ref-count of the underlying storage. Useful for tests
     // verifying COW semantics (a mutation should leave the
     // old storage with refcount > 1).
@@ -460,7 +466,10 @@ public:
     [[nodiscard]] bool empty() const noexcept { return span_.empty(); }
     // Issue #1520: SoAColumnar-compatible data() for pure columnar hot paths.
     [[nodiscard]] const T* data() const noexcept { return span_.data(); }
-    [[nodiscard]] const T& operator[](size_type i) const { return span_[i]; }
+    // Issue #1624: SoAColumnarFull — preferred name for DOD hot paths.
+    [[nodiscard]] std::span<const T> columnar_accessor() const noexcept { return span_; }
+    [[nodiscard]] size_type stable_shape_id() const noexcept { return span_.size(); }
+    [[nodiscard]] const T& operator[](size_type i) const pre(i < span_.size()) { return span_[i]; }
 
     // Issue #1520: range-for over pinned children without materializing.
     [[nodiscard]] const_iterator begin() const noexcept { return span_.data(); }
@@ -478,8 +487,9 @@ private:
     std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep_;
 };
 
-// Issue #1520: compile-time SoAColumnar shape check for SafePCVSpan
-// (size/empty/data — same requirements as aura::core::SoAColumnar).
+// Issue #1520 / #1624: compile-time SoAColumnar / SoAColumnarFull shape
+// checks for SafePCVSpan + PersistentChildVector (size/empty/data +
+// columnar_accessor / stable_shape_id).
 namespace detail {
     template <typename C> constexpr bool safe_pcv_soa_shape() {
         return requires(const C& c) {
@@ -488,9 +498,21 @@ namespace detail {
             { c.data() };
         };
     }
+    template <typename C> constexpr bool safe_pcv_soa_full_shape() {
+        return safe_pcv_soa_shape<C>() &&
+            requires(const C& c)
+        {
+            {c.columnar_accessor()};
+            {c.stable_shape_id()}->std::convertible_to<std::size_t>;
+        };
+    }
 } // namespace detail
 static_assert(detail::safe_pcv_soa_shape<SafePCVSpan<std::uint32_t>>(),
               "Issue #1520: SafePCVSpan must expose size/empty/data for SoAColumnar");
+static_assert(detail::safe_pcv_soa_full_shape<SafePCVSpan<std::uint32_t>>(),
+              "Issue #1624: SafePCVSpan must satisfy SoAColumnarFull shape");
+static_assert(detail::safe_pcv_soa_full_shape<PersistentChildVector<std::uint32_t>>(),
+              "Issue #1624: PersistentChildVector must satisfy SoAColumnarFull shape");
 
 } // namespace aura::ast
 

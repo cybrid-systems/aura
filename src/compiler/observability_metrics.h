@@ -6128,12 +6128,16 @@ struct CompilerMetrics {
     // Issue #1520: children_ columnar + region dense lookup surface.
     std::atomic<std::uint64_t> children_column_soa_hits_total{0}; // #1520
     std::atomic<std::uint64_t> pcv_pin_count_total{0};            // #1520
-    std::atomic<std::uint64_t> region_dense_hits_total{0};        // #1520
-    std::atomic<std::uint64_t> map_indirection_miss_total{0};     // #1520 (region map fallback)
-    std::atomic<std::uint64_t> arena_shrink_tier_hardened{1};     // #1242
-    std::atomic<std::uint64_t> soa_view_eval_helpers{1};          // #1243
-    std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};  // #1244
-    std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{1}; // #1245
+    // Issue #1624: PCV / pmr DOD migration observability
+    // (soa_dod_migration_progress, pcv_columnar_hit_rate_bp).
+    std::atomic<std::uint64_t> soa_dod_migration_progress_total{0}; // #1624
+    std::atomic<std::uint64_t> pcv_columnar_hit_rate_bp{0};         // #1624
+    std::atomic<std::uint64_t> region_dense_hits_total{0};          // #1520
+    std::atomic<std::uint64_t> map_indirection_miss_total{0};       // #1520 (region map fallback)
+    std::atomic<std::uint64_t> arena_shrink_tier_hardened{1};       // #1242
+    std::atomic<std::uint64_t> soa_view_eval_helpers{1};            // #1243
+    std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};    // #1244
+    std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{1};   // #1245
 
     // ── Issues #1246–#1250: reflect/hygiene/agent-OOB/provenance Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1246_1250_active{1};
