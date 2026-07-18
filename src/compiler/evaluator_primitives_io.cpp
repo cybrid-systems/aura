@@ -997,6 +997,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         "terminal-diff-update",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             // (terminal-diff-update old-id new-id) → changed-cell-count
+            // Issue #1673: also mark dirty AABB on *new* for changed cells so
+            // terminal-present-batch can dirty-short-circuit + emit minimal ANSI
+            // (production double-buffer swap path: write back → diff → present).
             if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
                 return make_int(-1);
             auto oid = as_int(a[0]);
@@ -1011,18 +1014,44 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     return make_int(-1);
                 auto& o = *s_term_bufs[static_cast<std::size_t>(oid)];
                 auto& n = *s_term_bufs[static_cast<std::size_t>(nid)];
-                // Lock order by id to avoid deadlock on same-buffer pairs.
-                std::shared_lock<std::shared_mutex> lo1(oid <= nid ? o.rwlock : n.rwlock);
-                std::shared_lock<std::shared_mutex> lo2(oid <= nid ? n.rwlock : o.rwlock,
-                                                        std::defer_lock);
-                if (oid != nid)
-                    lo2.lock();
-                if (o.w != n.w || o.h != n.h)
-                    changed = static_cast<std::int64_t>(n.cells.size()); // full refresh
-                else {
-                    for (std::size_t i = 0; i < o.cells.size(); ++i) {
-                        if (o.cells[i] != n.cells[i])
-                            ++changed;
+                // Lock order by id. Exclusive on *new* to update dirty region.
+                if (oid == nid) {
+                    std::unique_lock<std::shared_mutex> lk(n.rwlock);
+                    // Same buffer: no cell changes vs self; leave dirty as-is.
+                    changed = 0;
+                } else if (oid < nid) {
+                    std::shared_lock<std::shared_mutex> lo(o.rwlock);
+                    std::unique_lock<std::shared_mutex> ln(n.rwlock);
+                    if (o.w != n.w || o.h != n.h) {
+                        changed = static_cast<std::int64_t>(n.cells.size());
+                        n.dirty.mark_all_dirty(static_cast<std::uint32_t>(n.w),
+                                               static_cast<std::uint32_t>(n.h));
+                    } else {
+                        const auto w = static_cast<std::uint32_t>(n.w);
+                        for (std::size_t i = 0; i < o.cells.size(); ++i) {
+                            if (o.cells[i] != n.cells[i]) {
+                                ++changed;
+                                n.dirty.mark_dirty(static_cast<std::uint32_t>(i % w),
+                                                   static_cast<std::uint32_t>(i / w));
+                            }
+                        }
+                    }
+                } else {
+                    std::unique_lock<std::shared_mutex> ln(n.rwlock);
+                    std::shared_lock<std::shared_mutex> lo(o.rwlock);
+                    if (o.w != n.w || o.h != n.h) {
+                        changed = static_cast<std::int64_t>(n.cells.size());
+                        n.dirty.mark_all_dirty(static_cast<std::uint32_t>(n.w),
+                                               static_cast<std::uint32_t>(n.h));
+                    } else {
+                        const auto w = static_cast<std::uint32_t>(n.w);
+                        for (std::size_t i = 0; i < o.cells.size(); ++i) {
+                            if (o.cells[i] != n.cells[i]) {
+                                ++changed;
+                                n.dirty.mark_dirty(static_cast<std::uint32_t>(i % w),
+                                                   static_cast<std::uint32_t>(i / w));
+                            }
+                        }
                     }
                 }
             }
@@ -1034,7 +1063,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             return make_int(changed);
         },
-        RENDER_PRIMITIVE_META(2, "Count changed cells between two buffers.", "(int int) -> int"));
+        RENDER_PRIMITIVE_META(
+            2, "Count changed cells; mark dirty AABB on new for present-batch (#1673).",
+            "(int int) -> int"));
 
     // Shared frame builder for present-batch and frame-ansi (#1349/#1350).
     auto build_present_frame = [](const TermBuf& b, std::string& out) -> std::uint64_t {
@@ -1270,6 +1301,46 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         },
         RENDER_PRIMITIVE_META(0, "Probe render-critical deopt throttle (#1563).",
                               "([string]) -> int"));
+
+    // Issue #1673: production render closed-loop stats (create/diff/present/zero-copy).
+    // Facade-only via (stats:get "query:render-stats") — no public add() growth.
+    ObservabilityPrims::register_stats_impl(
+        "query:render-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto& eng = aura::renderer::render_engine_counters();
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
+            };
+            insert_kv("schema", 1673);
+            insert_kv("present-calls", static_cast<std::int64_t>(eng.present_calls));
+            insert_kv("present-skips", static_cast<std::int64_t>(eng.present_skips));
+            insert_kv("present-bytes", static_cast<std::int64_t>(eng.present_bytes));
+            insert_kv("draw-calls", static_cast<std::int64_t>(eng.draw_calls));
+            insert_kv("draw-cells", static_cast<std::int64_t>(eng.draw_cells));
+            insert_kv("zero-copy-acquires", static_cast<std::int64_t>(eng.zero_copy_acquires));
+            insert_kv("sgr-emits", static_cast<std::int64_t>(eng.sgr_emits));
+            insert_kv("dirty-cells-emitted", static_cast<std::int64_t>(eng.dirty_cells_emitted));
+            insert_kv("buffer-creates", m ? load(m->terminal_buffer_creates) : 0);
+            insert_kv("buffer-live", m ? load(m->terminal_buffer_live) : 0);
+            insert_kv("diff-updates", m ? load(m->terminal_diff_updates) : 0);
+            insert_kv("diff-cells", m ? load(m->terminal_diff_cells_total) : 0);
+            insert_kv("present-batch-total", m ? load(m->terminal_present_batch_total) : 0);
+            insert_kv("set-cell-total", m ? load(m->terminal_set_cell_total) : 0);
+            insert_kv("hot-dispatch-hits-render",
+                      static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits_render()));
+            insert_kv("phase", aura::renderer::kRenderPrimitivesPhase);
+            insert_kv("issue", 1673);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     ObservabilityPrims::register_stats_impl(
         "query:render-jit-stability-stats", [&ev](std::span<const EvalValue>) -> EvalValue {

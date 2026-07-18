@@ -228,6 +228,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:terminal-render-production-stats",
     "query:render-ffi-buffer-stats",
     "query:render-hotpath-stats",
+    // Issue #1673: production present/diff/zero-copy closed-loop stats
+    "query:render-stats",
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",

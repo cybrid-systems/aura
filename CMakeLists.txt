@@ -5317,6 +5317,9 @@ aura_issue_test_link_llvm_jit(test_lookup_stats_impl_heterogeneous_1671)
 # Issue #1672: stats catalog ↔ register_stats_impl drift diagnostic.
 aura_add_issue_test(test_stats_catalog_drift_1672)
 aura_issue_test_link_llvm_jit(test_stats_catalog_drift_1672)
+# Issue #1673: production terminal render closed loop (diff→dirty + render-stats).
+aura_add_issue_test(test_terminal_render_production_1673)
+aura_issue_test_link_llvm_jit(test_terminal_render_production_1673)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
