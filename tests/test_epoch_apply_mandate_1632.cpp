@@ -256,8 +256,9 @@ static void ac6_schema_1632() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1632, "schema 1632");
-    CHECK(href(cs, "issue") == 1632, "issue 1632");
+    // Lineage: #1660 bumps schema; accept 1660|1632.
+    CHECK(href(cs, "schema") == 1660 || href(cs, "schema") == 1632, "schema 1660|1632");
+    CHECK(href(cs, "issue") == 1660 || href(cs, "issue") == 1632, "issue 1660|1632");
     CHECK(href(cs, "live_closure_stale_prevented") >= 0, "live_closure_stale_prevented");
     CHECK(href(cs, "bridge_epoch_mismatch_fallback") >= 0, "bridge_epoch_mismatch_fallback");
     CHECK(href(cs, "stale_closure_prevented") >= 0, "stale_closure_prevented");

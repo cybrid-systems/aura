@@ -132,25 +132,27 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
     m->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #681 / #1287 / #1491 / #1632: pre-call epoch/version enforcement
-// for live closures held across mutate:rebind / invalidate_function.
-// Dual-path apply_closure (map + bridge) MUST treat bridge_epoch /
-// EnvFrame version (defuse) mismatch as mandatory safe fallback (no
-// dangling flat*/pool* use after mutation). #1632 mandates this on all
-// hot paths (apply + JIT aura_closure_call + IR apply).
+// Issue #681 / #1287 / #1491 / #1632 / #1660: pre-call epoch/version
+// enforcement for live closures held across mutate:rebind /
+// invalidate_function. Dual-path apply_closure (map + bridge) MUST treat
+// bridge_epoch / EnvFrame version (defuse) mismatch as mandatory safe
+// fallback (no dangling flat*/pool* use after mutation).
+//
+// #1660: single source-of-truth is Evaluator::closure_is_epoch_or_env_stale
+// (both dual paths + materialize/JIT share the same predicate). Metrics
+// distinguish epoch-stale (bridge) vs env-stale (SoA version_) vs
+// linear-stale cleanly.
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
-    // Issue #1485 C1: epoch_stale tracks bridge_epoch OR env_frame
-    // mismatch specifically (excludes linear-only stale) so the new
-    // closure_epoch_mismatch_fallback metric is correctly scoped.
-    bool epoch_stale = false;
+    // Issue #1485 C1 / #1660: epoch_or_env_stale excludes linear-only so
+    // closure_epoch_mismatch_fallback stays correctly scoped.
+    bool epoch_or_env_stale = false;
     const auto cur_epoch = ev.current_bridge_epoch();
-    // Issue #1365: always consult is_bridge_stale (strict: unstamped → stale
-    // when tracking is active). Previously skipped bridge_epoch==0 entirely.
+    // Bridge half — #1365 strict is_bridge_stale.
     if (ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
-        epoch_stale = true;
+        epoch_or_env_stale = true;
         if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
             m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -162,26 +164,18 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         }
     }
     if (cl.env_id != NULL_ENV_ID) {
+        // EnvFrame SoA half — version_ / invalid (parent_id_ walk uses same frames).
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
             stale = true;
-            epoch_stale = true;
+            epoch_or_env_stale = true;
             if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
                 m->compiler_closure_envframe_stale_total.fetch_add(1, std::memory_order_relaxed);
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Issue #1478 / #1626: linear post-mutate dual-check (third arm).
-        // Parallel to the #1475 epoch check above. The helper bumps
-        // linear_post_mutate_enforcements; we bump linear_ownership_
-        // violation_prevented on violation (matching the closure_
-        // bridge_epoch_safety_enforced pattern).
-        //
-        // MVP: helper returns true unconditionally (real per-cell
-        // linear scan deferred to #1543, which needs runtime linear
-        // cell tagging infrastructure). The wiring point is in place
-        // and observable via the counter so production telemetry can
-        // track enforcement coverage while the real scan ships.
+        // Issue #1478 / #1626 / #1660: linear post-mutate third arm
+        // (distinct metric from epoch/env — linear-stale-total).
         if (!ev.linear_post_mutate_enforce(cl.env_id)) {
             stale = true;
             if (m) {
@@ -190,6 +184,12 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             }
         }
+    }
+    // #1660 invariant: epoch/env half matches the public unified helper.
+    // (linear-only stale is intentionally outside that helper.)
+    if (ev.closure_is_epoch_or_env_stale(cl)) {
+        stale = true;
+        epoch_or_env_stale = true;
     }
     if (stale) {
         ev.bump_compiler_root_stale_closure_detected();
@@ -205,10 +205,10 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         // Issue #1632 AC3: live_closure_stale_prevented on apply path
         // (parity with JIT walk / invalidate active-closure metrics).
         ev.bump_compiler_live_closure_stale_prevented();
-        // Issue #1485 C1 / #1632: lifetime count of safe-fallback paths
-        // taken after a bridge_epoch / defuse_version_ mismatch
-        // (epoch_stale excludes linear-only so linear fallbacks don't bleed).
-        if (epoch_stale)
+        // Issue #1485 C1 / #1632 / #1660: lifetime count of safe-fallback
+        // paths after bridge_epoch / EnvFrame version_ mismatch
+        // (excludes linear-only so linear fallbacks don't bleed).
+        if (epoch_or_env_stale)
             ev.bump_closure_epoch_mismatch_fallback();
     }
     return stale;

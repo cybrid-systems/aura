@@ -176,12 +176,14 @@ static void ac5_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1632 || href(cs, "schema") == 1627 || href(cs, "schema") == 1626 ||
-              href(cs, "schema") == 1607 || href(cs, "schema") == 1604 ||
-              href(cs, "schema") == 1598,
-          "schema 1632|1627|lineage");
-    CHECK(href(cs, "issue") == 1627 || href(cs, "issue") == 1626 || href(cs, "issue") < 0,
-          "issue 1627");
+    // Lineage: #1660 bumps schema; accept 1660|1632|….
+    CHECK(href(cs, "schema") == 1660 || href(cs, "schema") == 1632 || href(cs, "schema") == 1627 ||
+              href(cs, "schema") == 1626 || href(cs, "schema") == 1607 ||
+              href(cs, "schema") == 1604 || href(cs, "schema") == 1598,
+          "schema 1660|1632|1627|lineage");
+    CHECK(href(cs, "issue") == 1660 || href(cs, "issue") == 1632 || href(cs, "issue") == 1627 ||
+              href(cs, "issue") == 1626 || href(cs, "issue") < 0,
+          "issue 1660|lineage");
     CHECK(href(cs, "invalidate_cascade_depth") >= 0, "cascade depth");
     CHECK(href(cs, "bridge_epoch_bumps") >= 0, "bridge bumps");
     CHECK(href(cs, "live_closure_stale_prevented") >= 0, "live_closure");

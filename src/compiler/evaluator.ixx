@@ -1415,6 +1415,22 @@ public:
     void stamp_closure_bridge_epoch(Closure& cl) const noexcept {
         cl.bridge_epoch = current_bridge_epoch();
     }
+
+    // Issue #1660: single source-of-truth for apply_closure dual paths
+    // (map + bridge), materialize_call_env, and JIT deopt gates.
+    // True when bridge_epoch is stale OR EnvFrame is invalid/stale
+    // (version_ / parent SoA). Does **not** include linear-only
+    // ownership (use linear_post_mutate_enforce for that third arm).
+    // Metrics distinguish epoch-stale vs env-stale at the call site.
+    [[nodiscard]] bool closure_is_epoch_or_env_stale(const Closure& cl) const noexcept {
+        if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch()))
+            return true;
+        if (cl.env_id != NULL_ENV_ID) {
+            if (is_env_frame_invalid(cl.env_id) || is_env_frame_stale(cl.env_id))
+                return true;
+        }
+        return false;
+    }
     void set_session_id(const std::string& id) { session_id_ = id; }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {

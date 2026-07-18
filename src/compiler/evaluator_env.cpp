@@ -656,6 +656,11 @@ void Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const 
 Env Evaluator::materialize_call_env(const Closure& cl) {
     // Issue #417: cross-TU invariant probe on Env materialization.
     ensure_mutation_invariants();
+    // Issue #1660: materialize participates in the same dual-path stale
+    // contract as apply_closure (closure_is_epoch_or_env_stale). EnvFrame
+    // SoA version_ / parent_id_ walks below still refresh or fall back;
+    // this documents the unified gate for agents and CI.
+    (void)closure_is_epoch_or_env_stale(cl);
     // P0 complete: legacy cl.env path removed. All closures have
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.

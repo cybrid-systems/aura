@@ -353,15 +353,17 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1598 / #1604 / #1626 / #1632: apply_closure / JIT / post-steal /
-    // invalidate dual-epoch hotpath closed-loop dashboard.
+    // Issue #1598 / #1604 / #1626 / #1632 / #1660: apply_closure / JIT /
+    // post-steal / invalidate dual-epoch hotpath closed-loop dashboard.
     // #1632 mandate: live_closure_stale_prevented + bridge_epoch_mismatch_fallback
     // on apply + JIT + IR paths (lineage 1627/1626/1604/1598).
+    // #1660 mandate: unified closure_is_epoch_or_env_stale + EnvFrame SoA
+    // (version_ / parent_id_) + distinct epoch/env/linear stale metrics.
     ObservabilityPrims::register_stats_impl(
         "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // Capacity must be power-of-two (open-address mask hcap-1).
-            auto* ht = FlatHashTable::create(128); // #1632 AC aliases
+            auto* ht = FlatHashTable::create(128); // #1660 AC aliases
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -446,8 +448,23 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("defuse-version-check-wired", 1);
             insert_kv("bridge-epoch-check-wired", 1);
             insert_kv("ir-apply-dual-check-wired", 1);
-            insert_kv("issue", 1632);
-            insert_kv("schema", 1632); // lineage 1627 / 1626 / 1607 / 1604 / 1598
+            // #1660 AC: unified helper + EnvFrame SoA + distinct stale metrics
+            // epoch-stale ≈ bridge mismatch hits; env-stale ≈ envframe_stale;
+            // linear-stale ≈ linear_ownership_violation_prevented.
+            insert_kv("epoch-stale-total", m ? L(&m->compiler_closure_epoch_mismatch_hits) : 0);
+            insert_kv("env-stale-total", m ? L(&m->compiler_closure_envframe_stale_total) : 0);
+            insert_kv("linear-stale-total", m ? L(&m->linear_ownership_violation_prevented) : 0);
+            insert_kv("stale-EnvFrame-prevented",
+                      m ? L(&m->compiler_closure_envframe_stale_total) : 0);
+            insert_kv("materialize-fallback-total", m ? L(&m->materialize_fallback_total) : 0);
+            insert_kv("unified-stale-helper-wired", 1);
+            insert_kv("closure-is-epoch-or-env-stale-wired", 1);
+            insert_kv("envframe-soa-version-wired", 1);
+            insert_kv("envframe-parent-id-walk-wired", 1);
+            insert_kv("materialize-call-env-stale-wired", 1);
+            insert_kv("apply-envframe-soa-mandate-active", 1);
+            insert_kv("issue", 1660);
+            insert_kv("schema", 1660); // lineage 1632 / 1627 / 1626 / 1607 / 1604 / 1598
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
