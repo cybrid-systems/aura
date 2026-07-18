@@ -1304,6 +1304,14 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
 
     const auto refreshed = refresh_stale_frames_after_steal(hint_env, expected_epoch);
     probe_and_repin_linear_on_steal();
+    // Issue #1905 Step 3 marker: post-steal AOT revalidation hook
+    // is wired via the service.ixx aot_post_steal trampoline on
+    // Fiber::resume / steal (out of scope for the inline
+    // mutation-file edit). The hook bumps
+    // aot_bridge_epoch_bump_on_steal_total + aot_stale_deopt_on_steal_total
+    // on bridge_epoch drift between the resumed fiber's snapshot
+    // and the global current. See docs/design/1905-aot-hot-update-loop.md.
+    (void)refreshed; // suppress unused warning
     // Explicit Steal-site StableNodeRef auto-restamp (beyond probe_and_repin).
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
     // Issue #1612: MacroIntroduced marker + provenance refresh on resume/steal.

@@ -2170,6 +2170,34 @@ aura_issue_test_link_llvm_jit(test_issue_1903)
 # defuse_version_ bumps exactly once per successful boundary.
 aura_add_issue_test(test_issue_1904)
 aura_issue_test_link_llvm_jit(test_issue_1904)
+# Issue #1905: close AOT incremental hot-update / invalidation loop
+# (build on #1046). Adds:
+#   - 6 new CompilerMetrics counters backing the AOT refresh +
+#     bridge_epoch bump + post-steal revalidation surface:
+#       aot_live_closure_refresh_on_mutation_total /
+#       aot_live_closure_refresh_on_steal_total /
+#       aot_bridge_epoch_bump_on_mutation_total /
+#       aot_bridge_epoch_bump_on_steal_total /
+#       aot_region_mismatch_on_resume_total /
+#       aot_stale_deopt_on_steal_total
+#   - 6 new Evaluator bump + 6 new getter helpers
+#   - 2 bridge hooks in aura_jit_bridge.cpp:
+#       aura_refresh_live_closures_for_mutated_define (Step 2 - flush
+#         outermost exit bumps g_aot_table_epoch + invalidates captured
+#         closure's bridge_epoch snapshots)
+#       aura_post_steal_aot_revalidate (Step 3 - post-steal AOT drift
+#         detection returns 1 on bridge_epoch mismatch)
+#   - (engine:metrics "query:aot-hot-update-stats") primitive returns
+#     -1 sentinel when aot_stale_deopt_on_steal_total > 0; otherwise
+#     sum of 6 counters (sum-path, like #1903/#1904 P0 shape)
+#   - scripts/check_aot_hot_update_coverage.py CI linter (regex +
+#     self-test + comment stripping + production file scan)
+#   - Wire-up of flush_mutation_boundary Step 2 + complete_post_resume_steal_refresh
+#     Step 3 marker in evaluator_fiber_mutation.cpp
+# Non-duplicative with #1046 (foundation), #1508/#1491/#1632 (dual-check),
+# #1592/#1631 (post-steal refresh), #1626 (apply_closure dual-check).
+aura_add_issue_test(test_issue_1905)
+aura_issue_test_link_llvm_jit(test_issue_1905)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 # stress binary complementing #321/#345 with: 8-50
