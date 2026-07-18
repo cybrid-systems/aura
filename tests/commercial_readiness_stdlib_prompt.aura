@@ -1,21 +1,62 @@
 ;; tests/commercial_readiness_stdlib_prompt.aura
 ;;
-;; Regression coverage for lib/std/prompt.aura (unified LLM prompt builder).
+;; Eleventh-pass audit: std/prompt — unified LLM prompt builder.
 ;;
-;; Covers:
-;;   - build-sys-prompt with all-empty arguments
-;;   - build-sys-prompt with full arguments
-;;   - get-api-ref-for-modules with empty / sample module lists
-;;   - string-join-parts with empty list
-;;   - string-join-modules with single / multiple modules
+;; Run:
+;;   ./build/aura < tests/commercial_readiness_stdlib_prompt.aura
+;;
+;; ── Module contract ──────────────────────────────────────────────────────
+;; lib/std/prompt.aura is documented as a 2-export module:
+;;   (export build-sys-prompt get-api-ref-for-modules)
+;;
+;; Plus 1 public constant:
+;;   PROMPT_IDENTITY  — the "You are Aura Lisp..." prefix string
+;;
+;; Plus 2 private helpers (not exported):
+;;   string-join-parts   — flattens a list of strings into one
+;;   string-join-modules — joins module names with ", "
+;;
+;; build-sys-prompt takes 4 args:
+;;   stdlib    — list of module names, e.g. ("std/list" "std/hash")
+;;   api-ref   — API reference string (or "")
+;;   task-name — task identifier (or "") — USED in output as TASK banner
+;;   hints     — task hints string (or "")
+;;
+;; All non-empty string args add their respective banner block; empty
+;; args are skipped (the empty list for stdlib is also skipped, not
+;; emitted as "Available stdlib: ").
+;;
+;; ── What this audit tests ────────────────────────────────────────────────
+;;   1. (require "std/prompt") loads without error
+;;   2. Both 2 exports are procedures (and PROMPT_IDENTITY is a string)
+;;   3. build-sys-prompt with all-empty args → returns PROMPT_IDENTITY
+;;      exactly (no stdlib / hint / api-ref / task-name blocks)
+;;   4. build-sys-prompt with full args → emits identity + stdlib +
+;;      hints + api-ref blocks (and task-name block when non-empty)
+;;   5. build-sys-prompt task-name IS emitted when non-empty (Issue #1583
+;;      fix — used to be a dead parameter)
+;;   6. build-sys-prompt task-name is NOT emitted when empty
+;;   7. get-api-ref-for-modules with empty / sample module lists
+;;   8. string-join-parts with empty list → ""
+;;   9. string-join-modules with single / multiple modules
+;;  10. Idempotency: calling build-sys-prompt twice with same args yields
+;;      the same output
+;;
+;; ── Known contract limitations ───────────────────────────────────────────
+;;   B1. get-api-ref-for-modules depends on std/adaptive:get-api-ref
+;;       availability. If std/adaptive isn't loaded or its api-ref
+;;       table is empty, the wrapper catches the error and returns "".
+;;       Tests for the empty case verify non-throw + non-empty return
+;;       (matches Python runner's behavior of always returning some
+;;       "Pitfalls" text).
+;;   B2. PROMPT_IDENTITY is hardcoded as a constant; build-sys-prompt
+;;       does not accept a custom identity string. Edge case — the
+;;       identity is meant to be stable across all LLM tasks.
 ;;
 ;; Note on expect semantics: in Aura Lisp, (and ...) of mixed truthy values
 ;; returns () which is truthy, so a generic expect-true does not reliably
 ;; catch #f. We use `expect` with an explicit expected value (#t/#f) for
 ;; boolean predicates — same pattern as commercial_readiness_stdlib_data_types.
-;;
-;; Run:
-;;   build/aura < tests/commercial_readiness_stdlib_prompt.aura
 
 ;; ═════════════════════════════════════════════════════════════════════════
 ;; Inline check framework
@@ -76,6 +117,14 @@
     (string-contains? result "std/list, std/hash") #t)
   (expect "bsp-full-has-stdlib-require-hint"
     (string-contains? result "(require std/name all:)") #t)
+  ;; Task-name banner (Issue #1583 — task-name was a dead parameter
+  ;; before, now emitted as "TASK: <name>" banner)
+  (expect "bsp-full-has-task-banner-divider"
+    (string-contains? result "========================================") #t)
+  (expect "bsp-full-has-task-banner-marker"
+    (string-contains? result "TASK: ") #t)
+  (expect "bsp-full-has-task-banner-name"
+    (string-contains? result "my-task") #t)
   ;; Hints block
   (expect "bsp-full-has-hint-divider"
     (string-contains? result "========================================") #t)
@@ -87,13 +136,31 @@
   (expect "bsp-full-has-api-ref-marker"
     (string-contains? result "Aura API Reference:") #t)
   (expect "bsp-full-has-api-ref-text"
-    (string-contains? result ";; api-ref-content") #t)
-  ;; Idempotency / no-leakage: empty-task-name should NOT change output.
-  ;; Comparing full output with task-name="" vs task-name="my-task" should
-  ;; be byte-identical — the parameter is unused in the body.
-  (let ((result-empty-name (build-sys-prompt stdlib api-ref "" hints)))
-    (expect "bsp-task-name-is-dead-param"
-      (equal? result result-empty-name) #t)))
+    (string-contains? result ";; api-ref-content") #t))
+
+;; task-name EMPTY: should NOT emit the "TASK: ..." banner block.
+(let* ((stdlib '("std/list" "std/hash"))
+       (api-ref ";; api-ref-content")
+       (hints "Prefer list operations")
+       (result-empty-task (build-sys-prompt stdlib api-ref "" hints)))
+  (expect "bsp-empty-task-no-banner"
+    (string-contains? result-empty-task "TASK: ") #f)
+  ;; But stdlib / hint / api-ref blocks ARE present
+  (expect "bsp-empty-task-stdlib-still-present"
+    (string-contains? result-empty-task "Available stdlib:") #t)
+  (expect "bsp-empty-task-hint-still-present"
+    (string-contains? result-empty-task "TASK-SPECIFIC HINT:") #t)
+  (expect "bsp-empty-task-api-ref-still-present"
+    (string-contains? result-empty-task "Aura API Reference:") #t))
+
+;; Idempotency: same args twice → same output.
+(let* ((stdlib '("std/list"))
+       (api-ref ";; ref")
+       (task "task-x")
+       (hints "hint-y")
+       (r1 (build-sys-prompt stdlib api-ref task hints))
+       (r2 (build-sys-prompt stdlib api-ref task hints)))
+  (expect "bsp-idempotent" (equal? r1 r2) #t))
 
 ;; ═════════════════════════════════════════════════════════════════════════
 ;; get-api-ref-for-modules — empty list
@@ -134,6 +201,18 @@
   "a, b, c")
 
 ;; ═════════════════════════════════════════════════════════════════════════
-;; End marker
+;; Audit history
 ;; ═════════════════════════════════════════════════════════════════════════
+;; Eleventh-pass deep audit 2026-07-18:
+;;   Promoted from 138-line regression baseline to ~200-line deep audit
+;;   matching the encoding/hash/csv/datetime template.
+;;   - Added module contract header (2 exports + 1 constant + 2 helpers)
+;;   - Documented B1 (get-api-ref dependency), B2 (identity hardcoded)
+;;   - Replaced stale `bsp-task-name-is-dead-param` test (FAILED because
+;;     Issue #1583 already fixed the dead-param issue — task-name IS now
+;;     emitted as a TASK banner block). Replaced with positive checks:
+;;     `bsp-full-has-task-banner-*` (when non-empty) and
+;;     `bsp-empty-task-no-banner` (when empty).
+;;   - Added idempotency test (same args → same output).
+;;   - Working subset: 30+ PASS / 0 FAIL on the 2-export surface.
 (display "\n=== prompt audit done ===\n")
