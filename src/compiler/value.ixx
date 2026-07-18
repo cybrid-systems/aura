@@ -109,7 +109,9 @@ export inline bool is_int(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::Fixnum;
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
+    // Issue #571 / #1622: Contracts on tagged fixnum range before shift.
     contract_assert(is_int(v));
+    contract_assert((v.val & 1) == 0);                 // fixnum low bit clear
     aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
     return v.val >> kFixnumShift;
 }
@@ -160,7 +162,11 @@ export inline bool is_string(const EvalValue& v) noexcept {
     return classify_eval_value_tag(v.val) == EvalValueTag::StringV2;
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
+    // Issue #1622: Contracts on v2 string tag + bias range.
     contract_assert(is_string(v));
+    contract_assert((v.val & 3) == 2);
+    contract_assert(v.val <= STRING_BIAS_VAL_2);
+    aura::core::cpp26::record_hotpath_invariant_hit();
     return string_idx_raw_v2(v.val);
 }
 

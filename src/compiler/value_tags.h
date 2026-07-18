@@ -81,15 +81,35 @@ enum class EvalValueTag : std::uint8_t {
 };
 
 // consteval low-2-bit dispatch table (bits 0-1 of the tagged int64).
+// Issue #571 / #1622: primary hot-path tag class table.
 inline constexpr EvalValueTag kEvalValueTagLow2Table[4] = {
+    EvalValueTag::Fixnum,   // 00 — also Float when in float bias range
+    EvalValueTag::Ref,      // 01
+    EvalValueTag::StringV2, // 10 — range-guarded by STRING_BIAS_VAL_2
+    EvalValueTag::Special,  // 11 — #f/#t/void sentinels
+};
+
+// Issue #1622: documented common tag pattern set for Agents / consteval.
+inline constexpr EvalValueTag kTagPatterns[4] = {
     EvalValueTag::Fixnum,
     EvalValueTag::Ref,
     EvalValueTag::StringV2,
     EvalValueTag::Special,
 };
 
-inline consteval EvalValueTag eval_value_tag_low2_table(std::size_t idx) noexcept {
+// constexpr (not consteval-only) so runtime classify can share the table.
+inline constexpr EvalValueTag eval_value_tag_low2_table(std::size_t idx) noexcept {
     return kEvalValueTagLow2Table[idx & 3u];
+}
+
+// Issue #1622: Special sentinel table (exact values).
+inline constexpr EvalValueTag classify_special_sentinel(std::int64_t v) noexcept {
+    if (v == kSpecialFalse || v == kSpecialTrue || v == kSpecialVoid)
+        return EvalValueTag::Special;
+    return EvalValueTag::Unknown;
+}
+inline consteval EvalValueTag classify_special_sentinel_consteval(std::int64_t v) noexcept {
+    return classify_special_sentinel(v);
 }
 
 // Issue #465 / #1240: consteval encoding contracts for v2 dispatch
@@ -371,6 +391,53 @@ static_assert(make_float_raw_v2(0) > STRING_BIAS_VAL_2,
 static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
               "v2 string lower bound is above string range (collision)");
 
+// Issue #571 / #1622: pure constexpr classifier (no atomics) for
+// compile-time dispatch validation and static_assert tables.
+// Mirrors runtime classify_eval_value_tag control flow.
+// Named *_consteval for historical AC naming; implemented as constexpr
+// so tests can also call it at runtime with dynamic samples.
+inline constexpr EvalValueTag classify_eval_value_tag_consteval(std::int64_t v) noexcept {
+    const auto low2 = static_cast<std::size_t>(v & 3);
+    // Prefer table for primary low2 class; refine Float/String ranges.
+    // Note: fixnums use (v<<1) so some fixnums have low2==2 (e.g. 1→2);
+    // those must NOT be treated as StringV2 unless in STRING_BIAS range.
+    const auto primary = eval_value_tag_low2_table(low2);
+    if (primary == EvalValueTag::Special)
+        return classify_special_sentinel(v);
+    if (primary == EvalValueTag::Ref)
+        return EvalValueTag::Ref;
+    if (primary == EvalValueTag::StringV2) {
+        if (v <= STRING_BIAS_VAL_2)
+            return EvalValueTag::StringV2;
+        // low2==2 but outside string bias: fixnum path (bit0 clear).
+        if (is_fixnum(v) && v > FLOAT_BIAS_VAL)
+            return EvalValueTag::Fixnum;
+        return EvalValueTag::Unknown;
+    }
+    // low2 == 0: Fixnum or Float (range disambiguation).
+    if (is_float_raw_v2(v))
+        return EvalValueTag::Float;
+    if (is_fixnum(v) && v > FLOAT_BIAS_VAL)
+        return EvalValueTag::Fixnum;
+    return EvalValueTag::Unknown;
+}
+
+// Issue #1622: compile-time self-checks for consteval classifier.
+static_assert(classify_eval_value_tag_consteval(0) == EvalValueTag::Fixnum,
+              "#1622: fixnum 0 classifies as Fixnum");
+static_assert(classify_eval_value_tag_consteval(2) == EvalValueTag::Fixnum,
+              "#1622: fixnum 1 encoded as 2 classifies as Fixnum");
+static_assert(classify_eval_value_tag_consteval(kSpecialFalse) == EvalValueTag::Special,
+              "#1622: #f is Special");
+static_assert(classify_eval_value_tag_consteval(kSpecialTrue) == EvalValueTag::Special,
+              "#1622: #t is Special");
+static_assert(classify_eval_value_tag_consteval(kSpecialVoid) == EvalValueTag::Special,
+              "#1622: void is Special");
+static_assert(classify_eval_value_tag_consteval(1) == EvalValueTag::Ref,
+              "#1622: low2=1 is Ref (pool index 0 Pair)");
+static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == EvalValueTag::Special,
+              "#1622: kTagPatterns order Fixnum..Special");
+
 // Issue #571: full tagged-value classification with v2 string
 // range check + float/fixnum disambiguation. Bumps dispatch hit/
 // miss counters for observability via (query:value-dispatch-stats).
@@ -384,39 +451,61 @@ static_assert(make_string_raw_v2(0) <= STRING_BIAS_VAL_2,
 // with fixnums but are disjoint on the range (fixnums are
 // v > FLOAT_BIAS_VAL_2). The float range check uses
 // is_float_raw_v2 for clarity.
+//
+// Issue #1622: runtime path uses low2 table first, then range refine
+// (same control flow as classify_eval_value_tag_consteval).
 inline EvalValueTag classify_eval_value_tag(std::int64_t v) noexcept {
     value_classify_call_count.fetch_add(1, std::memory_order_relaxed);
     aura::core::cpp26::record_hotpath_invariant_hit();
-    if ((v & 3) == 3) {
-        if (v == 3 || v == 7 || v == 11) {
+    const auto low2 = static_cast<std::size_t>(v & 3);
+    const auto primary = eval_value_tag_low2_table(low2);
+    if (primary == EvalValueTag::Special) {
+        if (v == kSpecialFalse || v == kSpecialTrue || v == kSpecialVoid) {
             record_value_dispatch_hit();
             return EvalValueTag::Special;
         }
         record_value_dispatch_miss();
         return EvalValueTag::Unknown;
     }
-    if ((v & 3) == 1) {
+    if (primary == EvalValueTag::Ref) {
         record_value_dispatch_hit();
         return EvalValueTag::Ref;
     }
-    if ((v & 3) == 2 && v <= STRING_BIAS_VAL_2) {
+    if (primary == EvalValueTag::StringV2) {
+        if (v <= STRING_BIAS_VAL_2) {
+            record_value_dispatch_hit();
+            return EvalValueTag::StringV2;
+        }
+        // Fixnums can have low2==2 (v=2,6,10…); not a string collision.
+        if (is_fixnum(v) && v > FLOAT_BIAS_VAL) {
+            record_value_dispatch_hit();
+            return EvalValueTag::Fixnum;
+        }
+        record_v2_string_collision_attempt();
+        record_value_dispatch_miss();
+        return EvalValueTag::Unknown;
+    }
+    // low2 == 0 → Fixnum or Float
+    if (is_float_raw_v2(v)) {
         record_value_dispatch_hit();
-        return EvalValueTag::StringV2;
+        return EvalValueTag::Float;
     }
     if (is_fixnum(v) && v > FLOAT_BIAS_VAL) {
         record_value_dispatch_hit();
         return EvalValueTag::Fixnum;
     }
-    if (is_float_raw_v2(v)) {
-        record_value_dispatch_hit();
-        return EvalValueTag::Float;
-    }
-    if ((v & 3) == 2) {
-        record_v2_string_collision_attempt();
-    }
     record_value_dispatch_miss();
     return EvalValueTag::Unknown;
 }
+
+// Issue #1622: range / tag validity probe for hot paths (evaluator, shape).
+[[nodiscard]] inline bool is_valid_tagged_value(std::int64_t v) noexcept {
+    return classify_eval_value_tag(v) != EvalValueTag::Unknown;
+}
+
+// Issue #1622: coverage flag for schema 1622.
+inline std::atomic<std::uint64_t> value_dispatch_consteval_table_wired{1};
+inline std::atomic<std::uint64_t> value_dispatch_hotpath_contracts_wired{1};
 
 } // namespace aura::compiler::types
 
