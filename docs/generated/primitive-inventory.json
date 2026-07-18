@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 520,
-  "frozen_count": 436,
+  "frozen_count": 437,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -329,6 +329,7 @@
     "query:render-hotpath-stats",
     "query:render-jit-soa-hotpath-stats",
     "query:render-observability-v2-stats",
+    "query:render-stats",
     "query:runtime-observability-correlated-stats",
     "query:runtime-orchestration-stats",
     "query:runtime-production-health",
@@ -973,7 +974,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 413,
+  "stats_count": 414,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1284,6 +1285,7 @@
     "query:render-hotpath-stats",
     "query:render-jit-soa-hotpath-stats",
     "query:render-observability-v2-stats",
+    "query:render-stats",
     "query:runtime-observability-correlated-stats",
     "query:runtime-orchestration-stats",
     "query:runtime-production-health",
