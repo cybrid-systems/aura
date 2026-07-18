@@ -44,6 +44,23 @@
 ;;        Now verified working at depths 1, 2, 3, 5 + multi-char sep +
 ;;        empty sep. Pattern noted for future similar stdlib functions
 ;;        that recurse via string-append with multiple prefix args.
+;;   B-string-2026-07-18-B. \xff (and likely \xNN byte escapes) were not
+;;       recognized by the aura string-literal reader. The default
+;;       branch of read_string in src/parser/lexer_impl.cpp dropped the
+;;       backslash and kept the next char ('x') as a literal, so
+;;       (string->chars "\xff") returned (120 102 102) — the literal
+;;       3-char string "xff" — instead of (255).
+;;       FIX APPLIED in src/parser/lexer_impl.cpp this session:
+;;         Added an \x case BEFORE the switch default that reads 1-2
+;;         hex digits after the backslash (C-style byte escape). Hex
+;;         digits: 0-9 / a-f / A-F. Two-digit form packs high nibble +
+;;         low nibble; one-digit form is 0-padded in the high nibble.
+;;         The fallback (\x not followed by a hex digit) preserves the
+;;         previous "drop-backslash-keep-next-char" behavior so
+;;         unrelated escapes like "\q" → "q" still work. The new
+;;         "(reader-level) \xHH byte escapes" section below verifies
+;;         basic / mixed / chained / escaped-backslash / fallback cases
+;;         via the full reader → parser → stdlib pipeline.
 ;;
 ;; ── Documented contract limitations (NOT bugs, NOT tested) ──────────────
 ;;   C1. string-trim only strips ASCII space (0x20), not tabs/newlines/
@@ -58,6 +75,13 @@
 ;;       "unbound variable: a" (related to surface B10 — the reader
 ;;       bug is at a lower level than this stdlib file). Workaround:
 ;;       pass numeric codepoints, e.g. (chars->string (list 97)).
+;;   B-string-2026-07-18-C. The NUL byte (\0 or \x0) is correctly emitted
+;;       by the reader but immediately dropped by Aura's string storage
+;;       layer (treated as a C-style terminator). (string-length "\0")
+;;       returns 0, (string->chars "\0") returns (), even though the
+;;       lexer writes byte 0x00 into string_buf_. Pre-existing limitation
+;;       (companion to Issue #964). Fix is downstream of the lexer; not
+;;       a reader fix.
 ;;   B-string-2026-07-18-A. (chars->string (list)) returns 0 instead
 ;;       of "". Root cause: the engine primitive (list->string ())
 ;;       returns 0 not "" for empty-list input. Cascades to chars->string.
@@ -66,11 +90,6 @@
 ;;       C-string-test convention would expect; needs engine primitive
 ;;       fix to (list->string ()) returning "" (or a clear sentinel
 ;;       decision). Documented for next session.
-;;   B-string-2026-07-18-B. \xff (and likely \xNN byte escapes) are not
-;;       recognized by the aura string-literal reader. (string->chars
-;;       "\xff") returns (120 102 102) — the literal "xff" — instead of
-;;       (255). Use char-code lists via (chars->string (list 255)) if you
-;;       need the byte value. Reader-level fix needed; not stdlib scope.
 
 ;; ═════════════════════════════════════════════════════════════════════════
 ;; Inline check framework (same pattern as surface / encoding / json)
@@ -361,6 +380,53 @@
   "He")
 
 ;; ═════════════════════════════════════════════════════════════════════════
+;; Reader-level escapes: \xHH byte escapes — B-string-2026-07-18-B fix.
+;; The Aura string-literal reader now recognizes \x followed by 1-2 hex
+;; digits (C-style byte escape). Verified via stdlib string-length /
+;; string->chars round-trip so the reader output flows through the full
+;; parse → eval path; stdlib functions themselves are already covered
+;; above (chars->string / string->chars assume codepoint-list input).
+;; ═════════════════════════════════════════════════════════════════════════
+
+;; Two-hex-digit form: high nibble + low nibble → byte value.
+(expect "xff-basic"           (string->chars "\xff") (list 255))
+(expect "xff-length-is-1"     (string-length      "\xff") 1)
+(expect "xff-uppercase"       (string->chars "\xFF") (list 255))
+(expect "xff-mixed-case"      (string->chars "\xAb") (list 171))
+(expect "xff-printable-DEL"   (string->chars "\x7f") (list 127))
+(expect "xff-ascii-A"         (string->chars "\x41") (list 65))
+
+;; One-hex-digit form: 0-padded high nibble.
+(expect "xf-1-digit"          (string->chars "\xf")  (list 15))
+;; NOTE: \x0 / \0 NUL byte is correctly emitted by the reader
+;; (src/parser/lexer_impl.cpp) but dropped by Aura's string storage
+;; (treated as C-style terminator — see (string-length "\0") = 0). So
+;; (string->chars "\x0") returns () instead of (0). Pre-existing
+;; limitation tracked under B-string-2026-07-18-C below. Not a lexer bug.
+
+;; Chained byte escapes produce multi-byte strings.
+(expect "xff-xaa-chained"     (string->chars "\xff\xaa") (list 255 170))
+(expect "xff-xaa-length-is-2" (string-length     "\xff\xaa") 2)
+
+;; 1-hex + literal char: the next non-hex char is consumed by the
+;; outer while-loop as a regular character (not part of the escape).
+(expect "xf-then-g"           (string->chars "\xfg")  (list 15 103))
+(expect "xff-then-z"          (string->chars "\xffz") (list 255 122))
+
+;; Mixed with surrounding literal chars / other escapes.
+(expect "ab-ffc-surrounded"   (string->chars "ab\xffc")  (list 97 98 255 99))
+(expect "newline-ff-tab"      (string->chars "\n\xff\t") (list 10 255 9))
+
+;; Escaped backslash: "\\xff" must remain the literal 4-char string
+;; "\xff" — i.e., no byte escape after the doubled backslash.
+(expect "doubled-backslash-no-escape"
+  (string->chars "\\xff") (list 92 120 102 102))
+
+;; Legacy fallback preserved: \x not followed by a hex digit drops
+;; the backslash and keeps the next char (same shape as "\q" → "q").
+(expect "x-no-hex-fallback-Z" (string->chars "\xZ") (list 120 90))
+
+;; ═════════════════════════════════════════════════════════════════════════
 ;; B8 inventory footer — keeps the bug-fix record visible at end-of-file.
 ;; ═════════════════════════════════════════════════════════════════════════
 ;; B8a: string-join non-tail-call bug — FIXED this session in
@@ -371,10 +437,19 @@
 ;; B-string-2026-07-18-A: (list->string ()) returns 0 instead of "".
 ;;       Cascades to chars->string. Engine primitive level — out of
 ;;       stdlib scope; tracked for engine follow-up.
+;; B-string-2026-07-18-C: NUL byte (\0 / \x0) emitted by reader but
+;;       dropped by string storage. (string-length "\0") = 0 and
+;;       (string->chars "\0") = (). The lexer is correct here; the
+;;       downstream string storage is C-string-flavored. Reader-level
+;;       fix is not the answer.
 ;; B-string-2026-07-18-B: \xff byte escape not recognized in aura
-;;       string literals. Returns literal "xff" codepoints instead.
-;;       Use (chars->string (list 255)) for byte values. Reader
-;;       level — out of stdlib scope.
+;;       string literals — FIXED this session in src/parser/lexer_impl.cpp.
+;;       Added \x case before the switch default that reads 1-2 hex
+;;       digits (0-9, a-f, A-F). Legacy fallback (\x not followed by a
+;;       hex digit) preserves the previous "drop-backslash-keep-next-
+;;       char" behavior so unrelated escapes like "\q" → "q" still work.
+;;       See the new "(reader-level) \xHH byte escapes" section above
+;;       for the verification matrix.
 ;; C1:  string-trim only strips ASCII space (0x20). Documented.
 ;; C2:  string-split-words treats high-byte chars as whitespace.
 ;;       Documented.

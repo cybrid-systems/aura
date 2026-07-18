@@ -65,6 +65,33 @@ Token Lexer::read_string() {
     while (pos_ < source_.size() && source_[pos_] != '"') {
         if (source_[pos_] == '\\' && pos_ + 1 < source_.size()) {
             char next = source_[pos_ + 1];
+            // Issue #1502: \xHH / \xH — C-style byte escape (1-2 hex digits)
+            if (next == 'x' && pos_ + 2 < source_.size()) {
+                auto hex_val = [](char c) -> int {
+                    if (c >= '0' && c <= '9')
+                        return c - '0';
+                    if (c >= 'a' && c <= 'f')
+                        return 10 + (c - 'a');
+                    if (c >= 'A' && c <= 'F')
+                        return 10 + (c - 'A');
+                    return -1;
+                };
+                int v1 = hex_val(source_[pos_ + 2]);
+                if (v1 >= 0) {
+                    int byte_val = v1;
+                    pos_ += 3; // past \xH
+                    if (pos_ < source_.size()) {
+                        int v2 = hex_val(source_[pos_]);
+                        if (v2 >= 0) {
+                            byte_val = (v1 << 4) | v2;
+                            ++pos_;
+                        }
+                    }
+                    string_buf_ += static_cast<char>(byte_val & 0xff);
+                    continue;
+                }
+                // Fall through: \x not followed by hex → legacy (keep 'x')
+            }
             switch (next) {
                 case 'n':
                     string_buf_ += '\n';
