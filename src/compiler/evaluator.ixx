@@ -1396,6 +1396,78 @@ public:
             return m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #1905: AOT incremental hot-update / invalidation loop
+    // closure (#1046). 6 new counters backing the
+    // (engine:metrics "query:aot-hot-update-stats") primitive.
+    // Bump sites live in aura_jit_bridge.cpp (aura_refresh_live_closures_for_mutated_define
+    // + flush_mutation_boundary outermost path) and in
+    // complete_post_resume_steal_refresh (post-steal path).
+    [[nodiscard]] std::uint64_t get_aot_live_closure_refresh_on_mutation_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_live_closure_refresh_on_mutation_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_live_closure_refresh_on_steal_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_live_closure_refresh_on_steal_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_bridge_epoch_bump_on_mutation_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_bridge_epoch_bump_on_mutation_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_bridge_epoch_bump_on_steal_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_bridge_epoch_bump_on_steal_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_region_mismatch_on_resume_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_region_mismatch_on_resume_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_stale_deopt_on_steal_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->aot_stale_deopt_on_steal_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_live_closure_refresh_on_mutation_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_live_closure_refresh_on_steal_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_live_closure_refresh_on_steal_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_bridge_epoch_bump_on_mutation_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_bridge_epoch_bump_on_mutation_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_bridge_epoch_bump_on_steal_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_bridge_epoch_bump_on_steal_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_region_mismatch_on_resume_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_region_mismatch_on_resume_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_stale_deopt_on_steal_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_stale_deopt_on_steal_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #682: compiler GC root flush hook (service.ixx
     // implements flush_compiler_gc_roots). Called from
     // flush_gc_roots at safepoint after runtime heap roots.

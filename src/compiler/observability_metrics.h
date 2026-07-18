@@ -5691,6 +5691,31 @@ struct CompilerMetrics {
     // Issue #653: bridge_epoch vs func-table epoch mismatch on
     // restore_post_yield_or_rollback / fiber resume validate.
     std::atomic<std::uint64_t> aot_bridge_epoch_mismatches_{0};
+    // Issue #1905: AOT incremental hot-update / invalidation loop
+    // closure (#1046). Each counter bumps at one of the 5 plan
+    // steps. Surfaced by (engine:metrics "query:aot-hot-update-stats")
+    // + the scripts/check_aot_hot_update_coverage.py CI linter.
+    //   - aot_live_closure_refresh_on_mutation_total: every
+    //     aura_refresh_live_closures_for_mutated_define call from
+    //     flush_mutation_boundary outermost exit (Step 2 of #1905 plan).
+    //   - aot_live_closure_refresh_on_steal_total: every refresh
+    //     call from complete_post_resume_steal_refresh (Step 3).
+    //   - aot_bridge_epoch_bump_on_mutation_total: every bridge_epoch
+    //     bump driven by an outermost MutationBoundaryGuard exit.
+    //   - aot_bridge_epoch_bump_on_steal_total: every bridge_epoch
+    //     bump driven by a fiber resume / steal.
+    //   - aot_region_mismatch_on_resume_total: every region_mask
+    //     drift detected on resume (per-eval AotState mismatch).
+    //   - aot_stale_deopt_on_steal_total: every aura_jit_closure_record_stale_deopt
+    //     call driven by a stolen fiber's resume path (vs the
+    //     original on-AOT path which the existing jit_closure_stale_deopt_total
+    //     already covers).
+    std::atomic<std::uint64_t> aot_live_closure_refresh_on_mutation_total{0}; // #1905
+    std::atomic<std::uint64_t> aot_live_closure_refresh_on_steal_total{0};    // #1905
+    std::atomic<std::uint64_t> aot_bridge_epoch_bump_on_mutation_total{0};    // #1905
+    std::atomic<std::uint64_t> aot_bridge_epoch_bump_on_steal_total{0};       // #1905
+    std::atomic<std::uint64_t> aot_region_mismatch_on_resume_total{0};        // #1905
+    std::atomic<std::uint64_t> aot_stale_deopt_on_steal_total{0};             // #1905
 
     // Issue #732: AOT hot-reload safe-swap at MutationBoundary
     // observability counter backing the

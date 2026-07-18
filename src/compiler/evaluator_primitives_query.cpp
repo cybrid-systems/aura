@@ -8939,6 +8939,50 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>((wrapped * 10000) / total));
         });
 
+    // Issue #1905: query:aot-hot-update-stats.
+    // Returns observability for the AOT incremental hot-update /
+    // invalidation loop (build on #1046). 6 counters surfaced:
+    //   - aot_live_closure_refresh_on_mutation_total: every
+    //     aura_refresh_live_closures_for_mutated_define call from
+    //     flush_mutation_boundary outermost exit (Step 2 of #1905).
+    //   - aot_live_closure_refresh_on_steal_total: every refresh
+    //     call from complete_post_resume_steal_refresh (Step 3).
+    //   - aot_bridge_epoch_bump_on_mutation_total: bridge_epoch bump
+    //     driven by outermost MutationBoundaryGuard exit.
+    //   - aot_bridge_epoch_bump_on_steal_total: bridge_epoch bump
+    //     driven by fiber resume / steal.
+    //   - aot_region_mismatch_on_resume_total: per-eval AotState
+    //     region_mask drift on resume (deopt path).
+    //   - aot_stale_deopt_on_steal_total: stale AOT closure dispatch
+    //     on stolen fiber resume (vs the regular jit_closure_stale_deopt_total
+    //     which is the on-AOT path).
+    //
+    // Returns -1 sentinel when aot_stale_deopt_on_steal_total > 0
+    // (grep-friendly regression marker). Otherwise returns the sum
+    // of all 6 counters.
+    //
+    // Returns 0 when no AOT hot-update activity observed yet (a
+    // fresh evaluator with no Guard exits + no steals is not in
+    // violation of the contract — vacuously covered).
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-hot-update-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t refresh_mut = ev->get_aot_live_closure_refresh_on_mutation_total();
+            const std::uint64_t refresh_steal = ev->get_aot_live_closure_refresh_on_steal_total();
+            const std::uint64_t bridge_mut = ev->get_aot_bridge_epoch_bump_on_mutation_total();
+            const std::uint64_t bridge_steal = ev->get_aot_bridge_epoch_bump_on_steal_total();
+            const std::uint64_t region_mismatch = ev->get_aot_region_mismatch_on_resume_total();
+            const std::uint64_t stale_deopt = ev->get_aot_stale_deopt_on_steal_total();
+            if (stale_deopt > 0)
+                return make_int(-1); // regression sentinel
+            return make_int(static_cast<std::int64_t>(refresh_mut + refresh_steal + bridge_mut +
+                                                      bridge_steal + region_mismatch +
+                                                      stale_deopt));
+        });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
