@@ -2602,21 +2602,25 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     if (formal_params.size() != actual_args.size())
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :inline-call: parameter count mismatch"});
-    auto call_parent = flat.parent_of(call_id);
-    if (call_parent == aura::ast::NULL_NODE)
+    // Issue #1702: capture parent edge before DFS clone; re-validate after.
+    if (call_id == aura::ast::NULL_NODE || !flat.is_live_node(call_id))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                                      "batch :inline-call: call has no parent"});
+                                                      "batch :inline-call: call node is not live"});
+    auto call_parent = flat.parent_of(call_id);
     int call_idx_in_parent = -1;
-    auto cpv = flat.get(call_parent);
-    for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
-        if (cpv.child(ci) == call_id) {
-            call_idx_in_parent = static_cast<int>(ci);
-            break;
+    if (call_parent != aura::ast::NULL_NODE && flat.is_live_node(call_parent)) {
+        auto cpv = flat.get(call_parent);
+        for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+            if (cpv.child(ci) == call_id) {
+                call_idx_in_parent = static_cast<int>(ci);
+                break;
+            }
         }
     }
-    if (call_idx_in_parent < 0)
+    if (call_parent == aura::ast::NULL_NODE || call_idx_in_parent < 0)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                                      "batch :inline-call: call index not found"});
+                                                      "batch :inline-call: call has no parent"});
+    const auto size_before_clone = static_cast<std::size_t>(flat.size());
     std::vector<aura::ast::NodeId> old_to_new(flat.size(), aura::ast::NULL_NODE);
     std::vector<aura::ast::NodeId> dfs = {func_body_node};
     while (!dfs.empty()) {
@@ -2703,6 +2707,39 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
             "batch :inline-call: function definition not found for inlining"});
+    // Issue #1702: re-validate call parent after multi-add DFS clone.
+    if (static_cast<std::size_t>(call_id) >= size_before_clone || !flat.is_live_node(call_id))
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :inline-call: call node invalid after DFS clone"});
+    auto parent_slot_ok = [&]() -> bool {
+        if (call_parent == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(call_parent) >= size_before_clone ||
+            !flat.is_live_node(call_parent) || call_idx_in_parent < 0)
+            return false;
+        auto cpv = flat.get(call_parent);
+        return static_cast<std::size_t>(call_idx_in_parent) < cpv.children.size() &&
+               cpv.child(static_cast<std::uint32_t>(call_idx_in_parent)) == call_id;
+    };
+    if (!parent_slot_ok()) {
+        call_parent = flat.parent_of(call_id);
+        call_idx_in_parent = -1;
+        if (call_parent != aura::ast::NULL_NODE &&
+            static_cast<std::size_t>(call_parent) < size_before_clone &&
+            flat.is_live_node(call_parent)) {
+            auto cpv = flat.get(call_parent);
+            for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+                if (cpv.child(ci) == call_id) {
+                    call_idx_in_parent = static_cast<int>(ci);
+                    break;
+                }
+            }
+        }
+        if (!parent_slot_ok())
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :inline-call: call_parent invalid after DFS clone"});
+    }
     flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
     flat.mark_dirty_upward_fast(call_parent);
     flat.add_mutation(call_id, "inline-call", summary, summary, summary);
