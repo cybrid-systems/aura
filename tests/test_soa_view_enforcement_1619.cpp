@@ -208,8 +208,9 @@ static void ac7_lineage() {
     auto adop = cs.eval("(engine:metrics \"query:soa-adoption-stats\")");
     CHECK(adop && is_hash(*adop), "adoption hash");
     auto sch = cs.eval("(hash-ref (engine:metrics \"query:soa-adoption-stats\") \"schema\")");
-    CHECK(sch && is_int(*sch) && (as_int(*sch) == 1619 || as_int(*sch) == 1517),
-          "adoption schema 1619|1517");
+    CHECK(sch && is_int(*sch) &&
+              (as_int(*sch) == 1629 || as_int(*sch) == 1619 || as_int(*sch) == 1517),
+          "adoption schema 1629|1619|1517");
 }
 
 } // namespace

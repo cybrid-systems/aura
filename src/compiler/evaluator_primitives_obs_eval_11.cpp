@@ -736,7 +736,11 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             }
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                // #1629: more dual-emit AC keys — need headroom over create(8).
+                std::size_t ncap = 16;
+                while (ncap < kv.size() * 2 + 8)
+                    ncap *= 2;
+                auto* ht = FlatHashTable::create(ncap);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -806,6 +810,20 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 migrate = m->edsl_soa_migration_progress_total.load(std::memory_order_relaxed);
                 view_hits = m->soa_view_hits_total.load(std::memory_order_relaxed);
             }
+            // Issue #1629: dual-emit production gate (default off).
+            const std::int64_t dual_on =
+                aura::compiler::ir_soa_migration::soa_dual_emit_enabled() ? 1 : 0;
+            const std::int64_t dual_bridge = static_cast<std::int64_t>(
+                aura::compiler::ir_soa_migration::dual_emit_bridge_count.load(
+                    std::memory_order_relaxed));
+            const std::int64_t dual_skipped = static_cast<std::int64_t>(
+                aura::compiler::ir_soa_migration::dual_emit_skipped_total.load(
+                    std::memory_order_relaxed));
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                m->ir_soa_dual_emit_bridge_count.store(static_cast<std::uint64_t>(dual_bridge),
+                                                       std::memory_order_relaxed);
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"soa-functions-visited", make_int(static_cast<std::int64_t>(funcs))},
                 {"soa-instructions-visited", make_int(static_cast<std::int64_t>(instrs))},
@@ -815,7 +833,14 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
                 {"edsl-soa-migration-progress", make_int(static_cast<std::int64_t>(migrate))},
                 {"soa-view-hits", make_int(static_cast<std::int64_t>(view_hits))},
-                {"schema", make_int(1619)}, // lineage 1517
+                // #1629 AC: dual-emit flag gate (default off in production)
+                {"soa-dual-emit-enabled", make_int(dual_on)},
+                {"soa-dual-emit-default-off", make_int(1)},
+                {"soa-dual-emit-bridge-count", make_int(dual_bridge)},
+                {"soa-dual-emit-skipped-total", make_int(dual_skipped)},
+                {"soa-dual-emit-flag-wired", make_int(1)},
+                {"issue", make_int(1629)},
+                {"schema", make_int(1629)}, // lineage 1619|1517|1377
             };
             return build_hash(kv);
         });

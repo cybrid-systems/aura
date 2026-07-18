@@ -17,7 +17,8 @@ module;
 #include <vector>
 
 #include "core/cpp26_contract_stats.h"
-#include "compiler/observability_metrics.h" // Issue #1425: dead_coercion_eliminated_total
+#include "compiler/observability_metrics.h"    // Issue #1425: dead_coercion_eliminated_total
+#include "compiler/jit_typed_mutation_stats.h" // Issue #1629: dual-emit flag early-out
 
 export module aura.compiler.pass_manager;
 import std;
@@ -4284,10 +4285,10 @@ public:
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.
     // Returns true if the wrapped pass returned no errors.
-    // Issue #1377: early-out when single-emit (empty SoA module) —
-    // no to_aos_view conversion cost when dual-emit was off.
+    // Issue #1377 / #1629: early-out when dual-emit flag off or empty SoA —
+    // no to_aos_view conversion cost in production single-emit path.
     bool run(IRModuleV2& soa_mod) {
-        if (soa_mod.functions.empty()) {
+        if (!ir_soa_migration::soa_dual_emit_enabled() || soa_mod.functions.empty()) {
             aos_view_ = aura::ir::IRModule{};
             return true;
         }
