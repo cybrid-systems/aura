@@ -276,7 +276,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     modules_.push_back(mod_env);
     module_cache_[resolved] = mod_idx;
     module_arena_ptrs_[resolved] = &mod_arena;
-    string_heap_.push_back(resolved);
+    // Issue #1668: do not string_heap_.push_back(resolved) — display name
+    // lives in module_names_; the bare heap push never captured an index
+    // (dead pollution on every load_module, same #1488 heuristic class).
     module_names_.push_back(resolved);
 
     // 10b. IR caching callback (registered by CompilerService)

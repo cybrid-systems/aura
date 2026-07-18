@@ -6,7 +6,7 @@ Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
   ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
-  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry
+  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap
   ./build.py gate --fix       # 同上，但 auto-regen docs/registry + lint/format --fix（#1572）
   ./build.py gate --scripts-only  # 跨平台：跳过 clang-format（#1573 Windows 脚本门栅）
   ./build.py ci               # build + CI 测试矩阵
@@ -27,6 +27,7 @@ Usage:
   ./build.py test-registry     # 校验 docs/generated/test-registry.json 新鲜度（#1572）
   ./build.py test-registry --fix  # 重新生成 test-registry.json
   ./build.py fixtures --check  # 校验 tests/fixtures/*.json schema
+  ./build.py dead-heap-push    # dead string_heap_ push audit --strict（#1668）
   ./build.py repro [--verify]  # 可复现 Release 构建（#675）
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
   ./build.py security          # 依赖/文件系统漏洞扫描（#675）
@@ -1542,6 +1543,31 @@ def cmd_test_binding():
     return 0
 
 
+def cmd_dead_heap_push():
+    """Issue #1488 / #1668: dead string_heap_ push pollution audit (strict)."""
+    print(f"{B}═══ Dead string_heap push audit (#1668) ═══{N}")
+    script = ROOT / "scripts" / "audit_dead_heap_push.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    ut = ROOT / "tests" / "test_audit_dead_heap_push.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
+        if r0.returncode != 0:
+            fail("test_audit_dead_heap_push unit tests failed")
+            return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "dead string_heap_ push candidates found — "
+            "run python3 scripts/audit_dead_heap_push.py and remove unused pushes "
+            "(see docs/design/string-heap-pollution.md / dead-heap-push-audit-1668.md)"
+        )
+        return 1
+    ok("dead heap push audit clean")
+    return 0
+
+
 def cmd_gate():
     """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
 
@@ -1552,6 +1578,8 @@ def cmd_gate():
     Issue #1573: pass --scripts-only (or AURA_GATE_SCRIPTS_ONLY=1) to skip
     clang-format — used by the Windows platform-gate job where the C++
     toolchain is not yet production-supported.
+
+    Issue #1668: also runs dead string_heap_ push audit (--strict).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1573,7 +1601,9 @@ def cmd_gate():
         rc = cmd_format()
         if rc:
             return rc
-    return cmd_fixtures() or cmd_primitive_surface() or cmd_test_registry() or cmd_test_binding()
+    return (
+        cmd_fixtures() or cmd_primitive_surface() or cmd_test_registry() or cmd_test_binding() or cmd_dead_heap_push()
+    )
 
 
 def cmd_ci():
@@ -1969,6 +1999,7 @@ def main():
         "lint": cmd_lint,
         "format": cmd_format,
         "test-registry": cmd_test_registry,
+        "dead-heap-push": cmd_dead_heap_push,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
