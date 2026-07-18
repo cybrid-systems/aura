@@ -866,10 +866,12 @@ void Evaluator::yield_mutation_boundary() {
     }
 }
 
-// Issue #1504: Agent-facing safe yield. Never yields while a
-// MutationBoundaryGuard holds workspace_mtx_ (deadlock with #362).
-// When depth==0 / not held: cooperative yield (MutationBoundary reason)
-// so multi-Agent orchestration can interleave without long holds.
+// Issue #1504 / #1635: Agent-facing first-class safe yield (ast:yield-at-boundary).
+// Never yields while a MutationBoundaryGuard holds workspace_mtx_ (#362 deadlock).
+// When depth==0 / not held: cooperative yield with YieldReason::MutationBoundary
+// so multi-Agent orchestration can interleave; GC request_gc_safepoint also
+// defers when depth>0 (wired contract).
+// Returns: 0 = yielded / safe no-fiber, 1 = skipped-held.
 int Evaluator::try_safe_yield_at_boundary(std::int64_t timeout_ms) noexcept {
     (void)timeout_ms; // reserved: future preemptive soft deadline
     const std::size_t depth = mutation_boundary_depth();

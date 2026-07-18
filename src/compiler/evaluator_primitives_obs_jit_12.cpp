@@ -493,8 +493,8 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1591 AC name: query:per-fiber-mutation-depth-stats
-    // Alias of query:per-fiber-mutation-stack-stats (same fields + schema 1591).
+    // Issue #1591 / #1635: query:per-fiber-mutation-depth-stats
+    // Alias of query:per-fiber-mutation-stack-stats (schema 1635 lineage).
     ObservabilityPrims::register_stats_impl(
         "query:per-fiber-mutation-depth-stats", [&ev](const auto&) -> EvalValue {
             const std::int64_t lifetime_max =
@@ -545,8 +545,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv(
                 "safepoint-wait-while-mutation-held-us",
                 static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
-            insert_kv("issue", 1591);
-            insert_kv("schema", 1591);
+            insert_kv("gc-safepoint-depth-check-wired", 1);
+            insert_kv("safe-yield-mandate-active", 1);
+            insert_kv("issue", 1635);
+            insert_kv("schema", 1635); // lineage 1591 / 1504
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

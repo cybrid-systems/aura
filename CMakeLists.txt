@@ -5213,6 +5213,9 @@ aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)
 # Issue #1591: mutation-boundary safe-yield + fairness stats (schema 1591).
 aura_add_issue_test(test_mutation_boundary_fairness_1591)
 aura_issue_test_link_llvm_jit(test_mutation_boundary_fairness_1591)
+# Issue #1635: first-class safe yield + per-fiber depth orchestration mandate
+aura_add_issue_test(test_safe_yield_orchestration_1635)
+aura_issue_test_link_llvm_jit(test_safe_yield_orchestration_1635)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
