@@ -975,6 +975,11 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     // probe_linear_ownership_at_gc_safepoint must use the same order.
     std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    // Issue #1665: TW tombstone = bridge_epoch==0 while tracking is active
+    // (current_bridge_epoch != 0). bridge_epoch==0 with tracking inactive is
+    // the unstamped/default stamp, NOT a free. Never gate on JIT
+    // g_closure_freed / aura_closure_is_freed (separate heap; OOB → "freed").
+    const auto cur_bridge = current_bridge_epoch();
     for (auto& [id, cl] : closures_) {
         (void)id;
         ++out.examined;
@@ -996,6 +1001,10 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
         ++out.with_linear_capture;
         if (has_moved)
             ++out.with_moved_capture;
+        // Already force-dropped under active tracking: skip re-mark /
+        // counter inflation (#1665). Still counted above for audit.
+        if (cur_bridge != 0 && cl.bridge_epoch == 0)
+            continue;
         const bool should_mark = mark_invalid && (!only_if_moved || has_moved);
         if (should_mark) {
             // Force safe_fallback on next apply regardless of later
@@ -1024,6 +1033,15 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
     closures_[id] = std::move(cl);
     return id;
+}
+
+// Issue #1665: durable free for tree-walker closures_ map (Option B).
+// JIT runtime free uses aura_free_closure + g_closure_freed (#1361) —
+// that table is separate from Evaluator::closures_. Erasing here is the
+// TW equivalent so scan_live_closures never iterates dead entries.
+bool Evaluator::erase_active_closure(ClosureId id) noexcept {
+    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    return closures_.erase(id) > 0;
 }
 
 std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {

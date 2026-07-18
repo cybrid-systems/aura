@@ -1644,20 +1644,23 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(prev * 100.0));
     });
 
-    // Issue #1361: free JIT/runtime closure env by id (opt-in; ID may be reused).
-    // Accepts int id (JIT runtime closure id) or a Closure value (tree-walker
-    // ClosureId — free is a no-op success for tree-walker; JIT path is the leak).
+    // Issue #1361 / #1665: free closure by id.
+    // - int id → JIT runtime table (aura_free_closure + g_closure_freed)
+    // - Closure value → tree-walker Evaluator::closures_ erase (#1665
+    //   durable free so scan_live_closures never iterates dead slots)
     add("closure:free!", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
         if (a.empty())
             return make_bool(false);
         if (is_int(a[0])) {
             aura_free_closure(as_int(a[0]));
             return make_bool(true);
         }
-        // Tree-walker Closure values use a different heap; free is opt-in no-op.
-        if (is_closure(a[0]))
+        // Issue #1665: erase TW map entry (was no-op; left dead slots in scan).
+        if (is_closure(a[0])) {
+            const auto cid = static_cast<ClosureId>(as_closure_id(a[0]));
+            (void)ev.erase_active_closure(cid);
             return make_bool(true);
+        }
         return make_bool(false);
     });
 
