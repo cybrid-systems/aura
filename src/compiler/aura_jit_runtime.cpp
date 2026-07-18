@@ -572,14 +572,29 @@ static std::shared_mutex g_closure_table_mtx;
 // Issue #1485 C2: per-closure provenance accessors (extern "C") for
 // JIT emit-side freshness probe infrastructure. Reads under shared lock
 // so concurrent alloc/free (which resize these vectors under
-// g_closure_table_mtx unique_lock) don't race. Out-of-range closure_id
-// returns 0 — the same convention as the inline read in aura_closure_call.
-// Declared AFTER g_closure_table_mtx (fix-scope static must precede use).
+// g_closure_table_mtx unique_lock) don't race.
+//
+// Issue #1706: out-of-range returns 0 for bridge_epoch / defuse_version
+// (legacy #1485 convention, same as aura_closure_call inline read).
+// 0 is ALSO a valid epoch for a newly allocated live slot — callers
+// MUST disambiguate with aura_closure_exists(id) first (Option B).
+// Declared AFTER g_closure_table_mtx (file-scope static must precede use).
+extern "C" int aura_closure_exists(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return 0;
+    std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    // Slot was allocated at least once (may still be freed — pair with
+    // aura_closure_is_freed for live-call gating).
+    return cid < g_closure_func_ids.size() ? 1 : 0;
+}
+
 extern "C" std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
     std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
     const auto cid = static_cast<std::size_t>(closure_id);
+    // #1706: 0 = OOR *or* valid epoch 0 — use aura_closure_exists first.
     return cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
 }
 
@@ -588,6 +603,7 @@ extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id
         return 0;
     std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
     const auto cid = static_cast<std::size_t>(closure_id);
+    // #1706: 0 = OOR *or* valid version 0 — use aura_closure_exists first.
     return cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
 }
 

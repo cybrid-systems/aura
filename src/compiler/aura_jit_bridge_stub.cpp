@@ -71,6 +71,11 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_current_bridge_epoch(voi
 // aura_jit_runtime.cpp; test binaries that don't link it (light JIT
 // bundles) get the degenerate return-0 path. Weak so production impl
 // wins when both are linked.
+// Issue #1706: exists stub always 0 (no table in light bundles).
+extern "C" __attribute__((weak)) int aura_closure_exists(std::int64_t /*closure_id*/) {
+    return 0;
+}
+
 extern "C" __attribute__((weak)) std::uint64_t
 aura_get_closure_bridge_epoch(std::int64_t /*closure_id*/) {
     return 0;
