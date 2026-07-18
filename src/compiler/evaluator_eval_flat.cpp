@@ -2151,7 +2151,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     }
     flat.commit_atomic_batch();
     invalidate_tag_arity_index();
-    flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
+    // Issue #1696: multi-node op — NULL_NODE sentinel, not NodeId 0.
+    flat.add_mutation(aura::ast::NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);
     return make_bool(true);
 }
 
@@ -2413,7 +2414,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :rename-symbol: symbol \"" + old_name +
                                                           "\" not found in AST"});
-    flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
+    // Issue #1696: multi-node rename — NULL_NODE sentinel, not NodeId 0.
+    flat.add_mutation(aura::ast::NULL_NODE, "rename-symbol", old_name, new_name, summary);
     return make_bool(true);
 }
 

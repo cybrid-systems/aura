@@ -2731,7 +2731,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // mutate:replace-pattern return only live nodes.
         ev.invalidate_tag_arity_index();
 
-        flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
+        // Issue #1696: multi-node op — log under NULL_NODE, not 0
+        // (0 is a real NodeId; NULL_NODE = ~0u is the multi-op sentinel).
+        flat.add_mutation(NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
     });
 
@@ -4044,7 +4046,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 std::string("symbol \"") + old_name + "\" not found in AST");
         }
 
-        flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
+        // Issue #1696: rename may touch many Variable sites — multi-node log.
+        flat.add_mutation(NULL_NODE, "rename-symbol", old_name, new_name, summary);
         return make_bool(true);
     });
 

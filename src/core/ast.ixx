@@ -5770,13 +5770,18 @@ public:
                                           0, false);
     }
 
-    // Record a mutation with rollback data (field_offset + old/new_value)
+    // Record a mutation with rollback data (field_offset + old/new_value).
+    // Issue #1696: node may be NULL_NODE for multi-node ops
+    // (replace-pattern, rename-symbol). NULL_NODE is ~0u, not 0 — bare
+    // 0 is a real NodeId and must not stand in for "whole-tree / N-sites".
+    // When node is NULL_NODE, skip mark_dirty_upward and node_first_mutation_
+    // (no single target; callers already dirtied individual sites).
     std::uint64_t add_mutation_with_rollback(const NodeId node, std::string_view op_name,
                                              std::string_view old_type, std::string_view new_type,
                                              std::string_view summary, MutationStatus status,
                                              std::uint32_t field_offset, std::uint64_t old_value,
                                              std::uint64_t new_value, bool has_rollback)
-        pre(node < tag_.size()) post(r : r >= 1) {
+        pre(node == NULL_NODE || node < tag_.size()) post(r : r >= 1) {
         const std::uint64_t mid = next_mutation_id_++;
         // Issue #1355: under render lightweight checkpoint, field-level
         // records go to a side stack (not mutation_log_) so hot-path
@@ -5800,7 +5805,8 @@ public:
             });
             lightweight_frames_.back().push_back(std::move(rec));
             lightweight_records_total_.fetch_add(1, std::memory_order_relaxed);
-            mark_dirty_upward(node);
+            if (node != NULL_NODE)
+                mark_dirty_upward(node);
             return mid;
         }
         mutation_log_.push_back(mutation::create_mutation_record({
@@ -5819,9 +5825,11 @@ public:
             .parent_mutation_id = mutation_parent_mutation_id_,
             .composite_transaction_id = mutation_composite_transaction_id_,
         }));
-        mark_dirty_upward(node);
-        if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
-            node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
+        if (node != NULL_NODE) {
+            mark_dirty_upward(node);
+            if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0)
+                node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
+        }
         // Issue #1362: auto-compact committed prefix when log is huge
         maybe_auto_compact_mutation_log();
         return mid;
