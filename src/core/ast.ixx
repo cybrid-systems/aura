@@ -3063,6 +3063,47 @@ public:
             });
     }
 
+    // Issue #1685 / #1687: re-resolve a Define after parse_to_flat appends
+    // into this FlatAST. Prefer `preferred` when it is still a live matching
+    // Define in [0, size_before_parse); otherwise scan that range only so a
+    // parse-appended full "(define name ...)" form is not mistaken for the
+    // original binding (and free-list recycle at lower ids is detected).
+    [[nodiscard]] NodeId resolve_define_after_parse(SymId sym, NodeId preferred,
+                                                    std::size_t size_before_parse) const {
+        const auto limit = std::min(size_before_parse, static_cast<std::size_t>(size()));
+        if (preferred != NULL_NODE && static_cast<std::size_t>(preferred) < limit &&
+            !is_free_slot(preferred)) {
+            auto v = get(preferred);
+            if (v.tag == NodeTag::Define && v.sym_id == sym)
+                return preferred;
+        }
+        for (NodeId id = 0; static_cast<std::size_t>(id) < limit; ++id) {
+            if (is_free_slot(id))
+                continue;
+            auto v = get(id);
+            if (v.tag == NodeTag::Define && v.sym_id == sym)
+                return id;
+        }
+        return NULL_NODE;
+    }
+
+    // Issue #1687: after resolve_define_after_parse, re-derive the Lambda
+    // child of a (define (name ...) ...) form. Returns NULL_NODE if the
+    // Define is missing or its value child is not a Lambda.
+    [[nodiscard]] NodeId resolve_lambda_child_of_define(NodeId define_id) const {
+        if (define_id == NULL_NODE || define_id >= size() || is_free_slot(define_id))
+            return NULL_NODE;
+        auto v = get(define_id);
+        if (v.tag != NodeTag::Define || v.children.size() != 1)
+            return NULL_NODE;
+        auto lambda_id = v.child(0);
+        if (lambda_id >= size() || is_free_slot(lambda_id))
+            return NULL_NODE;
+        if (get(lambda_id).tag != NodeTag::Lambda)
+            return NULL_NODE;
+        return lambda_id;
+    }
+
     [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
                                          std::span<const NodeId> ctors) {
         auto id = add_node(NodeTag::DefineType);
