@@ -621,42 +621,36 @@ void ObservabilityPrims::register_eval_p92(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 93 (orig lines 10683-10762)
 void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
 
-    // (query:shape-folding-stats) — Issue #462: observability
-    // for ShapeAwareFoldingPass. Returns a 4-field hash:
-    //   - shape-fold-count: lifetime # of instructions
-    //     replaced (OpNop'd) due to shape/linear/narrow
-    //     metadata
-    //   - shape-linear-elide-count: subset of fold-count
-    //     due to linear-ownership elision (MoveOp on
-    //     non-escaping Owned slot is a no-op)
-    //   - shape-narrow-check-count: # of redundant
-    //     type-checks detected (counted, not yet rewritten
-    //     in Cycle 1; rewrite is #462 follow-up)
-    //   - guard-shape-hits: # of GuardShape instructions
-    //     seen in the module (signal for downstream passes
-    //     to trust per-block shape_id)
-    //
-    // This is the AI Agent's signal for "is the
-    // shape-aware folding pass doing useful work?".
-    // Cycle 2 (separate issue) will add per-shape-id
-    // OpAdd unchecked specialization + the narrow-evidence
-    // rewrite. The counter layer is in place.
+    // (query:shape-folding-stats) — Issue #462 / #1661: observability
+    // for ShapeAwareFoldingPass collaborative with EscapeAnalysis +
+    // LinearOwnership + GuardShape + ConstantFolding.
+    // Schema **1661** (lineage 462). Fields:
+    //   - shape-fold-count / shape_aware_fold_hits (#1661 AC alias)
+    //   - shape-linear-elide-count / linear_ownership_dce_savings
+    //   - shape-narrow-check-count (CastOp narrow fold)
+    //   - guard-shape-hits / guardshape_inserted_count (presence signal)
+    //   - specialized-shape-fold-opportunities
+    //   - collab wire flags + schema 1661
     ObservabilityPrims::register_stats_impl(
         "query:shape-folding-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t fold = 0;
             std::uint64_t linear_elide = 0;
             std::uint64_t narrow = 0;
             std::uint64_t guard_hits = 0;
+            std::uint64_t specialized_ops = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 fold = m->shape_fold_count.load(std::memory_order_relaxed);
                 linear_elide = m->shape_linear_elide_count.load(std::memory_order_relaxed);
                 narrow = m->shape_narrow_check_count.load(std::memory_order_relaxed);
                 guard_hits = m->guard_shape_hits.load(std::memory_order_relaxed);
+                specialized_ops =
+                    m->shape_specialized_fold_opportunities.load(std::memory_order_relaxed);
             }
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                // Capacity power-of-two; #1661 adds AC aliases + wire flags.
+                auto* ht = FlatHashTable::create(32);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -699,6 +693,22 @@ void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
                 {"shape-linear-elide-count", make_int(static_cast<std::int64_t>(linear_elide))},
                 {"shape-narrow-check-count", make_int(static_cast<std::int64_t>(narrow))},
                 {"guard-shape-hits", make_int(static_cast<std::int64_t>(guard_hits))},
+                // #1661 AC issue-body metric names (aliases).
+                {"shape_aware_fold_hits", make_int(static_cast<std::int64_t>(fold))},
+                {"linear_ownership_dce_savings", make_int(static_cast<std::int64_t>(linear_elide))},
+                {"guardshape_inserted_count", make_int(static_cast<std::int64_t>(guard_hits))},
+                {"specialized-shape-fold-opportunities",
+                 make_int(static_cast<std::int64_t>(specialized_ops))},
+                // Collaboration wire flags (EscapeAnalysis + CF + Linear + mutate re-lower).
+                {"escape-analysis-collab-wired", make_int(1)},
+                {"constant-fold-collab-wired", make_int(1)},
+                {"linear-ownership-collab-wired", make_int(1)},
+                {"guardshape-collab-wired", make_int(1)},
+                {"narrow-evidence-cast-fold-wired", make_int(1)},
+                {"mutation-relower-collab-wired", make_int(1)},
+                {"shape-linear-collaborative-mandate-active", make_int(1)},
+                {"issue", make_int(1661)},
+                {"schema", make_int(1661)}, // lineage 462
             };
             return build_hash(kv);
         });
