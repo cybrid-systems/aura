@@ -5383,6 +5383,9 @@ aura_issue_test_link_llvm_jit(test_module_prefix_dead_heap_1693)
 # Issue #1694: replace-pattern re-validate parent after each parse_to_flat.
 aura_add_issue_test(test_mutate_replace_pattern_stale_parent_1694)
 aura_issue_test_link_llvm_jit(test_mutate_replace_pattern_stale_parent_1694)
+# Issue #1695: QueryMatcher captures are StableNodeRef (not raw NodeId).
+aura_add_issue_test(test_matcher_stable_captures_1695)
+aura_issue_test_link_llvm_jit(test_matcher_stable_captures_1695)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

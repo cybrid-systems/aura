@@ -1576,9 +1576,11 @@ void register_workspace_query_primitives(
                 auto name = pat_pool->resolve(kv.first);
                 if (name.empty() || name[0] != '?')
                     continue;
-                int64_t bind_value = static_cast<int64_t>(kv.second);
-                if (kv.second < ws.workspace_flat->size()) {
-                    auto wsn = ws.workspace_flat->get(kv.second);
+                // Issue #1695: capture values are StableNodeRef.
+                const auto cap_id = kv.second.id;
+                int64_t bind_value = static_cast<int64_t>(cap_id);
+                if (cap_id != aura::ast::NULL_NODE && cap_id < ws.workspace_flat->size()) {
+                    auto wsn = ws.workspace_flat->get(cap_id);
                     if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
                         bind_value = wsn.int_value;
                     }

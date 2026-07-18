@@ -95,7 +95,8 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
     // the query site. The capture uses a sentinel sym_id (0)
     // so `?x` lookups never collide.
     if (is_wildcard(pat_id)) {
-        state.captures.emplace_back(static_cast<SymId>(0), ws_id);
+        // Issue #1695: StableNodeRef capture (gen-tagged).
+        state.captures.emplace_back(static_cast<SymId>(0), ref_of(ws_id));
         return true;
     }
 
@@ -104,9 +105,11 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
         auto key = pat_node.sym_id;
         for (auto& kv : state.captures) {
             if (kv.first == key) {
-                if (kv.second >= ws_flat_->size())
+                // Issue #1695: read NodeId from StableNodeRef.
+                const auto bound_id = kv.second.id;
+                if (bound_id == NULL_NODE || bound_id >= ws_flat_->size())
                     return false;
-                auto bound = ws_flat_->get(kv.second);
+                auto bound = ws_flat_->get(bound_id);
                 if (bound.tag != ws_node.tag)
                     return false;
                 switch (bound.tag) {
@@ -119,11 +122,11 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
                         return ws_pool_->resolve(bound.sym_id) == ws_pool_->resolve(ws_node.sym_id);
                     default:
                         // Composite node: fall back to identity
-                        return kv.second == ws_id;
+                        return bound_id == ws_id;
                 }
             }
         }
-        state.captures.emplace_back(key, ws_id);
+        state.captures.emplace_back(key, ref_of(ws_id));
         return true;
     }
 
@@ -244,7 +247,8 @@ bool QueryMatcher::match_list(std::span<const NodeId> ws_ch, std::span<const Nod
             return true;
         state.captures.resize(save);
         // Path B: consume 1 child + recurse on the rest.
-        state.captures.emplace_back(static_cast<SymId>(0), ws_ch[0]);
+        // Issue #1695: StableNodeRef capture.
+        state.captures.emplace_back(static_cast<SymId>(0), ref_of(ws_ch[0]));
         return match_list(ws_ch.subspan(1), pat_ch);
     }
     // Fixed position: 1 ws child consumed, 1 pat element consumed.

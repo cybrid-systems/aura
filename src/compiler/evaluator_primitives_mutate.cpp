@@ -2594,9 +2594,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             PatternMatch pm;
             pm.match_ref = flat.make_ref(id);
+            // Issue #1695: matcher already stores StableNodeRef captures
+            // (gen-tagged at match time); copy through, do not re-make_ref
+            // from a raw NodeId after later parse_to_flat iterations.
             pm.capture_refs.reserve(matcher.state.captures.size());
             for (auto& kv : matcher.state.captures)
-                pm.capture_refs.push_back(flat.make_ref(kv.second));
+                pm.capture_refs.push_back(kv.second);
             matches.push_back(std::move(pm));
         }
 

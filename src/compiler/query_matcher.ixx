@@ -34,8 +34,11 @@ namespace aura::compiler {
 // Per-match state. The captures vector is insertion-ordered; the
 // matcher uses savepoint / resize-back for backtracking. Linear
 // scan lookup is fine for typical patterns (≤10 captures).
+// Issue #1695: values are StableNodeRef (not raw NodeId) so
+// mutate:replace-pattern / query:pattern share generation-tagged
+// provenance at capture time (Issue #818 pattern).
 export struct QueryMatchState {
-    std::vector<std::pair<SymId, NodeId>> captures;
+    std::vector<std::pair<SymId, FlatAST::StableNodeRef>> captures;
     bool nested_arity = false; // true = Kleene (0..N), false = strict (exactly 1)
     int depth = 0;
 };
@@ -73,7 +76,8 @@ public:
     // bound as locals. If the guard returns false, the match is
     // rejected.
     struct PendingGuard {
-        std::vector<std::pair<SymId, NodeId>> captures;
+        // Issue #1695: StableNodeRef captures (same as QueryMatchState).
+        std::vector<std::pair<SymId, FlatAST::StableNodeRef>> captures;
         std::string guard_expr;
     };
     std::vector<PendingGuard> pending_guards_;
@@ -111,6 +115,13 @@ public:
     QueryMatchState state;
 
 private:
+    // Issue #1695: bind workspace nodes as StableNodeRef at capture.
+    [[nodiscard]] FlatAST::StableNodeRef ref_of(NodeId id) const {
+        if (!ws_flat_ || id == NULL_NODE)
+            return FlatAST::StableNodeRef{};
+        return ws_flat_->make_ref(id);
+    }
+
     FlatAST* ws_flat_;
     StringPool* ws_pool_;
     FlatAST* pat_flat_;
