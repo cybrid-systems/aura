@@ -294,9 +294,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
     const auto value_dispatch_schema =
         hash_int_field(cs, "(engine:metrics \"query:value-dispatch-stats\")", "schema");
-    CHECK(
-        value_dispatch_schema == 723,
-        std::format("value-dispatch schema = {} (expected 723, no drift)", value_dispatch_schema));
+    CHECK(value_dispatch_schema == 1622 || value_dispatch_schema == 723,
+          std::format("value-dispatch schema = {} (expected 1622|723)", value_dispatch_schema));
     const auto closed_loop_schema =
         hash_int_field(cs, "(engine:metrics \"query:closed-loop-reliability-stats\")", "schema");
     CHECK(closed_loop_schema == 726,

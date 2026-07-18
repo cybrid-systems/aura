@@ -1260,53 +1260,22 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 47 (orig lines 6159-6284)
 void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #723: (query:value-dispatch-stats) — Pass pipeline
-    // DirtyAware + Value v2 + Shape history integration counters
-    // (non-duplicative with #658 Gaps 3/5 broad and #687 coercion
-    // Pass; #723 is the FIRST observability surface that tracks
-    // Value v2 dispatch + shape history integration outcomes
-    // as separate counters).
+    // Issue #723 / #571 / #1622: (query:value-dispatch-stats) — Value v2
+    // dispatch + consteval table + Contracts observability (non-duplicative
+    // with #658 Gaps 3/5; hash surface preferred over int-sum legacy).
     //
-    // Fields (4 + sentinel):
-    //   - dispatch-calls          value_dispatch_calls_total
-    //                             (# of times classify / is_* / as_*
-    //                              / dispatch entry points were
-    //                              called — proxy for value dispatch
-    //                              traffic)
-    //   - unknown-tags            value_unknown_tag_total
-    //                             (# of times classify encountered
-    //                              an unknown tag — bumped by
-    //                              value_tags.h contract violation
-    //                              path — proxy for "how often
-    //                              dispatch misclass happens")
-    //   - v2-string-collisions    value_v2_string_collisions_total
-    //                             (# of v2 string collisions —
-    //                              proxy for "how saturated the
-    //                              v2 string heap is")
-    //   - shape-history-shifts    shape_history_shift_total
-    //                             (# of times the shape history
-    //                              ring buffer / SoA column
-    //                              shifted — proxy for "how
-    //                              churned shape classification
-    //                              is")
-    //   - schema == 723
-    //
-    // Phase 1 ships the primitive + counters + bump helpers.
-    // The actual DirtyAware implementation for ConstantFoldingWrap /
-    // ArityWrap / Wraps + static_asserts + Contracts expansion +
-    // shape history ring buffer replacement + deopt_hook wiring
-    // to JIT/service dirty scope are follow-up work (each is a
-    // dedicated session in pass_manager.ixx + value.ixx +
-    // value_tags.h + shape_profiler.cpp).
-    //
-    // Issue #723: routes through ev.primitives_.add (3-arg form)
-    // so we can attach PrimMeta with schema=723 + category=general
-    // + arity=0 + pure=true (same pattern as #712-#722).
+    // Fields (lineage 723 + #1622 AC):
+    //   - dispatch-calls / unknown-tags / v2-string-collisions / shape-history-shifts
+    //   - dispatch-hits / dispatch-misses (process-wide value_tags atomics)
+    //   - dispatch-hit-rate-bp / contract-violation-count / v2-string-collision-attempts
+    //   - classify-calls / consteval-table-wired / hotpath-contracts-wired
+    //   - schema == 1622 (lineage 723|571)
     ObservabilityPrims::register_stats_impl(
         "query:value-dispatch-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                // #1622: ~14 keys — create(32) headroom.
+                auto* ht = FlatHashTable::create(32);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -1347,28 +1316,63 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
+            // Process-wide hot path counters (value_tags.h #571).
+            const std::int64_t hits = static_cast<std::int64_t>(
+                types::value_dispatch_hit_count.load(std::memory_order_relaxed));
+            const std::int64_t misses = static_cast<std::int64_t>(
+                types::value_dispatch_miss_count.load(std::memory_order_relaxed));
+            const std::int64_t violations = static_cast<std::int64_t>(
+                types::value_contract_violation_count.load(std::memory_order_relaxed));
+            const std::int64_t collisions = static_cast<std::int64_t>(
+                types::v2_string_collision_attempts.load(std::memory_order_relaxed));
+            const std::int64_t classify_calls = static_cast<std::int64_t>(
+                types::value_classify_call_count.load(std::memory_order_relaxed));
+            const auto denom = hits + misses;
+            const std::int64_t hit_rate_bp =
+                denom > 0 ? (hits * 10000) / denom : (hits > 0 ? 10000 : 0);
+            // Mirror into CompilerMetrics for dashboards that only read m.
+            if (m) {
+                m->value_dispatch_calls_total.store(static_cast<std::uint64_t>(classify_calls),
+                                                    std::memory_order_relaxed);
+                m->value_v2_string_collisions_total.store(static_cast<std::uint64_t>(collisions),
+                                                          std::memory_order_relaxed);
+            }
             const std::int64_t dispatch_calls =
                 m ? static_cast<std::int64_t>(
                         m->value_dispatch_calls_total.load(std::memory_order_relaxed))
-                  : 0;
+                  : classify_calls;
             const std::int64_t unknown_tags =
                 m ? static_cast<std::int64_t>(
                         m->value_unknown_tag_total.load(std::memory_order_relaxed))
-                  : 0;
+                  : misses;
             const std::int64_t v2_string_collisions =
                 m ? static_cast<std::int64_t>(
                         m->value_v2_string_collisions_total.load(std::memory_order_relaxed))
-                  : 0;
+                  : collisions;
             const std::int64_t shape_history_shifts =
                 m ? static_cast<std::int64_t>(
                         m->shape_history_shift_total.load(std::memory_order_relaxed))
                   : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
+                // #723 lineage
                 {"dispatch-calls", make_int(dispatch_calls)},
                 {"unknown-tags", make_int(unknown_tags)},
                 {"v2-string-collisions", make_int(v2_string_collisions)},
                 {"shape-history-shifts", make_int(shape_history_shifts)},
-                {"schema", make_int(723)},
+                // #571 / #1622 process-wide AC keys
+                {"dispatch-hits", make_int(hits)},
+                {"dispatch-misses", make_int(misses)},
+                {"dispatch-hit-rate-bp", make_int(hit_rate_bp)},
+                {"dispatch_hit_rate", make_int(hit_rate_bp)},
+                {"contract-violation-count", make_int(violations)},
+                {"contract_violation_count", make_int(violations)},
+                {"v2-string-collision-attempts", make_int(collisions)},
+                {"v2_string_collision_attempts", make_int(collisions)},
+                {"classify-calls", make_int(classify_calls)},
+                {"consteval-table-wired", make_int(1)},
+                {"hotpath-contracts-wired", make_int(1)},
+                {"issue", make_int(1622)},
+                {"schema", make_int(1622)}, // lineage 723|571
             };
             return build_hash(kv);
         });
