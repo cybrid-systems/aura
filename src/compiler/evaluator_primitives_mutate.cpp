@@ -117,7 +117,19 @@ namespace {
         return walk(walk, root);
     }
 
+    // Issue #469 / #1683: SV hardware closed-loop after structural mutate.
+    // Pin workspace_flat_ + workspace_pool_ for the multi-call window so a
+    // concurrent COW cannot swap ws under us while pool is re-read later.
+    // If this fiber already holds MutationBoundaryGuard's unique lock,
+    // skip shared acquire (std::shared_mutex is not recursive).
     void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
+        const bool outer_unique =
+            ev.mutation_boundary_held() || ev.mutation_boundary_depth_slot_value() > 0;
+        std::optional<Evaluator::WorkspaceSharedLock> shared;
+        if (!outer_unique)
+            shared.emplace(ev);
+
+        // Re-read under the lock (or under outer unique) so ws/pool match.
         auto* ws = ev.workspace_flat();
         if (!ws || node >= ws->size())
             return;
