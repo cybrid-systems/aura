@@ -5371,6 +5371,9 @@ aura_issue_test_link_llvm_jit(test_mutate_remove_node_parent_index_1689)
 # Issue #1690: insert-child re-validate parent after parse_to_flat.
 aura_add_issue_test(test_mutate_insert_child_stale_parent_1690)
 aura_issue_test_link_llvm_jit(test_mutate_insert_child_stale_parent_1690)
+# Issue #1691: no dead define_str string_heap_ push in refactor/extract.
+aura_add_issue_test(test_mutate_dead_heap_define_str_1691)
+aura_issue_test_link_llvm_jit(test_mutate_dead_heap_define_str_1691)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

@@ -3787,8 +3787,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "node " + std::to_string(node) + " has no parent in the AST");
             }
 
-            // Create the new function definition string (local only —
-            // Issue #1488: do not push unused define_str into string_heap_).
+            // Create the new function definition string (local stack only).
+            // Issue #1488 / #1691: do NOT push define_str into string_heap_ —
+            // parse_to_flat takes the std::string directly; define_idx was
+            // never consumed (dead heap pollution).
             std::string define_str = "(define (" + new_name + " x) x)";
 
             // Parse the define into workspace
