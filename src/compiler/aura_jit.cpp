@@ -3066,6 +3066,22 @@ void AuraJIT::record_consistency_result(bool match) noexcept {
     }
 }
 
+// Issue #1658: CI/debug consistency gate. Under strict mode (default ON),
+// compile() already folds unhandled → consistency_violations; this entry
+// re-reads the counter so agents/tests can assert zero violations without
+// a new public EDSL primitive (SlimSurface / engine:metrics only).
+bool AuraJIT::force_jit_consistency_check() noexcept {
+    if (strict_consistency_mode_) {
+        const auto unhandled = metrics_.unhandled_opcode_count.load(std::memory_order_relaxed);
+        // Unhandled without a prior compile-fail fold still counts as a
+        // consistency risk (e.g. metrics-only test harness mirrors).
+        if (unhandled > 0 && metrics_.consistency_violations.load(std::memory_order_relaxed) == 0) {
+            metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return metrics_.consistency_violations.load(std::memory_order_relaxed) == 0;
+}
+
 std::uint64_t AuraJIT::opcode_coverage_count() const noexcept {
     const auto mask = metrics_.opcode_covered_mask.load(std::memory_order_relaxed);
     // popcount of lower kTrackedOpcodeCount bits
@@ -3724,6 +3740,15 @@ void AuraJIT::record_consistency_result(bool match) noexcept {
         metrics_.consistency_match_total.fetch_add(1, std::memory_order_relaxed);
     else
         metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+}
+bool AuraJIT::force_jit_consistency_check() noexcept {
+    if (strict_consistency_mode_) {
+        const auto unhandled = metrics_.unhandled_opcode_count.load(std::memory_order_relaxed);
+        if (unhandled > 0 && metrics_.consistency_violations.load(std::memory_order_relaxed) == 0) {
+            metrics_.consistency_violations.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    return metrics_.consistency_violations.load(std::memory_order_relaxed) == 0;
 }
 std::uint64_t AuraJIT::opcode_coverage_count() const noexcept {
     return 0;
