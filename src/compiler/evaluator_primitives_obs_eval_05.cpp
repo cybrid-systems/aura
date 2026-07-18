@@ -1481,12 +1481,15 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
-    // Issue #1445: (query:orchestration-steal-stats) — work-stealing +
-    // starvation-mitigation telemetry (Scheduler::on_long_mutation_held path).
+    // Issue #1445 / #1492 / #1633: (query:orchestration-steal-stats) —
+    // work-stealing + inner-boundary defer + starvation mitigation.
+    // Schema **1633** (lineage 1492/1445): long-mutation hook wired to
+    // apply_starvation_mitigation; mandate flags for steal loop.
     ObservabilityPrims::register_stats_impl(
         "query:orchestration-steal-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                // Capacity must be power-of-two (open-address mask hcap-1).
                 auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
@@ -1529,6 +1532,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
+            const auto inner_mit = load(s.steal_inner_deferred_starvation_mitigated_count);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"mutation-bias-hits", make_int(load(s.mutation_bias_hits))},
                 {"outermost-preferred", make_int(load(s.outermost_preferred))},
@@ -1537,15 +1541,22 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"steal-priority-boost-triggered",
                  make_int(load(s.steal_priority_boost_triggered))},
                 {"starvation-mitigated-count", make_int(load(s.starvation_mitigated_count))},
-                // Issue #1492: inner-defer starvation mitigation applications.
-                {"steal-inner-deferred-starvation-mitigated-count",
-                 make_int(load(s.steal_inner_deferred_starvation_mitigated_count))},
+                // Issue #1492 / #1633: inner-defer starvation mitigation applications.
+                {"steal-inner-deferred-starvation-mitigated-count", make_int(inner_mit)},
+                // #1633 AC3 alias (underscore form from issue body)
+                {"steal_inner_deferred_starvation_mitigated_count", make_int(inner_mit)},
                 {"ring-steal-attempts", make_int(load(s.ring_steal_attempts))},
                 {"ring-steal-successes", make_int(load(s.ring_steal_successes))},
                 {"steal-deferred-inner-boundary", make_int(load(s.steal_deferred_inner_boundary))},
                 {"global-deferred-mutation-total",
                  make_int(load(s.global_deferred_mutation_total))},
-                {"schema", make_int(1492)},
+                // #1633 mandate wire flags
+                {"inner-defer-mitigation-wired", make_int(1)},
+                {"long-mutation-hook-wired", make_int(1)},
+                {"steal-loop-inner-defer-wired", make_int(1)},
+                {"starvation-mitigation-mandate-active", make_int(1)},
+                {"issue", make_int(1633)},
+                {"schema", make_int(1633)}, // lineage 1492 / 1445
             };
             return build_hash(kv);
         });

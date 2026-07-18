@@ -5134,6 +5134,9 @@ aura_add_issue_test(test_issue_1491)
 aura_issue_test_link_llvm_jit(test_issue_1491)
 # Issue #1492: nested MutationBoundary steal defer + starvation mitigation.
 aura_add_issue_test(test_issue_1492)
+# Issue #1633: nested MutationBoundary steal defer + starvation mitigation mandate
+aura_add_issue_test(test_inner_steal_starvation_1633)
+aura_issue_test_link_llvm_jit(test_inner_steal_starvation_1633)
 aura_issue_test_link_llvm_jit(test_issue_1492)
 # Issue #1493: per-fiber mutation depth / adaptive safepoint observability.
 aura_add_issue_test(test_issue_1493)
