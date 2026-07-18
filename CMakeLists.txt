@@ -5265,6 +5265,9 @@ aura_issue_test_link_llvm_jit(test_arena_auto_compact_policy_1621)
 
 aura_add_issue_test(test_value_encoding_v2_dispatch_contracts_1622)
 aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_1622)
+
+aura_add_issue_test(test_eval_relower_hotpath_1623)
+aura_issue_test_link_llvm_jit(test_eval_relower_hotpath_1623)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
 aura_add_issue_test(test_parallel_orchestration_stress_1602)
 aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)

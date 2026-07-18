@@ -2187,9 +2187,11 @@ public:
             auto body_node =
                 body_id < flat_ptr->size() ? flat_ptr->get(body_id) : aura::ast::NodeView{};
             if (body_node.tag == aura::ast::NodeTag::Lambda) {
-                // Issue #1506: prefer partial re-lower when already cached+dirty.
-                auto result = cache_define_prefer_partial(input, *flat_ptr, *pool_ptr,
-                                                          expanded_root, std::string(name));
+                // Issue #1506 / #1623: prefer partial re-lower when already
+                // cached+dirty (relower_define_blocks before full cache_define).
+                auto result = cache_define_prefer_partial(
+                    input, *flat_ptr, *pool_ptr, expanded_root, std::string(name),
+                    /*bind_in_env=*/true, "__repl__", /*from_eval_ir=*/false);
                 if (!result)
                     return result;
                 user_bindings_.insert(std::string(name));
@@ -2583,9 +2585,10 @@ public:
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
             auto& [name, _body_id] = *def;
-            // Issue #1506: prefer partial re-lower when already cached+dirty.
+            // Issue #1506 / #1623: prefer partial re-lower (eval_ir path).
             auto result = cache_define_prefer_partial(input, *flat_ptr, *pool_ptr, flat_ptr->root,
-                                                      std::string(name));
+                                                      std::string(name), /*bind_in_env=*/true,
+                                                      "__repl__", /*from_eval_ir=*/true);
             if (!result)
                 return result;
             return EvalResult(types::make_void());
@@ -5449,8 +5452,21 @@ public:
                 ++ok;
                 continue;
             }
+            // Issue #1623: workspace dirty sweep is on eval/eval_ir entry.
+            metrics_.eval_path_relower_total.fetch_add(1, std::memory_order_relaxed);
+            const auto per_before =
+                metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
+            const auto blocks_before =
+                metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
             if (relower_define_blocks(name, canonical, *ws_flat, *ws_pool, expanded)) {
                 ++ok;
+                // Count true partial only (per-fn / blocks), not full-fallback.
+                if (metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
+                        per_before ||
+                    metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed) >
+                        blocks_before) {
+                    metrics_.incremental_eval_relower_hits.fetch_add(1, std::memory_order_relaxed);
+                }
             }
         }
         return ok;
@@ -6102,11 +6118,14 @@ public:
     //       (dispatches relower_define_function when dirty_func_count==1)
     //     else full cache_define
     //   lookup_define_v2 → 2 (miss): full cache_define
+    // Issue #1506 / #1555 / #1601 / #1623: prefer partial re-lower.
+    // `from_eval_ir` distinguishes eval vs eval_ir for AC metrics.
     EvalResult cache_define_prefer_partial(std::string_view source, aura::ast::FlatAST& flat,
                                            aura::ast::StringPool& pool,
                                            aura::ast::NodeId expanded_root,
                                            const std::string& name_str, bool bind_in_env = true,
-                                           const std::string& module_name = "__repl__") {
+                                           const std::string& module_name = "__repl__",
+                                           bool from_eval_ir = false) {
         const std::string src(source);
         const auto hash = fnv1a_64(src);
         const int st = lookup_define_v2(name_str, hash);
@@ -6127,9 +6146,18 @@ public:
 
         if (st == 1) {
             auto it = ir_cache_v2_.find(name_str);
-            if (it != ir_cache_v2_.end() && !it->second.irs.empty() &&
-                it->second.source_hash == hash &&
-                (it->second.dirty || it->second.dirty_block_count() > 0)) {
+            // #1623: set-body / rebind change source_hash but mark body
+            // dirty bitmasks — still prefer relower_define_blocks so AI
+            // mutate loops do not skip partial solely due to hash mismatch.
+            // Require dirty_block_count>0 when hash differs so we never
+            // "skip" (clean-bitmask early return) with stale IR.
+            const bool has_ir = it != ir_cache_v2_.end() && !it->second.irs.empty();
+            const std::size_t dirty_n = has_ir ? it->second.dirty_block_count() : 0;
+            // Prefer partial whenever dirty bitmasks fire — including when
+            // source_hash changed (mutate:set-body). dirty_n>0 is required so
+            // we never take the clean-bitmask early-return with stale IR.
+            const bool try_partial = has_ir && dirty_n > 0;
+            if (try_partial) {
                 // Prefer Lambda body node for per-function re-lower.
                 aura::ast::NodeId expanded = expanded_root;
                 if (expanded_root < flat.size()) {
@@ -6140,9 +6168,31 @@ public:
                             expanded = body;
                     }
                 }
-                // #1555/#1601: dirty_func_count==1 → relower_define_function inside
-                // relower_only_dirty_blocks; multi-func dirty → partial or full fallback.
+                // #1555/#1601/#1623: dirty → relower_define_blocks first
+                // (never full lower as the default when bitmasks fire).
+                metrics_.eval_path_relower_total.fetch_add(1, std::memory_order_relaxed);
+                if (from_eval_ir)
+                    metrics_.eval_ir_path_relower_total.fetch_add(1, std::memory_order_relaxed);
+                const auto per_before =
+                    metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
+                const auto blocks_before =
+                    metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed);
                 if (relower_only_dirty_blocks(name_str, source, flat, pool, expanded)) {
+                    // True partial win (per-function / per-block), not
+                    // internal full-fallback success of relower_define_blocks.
+                    const bool true_partial =
+                        metrics_.relower_per_function_called_count.load(std::memory_order_relaxed) >
+                            per_before ||
+                        metrics_.incremental_relower_blocks_total.load(std::memory_order_relaxed) >
+                            blocks_before;
+                    if (true_partial) {
+                        metrics_.incremental_eval_relower_hits.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        metrics_.incremental_partial_relower_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    // relower_define_blocks / store_define_v2 already stamp
+                    // source_hash; avoid touching `it` (may invalidate on store).
                     // Partial path updated IR; still ensure env binding
                     // when requested (first define may not have bound).
                     if (bind_in_env) {
@@ -6157,6 +6207,7 @@ public:
                 }
             }
             // Source changed, no IR, or partial failed → full path.
+            metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
         // st == 2 (miss) or st == 1 fallback
         return cache_define(source, flat, pool, expanded_root, name_str, bind_in_env, module_name);

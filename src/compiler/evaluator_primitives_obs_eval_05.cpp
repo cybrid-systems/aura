@@ -680,7 +680,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32); // #1601 more keys
+                auto* ht = FlatHashTable::create(64); // #1601 / #1623 more keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -737,7 +737,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
                   : 0;
-            // Issue #1601 / #1605: production consumer metrics
+            // Issue #1601 / #1605 / #1623: production consumer metrics
             // (eval/eval_ir/define_function prefer partial re-lower).
             const std::int64_t incr_blocks =
                 m ? static_cast<std::int64_t>(
@@ -767,6 +767,19 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 (dirty_hits + blocks_saved) > 0
                     ? static_cast<std::int64_t>((dirty_hits * 10000) / (dirty_hits + blocks_saved))
                     : 0;
+            // #1623: EDSL eval hot-path partial re-lower AC counters
+            const std::int64_t eval_hits =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_eval_relower_hits.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t eval_path =
+                m ? static_cast<std::int64_t>(
+                        m->eval_path_relower_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t eval_ir_path =
+                m ? static_cast<std::int64_t>(
+                        m->eval_ir_path_relower_total.load(std::memory_order_relaxed))
+                  : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"impact-blocks-hit", make_int(impact_blocks_hit)},
                 {"partial-relowers", make_int(partial_relowers)},
@@ -781,12 +794,17 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"full_relower_count", make_int(full_called)},
                 {"dirty_block_ratio", make_int(dirty_ratio_bp)}, // basis points
                 {"dirty_block_ratio_bp", make_int(dirty_ratio_bp)},
+                // #1623 AC keys — eval/eval_ir hot-path partial wins
+                {"incremental_eval_relower_hits", make_int(eval_hits)},
+                {"eval_path_relower_total", make_int(eval_path)},
+                {"eval_ir_path_relower_total", make_int(eval_ir_path)},
                 {"eval-prefer-partial-wired", make_int(1)},
                 {"eval-ir-prefer-partial-wired", make_int(1)},
                 {"relower-only-dirty-blocks-wired", make_int(1)},
                 {"relower-define-blocks-wired", make_int(1)},
-                {"issue", make_int(1605)},
-                {"schema", make_int(1605)}, // lineage 1601 / 718
+                {"lookup-define-v2-prefer-partial", make_int(1)},
+                {"issue", make_int(1623)},
+                {"schema", make_int(1623)}, // lineage 1605 / 1601 / 1506 / 718
             };
             return build_hash(kv);
         });
