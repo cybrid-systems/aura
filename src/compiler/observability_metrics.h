@@ -94,6 +94,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_per_function_called_count{0};
     // Issue #1474: per-block re-lower observability.
     std::atomic<std::uint64_t> incremental_relower_blocks_total{0};
+    // Issue #1623: production eval / eval_ir hot-path partial re-lower
+    // (cache_define_prefer_partial → relower_define_blocks success).
+    //   - incremental_eval_relower_hits: partial success from EDSL define path
+    //   - eval_path_relower_total: eval() define-path partial attempts/wins
+    //   - eval_ir_path_relower_total: eval_ir() define-path partial wins
+    std::atomic<std::uint64_t> incremental_eval_relower_hits{0};
+    std::atomic<std::uint64_t> eval_path_relower_total{0};
+    std::atomic<std::uint64_t> eval_ir_path_relower_total{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
