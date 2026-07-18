@@ -1433,13 +1433,16 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     auto t0 = std::chrono::steady_clock::now();
     int64_t result = 0;
     if (g_prim_dispatcher) {
-        // Fast-pack: avoid the 3-element stack array that the
-        // original wrapper allocated. The dispatcher takes
-        // (int64_t*) but we can pass a pointer into the call's
-        // argument slots directly (a, b, and a sentinel 0).
-        // This saves 3 stores per primitive call.
+        // Fast-pack: fixed 3-element stack array (a, b, sentinel 0).
+        // Issue #1711: clamp argc to 3 — dispatcher may index args[0..argc).
+        // Passing count>3 was a stack buffer overflow (read past args[3]).
         int64_t args[3] = {a, b, 0};
-        result = g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
+        int32_t safe_count = static_cast<int32_t>(count);
+        if (safe_count < 0)
+            safe_count = 0;
+        if (safe_count > 3)
+            safe_count = 3;
+        result = g_prim_dispatcher(slot, args, safe_count);
     }
     auto t1 = std::chrono::steady_clock::now();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
