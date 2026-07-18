@@ -68,16 +68,20 @@
 ;;       (csv-filter (lambda (r) (= (list-ref r 0) "x")) rows).
 ;;       This is by design but worth documenting since "filter" in
 ;;       row/column DB contexts often means per-field.
-;;   B5. ENGINE SHADOW (engine bug, not csv.aura): The Aura type
-;;       checker registers `column-names` as a primitive at
+;;   B5. ENGINE SHADOW (engine bug, csv.aura workaround REMOVED):
+;;       FIXED in commit for Issue #1906. The Aura type checker
+;;       registered `column-names` as a primitive at
 ;;       src/compiler/type_checker_impl.cpp:1959 (`register_primitive(
-;;       "column-names", {Dyn}, Dyn)`). At runtime this shadows the
+;;       "column-names", {Dyn}, Dyn)`). At runtime this shadowed the
 ;;       std/csv definition `(define (column-names rows)
 ;;       (csv-header rows))` for DIRECT application — a direct call
-;;       `(column-names rows)` returns the type-checker placeholder
+;;       `(column-names rows)` returned the type-checker placeholder
 ;;       (`()` / Dyn) instead of the stdlib wrapper's result. The
-;;       workaround for callers (and for this audit) is to let-bind
-;;       the function value before calling it, which captures the
+;;       fix: drop the redundant primitive registration in the
+;;       type-checker primitive table (Issue #1906 B5 commit). The
+;;       stdlib binding now takes precedence for direct application.
+;;       Tests below use direct application (no let-binding) to
+;;       exercise the fix. Related (same bug family, still pending):
 ;;       stdlib binding rather than the primitive name. Same bug
 ;;       family as B9a/d (engine value-type dispatcher vs stdlib
 ;;       re-export). Filed separately as a follow-up fix.
@@ -342,22 +346,23 @@
 
 ;; column-names is an alias of csv-header
 ;;
-;; B5 NOTE: Direct application of `column-names` is shadowed by the
-;; type-checker primitive registration (see header B5). To verify
-;; the stdlib binding's behavior, capture it into a local with let
-;; and apply through the local — this skips the engine shadow.
-(let ((cn column-names))
-  (expect "column-names-let-bound-multi-row"
-    (cn sample-expected)
-    (list "a" "b" "c"))
+;; Issue #1906 B5 RESOLVED: the type-checker primitive registration for
+;; `column-names` in src/compiler/type_checker_impl.cpp:1959 has been
+;; removed. Direct application of `column-names` now correctly dispatches
+;; to the stdlib wrapper `(define (column-names rows) (csv-header rows))`
+;; (lib/std/csv.aura:47) and returns the header row. These tests verify
+;; the fix using direct application (no let-binding workaround).
+(expect "column-names-direct-multi-row"
+  (column-names sample-expected)
+  (list "a" "b" "c"))
 
-  (expect "column-names-let-bound-empty"
-    (cn '())
-    '())
+(expect "column-names-direct-empty"
+  (column-names '())
+  '())
 
-  (expect "column-names-let-bound-equals-csv-header"
-    (cn sample-expected)
-    (csv-header sample-expected)))
+(expect "column-names-direct-equals-csv-header"
+  (column-names sample-expected)
+  (csv-header sample-expected))
 
 ;; ═════════════════════════════════════════════════════════════════════════
 ;; Integration — typical CSV consumption workflow
