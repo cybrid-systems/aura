@@ -239,8 +239,12 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     const auto current_ver = defuse_version_snapshot();
     const auto current_bridge = current_bridge_epoch();
     bool violation = false;
-    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    // Issue #1664: canonical dual-lock order is closures → env_frames
+    // (matches scan_live_closures_for_linear_captures / apply_closure).
+    // Pre-#1664 took env then closures — latent deadlock if either side
+    // upgrades to unique while the other holds the reverse order.
     std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     for (const auto& [id, cl] : closures_) {
         (void)id;
         if (cl.bridge_epoch == 0)
@@ -517,6 +521,8 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     // Issue #1557 / #1568: full boundary consistency (scan all linear +
     // epoch fence + enforce_all + GC root audit).
+    // Issue #1664: scan_live_closures (via enforce) uses closures → env
+    // lock order; do not re-acquire env then closures here.
     const auto r =
         enforce_linear_boundary_consistency(kLinearGcRootAuditFiberSteal, /*mark_all_linear=*/true);
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
