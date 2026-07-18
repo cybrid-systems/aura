@@ -1733,22 +1733,116 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
 }
 
 EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a) {
-    // TODO #236 follow-up: extract the inner logic from
-    // mutate:replace-value (LiteralInt / LiteralFloat /
-    // LiteralString / sym_id field updates) so it can run
-    // under an outer guard. For MVP, error out so the agent
-    // falls back to standalone (and accepts no transactionality).
-    (void)a;
-    return std::unexpected(aura::diag::Diagnostic{
-        aura::diag::ErrorKind::InternalError,
-        "batch :replace-value not yet supported (use standalone mutate:replace-value)"});
+    if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :replace-value requires node-id (int), new-value, summary (string)"});
+    if (!workspace_flat_)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :replace-value: no workspace loaded"});
+    auto sum_idx = as_string_idx(a[2]);
+    if (sum_idx >= string_heap_.size())
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-value: summary index out of range"});
+    auto& flat = *workspace_flat_;
+    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    if (node >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :replace-value: node out of range"});
+    auto nv = flat.get(node);
+    switch (nv.tag) {
+        case aura::ast::NodeTag::LiteralInt: {
+            if (!is_int(a[1]))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError,
+                    "batch :replace-value: LiteralInt node requires an integer value"});
+            auto new_val = static_cast<std::int64_t>(as_int(a[1]));
+            std::uint64_t old_val = static_cast<std::uint64_t>(nv.int_value);
+            auto mid = flat.add_mutation_with_rollback(
+                node, "replace-value", "Int", "Int", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed, 0, old_val,
+                static_cast<std::uint64_t>(new_val), true);
+            flat.set_int(node, new_val);
+            flat.mark_dirty_upward_fast(node, aura::ast::FlatAST::kGeneralDirty);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        case aura::ast::NodeTag::LiteralFloat: {
+            if (!is_float(a[1]))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError,
+                    "batch :replace-value: LiteralFloat node requires a float value"});
+            double new_val = as_float(a[1]);
+            std::uint64_t new_bits = std::bit_cast<std::uint64_t>(new_val);
+            std::uint64_t old_bits = std::bit_cast<std::uint64_t>(nv.float_value);
+            auto mid = flat.add_mutation_with_rollback(
+                node, "replace-value", "Float", "Float", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed,
+                static_cast<std::uint32_t>(aura::ast::MutationSoAField::FloatVal), old_bits,
+                new_bits, true);
+            flat.set_float(node, new_val);
+            flat.mark_dirty_upward_fast(node, aura::ast::FlatAST::kGeneralDirty);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        case aura::ast::NodeTag::Variable:
+        case aura::ast::NodeTag::LiteralString: {
+            if (!is_string(a[1]))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError,
+                    "batch :replace-value: Variable/LiteralString node requires a string value"});
+            auto new_sym_idx = as_string_idx(a[1]);
+            if (new_sym_idx >= string_heap_.size())
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-value: new value string index out of range"});
+            auto new_name = string_heap_[new_sym_idx];
+            auto new_sym = workspace_pool_->intern(new_name);
+            std::uint64_t old_val = nv.sym_id;
+            auto mid = flat.add_mutation_with_rollback(
+                node, "replace-value", "Sym", "Sym", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed,
+                static_cast<std::uint32_t>(aura::ast::MutationSoAField::SymId), old_val, new_sym,
+                true);
+            flat.set_sym(node, new_sym);
+            flat.mark_dirty_upward_fast(node, aura::ast::FlatAST::kGeneralDirty);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        default:
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::TypeError,
+                "batch :replace-value: node tag does not support value replacement (" +
+                    std::to_string(static_cast<int>(nv.tag)) + ")"});
+    }
 }
 
 EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a) {
-    (void)a;
-    return std::unexpected(aura::diag::Diagnostic{
-        aura::diag::ErrorKind::InternalError,
-        "batch :tweak-literal not yet supported (use standalone mutate:tweak-literal)"});
+    if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                   "batch :tweak-literal requires node-id (int) and delta (int)"});
+    auto& flat = *workspace_flat_;
+    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    if (node >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :tweak-literal: node out of range"});
+    auto delta = as_int(a[1]);
+    auto v = flat.get(node);
+    if (v.tag != aura::ast::NodeTag::LiteralInt)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::TypeError,
+            "batch :tweak-literal: node " + std::to_string(node) + " is not a LiteralInt"});
+    auto new_val = std::max<std::int64_t>(0, static_cast<std::int64_t>(v.int_value) + delta);
+    auto old_val = v.int_value;
+    std::string summary =
+        (a.size() > 2 && is_string(a[2]))
+            ? string_heap_[as_string_idx(a[2])]
+            : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
+    flat.add_mutation_with_rollback(
+        node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed, 0,
+        static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(new_val), true);
+    flat.set_int(node, new_val);
+    flat.mark_dirty_upward_fast(node);
+    return make_int(static_cast<std::int64_t>(new_val));
 }
 
 // Issue #396 Phase 2: lockless variant of (mutate:remove-node).
@@ -1851,6 +1945,645 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
     flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
                                            "insert-child");
     return make_int(static_cast<std::int64_t>(pr.root));
+}
+
+// Issue #1900: lockless variant of (mutate:set-body). Inner logic
+// from the wrapper primitive stripped of Guard + fiber-yield +
+// read-only + hygiene + lazy COW + dep-graph query + typecheck +
+// ownership validation + mark_define_dirty_fn + repopulate_dep_graph.
+EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+        !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :set-body requires name (string) and new-body-code (string)"});
+    auto name_idx = as_string_idx(a[0]);
+    auto code_idx = as_string_idx(a[1]);
+    if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :set-body: string index out of range"});
+    auto& flat = *workspace_flat_;
+    auto name = string_heap_[name_idx];
+    auto sym = canonical_pool()->intern(name);
+    aura::ast::NodeId target = aura::ast::NULL_NODE;
+    aura::ast::NodeId lambda_id = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+            if (v.children.size() != 1)
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::ArityMismatch, "batch :set-body: define has " +
+                                                              std::to_string(v.children.size()) +
+                                                              " children, expected 1"});
+            lambda_id = v.child(0);
+            auto lv = flat.get(lambda_id);
+            if (lv.tag != aura::ast::NodeTag::Lambda)
+                return std::unexpected(
+                    aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                           "batch :set-body: define body is not a Lambda"});
+            target = id;
+            break;
+        }
+    }
+    if (target == aura::ast::NULL_NODE)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :set-body: function \"" + name + "\" not found"});
+    auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ParseError, "batch :set-body: parse failed for new body"});
+    auto root_v = flat.get(pr.root);
+    aura::ast::NodeId body_to_set = pr.root;
+    if (root_v.tag == aura::ast::NodeTag::Define) {
+        if (root_v.children.empty())
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, "batch :set-body: define form has no body"});
+        body_to_set = root_v.child(0);
+    }
+    auto new_root_v = flat.get(body_to_set);
+    if (new_root_v.tag == aura::ast::NodeTag::Lambda) {
+        flat.set_child(target, 0, body_to_set);
+    } else {
+        flat.set_child(lambda_id, 0, body_to_set);
+    }
+    aura::ast::NodeId old_body =
+        (flat.children(target).size() > 1) ? flat.children(target)[1] : aura::ast::NULL_NODE;
+    flat.add_structural_mutation_log_entry(target, 1, old_body, body_to_set, "set-body");
+    flat.mark_dirty_upward_fast(target, aura::ast::FlatAST::kGeneralDirty |
+                                            aura::ast::FlatAST::kConstraintDirty);
+    return make_bool(true);
+}
+
+// Issue #1900: lockless variant of (mutate:replace-pattern). Inner
+// logic stripped of Guard + fiber-yield + read-only + hygiene.
+// Single-subtree wildcard match (no Kleene capture substitution
+// in batch context — outer batch can be re-issued with strict-arity
+// flag if needed).
+EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+        !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :replace-pattern requires pattern and replacement strings"});
+    auto pattern_idx = as_string_idx(a[0]);
+    auto repl_idx = as_string_idx(a[1]);
+    if (pattern_idx >= string_heap_.size() || repl_idx >= string_heap_.size())
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-pattern: string index out of range"});
+    auto& flat = *workspace_flat_;
+    auto pattern_str = string_heap_[pattern_idx];
+    std::string repl_template = string_heap_[repl_idx];
+    std::string summary = "batch replace-pattern";
+    for (std::size_t ai = 2; ai < a.size(); ++ai) {
+        if (is_string(a[ai]))
+            summary = string_heap_[as_string_idx(a[ai])];
+    }
+    auto alloc = temp_arena_->allocator();
+    auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
+    auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+    auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
+    if (!pat_pr.success || pat_pr.root == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ParseError, "batch :replace-pattern: pattern parse failed"});
+    auto wildcard_sym = pat_pool->intern("...");
+    const auto end_id = flat.size();
+    int replaced_count = 0;
+    flat.begin_atomic_batch();
+    for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+        if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
+            flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
+            continue;
+        std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_sub;
+        match_sub = [&](aura::ast::NodeId wid, aura::ast::NodeId pid) -> bool {
+            if (pid >= pat_flat->size() || wid >= flat.size())
+                return false;
+            auto wv = flat.get(wid);
+            auto pv = pat_flat->get(pid);
+            if (pv.tag == aura::ast::NodeTag::Variable && pv.sym_id == wildcard_sym)
+                return true;
+            if (wv.tag != pv.tag)
+                return false;
+            if (wv.tag == aura::ast::NodeTag::Variable ||
+                wv.tag == aura::ast::NodeTag::LiteralString ||
+                wv.tag == aura::ast::NodeTag::Define || wv.tag == aura::ast::NodeTag::DefineType ||
+                wv.tag == aura::ast::NodeTag::DefineModule)
+                if (wv.sym_id != pv.sym_id)
+                    return false;
+            if (wv.children.size() != pv.children.size())
+                return false;
+            for (std::size_t ci = 0; ci < wv.children.size(); ++ci)
+                if (!match_sub(wv.child(ci), pv.child(ci)))
+                    return false;
+            return true;
+        };
+        if (!match_sub(id, pat_pr.root))
+            continue;
+        std::string filled_repl = repl_template;
+        auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *workspace_pool_);
+        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
+            continue;
+        aura::ast::NodeId parent_id = aura::ast::NULL_NODE;
+        std::uint32_t child_idx = 0;
+        bool found = false;
+        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+            auto pv = flat.get(pid);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == id) {
+                    parent_id = pid;
+                    child_idx = static_cast<std::uint32_t>(ci);
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+                break;
+        }
+        if (!found)
+            continue;
+        flat.set_child(parent_id, child_idx, repl_pr.root);
+        ++replaced_count;
+    }
+    if (replaced_count == 0) {
+        flat.rollback_atomic_batch();
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :replace-pattern: no matches found (or all parse-failed)"});
+    }
+    flat.commit_atomic_batch();
+    invalidate_tag_arity_index();
+    flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
+    return make_bool(true);
+}
+
+// Issue #1900: lockless variant of (mutate:replace-subtree).
+// Hygiene gate kept inline (per-#142 contract).
+EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :replace-subtree requires node-id (int) and new-code (string)"});
+    auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto code_idx = as_string_idx(a[1]);
+    if (code_idx >= string_heap_.size())
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-subtree: code string index out of range"});
+    auto& flat = *workspace_flat_;
+    if (target == aura::ast::NULL_NODE || target >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :replace-subtree: node-id out of range"});
+    if (flat.is_macro_introduced(target))
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-subtree: cannot mutate macro-introduced node"});
+    auto new_code = string_heap_[code_idx];
+    std::string summary =
+        (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])] : "replace-subtree";
+    auto parent_id = flat.parent_of(target);
+    std::uint32_t child_idx = 0;
+    bool found_slot = false;
+    if (parent_id != aura::ast::NULL_NODE && parent_id < flat.size()) {
+        auto pv = flat.get(parent_id);
+        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == target) {
+                child_idx = static_cast<std::uint32_t>(ci);
+                found_slot = true;
+                break;
+            }
+        }
+    }
+    if (!found_slot)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-subtree: target has no parent slot to replace"});
+    auto pr = aura::parser::parse_to_flat(new_code, flat, *workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
+                                                      "batch :replace-subtree: parse failed"});
+    flat.set_child(parent_id, child_idx, pr.root);
+    flat.mark_dirty_upward_fast(parent_id, aura::ast::FlatAST::kGeneralDirty);
+    flat.add_mutation_subtree(pr.root, parent_id, child_idx, "<batch-captured>", "replace-subtree",
+                              summary);
+    return make_bool(true);
+}
+
+// Issue #1900: lockless variant of (mutate:splice).
+EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalValue> a) {
+    if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_ || !workspace_pool_)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                   "batch :splice requires parent-id, position, code-strings..."});
+    auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto pos = static_cast<std::uint32_t>(as_int(a[1]));
+    auto& flat = *workspace_flat_;
+    if (parent >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :splice: parent out of range"});
+    std::vector<types::EvalValue> code_args;
+    for (std::size_t i = 2; i < a.size(); ++i) {
+        if (i == a.size() - 1 && i >= 3 && is_string(a[i]))
+            continue;
+        if (is_string(a[i]))
+            code_args.push_back(a[i]);
+    }
+    if (code_args.empty())
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :splice: no code strings provided"});
+    std::string summary = "batch splice";
+    if (a.size() >= 4 && is_string(a[a.size() - 1])) {
+        auto sidx = as_string_idx(a[a.size() - 1]);
+        if (sidx < string_heap_.size())
+            summary = string_heap_[sidx];
+    }
+    EvalValue result_list = make_void();
+    std::uint32_t insert_pos = pos;
+    for (auto& code_val : code_args) {
+        auto cidx = as_string_idx(code_val);
+        if (cidx >= string_heap_.size())
+            continue;
+        auto pr = aura::parser::parse_to_flat(string_heap_[cidx], flat, *workspace_pool_);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            continue;
+        flat.insert_child(parent, insert_pos, pr.root);
+        flat.add_mutation(parent, "splice", std::to_string(insert_pos), string_heap_[cidx],
+                          summary);
+        flat.mark_dirty_upward_fast(parent);
+        auto pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)), result_list});
+        result_list = make_pair(pid);
+        ++insert_pos;
+    }
+    EvalValue reversed = make_void();
+    auto cur = result_list;
+    while (is_pair(cur)) {
+        auto idx = as_pair_idx(cur);
+        if (idx >= pairs_.size())
+            break;
+        auto ridx = pairs_.size();
+        pairs_.push_back({pairs_[idx].car, reversed});
+        reversed = make_pair(ridx);
+        cur = pairs_[idx].cdr;
+    }
+    return reversed;
+}
+
+// Issue #1900: lockless variant of (mutate:wrap).
+EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :wrap requires node-id and wrapper-template (with '_' placeholder)"});
+    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto tmpl_idx = as_string_idx(a[1]);
+    if (tmpl_idx >= string_heap_.size())
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :wrap: template string index out of range"});
+    auto& flat = *workspace_flat_;
+    if (node >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :wrap: node out of range"});
+    std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
+                                                            : "wrap node " + std::to_string(node);
+    aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
+    int child_idx_in_parent = -1;
+    for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+        auto pv = flat.get(pid);
+        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == node) {
+                parent_of_target = pid;
+                child_idx_in_parent = static_cast<int>(ci);
+                break;
+            }
+        }
+        if (parent_of_target != aura::ast::NULL_NODE)
+            break;
+    }
+    if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :wrap: node " + std::to_string(node) + " has no parent"});
+    auto tmpl = string_heap_[tmpl_idx];
+    auto sentinel_pos = tmpl.find('_');
+    if (sentinel_pos == std::string::npos)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :wrap: wrapper-template must contain a '_' placeholder"});
+    std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
+    auto parsed_tmpl = tmpl.substr(0, sentinel_pos) + sentinel + tmpl.substr(sentinel_pos + 1);
+    auto pr = aura::parser::parse_to_flat(parsed_tmpl, flat, *workspace_pool_);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ParseError, "batch :wrap: wrapper template parse failed"});
+    auto sentinel_sym = workspace_pool_->intern(sentinel);
+    aura::ast::NodeId sentinel_id = aura::ast::NULL_NODE;
+    aura::ast::NodeId sentinel_parent = aura::ast::NULL_NODE;
+    int sentinel_child_idx = -1;
+    for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+        auto sv = flat.get(sid);
+        if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sentinel_sym) {
+            sentinel_id = sid;
+            for (aura::ast::NodeId p2 = 0; p2 < flat.size(); ++p2) {
+                auto p2v = flat.get(p2);
+                for (std::size_t ci = 0; ci < p2v.children.size(); ++ci) {
+                    if (p2v.child(ci) == sid) {
+                        sentinel_parent = p2;
+                        sentinel_child_idx = static_cast<int>(ci);
+                        break;
+                    }
+                }
+                if (sentinel_parent != aura::ast::NULL_NODE)
+                    break;
+            }
+            break;
+        }
+    }
+    if (sentinel_id == aura::ast::NULL_NODE || sentinel_parent == aura::ast::NULL_NODE ||
+        sentinel_child_idx < 0)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :wrap: sentinel placeholder not found in parsed wrapper"});
+    flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
+    flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), pr.root);
+    flat.add_mutation(node, "wrap", parsed_tmpl, summary, summary);
+    flat.mark_dirty_upward_fast(parent_of_target);
+    return make_int(static_cast<std::int64_t>(pr.root));
+}
+
+// Issue #1900: lockless variant of (mutate:rename-symbol).
+EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types::EvalValue> a) {
+    if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
+        !workspace_pool_)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                   "batch :rename-symbol requires old-name and new-name strings"});
+    auto old_name_idx = as_string_idx(a[0]);
+    auto new_name_idx = as_string_idx(a[1]);
+    if (old_name_idx >= string_heap_.size() || new_name_idx >= string_heap_.size())
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :rename-symbol: string index out of range"});
+    auto& flat = *workspace_flat_;
+    auto old_name = string_heap_[old_name_idx];
+    auto new_name = string_heap_[new_name_idx];
+    auto old_sym = workspace_pool_->intern(old_name);
+    auto new_sym = workspace_pool_->intern(new_name);
+    std::string summary = (a.size() > 2 && is_string(a[2]))
+                              ? string_heap_[as_string_idx(a[2])]
+                              : "rename " + old_name + " -> " + new_name;
+    int count = 0;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.sym_id(id) == old_sym) {
+            auto tag = flat.tag(id);
+            if (tag == aura::ast::NodeTag::Variable || tag == aura::ast::NodeTag::Define ||
+                tag == aura::ast::NodeTag::DefineType || tag == aura::ast::NodeTag::DefineModule ||
+                tag == aura::ast::NodeTag::Let || tag == aura::ast::NodeTag::LetRec ||
+                tag == aura::ast::NodeTag::Set || tag == aura::ast::NodeTag::MacroDef) {
+                flat.sym_id(id) = new_sym;
+                ++count;
+            }
+        }
+    }
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.tag(id) == aura::ast::NodeTag::Lambda) {
+            count += flat.rename_param(id, old_sym, new_sym, nullptr);
+        }
+    }
+    if (count == 0)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :rename-symbol: symbol \"" + old_name +
+                                                          "\" not found in AST"});
+    flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
+    return make_bool(true);
+}
+
+// Issue #1900: lockless variant of (mutate:move-node).
+EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::EvalValue> a) {
+    if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_flat_)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ArityMismatch,
+            "batch :move-node requires node-id, new-parent-id, new-position"});
+    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto new_parent = static_cast<aura::ast::NodeId>(as_int(a[1]));
+    auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
+    auto& flat = *workspace_flat_;
+    if (node >= flat.size() || new_parent >= flat.size() || node == aura::ast::NULL_NODE ||
+        new_parent == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :move-node: node or parent out of range"});
+    if (node == new_parent)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :move-node: cannot move node to itself"});
+    {
+        auto p = flat.parent_of(new_parent);
+        while (p != aura::ast::NULL_NODE) {
+            if (p == node)
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :move-node: new parent is a descendant of moved node"});
+            auto next = flat.parent_of(p);
+            if (next == p)
+                break;
+            p = next;
+        }
+    }
+    auto cur_parent = flat.parent_of(node);
+    if (cur_parent == aura::ast::NULL_NODE)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :move-node: node has no parent (possibly the root)"});
+    int cur_idx = -1;
+    auto cpv = flat.get(cur_parent);
+    for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+        if (cpv.child(ci) == node) {
+            cur_idx = static_cast<int>(ci);
+            break;
+        }
+    }
+    if (cur_idx < 0)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :move-node: node not found in parent's children list"});
+    std::string summary = (a.size() > 3 && is_string(a[3])) ? string_heap_[as_string_idx(a[3])]
+                                                            : "move node " + std::to_string(node);
+    flat.set_child(cur_parent, cur_idx, aura::ast::NULL_NODE);
+    flat.insert_child(new_parent, new_pos, node);
+    flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
+                      summary);
+    flat.mark_dirty_upward_fast(new_parent);
+    return make_bool(true);
+}
+
+// Issue #1900: lockless variant of (mutate:inline-call).
+EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::EvalValue> a) {
+    if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
+                                                      "batch :inline-call requires call-node-id"});
+    auto call_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto& flat = *workspace_flat_;
+    if (call_id >= flat.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :inline-call: call node out of range"});
+    auto cv = flat.get(call_id);
+    if (cv.tag != aura::ast::NodeTag::Call || cv.children.empty())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::TypeError,
+            "batch :inline-call: node " + std::to_string(call_id) + " is not a call"});
+    std::string summary = (a.size() > 1 && is_string(a[1]))
+                              ? string_heap_[as_string_idx(a[1])]
+                              : "inline call " + std::to_string(call_id);
+    auto func_node = cv.child(0);
+    auto fv = flat.get(func_node);
+    aura::ast::NodeId func_body_node = aura::ast::NULL_NODE;
+    std::vector<aura::ast::SymId> formal_params;
+    if (fv.tag == aura::ast::NodeTag::Variable) {
+        auto sym = fv.sym_id;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym && !v.children.empty()) {
+                func_body_node = v.child(0);
+                break;
+            }
+        }
+        if (func_body_node == aura::ast::NULL_NODE)
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :inline-call: function definition not found"});
+        auto bn = flat.get(func_body_node);
+        if (bn.tag != aura::ast::NodeTag::Lambda)
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :inline-call: target is not a lambda"});
+        formal_params.assign(bn.params.begin(), bn.params.end());
+        if (bn.children.empty())
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "batch :inline-call: lambda body is empty"});
+        func_body_node = bn.child(0);
+    } else if (fv.tag == aura::ast::NodeTag::Lambda) {
+        formal_params.assign(fv.params.begin(), fv.params.end());
+        if (fv.children.empty())
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "batch :inline-call: lambda body is empty"});
+        func_body_node = fv.child(0);
+    } else {
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :inline-call: target function form not supported"});
+    }
+    std::vector<aura::ast::NodeId> actual_args;
+    for (std::size_t i = 1; i < cv.children.size(); ++i)
+        actual_args.push_back(cv.child(i));
+    if (formal_params.size() != actual_args.size())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "batch :inline-call: parameter count mismatch"});
+    auto call_parent = flat.parent_of(call_id);
+    if (call_parent == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :inline-call: call has no parent"});
+    int call_idx_in_parent = -1;
+    auto cpv = flat.get(call_parent);
+    for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+        if (cpv.child(ci) == call_id) {
+            call_idx_in_parent = static_cast<int>(ci);
+            break;
+        }
+    }
+    if (call_idx_in_parent < 0)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :inline-call: call index not found"});
+    std::vector<aura::ast::NodeId> old_to_new(flat.size(), aura::ast::NULL_NODE);
+    std::vector<aura::ast::NodeId> dfs = {func_body_node};
+    while (!dfs.empty()) {
+        auto cur = dfs.back();
+        dfs.pop_back();
+        if (cur >= old_to_new.size())
+            old_to_new.resize(cur + 1, aura::ast::NULL_NODE);
+        if (old_to_new[cur] != aura::ast::NULL_NODE)
+            continue;
+        auto v = flat.get(cur);
+        aura::ast::NodeId new_id = aura::ast::NULL_NODE;
+        switch (v.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                new_id = flat.add_literal(v.int_value);
+                break;
+            case aura::ast::NodeTag::LiteralFloat:
+                new_id = flat.add_literal_float(v.float_value);
+                break;
+            case aura::ast::NodeTag::LiteralString:
+                new_id = flat.add_literalstring(v.sym_id);
+                break;
+            case aura::ast::NodeTag::Variable: {
+                bool is_param = false;
+                for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                    if (formal_params[pi] == v.sym_id) {
+                        new_id = actual_args[pi];
+                        is_param = true;
+                        break;
+                    }
+                }
+                if (!is_param)
+                    new_id = flat.add_variable(v.sym_id);
+                break;
+            }
+            default:
+                new_id = flat.add_raw_node(v.tag);
+                break;
+        }
+        if (new_id != aura::ast::NULL_NODE) {
+            old_to_new[cur] = new_id;
+            for (auto c : v.children) {
+                if (c != aura::ast::NULL_NODE)
+                    dfs.push_back(c);
+            }
+        }
+    }
+    for (std::size_t old_nid = 0; old_nid < old_to_new.size(); ++old_nid) {
+        auto new_id = old_to_new[old_nid];
+        if (new_id == aura::ast::NULL_NODE)
+            continue;
+        bool is_reused_arg = false;
+        for (auto arg : actual_args) {
+            if (arg == new_id) {
+                is_reused_arg = true;
+                break;
+            }
+        }
+        if (is_reused_arg)
+            continue;
+        auto old_v = flat.get(static_cast<aura::ast::NodeId>(old_nid));
+        if (old_v.tag == aura::ast::NodeTag::Lambda && !old_v.params.empty())
+            flat.set_lambda_params(new_id, old_v.params, old_v.param_annotations);
+        for (std::size_t ci = 0; ci < old_v.children.size(); ++ci) {
+            auto old_child = old_v.child(ci);
+            if (old_child == aura::ast::NULL_NODE)
+                continue;
+            if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE) {
+                flat.set_child(new_id, static_cast<std::uint32_t>(ci), old_to_new[old_child]);
+            } else {
+                auto old_cv = flat.get(old_child);
+                if (old_cv.tag == aura::ast::NodeTag::Variable) {
+                    for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                        if (formal_params[pi] == old_cv.sym_id) {
+                            flat.set_child(new_id, static_cast<std::uint32_t>(ci), actual_args[pi]);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    auto cloned_body = old_to_new[func_body_node];
+    if (cloned_body == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :inline-call: function definition not found for inlining"});
+    flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
+    flat.mark_dirty_upward_fast(call_parent);
+    flat.add_mutation(call_id, "inline-call", summary, summary, summary);
+    flat.restamp_all_node_generations();
+    return make_bool(true);
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────

@@ -642,6 +642,18 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(
                  ev.workspace_flat_ ? ev.workspace_flat_->parent_topology_restore_count() : 0))},
             {"schema", make_int(1502)},
+            // Issue #1900 AC3: dispatch-coverage + interleaving-prevention
+            // telemetry. unsupported-op-total bumps when a future mutate
+            // primitive lands before its lockless helper ships (the 14-op
+            // dispatch is now complete). interleaved-prevented bumps on
+            // every successful commit (the outer MutationBoundaryGuard held
+            // workspace_mtx_ unique_lock for the entire batch, serializing
+            // any concurrent mutator).
+            {"unsupported-op-total",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_unsupported_op_total()))},
+            {"interleaved-prevented",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_interleaved_prevented_total()))},
+            {"schema-1900", make_int(1900)},
         };
         return build_hash(kv);
     });

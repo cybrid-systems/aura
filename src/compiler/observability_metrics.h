@@ -515,6 +515,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> is_valid_check_count{0};
     std::atomic<std::uint64_t> stable_ref_invalidations{0};
     std::atomic<std::uint64_t> atomic_batch_commits{0};
+    // Issue #1900 AC3: dispatch-coverage + interleaving-prevention
+    // telemetry. unsupported_op_total only ever bumps when a future
+    // mutate primitive lands before its lockless helper ships (the
+    // 14-op dispatch is now complete). interleaved_mutation_prevented
+    // bumps on every successful commit (the outer MutationBoundaryGuard
+    // held workspace_mtx_ unique_lock for the entire batch, serializing
+    // any concurrent mutator).
+    std::atomic<std::uint64_t> atomic_batch_unsupported_op_total{0};
+    std::atomic<std::uint64_t> atomic_batch_interleaved_mutation_prevented{0};
     // Issue #256: AST operation observability. See ast.ixx
     // for the bump sites + semantics. The ratio
     // mark_dirty_total_nodes / mark_dirty_upward_call_count

@@ -1483,6 +1483,15 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_393)
 aura_add_issue_test(test_issue_396)
 aura_issue_test_link_llvm_jit_minimal(test_issue_396)
 
+# Issue #1900: refine #1698 — strengthen mutate:atomic-batch
+# strong atomicity + expand dispatch table 5 → 14 ops.
+# Validates: (a) all 14 sub-ops work in batch; (b)
+# atomic_batch_unsupported_op_total + interleaved_mutation_prevented
+# metrics bump correctly; (c) 1000+ iter concurrent fiber stress
+# runs clean. Pure CompilerService tests.
+aura_add_issue_test(test_issue_1900)
+aura_issue_test_link_llvm_jit_minimal(test_issue_1900)
+
 # Issue #397: centralize SyntaxMarker::MacroIntroduced
 # checks behind FlatAST::is_macro_introduced helper. 8
 # inline call sites refactored. Pure CompilerService tests

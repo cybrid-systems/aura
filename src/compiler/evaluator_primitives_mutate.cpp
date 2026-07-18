@@ -3097,12 +3097,35 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // non-recursive shared_mutex — the batch already
             // holds the lock via its outer guard.
             //
-            // Sub-op name mapping:
-            //   "mutate:rebind"       -> eval_flat_apply_mutate_rebind
-            //   "mutate:replace-value" -> eval_flat_apply_mutate_replace_value
-            //   "mutate:tweak-literal" -> eval_flat_apply_mutate_tweak_literal
-            // Anything else: unsupported (would need to acquire
-            // the lock, which deadlocks; fail fast).
+            // Issue #1900: dispatch expanded from 5 → 14 ops.
+            // All 14 lockless helpers in evaluator_eval_flat.cpp
+            // are extracted from the wrapper primitives and
+            // stripped of MutationBoundaryGuard + fiber-yield +
+            // read-only + lazy COW + typecheck + ownership +
+            // defuse_version_ bumps + dep-graph propagation
+            // (those are outer-batch responsibilities). The
+            // outer MutationBoundaryGuard already holds
+            // workspace_mtx_ unique_lock for the entire batch
+            // lifetime (only outermost Guard acquires, per
+            // #236 nesting rule), so all 14 sub-ops run under
+            // strong atomicity against concurrent mutators.
+            //
+            // Sub-op name mapping (14 ops):
+            //   "mutate:rebind"             -> eval_flat_apply_mutate_rebind
+            //   "mutate:replace-value"      -> eval_flat_apply_mutate_replace_value
+            //   "mutate:tweak-literal"       -> eval_flat_apply_mutate_tweak_literal
+            //   "mutate:remove-node"         -> eval_flat_apply_mutate_remove_node  (Issue #396
+            //   Phase 2) "mutate:insert-child"        -> eval_flat_apply_mutate_insert_child (Issue
+            //   #396 Phase 2) "mutate:set-body"            -> eval_flat_apply_mutate_set_body
+            //   (Issue #1900) "mutate:replace-pattern"     ->
+            //   eval_flat_apply_mutate_replace_pattern (Issue #1900) "mutate:replace-subtree" ->
+            //   eval_flat_apply_mutate_replace_subtree (Issue #1900) "mutate:splice" ->
+            //   eval_flat_apply_mutate_splice (Issue #1900) "mutate:wrap"                ->
+            //   eval_flat_apply_mutate_wrap (Issue #1900) "mutate:rename-symbol"       ->
+            //   eval_flat_apply_mutate_rename_symbol (Issue #1900) "mutate:move-node"           ->
+            //   eval_flat_apply_mutate_move_node (Issue #1900) "mutate:inline-call"         ->
+            //   eval_flat_apply_mutate_inline_call (Issue #1900)
+            // Anything else: unsupported (bump unsupported_op metric + abort).
             EvalResult sub_result{types::make_void()};
             if (op_name == "mutate:rebind") {
                 sub_result = ev.eval_flat_apply_mutate_rebind(op_args);
@@ -3116,15 +3139,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             } else if (op_name == "mutate:insert-child") {
                 // Issue #396 Phase 2: lockless variant extracted.
                 sub_result = ev.eval_flat_apply_mutate_insert_child(op_args);
+            } else if (op_name == "mutate:set-body") {
+                sub_result = ev.eval_flat_apply_mutate_set_body(op_args);
+            } else if (op_name == "mutate:replace-pattern") {
+                sub_result = ev.eval_flat_apply_mutate_replace_pattern(op_args);
+            } else if (op_name == "mutate:replace-subtree") {
+                sub_result = ev.eval_flat_apply_mutate_replace_subtree(op_args);
+            } else if (op_name == "mutate:splice") {
+                sub_result = ev.eval_flat_apply_mutate_splice(op_args);
+            } else if (op_name == "mutate:wrap") {
+                sub_result = ev.eval_flat_apply_mutate_wrap(op_args);
+            } else if (op_name == "mutate:rename-symbol") {
+                sub_result = ev.eval_flat_apply_mutate_rename_symbol(op_args);
+            } else if (op_name == "mutate:move-node") {
+                sub_result = ev.eval_flat_apply_mutate_move_node(op_args);
+            } else if (op_name == "mutate:inline-call") {
+                sub_result = ev.eval_flat_apply_mutate_inline_call(op_args);
             } else {
-                // For other ops (insert-child / remove-node / etc.)
-                // that aren't extracted to lockless helpers yet,
-                // error out instead of deadlocking on a nested
-                // guard acquire.
+                // Unsupported sub-op name. This path should now
+                // only fire for future-version primitives that
+                // land before their lockless helper ships, or for
+                // an EDSL caller that mistypes a name. Bump the
+                // #1900 AC3 metric, abort the batch, and surface
+                // a helpful error listing the 14 supported names.
+                ev.bump_atomic_batch_unsupported_op();
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
-                // Issue #1502: full parent_ topology + linear enforce
-                // on unsupported-op abort (same as batch-failed path).
                 ev.workspace_flat_->rebuild_parent_links_from_children();
                 (void)ev.linear_post_mutate_enforce_all();
                 ev.atomic_batch_domain_.rollbacks++;
@@ -3135,10 +3175,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.rollback_atomic_batch_pinning();
                 guard_ok = false;
                 return ev.make_merr("batch-unsupported-op",
-                                    ("mutate:atomic-batch does not yet support '" + op_name +
-                                     "' (only :rebind / :replace-value / :tweak-literal / "
-                                     ":remove-node / :insert-child; the others "
-                                     "need lockless helper extraction)")
+                                    ("mutate:atomic-batch does not support '" + op_name +
+                                     "' (supported: :rebind / :replace-value / :tweak-literal / "
+                                     ":remove-node / :insert-child / :set-body / "
+                                     ":replace-pattern / :replace-subtree / :splice / :wrap / "
+                                     ":rename-symbol / :move-node / :inline-call)")
                                         .c_str());
             }
             if (!sub_result) {
@@ -3197,6 +3238,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.atomic_batch_domain_.ops_total += op_count;
         ev.atomic_batch_domain_.bumps_saved_total += saved;
         ev.commit_atomic_batch_pinning();
+        // Issue #1900 AC3: each successful commit means the outer
+        // MutationBoundaryGuard serialized all concurrent mutators
+        // for the entire batch duration (workspace_mtx_ unique_lock
+        // held from Guard ctor through dtor). Bump the
+        // interleaved_mutation_prevented counter so AI dashboards
+        // can observe "how many strong-atomicity sessions ran".
+        ev.bump_atomic_batch_interleaved_prevented();
         // Issue #396 Phase 3: track fiber-context commits for
         // the "executed-under-concurrent-fiber" heuristic.
         if (in_fiber) {
