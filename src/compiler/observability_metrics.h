@@ -4273,6 +4273,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_rollbacks_total{0};
     std::atomic<std::uint64_t> mutation_boundary_yield_resumes_total{0};
     std::atomic<std::uint64_t> mutation_boundary_recovery_failures_total{0};
+    // Issue #1684: Guard::run_or_rollback caught a throw mid-mutate.
+    std::atomic<std::uint64_t> mutation_boundary_exception_rollback_total{0};
 
     // Issue #718: fine-grained per-block re-lower observability
     // counters for (query:incremental-relower-stats). These

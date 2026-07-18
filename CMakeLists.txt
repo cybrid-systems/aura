@@ -5350,6 +5350,9 @@ aura_issue_test_link_llvm_jit(test_occurrence_dirty_cycle_guard_1682)
 # Issue #1683: SV closed-loop pins workspace under shared/outer unique lock.
 aura_add_issue_test(test_sv_closedloop_workspace_lock_1683)
 aura_issue_test_link_llvm_jit(test_sv_closedloop_workspace_lock_1683)
+# Issue #1684: MutationBoundaryGuard::run_or_rollback exception safety.
+aura_add_issue_test(test_mutate_guard_exception_safety_1684)
+aura_issue_test_link_llvm_jit(test_mutate_guard_exception_safety_1684)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

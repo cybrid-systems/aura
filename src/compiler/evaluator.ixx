@@ -11268,6 +11268,51 @@ public:
         [[nodiscard]] bool is_outermost() const noexcept { return is_outermost_; }
         // Issue #1590: true when legacy ctor soft-failed on mutation quota.
         [[nodiscard]] bool is_inert() const noexcept { return inert_; }
+        // Issue #1684: mark success_flag false so dtor rolls back (if
+        // panic_auto_rollback_) instead of committing a partial mutate.
+        void mark_failed() noexcept {
+            if (flag_)
+                *flag_ = false;
+        }
+        // Issue #1684: run callable under Guard; on any throw, mark_failed
+        // so ~MutationBoundaryGuard does not commit. Prefer this for
+        // validate / typecheck / ownership and other external call sites
+        // inside add_mutate bodies (throws previously left ok=true).
+        // Returns true if fn completed without throwing.
+        template <typename F>
+        [[nodiscard]] bool run_or_rollback(F&& fn, std::string* err_out = nullptr) {
+            if (inert_) {
+                if (err_out)
+                    *err_out = "inert guard";
+                return false;
+            }
+            try {
+                std::forward<F>(fn)();
+                return true;
+            } catch (const std::exception& e) {
+                mark_failed();
+                if (err_out)
+                    *err_out = e.what();
+                if (ev_) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_exception_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                return false;
+            } catch (...) {
+                // [SILENCE-PRIM-#1684] intentional: convert unknown throw into
+                // Guard mark_failed + false so mutate does not commit.
+                mark_failed();
+                if (err_out)
+                    *err_out = "unknown exception";
+                if (ev_) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_exception_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                return false;
+            }
+        }
         // Issue #266: enable fine-grained column snapshots for the
         // next guard on this evaluator (call before construction).
         static void enable_fine_rollback(Evaluator& ev) noexcept {
