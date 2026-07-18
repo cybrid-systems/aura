@@ -166,8 +166,10 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
             // Prefix injection: bind both prefix:name and bare name for each export
             for (auto& [name, val] : mod_env->bindings()) {
                 auto prefixed = prefix + name;
-                // Env::bind copies key strings — do not push to string_heap_
-                // (Issue #1488: dead intern leftover polluted the heap).
+                // Env::bind copies key strings — do not intern prefixed
+                // names into the workspace string heap (no psid capture).
+                // Issue #1488 / #1693: dead intern leftover polluted the heap;
+                // bind uses the stack std::string directly.
                 ev.top_.bind(prefixed, val);
                 // Also bind bare name (no prefix) so tree-walker can find it
                 ev.top_.bind(name, val);
