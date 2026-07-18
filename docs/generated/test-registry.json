@@ -4825,7 +4825,7 @@
     {
       "file": "tests/test_mutate_sv_guard_1704.cpp",
       "category": "unit",
-      "reason": "Issue #1704 — mutate:sv-add-coverpoint / mutate:sv-weaken-property",
+      "reason": "Issue #1704 / #1705 — mutate:sv-add-coverpoint and",
       "issue": null
     },
     {
