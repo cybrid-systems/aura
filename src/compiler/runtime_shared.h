@@ -111,6 +111,15 @@ extern "C" int aura_closure_is_freed(std::int64_t closure_id);
 extern "C" int aura_closure_exists(std::int64_t closure_id);
 // Issue #1707: count of closure-cache generation mismatches (torn-read prevented).
 extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void);
+// Issue #1710: unchecked pair car/cdr fallbacks (OOB or defuse drift).
+extern "C" std::uint64_t aura_unchecked_pair_fallback_total(void);
+extern "C" void aura_pair_l2_stamp_defuse(std::uint64_t version);
+extern "C" void aura_pair_l2_clear_defuse_stamp(void);
+extern "C" std::int64_t aura_pair_car_unchecked(std::int64_t pair_val);
+extern "C" std::int64_t aura_pair_cdr_unchecked(std::int64_t pair_val);
+extern "C" std::int64_t aura_pair_car(std::int64_t pair_val);
+extern "C" std::int64_t aura_pair_cdr(std::int64_t pair_val);
+extern "C" std::int64_t aura_alloc_pair(std::int64_t car, std::int64_t cdr);
 
 // ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
 extern "C" std::int64_t aura_jit_test();

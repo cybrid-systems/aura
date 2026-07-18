@@ -236,6 +236,11 @@ extern "C" void aura_bypass_count_reset() {
 //
 static std::atomic<uint64_t> g_workspace_unchecked_fastpath_count{0};
 static std::atomic<uint64_t> g_workspace_deopt_count{0};
+// Issue #1710: unchecked pair access fell back to bounds-safe path
+// (OOB id, null slot, or defuse drift when L2 stamp is set).
+static std::atomic<uint64_t> g_unchecked_pair_fallback_total{0};
+// TLS stamp set by JIT L2 entry (optional). UINT64_MAX = unset.
+static thread_local std::uint64_t g_tls_pair_l2_defuse_stamp = UINT64_MAX;
 // Issue #1610: JIT MacroIntroduced hygiene policy counters.
 // consults = lower() saw source_marker==MacroIntroduced;
 // deopt = dirty+MacroIntroduced forced deopt (or explicit hygiene deopt).
@@ -261,6 +266,20 @@ extern "C" uint64_t aura_unchecked_fastpath_count() {
 
 extern "C" uint64_t aura_deopt_count() {
     return g_workspace_deopt_count.load(std::memory_order_relaxed);
+}
+
+// Issue #1710: JIT L2 may stamp the defuse version seen at entry; unchecked
+// pair access compares against live aura_get_defuse_version() for drift.
+extern "C" void aura_pair_l2_stamp_defuse(std::uint64_t version) {
+    g_tls_pair_l2_defuse_stamp = version;
+}
+
+extern "C" void aura_pair_l2_clear_defuse_stamp(void) {
+    g_tls_pair_l2_defuse_stamp = UINT64_MAX;
+}
+
+extern "C" uint64_t aura_unchecked_pair_fallback_total() {
+    return g_unchecked_pair_fallback_total.load(std::memory_order_relaxed);
 }
 
 // Issue #1610: compile-time / lower-path hygiene observability (not LLVM symbols).
@@ -295,6 +314,8 @@ extern "C" void aura_counters_reset() {
     g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
     g_workspace_unchecked_fastpath_count.store(0, std::memory_order_relaxed);
     g_workspace_deopt_count.store(0, std::memory_order_relaxed);
+    g_unchecked_pair_fallback_total.store(0, std::memory_order_relaxed);
+    g_tls_pair_l2_defuse_stamp = UINT64_MAX;
     g_jit_macro_hygiene_consults.store(0, std::memory_order_relaxed);
     g_jit_macro_introduced_deopt.store(0, std::memory_order_relaxed);
     g_hygiene_ir_macro_marker_total.store(0, std::memory_order_relaxed);
@@ -1323,36 +1344,53 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
     return (id << 2) | 1;
 }
 
-// L2 specialization: unchecked pair access (skips bounds check)
+// L2 specialization: "unchecked" pair access (shape already verified).
 //
-// Issue #157 Phase 1b: NO LOCK. The "unchecked" suffix now means
-// both "no bounds check" AND "no lock" — the function is a true
-// raw read of g_pair_slots[id]->car, relying on the caller (the
-// JIT lowering) to have done a defuse_version_ check at L2 entry.
-// The version check guarantees that no other fiber has mutated
-// the workspace since the function started, so the read is safe
-// even without a lock. On version mismatch, the JIT emits a
-// deopt branch to aura_pair_car (with bounds check + lock).
+// Issue #1710 (P0): former NO-LOCK raw index into g_pair_slots was a
+// silent UAF under concurrent alloc_pair realloc / free when the JIT
+// L2 defuse check was skipped or raced. Always:
+//   1) optional TLS stamp vs live defuse_version drift → fallback metric
+//   2) workspace read lock (sync with aura_alloc_pair publish)
+//   3) bounds + null-slot check before dereference
+// On OOB/null, return 0 (same as aura_pair_car) and bump fallback.
 //
-// In single-threaded execution (the common case), the version
-// check passes, the unchecked path is taken, and the lock cost
-// is avoided. In multi-threaded execution with concurrent
-// mutate, the version check fails (on the next L2 use after the
-// mutate), the deopt path is taken, and the lock is acquired
-// for the slow path.
-//
-// The shape check (SHAPE_PAIR) is still required — the
-// pair_val must be a valid pair reference, not a fixnum/void.
+// The shape check (SHAPE_PAIR) is still required at the call site —
+// pair_val should be a pair reference, not a fixnum/void.
+static int64_t pair_field_locked(int64_t pair_val, bool want_car) {
+    const uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    if (id >= g_pair_slots.size() || g_pair_slots[id] == nullptr) {
+        g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
+    return want_car ? g_pair_slots[id]->car : g_pair_slots[id]->cdr;
+}
+
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
     g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
-    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id]->car;
+    // Issue #1710: if L2 stamped a defuse version and it drifted, count
+    // fallback (still take lock+bounds — no nested re-entry to car).
+    if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
+        const auto cur = aura_get_defuse_version();
+        if (cur != g_tls_pair_l2_defuse_stamp)
+            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_lock_workspace_read();
+    const int64_t result = pair_field_locked(pair_val, /*want_car=*/true);
+    aura_unlock_workspace_read();
+    return result;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
     g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
-    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id]->cdr;
+    if (g_tls_pair_l2_defuse_stamp != UINT64_MAX) {
+        const auto cur = aura_get_defuse_version();
+        if (cur != g_tls_pair_l2_defuse_stamp)
+            g_unchecked_pair_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_lock_workspace_read();
+    const int64_t result = pair_field_locked(pair_val, /*want_car=*/false);
+    aura_unlock_workspace_read();
+    return result;
 }
 
 // === Primitive call bridge ===
