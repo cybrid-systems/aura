@@ -2044,23 +2044,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return mev("not-found", std::string("function \"") + name + "\" not found in AST");
     });
 
-    // (mutate:remove-node node-id) — Remove a node by setting parent's reference to NULL_NODE
-    // The node entry remains in the FlatAST but is disconnected from the tree.
-    // The tree walker in eval_flat skips NULL_NODE children.
-    // Issue #213 Cycle 2: migrate mutate:remove-node to use
-    // the MutationBoundaryGuard (RAII). The guard handles:
-    //   - exclusive workspace write lock (replaces std::unique_lock)
-    //   - ev.defuse_version_ bump on enter
-    //   - ev.defuse_version_ bump + rollback on exit(success=false)
-    //   - checkpoint push/pop (for the rollback machinery)
-    // The primitive now:
-    //   - declares `bool ok = true` and passes &ok to the guard
-    //   - sets `ok = false` on every error-return path
-    //   - the early `make_merr` returns stay but the success flag
-    //     is set so the guard's destructor triggers rollback
-    //   - the manual `ev.defuse_version_.fetch_add(1)` for the
-    //     second bump is removed (the guard does it on rollback
-    //     only; on success the version advance from enter stays)
+    // (mutate:remove-node node-id) — Detach target from ALL parents (DAG).
+    // FlatAST is a DAG (#1475 / #1688): a node may be referenced by multiple
+    // parents. Success means every incoming child edge is removed; the node
+    // entry may remain in the flat but is unreachable via children walks.
+    // For single-edge removal, use a future mutate:remove-edge (TODO).
+    // Issue #213 Cycle 2: MutationBoundaryGuard RAII owns lock + version.
     add_mutate("mutate:remove-node", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
@@ -2083,60 +2072,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                            std::to_string(flat.size()));
         }
 
-        // Phase 4 follow-up #3b: the wrapper still does the
-        // parent-walk (this primitive takes a target id, not
-        // a parent+index, so it doesn't map cleanly to a single
-        // RemoveChildMutator call). Once the parent + child index
-        // are found, the actual remove_child + mark_dirty_upward
-        // delegates to the strategy. Error propagation flows
-        // through AuraResult<NodeId>.
-        bool removed = false;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            if (v.children.empty())
-                continue;
-            const auto& children = flat.children(id);
-            for (std::size_t ci = 0; ci < children.size(); ++ci) {
-                if (children[ci] != target)
-                    continue;
-                // Found target at parent=id, child index=ci.
-                // Route the structural mutation through RemoveChildMutator.
-                // Issue #1686: wrap strategy apply so a throw does not commit.
-                std::string mut_err;
-                bool mut_ok = false;
-                std::string threw;
-                if (!guard.run_or_rollback(
-                        [&] {
-                            auto result = aura::ast::mutators::apply_mutation(
-                                flat, id,
-                                aura::ast::mutators::RemoveChildMutator{
-                                    static_cast<std::uint32_t>(ci)});
-                            if (!result) {
-                                mut_err = std::string(result.error().message);
-                                return;
-                            }
+        // Issue #1688: remove from ALL parents (not just the first).
+        // Issue #1686: wrap so a throw does not commit a partial multi-edge remove.
+        std::string mut_err;
+        std::size_t edge_count = 0;
+        std::string threw;
+        if (!guard.run_or_rollback(
+                [&] {
+                    auto result = aura::ast::mutators::remove_node_from_all_parents(
+                        flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
                             flat.add_structural_mutation_log_entry(
-                                id, static_cast<std::uint32_t>(ci), target, aura::ast::NULL_NODE,
-                                "remove-node");
-                            mut_ok = true;
-                        },
-                        &threw)) {
-                    ok = false;
-                    return mev("mutation-threw", std::string("remove-node apply threw: ") + threw);
-                }
-                if (!mut_ok) {
-                    ok = false;
-                    return mev("mutation-error", mut_err.empty() ? "remove-node failed" : mut_err);
-                }
-                removed = true;
-                break;
-            }
-            if (removed)
-                break;
-        }
-        if (!removed) {
+                                parent, ci, target, aura::ast::NULL_NODE, "remove-node");
+                        });
+                    if (!result) {
+                        mut_err = std::string(result.error().message);
+                        return;
+                    }
+                    edge_count = *result;
+                },
+                &threw)) {
             ok = false;
-            return mev("not-found", "node " + std::to_string(target) + " has no parent in the AST");
+            return mev("mutation-threw", std::string("remove-node apply threw: ") + threw);
+        }
+        if (edge_count == 0) {
+            ok = false;
+            if (mut_err.empty())
+                return mev("not-found",
+                           "node " + std::to_string(target) + " has no parent in the AST");
+            return mev("mutation-error", mut_err);
         }
         return make_bool(true);
     });
