@@ -5389,6 +5389,9 @@ aura_issue_test_link_llvm_jit(test_matcher_stable_captures_1695)
 # Issue #1696: multi-node mutators log under NULL_NODE, not NodeId 0.
 aura_add_issue_test(test_mutate_multi_node_log_null_1696)
 aura_issue_test_link_llvm_jit(test_mutate_multi_node_log_null_1696)
+# Issue #1697: replace-subtree re-validate/re-derive parent after parse_to_flat.
+aura_add_issue_test(test_mutate_replace_subtree_stale_parent_1697)
+aura_issue_test_link_llvm_jit(test_mutate_replace_subtree_stale_parent_1697)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

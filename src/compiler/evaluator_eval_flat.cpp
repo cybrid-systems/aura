@@ -2197,24 +2197,54 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-subtree: target has no parent slot to replace"});
-    // Issue #1685 / #1687: re-validate parent/slot after parse append.
+    // Issue #1697 / #1685: re-validate parent/slot after parse; re-derive
+    // from target if the pre-parse edge is no longer attached.
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
+    const auto target_ref = flat.make_ref(target);
     auto pr = aura::parser::parse_to_flat(new_code, flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
                                                       "batch :replace-subtree: parse failed"});
-    if (parent_id == aura::ast::NULL_NODE ||
-        static_cast<std::size_t>(parent_id) >= size_before_parse || parent_id >= flat.size() ||
-        flat.is_free_slot(parent_id))
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :replace-subtree: parent invalid after parse"});
-    {
+    auto parent_slot_ok = [&]() -> bool {
+        if (parent_id == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent_id) >= size_before_parse ||
+            !flat.is_live_node(parent_id))
+            return false;
         auto pv = flat.get(parent_id);
-        if (child_idx >= pv.children.size() || pv.child(child_idx) != target)
+        return child_idx < pv.children.size() && pv.child(child_idx) == target;
+    };
+    if (!parent_slot_ok()) {
+        if (!target_ref.is_valid_in(flat) ||
+            static_cast<std::size_t>(target_ref.id) >= size_before_parse ||
+            !flat.is_live_node(target_ref.id))
             return std::unexpected(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                       "batch :replace-subtree: child slot invalid after parse"});
+                                       "batch :replace-subtree: target invalid after parse"});
+        target = target_ref.id;
+        parent_id = flat.parent_of(target);
+        if (parent_id == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent_id) >= size_before_parse ||
+            !flat.is_live_node(parent_id))
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :replace-subtree: parent edge lost after parse"});
+        // Re-scan child index among pre-parse parent children.
+        child_idx = 0;
+        found_slot = false;
+        {
+            auto pv = flat.get(parent_id);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == target) {
+                    child_idx = static_cast<std::uint32_t>(ci);
+                    found_slot = true;
+                    break;
+                }
+            }
+        }
+        if (!found_slot || !parent_slot_ok())
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :replace-subtree: parent invalid after parse"});
     }
     flat.set_child(parent_id, child_idx, pr.root);
     flat.mark_dirty_upward_fast(parent_id, aura::ast::FlatAST::kGeneralDirty);

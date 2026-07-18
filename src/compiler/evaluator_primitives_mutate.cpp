@@ -2906,8 +2906,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         // ── Parse the new code into the workspace ─────────────
-        // Issue #1685: snapshot size; re-validate parent slot after append.
+        // Issue #1697 / #1685: snapshot size; re-validate parent+slot
+        // after append. If the pre-parse edge broke, re-derive from
+        // the (still-live) target — same pattern as #1694 replace-pattern.
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        const auto target_ref = flat.make_ref(target);
         auto pr = aura::parser::parse_to_flat(new_code, flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == NULL_NODE) {
             ok = false;
@@ -2918,17 +2921,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // below. Overwriting root would lose the parent linkage
         // and break eval / current-source.
 
-        // Issue #1685: parent/slot captured before parse must still be live.
-        if (parent_id == NULL_NODE || static_cast<std::size_t>(parent_id) >= size_before_parse ||
-            parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
-            ok = false;
-            return mev("stale-ref", "replace-subtree: parent invalid after parse");
-        }
-        {
+        // Issue #1697: parent/slot may be stale after parse_to_flat.
+        auto parent_slot_ok = [&]() -> bool {
+            if (parent_id == NULL_NODE ||
+                static_cast<std::size_t>(parent_id) >= size_before_parse ||
+                !flat.is_live_node(parent_id))
+                return false;
             auto pv = flat.get(parent_id);
-            if (child_idx >= pv.children.size() || pv.child(child_idx) != target) {
+            return child_idx < pv.children.size() && pv.child(child_idx) == target;
+        };
+        if (!parent_slot_ok()) {
+            // Re-derive edge from target (StableNodeRef gen + live check).
+            if (!target_ref.is_valid_in(flat) ||
+                static_cast<std::size_t>(target_ref.id) >= size_before_parse ||
+                !flat.is_live_node(target_ref.id)) {
                 ok = false;
-                return mev("stale-ref", "replace-subtree: child slot invalid after parse");
+                return mev("stale-ref", "replace-subtree: target invalid after parse");
+            }
+            target = target_ref.id;
+            auto child_idx_opt = parent_child_index_if_attached(flat, target);
+            if (!child_idx_opt) {
+                ok = false;
+                return mev("stale-ref", "replace-subtree: parent edge lost after parse");
+            }
+            parent_id = flat.parent_of(target);
+            child_idx = *child_idx_opt;
+            if (!parent_slot_ok()) {
+                ok = false;
+                return mev("stale-ref", "replace-subtree: parent invalid after parse");
             }
         }
 
