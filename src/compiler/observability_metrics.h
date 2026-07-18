@@ -6234,6 +6234,10 @@ struct CompilerMetrics {
     // body-only + free-var scan of irs[2..N] (not full-entry dirty).
     // Bumped once per dependent cascade hit on the targeted path.
     std::atomic<std::uint64_t> dep_graph_nested_lambda_targeted_dirty_total{0};
+    // Issue #1625: per-block nested lambda targeting (not whole nested fn).
+    // blocks_targeted = blocks marked dirty; blocks_kept_clean = left clean.
+    std::atomic<std::uint64_t> dep_graph_nested_lambda_blocks_targeted_total{0};
+    std::atomic<std::uint64_t> dep_graph_nested_lambda_blocks_kept_clean_total{0};
     std::atomic<std::uint64_t> dep_graph_hygiene_propagate{0}; // #1261
     // Issue #1376: dep_graph_ record_dependency lock observability
     std::atomic<std::uint64_t> dep_graph_record_total{0};       // every record_dependency call

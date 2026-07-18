@@ -4419,6 +4419,93 @@ public:
     // (Issue #1522/#1476/#1524/#1496/#1607 — single soft/hard epoch protocol)
     // authoritative helper with AOT table epoch + JIT batch_deopt).
 
+    // Issue #1625: does nested IR function reference `mutated_name`?
+    // free_vars (capture list) + instruction-level ConstString scan
+    // against entry.strings (covers quote/name loads when lowered).
+    static bool nested_lambda_references_name(const aura::ir::IRFunction& nfn,
+                                              const std::string& mutated_name,
+                                              const std::vector<std::string>& strings) {
+        for (const auto& fv : nfn.free_vars) {
+            if (fv == mutated_name)
+                return true;
+        }
+        // Instruction-level: ConstString loads of the name (quoted /
+        // symbolic refs that escape free_vars on some lower paths).
+        for (const auto& bb : nfn.blocks) {
+            for (const auto& instr : bb.instructions) {
+                if (instr.opcode != aura::ir::IROpcode::ConstString)
+                    continue;
+                const auto idx = instr.operands[1];
+                if (idx < strings.size() && strings[idx] == mutated_name)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    // Issue #1625: mark only nested-lambda blocks that reference the
+    // mutated name (per-block), not the whole nested function.
+    // When free_vars/ConstString say "refs" but no block-level evidence
+    // (empty/synthetic IR), mark entry_block only — keeps dirty << total
+    // on multi-block nested lambdas. Returns blocks marked.
+    std::size_t mark_nested_lambda_blocks_targeted(IRCacheEntry& entry, std::size_t fi,
+                                                   const std::string& mutated_name) {
+        if (fi >= entry.irs.size())
+            return 0;
+        const auto& nfn = entry.irs[fi];
+        if (!nested_lambda_references_name(nfn, mutated_name, entry.strings))
+            return 0;
+        if (entry.block_dirty_per_func_.size() <= fi)
+            entry.block_dirty_per_func_.resize(fi + 1);
+        auto& fb = entry.block_dirty_per_func_[fi];
+        if (fb.size() < nfn.blocks.size())
+            fb.resize(nfn.blocks.size(), std::uint8_t{0});
+
+        // Collect per-block instruction hits (ConstString → name).
+        std::vector<std::uint8_t> hit(nfn.blocks.size(), 0);
+        bool any_instr_hit = false;
+        for (std::size_t bi = 0; bi < nfn.blocks.size(); ++bi) {
+            for (const auto& instr : nfn.blocks[bi].instructions) {
+                if (instr.opcode != aura::ir::IROpcode::ConstString)
+                    continue;
+                const auto idx = instr.operands[1];
+                if (idx < entry.strings.size() && entry.strings[idx] == mutated_name) {
+                    hit[bi] = 1;
+                    any_instr_hit = true;
+                    break;
+                }
+            }
+        }
+
+        std::size_t marked = 0;
+        if (any_instr_hit) {
+            for (std::size_t bi = 0; bi < hit.size(); ++bi) {
+                if (!hit[bi])
+                    continue;
+                entry.mark_block_dirty(fi, static_cast<std::uint32_t>(bi));
+                ++marked;
+            }
+        } else {
+            // free_vars / capture hit without per-block IR evidence:
+            // mark entry block only (not all nested blocks).
+            const auto eb = static_cast<std::size_t>(nfn.entry_block);
+            const std::uint32_t bi = eb < nfn.blocks.size() ? static_cast<std::uint32_t>(eb) : 0u;
+            if (!nfn.blocks.empty()) {
+                entry.mark_block_dirty(fi, bi);
+                marked = 1;
+            }
+        }
+        const std::size_t total = nfn.blocks.size();
+        const std::size_t kept = total > marked ? total - marked : 0;
+        if (marked > 0) {
+            metrics_.dep_graph_nested_lambda_blocks_targeted_total.fetch_add(
+                marked, std::memory_order_relaxed);
+            metrics_.dep_graph_nested_lambda_blocks_kept_clean_total.fetch_add(
+                kept, std::memory_order_relaxed);
+        }
+        return marked;
+    }
+
     void mark_define_dirty(const std::string& name) {
         // Issue #1476 + #1523: unify dirty mark + dual-epoch; acquire
         // mutate FIRST when safe (skip if would invert lock order).
@@ -4466,27 +4553,14 @@ public:
                      ++bi) {
                     primary.mark_block_dirty(/*func_idx=*/body_idx, bi);
                 }
-                // Issue #1505: free-var scan of nested lambdas for self.
+                // Issue #1505 / #1625: free-var + per-block targeted dirty
+                // of nested lambdas for self (not whole nested fn).
+                // Always bump targeted once for nested primary shape —
+                // body-only + selective nested is still the targeted path
+                // (even when no nested free-refs self).
                 if (nested_primary) {
-                    for (std::size_t fi = 2; fi < primary.irs.size(); ++fi) {
-                        if (fi >= primary.block_dirty_per_func_.size())
-                            break;
-                        const auto& nfn = primary.irs[fi];
-                        bool free_refs_self = false;
-                        for (const auto& fv : nfn.free_vars) {
-                            if (fv == name) {
-                                free_refs_self = true;
-                                break;
-                            }
-                        }
-                        if (!free_refs_self)
-                            continue;
-                        auto& fb = primary.block_dirty_per_func_[fi];
-                        if (fb.empty() && !nfn.blocks.empty())
-                            fb.resize(nfn.blocks.size(), std::uint8_t{0});
-                        for (auto& b : fb)
-                            b = 1;
-                    }
+                    for (std::size_t fi = 2; fi < primary.irs.size(); ++fi)
+                        (void)mark_nested_lambda_blocks_targeted(primary, fi, name);
                     metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
@@ -4592,35 +4666,27 @@ public:
                     for (auto& b : centry.block_dirty_per_func_[1]) {
                         b = 1;
                     }
-                    // Issue #1505: free-var scan of nested lambdas.
-                    // Match free_vars against `cur` (immediate cascade
-                    // predecessor), not only the BFS root — multi-hop
-                    // cascades invalidate the intermediate name.
+                    // Issue #1505 / #1625: free-var + per-block targeted
+                    // dirty of nested lambdas. Match against `cur`
+                    // (immediate cascade predecessor). Only blocks that
+                    // reference the name (or entry_block fallback) are
+                    // marked — not the whole nested function.
                     if (nested_lambdas) {
+                        bool any_nested_targeted = false;
                         for (std::size_t fi = 2; fi < centry.irs.size(); ++fi) {
-                            if (fi >= centry.block_dirty_per_func_.size())
-                                break;
-                            const auto& nfn = centry.irs[fi];
-                            bool free_refs_cur = false;
-                            for (const auto& fv : nfn.free_vars) {
-                                if (fv == cur) {
-                                    free_refs_cur = true;
-                                    break;
-                                }
-                            }
-                            if (!free_refs_cur)
-                                continue;
-                            // Free-ref hit: mark all blocks of this nested
-                            // lambda dirty (function-level free_vars; no
-                            // per-block free-var map yet).
-                            auto& fb = centry.block_dirty_per_func_[fi];
-                            if (fb.empty() && !nfn.blocks.empty())
-                                fb.resize(nfn.blocks.size(), std::uint8_t{0});
-                            for (auto& b : fb)
-                                b = 1;
+                            if (mark_nested_lambda_blocks_targeted(centry, fi, cur) > 0)
+                                any_nested_targeted = true;
                         }
-                        metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        if (any_nested_targeted) {
+                            metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            // Nested present but none free-ref `cur` —
+                            // still count as body-only targeted cascade
+                            // (body marked above; nested kept clean).
+                            metrics_.dep_graph_nested_lambda_targeted_dirty_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                     }
                     metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 } else if (nested_lambdas) {

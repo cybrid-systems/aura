@@ -5306,6 +5306,10 @@ aura_issue_test_link_llvm_jit(test_issue_1504)
 # Issue #1505: mark_define_dirty cascade nested-lambda free-var scan + targeted dirty.
 aura_add_issue_test(test_issue_1505)
 aura_issue_test_link_llvm_jit(test_issue_1505)
+
+# Issue #1625: nested lambda per-block targeted dirty cascade
+aura_add_issue_test(test_issue_1625_nested_lambda_targeted)
+aura_issue_test_link_llvm_jit(test_issue_1625_nested_lambda_targeted)
 # Issue #1506: eval/eval_ir prefer relower_define_blocks (partial) over cache_define.
 aura_add_issue_test(test_issue_1506)
 aura_issue_test_link_llvm_jit(test_issue_1506)
