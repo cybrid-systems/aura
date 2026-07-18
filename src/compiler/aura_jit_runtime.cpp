@@ -770,8 +770,12 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_defuse_versions[cid] = 0;
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
-    g_closure_freed[cid] = 1;
+    // Issue #1708: push free_list FIRST, then mark freed=1.
+    // If push_back throws (e.g. bad_alloc), freed stays 0 → no permanent
+    // "freed but not reusable" slot leak. Under unique table lock, no
+    // concurrent alloc can pop a half-freed cid between these two stores.
     g_closure_free_list.push_back(cid);
+    g_closure_freed[cid] = 1;
     invalidate_closure_cache_for(closure_id);
     g_closure_free_total.fetch_add(1, std::memory_order_relaxed);
     aura_unlock_workspace_write();
