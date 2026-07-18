@@ -5401,6 +5401,9 @@ aura_issue_test_link_llvm_jit(test_mutate_wrap_stale_parent_1700)
 # Issue #1701: extract-function re-validate parent after multi add_*.
 aura_add_issue_test(test_mutate_extract_stale_parent_1701)
 aura_issue_test_link_llvm_jit(test_mutate_extract_stale_parent_1701)
+# Issue #1702: inline-call re-validate call_parent after DFS clone add_*.
+aura_add_issue_test(test_mutate_inline_stale_parent_1702)
+aura_issue_test_link_llvm_jit(test_mutate_inline_stale_parent_1702)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

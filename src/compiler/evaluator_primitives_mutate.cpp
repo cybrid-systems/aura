@@ -4443,24 +4443,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (formal_params.size() != actual_args.size())
             return ev.make_merr("inline-error", "parameter count mismatch in inlining");
 
-        // Find parent of the call node
+        // Find parent of the call node (re-validated after DFS clone — #1702).
+        if (call_id == NULL_NODE || !flat.is_live_node(call_id))
+            return ev.make_merr("out-of-range", "call node is not live");
         auto call_parent = flat.parent_of(call_id);
-        if (call_parent == NULL_NODE)
+        auto call_idx_opt = parent_child_index_if_attached(flat, call_id);
+        if (call_parent == NULL_NODE || !call_idx_opt)
             return ev.make_merr("inline-error", "call node has no parent");
+        int call_idx_in_parent = static_cast<int>(*call_idx_opt);
 
-        // Find call index in its parent
-        int call_idx_in_parent = -1;
-        {
-            auto cpv = flat.get(call_parent);
-            for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
-                if (cpv.child(ci) == call_id) {
-                    call_idx_in_parent = static_cast<int>(ci);
-                    break;
-                }
-            }
-        }
-        if (call_idx_in_parent < 0)
-            return ev.make_merr("inline-error", "call node not found in parent's children");
+        // Issue #1702: DFS clone performs many flat.add_* (each may
+        // stress SoA / free-list). Snapshot pre-clone size; re-validate
+        // call_parent + call_id edge before set_child. is_live_node only
+        // (restamp_all_node_generations runs at the end of this prim).
+        const auto size_before_clone = static_cast<std::size_t>(flat.size());
 
         // Simple inline: replace the call with the body, substituting
         // Variable nodes for params with the actual argument nodes.
@@ -4611,6 +4607,30 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto cloned_body = old_to_new[func_body_node];
         if (cloned_body == aura::ast::NULL_NODE)
             return ev.make_merr("inline-error", "function definition not found for inlining");
+
+        // Issue #1702: re-validate call parent edge after multi-add DFS clone.
+        if (static_cast<std::size_t>(call_id) >= size_before_clone || !flat.is_live_node(call_id))
+            return ev.make_merr("stale-ref", "inline-call: call node invalid after DFS clone");
+        auto parent_slot_ok = [&]() -> bool {
+            if (call_parent == NULL_NODE ||
+                static_cast<std::size_t>(call_parent) >= size_before_clone ||
+                !flat.is_live_node(call_parent) || call_idx_in_parent < 0)
+                return false;
+            auto cpv = flat.get(call_parent);
+            return static_cast<std::size_t>(call_idx_in_parent) < cpv.children.size() &&
+                   cpv.child(static_cast<std::uint32_t>(call_idx_in_parent)) == call_id;
+        };
+        if (!parent_slot_ok()) {
+            call_idx_opt = parent_child_index_if_attached(flat, call_id);
+            if (!call_idx_opt)
+                return ev.make_merr("stale-ref", "inline-call: parent edge lost after DFS clone");
+            call_parent = flat.parent_of(call_id);
+            call_idx_in_parent = static_cast<int>(*call_idx_opt);
+            if (!parent_slot_ok())
+                return ev.make_merr("stale-ref",
+                                    "inline-call: call_parent invalid after DFS clone");
+        }
+
         flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
         ev.workspace_flat_->mark_dirty_upward(call_parent);
 
