@@ -5278,6 +5278,9 @@ aura_issue_test_link_llvm_jit(test_fiber_resume_lifecycle_1631)
 # Issue #1609: query:pattern MacroIntroduced hygiene force-filter.
 aura_add_issue_test(test_query_pattern_hygiene_1609)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)
+# Issue #1636: mandate MacroIntroduced hygiene + marker dimension via tag_arity.
+aura_add_issue_test(test_query_pattern_hygiene_mandate_1636)
+aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate_1636)
 # Issue #1610: IR/JIT/AOT MacroIntroduced + provenance propagation.
 aura_add_issue_test(test_ir_hygiene_propagation_1610)
 aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation_1610)

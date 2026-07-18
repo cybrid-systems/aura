@@ -85,9 +85,11 @@ static void ac3_authoritative_stats() {
     (void)cs.eval("(query:pattern \"*\")");
     auto h = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(h && is_hash(*h), "authoritative hash (not bare int)");
-    CHECK(href(cs, "query:pattern-hygiene-stats", "schema") == 1609 ||
+    // Lineage: #1636 bumps schema; accept 1636|1609|1501.
+    CHECK(href(cs, "query:pattern-hygiene-stats", "schema") == 1636 ||
+              href(cs, "query:pattern-hygiene-stats", "schema") == 1609 ||
               href(cs, "query:pattern-hygiene-stats", "schema") == 1501,
-          "schema 1609|1501");
+          "schema 1636|1609|1501");
     CHECK(href(cs, "query:pattern-hygiene-stats", "root-skips") >= 0, "root-skips");
     CHECK(href(cs, "query:pattern-hygiene-stats", "recursive-skips") >= 0, "recursive-skips");
     CHECK(href(cs, "query:pattern-hygiene-stats", "hygiene-index-served") >= 0,

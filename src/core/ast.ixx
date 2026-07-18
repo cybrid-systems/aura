@@ -1320,6 +1320,12 @@ public:
     // Issue #1371: hash map (tag, arity) → vector<NodeId>
     // for O(1) find_by_tag_arity (was linear vector scan).
     // Built lazily on first query:pattern / ensure call.
+    //
+    // Issue #1636 / #1609 / #1501: MacroIntroduced hygiene is **not**
+    // packed into TagArityKey. Evaluator maintains a parallel
+    // tag_arity_index_user_ (user-marker only) served when
+    // skip_macro_introduced=true — same hot-path O(1) win without
+    // exploding key space or delta-pack complexity.
     struct TagArityKey {
         std::uint32_t tag;
         std::uint16_t arity_min;

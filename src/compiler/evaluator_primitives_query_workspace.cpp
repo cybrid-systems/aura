@@ -1706,8 +1706,9 @@ void register_workspace_query_primitives(
                 if (id >= flat.size())
                     continue;
                 if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                    // Issue #458 / #1501 / #1609: force-skip MacroIntroduced
-                    // on query:pattern hot path (default hygiene).
+                    // Issue #458 / #1501 / #1609 / #1636: MANDATE force-skip
+                    // MacroIntroduced on query:pattern hot path (default
+                    // hygiene) unless :allow-macro-introduced #t.
                     ev.bump_macro_introduced_skipped_in_query();
                     if (flat.provenance(id) != 0)
                         ev.bump_macro_hygiene_provenance_violation();
