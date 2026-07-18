@@ -302,23 +302,15 @@ export struct IncomingChildEdge {
 
 export [[nodiscard]] std::vector<IncomingChildEdge>
 collect_incoming_child_edges(const FlatAST& flat, NodeId target) {
+    // Issue #1689: O(deg) via FlatAST inverted parent-edge index
+    // (rebuild O(N+E) only when dirty after bulk topology ops).
     std::vector<IncomingChildEdge> edges;
     if (target == NULL_NODE || target >= flat.size())
         return edges;
-    for (NodeId id = 0; id < flat.size(); ++id) {
-        if (flat.is_free_slot(id))
-            continue;
-        auto children = flat.children(id);
-        for (std::size_t ci = 0; ci < children.size(); ++ci) {
-            if (children[ci] == target)
-                edges.push_back(IncomingChildEdge{id, static_cast<std::uint32_t>(ci)});
-        }
-    }
-    std::ranges::sort(edges, [](const IncomingChildEdge& a, const IncomingChildEdge& b) {
-        if (a.parent != b.parent)
-            return a.parent < b.parent;
-        return a.child_index > b.child_index; // higher index first per parent
-    });
+    auto raw = flat.collect_incoming_parent_edges(target);
+    edges.reserve(raw.size());
+    for (const auto& e : raw)
+        edges.push_back(IncomingChildEdge{e.first, e.second});
     return edges;
 }
 

@@ -891,6 +891,9 @@ private:
         if (id < occ_stale_.size())
             occ_stale_[id] = 0;
         parent_[id] = NULL_NODE;
+        // Issue #1689: recycled slot has no incoming edges.
+        if (!incoming_parent_index_dirty_ && id < incoming_parent_edges_.size())
+            incoming_parent_edges_[id].clear();
         node_gen_[id] = generation_;
     }
 
@@ -1143,6 +1146,15 @@ public:
         // stable state).
         last_seen_epoch_.push_back(0);
         parent_.push_back(NULL_NODE);
+        // Issue #1689: keep inverted index parallel to node columns when valid.
+        if (!incoming_parent_index_dirty_) {
+            if (incoming_parent_edges_.size() < tag_.size())
+                incoming_parent_edges_.resize(tag_.size());
+            // New id is at tag_.size()-1 after push above; ensure slot exists.
+            if (incoming_parent_edges_.size() <= static_cast<std::size_t>(id))
+                incoming_parent_edges_.resize(static_cast<std::size_t>(id) + 1);
+            incoming_parent_edges_[id].clear();
+        }
         node_gen_.push_back(generation_);
         return id;
     }
@@ -1195,6 +1207,18 @@ public:
     // mutex as nullptr; the moved-to owns it).
     OwnedSharedMutex structural_mtx_;
     std::pmr::vector<NodeId> parent_;
+    // Issue #1689: inverted multi-parent edge index.
+    // For each child NodeId, list of (parent, child_index) edges that
+    // reference it. Enables O(deg) parent lookup for remove-node (vs O(N*C)).
+    // Mutable: rebuild may run from const collect/lookup paths.
+    // When dirty, next lookup rebuilds from children_; locked structural
+    // mutates keep the index fresh via incremental updates.
+    mutable std::pmr::vector<std::pmr::vector<std::pair<NodeId, std::uint32_t>>>
+        incoming_parent_edges_;
+    mutable bool incoming_parent_index_dirty_ = true;
+    mutable std::atomic<std::uint64_t> incoming_parent_index_rebuilds_{0};
+    mutable std::atomic<std::uint64_t> incoming_parent_index_lookups_{0};
+    mutable std::atomic<std::uint64_t> incoming_parent_index_hits_{0};
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
     std::pmr::vector<std::uint32_t> cap_require_count_;
@@ -2369,6 +2393,11 @@ public:
         , sym_id_(std::move(other.sym_id_))
         , children_(std::move(other.children_))
         , parent_(std::move(other.parent_))
+        , incoming_parent_edges_(std::move(other.incoming_parent_edges_))
+        , incoming_parent_index_dirty_(other.incoming_parent_index_dirty_)
+        , incoming_parent_index_rebuilds_(other.incoming_parent_index_rebuilds_.load())
+        , incoming_parent_index_lookups_(other.incoming_parent_index_lookups_.load())
+        , incoming_parent_index_hits_(other.incoming_parent_index_hits_.load())
         , param_begin_(std::move(other.param_begin_))
         , param_count_(std::move(other.param_count_))
         , cap_require_count_(std::move(other.cap_require_count_))
@@ -2458,6 +2487,11 @@ public:
             sym_id_ = std::move(other.sym_id_);
             children_ = std::move(other.children_);
             parent_ = std::move(other.parent_);
+            incoming_parent_edges_ = std::move(other.incoming_parent_edges_);
+            incoming_parent_index_dirty_ = other.incoming_parent_index_dirty_;
+            incoming_parent_index_rebuilds_.store(other.incoming_parent_index_rebuilds_.load());
+            incoming_parent_index_lookups_.store(other.incoming_parent_index_lookups_.load());
+            incoming_parent_index_hits_.store(other.incoming_parent_index_hits_.load());
             param_begin_ = std::move(other.param_begin_);
             param_count_ = std::move(other.param_count_);
             cap_require_count_ = std::move(other.cap_require_count_);
@@ -2537,6 +2571,11 @@ public:
         , sym_id_(other.sym_id_)
         , children_(other.children_)
         , parent_(other.parent_)
+        , incoming_parent_edges_(other.incoming_parent_edges_)
+        , incoming_parent_index_dirty_(other.incoming_parent_index_dirty_)
+        , incoming_parent_index_rebuilds_(other.incoming_parent_index_rebuilds_.load())
+        , incoming_parent_index_lookups_(other.incoming_parent_index_lookups_.load())
+        , incoming_parent_index_hits_(other.incoming_parent_index_hits_.load())
         , param_begin_(other.param_begin_)
         , param_count_(other.param_count_)
         , cap_require_count_(other.cap_require_count_)
@@ -2623,6 +2662,11 @@ public:
             sym_id_ = other.sym_id_;
             children_ = other.children_;
             parent_ = other.parent_;
+            incoming_parent_edges_ = other.incoming_parent_edges_;
+            incoming_parent_index_dirty_ = other.incoming_parent_index_dirty_;
+            incoming_parent_index_rebuilds_.store(other.incoming_parent_index_rebuilds_.load());
+            incoming_parent_index_lookups_.store(other.incoming_parent_index_lookups_.load());
+            incoming_parent_index_hits_.store(other.incoming_parent_index_hits_.load());
             param_begin_ = other.param_begin_;
             param_count_ = other.param_count_;
             cap_require_count_ = other.cap_require_count_;
@@ -2694,6 +2738,7 @@ public:
         , sym_id_(alloc)
         , children_()
         , parent_(alloc)
+        , incoming_parent_edges_(alloc)
         , param_begin_(alloc)
         , param_count_(alloc)
         , cap_require_count_(alloc)
@@ -2770,6 +2815,8 @@ public:
             if (cid != NULL_NODE)
                 parent_[cid] = id;
         }
+        // Issue #1689: bulk parent rewrite — reindex on next lookup.
+        mark_incoming_parent_index_dirty();
     }
 
     [[nodiscard]] NodeId add_literal_float(double val) {
@@ -3560,6 +3607,67 @@ public:
         return id < parent_.size() ? parent_[id] : NULL_NODE;
     }
 
+    // Issue #1689: mark inverted parent-edge index stale (bulk topology
+    // changes). Next collect/lookup rebuilds O(N+E).
+    void mark_incoming_parent_index_dirty() const noexcept { incoming_parent_index_dirty_ = true; }
+
+    // Issue #1689: rebuild child→[(parent,idx)...] from children_ SoA.
+    void rebuild_incoming_parent_index() const {
+        const auto n = size();
+        incoming_parent_edges_.assign(n, {});
+        for (NodeId id = 0; id < n; ++id) {
+            if (is_free_slot(id) || id >= children_.size())
+                continue;
+            const auto& ch = children_[id];
+            for (std::size_t ci = 0; ci < ch.size(); ++ci) {
+                auto cid = ch[static_cast<std::uint32_t>(ci)];
+                if (cid == NULL_NODE || cid >= n)
+                    continue;
+                incoming_parent_edges_[cid].emplace_back(id, static_cast<std::uint32_t>(ci));
+            }
+        }
+        incoming_parent_index_dirty_ = false;
+        incoming_parent_index_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void ensure_incoming_parent_index() const {
+        if (incoming_parent_index_dirty_)
+            rebuild_incoming_parent_index();
+    }
+
+    // Issue #1689: O(deg) collect of all (parent, child_index) edges to
+    // `target`, sorted for safe multi-remove (same parent → higher index first).
+    [[nodiscard]] std::vector<std::pair<NodeId, std::uint32_t>>
+    collect_incoming_parent_edges(NodeId target) const {
+        incoming_parent_index_lookups_.fetch_add(1, std::memory_order_relaxed);
+        ensure_incoming_parent_index();
+        incoming_parent_index_hits_.fetch_add(1, std::memory_order_relaxed);
+        std::vector<std::pair<NodeId, std::uint32_t>> edges;
+        if (target == NULL_NODE || target >= incoming_parent_edges_.size())
+            return edges;
+        const auto& src = incoming_parent_edges_[target];
+        edges.assign(src.begin(), src.end());
+        std::ranges::sort(edges, [](const auto& a, const auto& b) {
+            if (a.first != b.first)
+                return a.first < b.first;
+            return a.second > b.second;
+        });
+        return edges;
+    }
+
+    [[nodiscard]] std::uint64_t incoming_parent_index_rebuilds() const noexcept {
+        return incoming_parent_index_rebuilds_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t incoming_parent_index_lookups() const noexcept {
+        return incoming_parent_index_lookups_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t incoming_parent_index_hits() const noexcept {
+        return incoming_parent_index_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool incoming_parent_index_dirty() const noexcept {
+        return incoming_parent_index_dirty_;
+    }
+
     // ── Child field access ─────────────────────────────────────
 
     std::span<const NodeId> children(NodeId id) const {
@@ -3813,6 +3921,49 @@ public:
     // guard acquisition.
     // Issue #1624: Contracts on structural child mutation — pre(id valid).
     // post: children count preserved (with_set), dirty bits via mark paths.
+    // Issue #1689: helpers for incremental inverted parent-edge index.
+    void incoming_index_ensure_size(NodeId need) const {
+        if (need == NULL_NODE)
+            return;
+        if (incoming_parent_edges_.size() <= static_cast<std::size_t>(need))
+            incoming_parent_edges_.resize(static_cast<std::size_t>(need) + 1);
+    }
+    void incoming_index_remove_edge(NodeId child, NodeId parent, std::uint32_t idx) const {
+        if (child == NULL_NODE || child >= incoming_parent_edges_.size())
+            return;
+        auto& edges = incoming_parent_edges_[child];
+        edges.erase(
+            std::remove_if(edges.begin(), edges.end(),
+                           [&](const auto& e) { return e.first == parent && e.second == idx; }),
+            edges.end());
+    }
+    void incoming_index_add_edge(NodeId child, NodeId parent, std::uint32_t idx) const {
+        if (child == NULL_NODE)
+            return;
+        incoming_index_ensure_size(child);
+        incoming_parent_edges_[child].emplace_back(parent, idx);
+    }
+    void incoming_index_shift_parent_indices(NodeId parent, std::uint32_t from_idx,
+                                             int delta) const {
+        // Adjust exactly one edge per child slot under `parent` at index ci
+        // (match e.second == ci). Matching >= from_idx would double-count when
+        // the same child NodeId appears in multiple slots.
+        const auto& list = children_[parent];
+        for (std::uint32_t ci = from_idx; ci < list.size(); ++ci) {
+            auto c = list[ci];
+            if (c == NULL_NODE || c >= incoming_parent_edges_.size())
+                continue;
+            for (auto& e : incoming_parent_edges_[c]) {
+                if (e.first == parent && e.second == ci) {
+                    if (delta < 0 && e.second == 0)
+                        break;
+                    e.second = static_cast<std::uint32_t>(static_cast<int>(e.second) + delta);
+                    break;
+                }
+            }
+        }
+    }
+
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         contract_assert(id < children_.size());
         const auto& list = children_[id];
@@ -3826,14 +3977,26 @@ public:
         contract_assert(children_[id].size() == old_size);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
+        // Issue #1689: incremental inverted index (when valid).
+        if (!incoming_parent_index_dirty_) {
+            if (old_cid != NULL_NODE)
+                incoming_index_remove_edge(old_cid, id, idx);
+            if (child != NULL_NODE)
+                incoming_index_add_edge(child, id, idx);
+        }
         add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
     }
     void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
         const auto& list = children_[id];
         auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
+        // Issue #1689: shift indices of edges at/after pos before insert.
+        if (!incoming_parent_index_dirty_ && pos < list.size())
+            incoming_index_shift_parent_indices(id, pos, /*delta=*/+1);
         children_[id] = list.with_insert(pos, child);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
+        if (!incoming_parent_index_dirty_ && child != NULL_NODE)
+            incoming_index_add_edge(child, id, pos);
         add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
         // Issue #1319 Phase 1: count structural inserts; full GapBuffer-backed
         // children_ column is progressive (PCV COW retained for snapshot/rollback).
@@ -3843,6 +4006,13 @@ public:
         const auto& list = children_[id];
         if (idx < list.size()) {
             auto cid = list[idx];
+            // Issue #1689: drop edge and shift higher indices before erase.
+            if (!incoming_parent_index_dirty_) {
+                if (cid != NULL_NODE)
+                    incoming_index_remove_edge(cid, id, idx);
+                if (idx + 1 < list.size())
+                    incoming_index_shift_parent_indices(id, idx + 1, /*delta=*/-1);
+            }
             if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = NULL_NODE;
             children_[id] = list.with_erase(idx);
@@ -3966,6 +4136,8 @@ public:
             }
         }
         parent_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1689: parent_ rebuild is bulk — refresh inverted index too.
+        rebuild_incoming_parent_index();
     }
 
     // Issue #1299/#1300: mark nodes [begin, size()) as free (node_gen_=0)
