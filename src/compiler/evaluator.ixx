@@ -4846,6 +4846,16 @@ public:
     // entry point.
     int request_gc_safepoint() noexcept {
         bump_gc_safepoint_request();
+        // Issue #1675: never STW/compact mid render present (hotpath).
+        // Adaptive GC + arena compact soft-gate already consult
+        // in_render_hotpath(); safepoint entry must defer too so
+        // long-running terminal apps keep frame-time predictability.
+        if (aura::core::arena_policy::in_render_hotpath()) {
+            bump_gc_safepoint_deferred();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+                m->render_hotpath_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return 1;
+        }
         // Issue #1489 / #651 / #1581 AC2: defer while PanicCheckpoint
         // recovery window is open (process-wide arm or live checkpoint).
         if (aura::gc_hooks::should_defer_compact_for_pending_checkpoint() ||
