@@ -5449,6 +5449,9 @@ aura_issue_test_link_llvm_jit(test_workspace_swap_guard_1717)
 # Issue #1718: try_probe reuses fixed string_heap slot (no unbounded push).
 aura_add_issue_test(test_try_probe_heap_slot_1718)
 aura_issue_test_link_llvm_jit(test_try_probe_heap_slot_1718)
+# Issue #1719: intend apply_closure refuses freed ClosureIds.
+aura_add_issue_test(test_intend_closure_live_1719)
+aura_issue_test_link_llvm_jit(test_intend_closure_live_1719)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
