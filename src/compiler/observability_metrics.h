@@ -765,6 +765,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eda_sv_verification_convergence_total{0};
     std::atomic<std::uint64_t> eda_sv_feedback_mutate_success_total{0};
     std::atomic<std::uint64_t> eda_sv_stable_ref_invalidation_total{0};
+    // Issue #1901 (refine #1822): EDA self-evolution StableNodeRef
+    // auto-refresh telemetry. stable_ref_auto_refresh_in_eda_total
+    // counts every refresh_if_stale / re-make_ref call from the
+    // EDA self-evolution primitive paths (eda:demo-sv-self-evolution
+    // + similar). eda_self_evolution_stale_ref_prevented counts
+    // the iterations where the refresh prevented a stale-ref
+    // access (forward-compat observability for the UAF window
+    // that #1822 / #1901 closed).
+    std::atomic<std::uint64_t> stable_ref_auto_refresh_in_eda_total{0};
+    std::atomic<std::uint64_t> eda_self_evolution_stale_ref_prevented{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
     std::atomic<std::uint64_t> eda_sv_corruption_detected_total{0};
     // Issue #697: Declarative primitives extension kit observability.
