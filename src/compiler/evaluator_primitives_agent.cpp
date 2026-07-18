@@ -2158,8 +2158,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     try {
                         top_errors[k] = std::stoi(te.substr(nstart, i - nstart));
                     } catch (const std::exception&) {
-                        // Issue #1724: top-errors stoi failure — keep slot default
-                        // + bump shared analytics parse metric (best-effort).
+                        // Issue #1724 / #1725: top-errors stoi failure — keep
+                        // slot default + bump analytics parse metric
+                        // (best-effort telemetry; not user input).
                         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                             m->agent_evolve_analytics_parse_failures.fetch_add(
                                 1, std::memory_order_relaxed);
