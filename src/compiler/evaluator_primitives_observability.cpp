@@ -230,6 +230,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:render-hotpath-stats",
     // Issue #1673: production present/diff/zero-copy closed-loop stats
     "query:render-stats",
+    // Issue #1675: frame arena + zero-copy + live cell-grid memory bounds
+    "query:render-memory-stats",
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",

@@ -763,7 +763,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto buf = std::make_unique<TermBuf>();
             buf->w = static_cast<std::int32_t>(w);
             buf->h = static_cast<std::int32_t>(h);
-            buf->cells.assign(static_cast<std::size_t>(w * h), TermCell::space_palette());
+            // Issue #1675: reserve exact capacity (no geometric growth jitter).
+            const auto ncells = static_cast<std::size_t>(w * h);
+            buf->cells.reserve(ncells);
+            buf->cells.assign(ncells, TermCell::space_palette());
             // #1559: first present after create is full-frame dirty.
             buf->dirty.mark_all_dirty(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
             std::int64_t id = -1;
@@ -785,6 +788,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->terminal_buffer_creates.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_buffer_live.fetch_add(1, std::memory_order_relaxed);
             }
+            (void)ncells; // capacity reserved above for #1675 predictability
             return make_int(id);
         },
         RENDER_PRIMITIVE_META(2, "Create terminal screen buffer (id).", "(int int) -> int"));
@@ -838,8 +842,17 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 reclaimed = trailing + static_cast<std::int64_t>(s_term_free_ids.size());
             }
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_buffer_compacts.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1675: compact is the render-registry "arena compact".
+                m->render_frame_reset_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Drop unused frame-arena capacity only when no present is active.
+            if (!aura::core::arena_policy::in_render_hotpath()) {
+                auto& fa = aura::core::zero_copy::g_render_frame_arena();
+                fa.reset();
+                // Keep capacity warm (do not clear block) for stable frame times.
+            }
             return make_int(reclaimed);
         },
         RENDER_PRIMITIVE_META(
@@ -1164,6 +1177,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
                 m->terminal_present_sgr_emits_total.store(
                     aura::renderer::render_engine_counters().sgr_emits, std::memory_order_relaxed);
+                // Issue #1675: mirror frame-arena / zero-copy process metrics.
+                auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
+                m->zero_copy_arena_alloc_bytes.store(
+                    zm.arena_alloc_bytes.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->zero_copy_arena_acquire_count.store(
+                    zm.arena_acquire_count.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->zero_copy_hit_in_render.store(zm.hit_in_render.load(std::memory_order_relaxed),
+                                                 std::memory_order_relaxed);
             }
             return make_int(n);
         },
@@ -1407,6 +1430,78 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (m && load(m->term_render_present_total) > 0)
                 ev.bump_render_obs_v2_savings(
                     static_cast<std::uint64_t>(load(m->term_render_present_total)));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1675: render memory predictability (frame arena + zero-copy + live cells).
+    // Facade-only: (stats:get "query:render-memory-stats") — no public add().
+    ObservabilityPrims::register_stats_impl(
+        "query:render-memory-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            auto& fa = aura::core::zero_copy::g_render_frame_arena();
+            auto& zm = aura::core::zero_copy::g_zero_copy_metrics();
+            // Live cell-grid bytes (bounded, predictable under freelist reuse).
+            std::int64_t live_bytes = 0;
+            std::int64_t live_bufs = 0;
+            {
+                std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
+                for (const auto& pbuf : s_term_bufs) {
+                    if (!pbuf)
+                        continue;
+                    ++live_bufs;
+                    live_bytes +=
+                        static_cast<std::int64_t>(pbuf->cells.capacity() * sizeof(TermCell));
+                }
+            }
+            // Sync process zero-copy atomics into CompilerMetrics for snapshot agents.
+            if (m) {
+                m->zero_copy_arena_alloc_bytes.store(
+                    zm.arena_alloc_bytes.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->zero_copy_arena_acquire_count.store(
+                    zm.arena_acquire_count.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                m->zero_copy_hit_in_render.store(zm.hit_in_render.load(std::memory_order_relaxed),
+                                                 std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
+            };
+            insert_kv("schema", 1675);
+            insert_kv("frame-arena-capacity", static_cast<std::int64_t>(fa.capacity_bytes()));
+            insert_kv("frame-arena-used", static_cast<std::int64_t>(fa.used_bytes()));
+            insert_kv("frame-arena-alloc-calls", static_cast<std::int64_t>(fa.alloc_calls));
+            insert_kv("frame-arena-total-bytes", static_cast<std::int64_t>(fa.total_bytes));
+            insert_kv(
+                "zero-copy-arena-alloc-bytes",
+                static_cast<std::int64_t>(zm.arena_alloc_bytes.load(std::memory_order_relaxed)));
+            insert_kv(
+                "zero-copy-arena-acquires",
+                static_cast<std::int64_t>(zm.arena_acquire_count.load(std::memory_order_relaxed)));
+            insert_kv("zero-copy-vector-fallback",
+                      static_cast<std::int64_t>(
+                          zm.vector_fallback_count.load(std::memory_order_relaxed)));
+            insert_kv("zero-copy-hit-in-render",
+                      static_cast<std::int64_t>(zm.hit_in_render.load(std::memory_order_relaxed)));
+            insert_kv("buffer-live-count", live_bufs);
+            insert_kv("buffer-live-capacity-bytes", live_bytes);
+            insert_kv("buffer-creates", m ? load(m->terminal_buffer_creates) : 0);
+            insert_kv("buffer-compacts", m ? load(m->terminal_buffer_compacts) : 0);
+            insert_kv(
+                "hotpath-enter-total",
+                static_cast<std::int64_t>(aura::core::arena_policy::render_hotpath_enter_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("hotpath-active", aura::core::arena_policy::in_render_hotpath() ? 1 : 0);
+            insert_kv("issue", 1675);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
