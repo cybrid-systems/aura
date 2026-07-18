@@ -151,32 +151,65 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //   1. calls detect-fn → list of "gap" records
     //   2. for each gap, calls fix-fn gap → #t if fixed
     //   3. returns the number of fixes
-    add("auto-evolve-once", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
-            return make_int(0);
-        auto detect_cid = as_closure_id(a[0]);
-        auto fix_cid = as_closure_id(a[1]);
-        auto detect_result = ev.apply_closure(detect_cid, {});
-        if (!detect_result)
-            return make_int(0);
-        EvalValue current = *detect_result;
-        std::int64_t fixed = 0;
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= ev.pairs_.size())
-                break;
-            auto gap = ev.pairs_[idx].car;
-            auto fix_result = ev.apply_closure(fix_cid, {gap});
-            if (fix_result) {
-                if (is_bool(*fix_result) && as_bool(*fix_result))
-                    ++fixed;
+    //
+    // Issue #1713: ClosureIds must stay live until apply_closure.
+    // TW lambdas live in Evaluator::closures_ (freed via
+    // (closure:free! <closure>) → erase_active_closure). JIT int ids
+    // use aura_closure_exists + aura_closure_is_freed. Do not call
+    // aura_closure_is_freed alone on TW ids (OOR ⇒ "freed").
+    auto auto_evolve_cid_live = [&ev](std::uint64_t raw) -> bool {
+        if (raw == 0)
+            return false;
+        if (ev.find_active_closure(static_cast<ClosureId>(raw)).has_value())
+            return true;
+        const auto id = static_cast<std::int64_t>(raw);
+        return aura_closure_exists(id) != 0 && aura_closure_is_freed(id) == 0;
+    };
+    auto auto_evolve_note_freed = [&ev]() {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->agent_closure_freed_during_tick.fetch_add(1, std::memory_order_relaxed);
+    };
+
+    add("auto-evolve-once",
+        [&ev, auto_evolve_cid_live,
+         auto_evolve_note_freed](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
+                return make_int(0);
+            auto detect_cid = as_closure_id(a[0]);
+            auto fix_cid = as_closure_id(a[1]);
+            // Issue #1713: refuse apply on freed detect/fix (UAF / wrong-fn).
+            if (!auto_evolve_cid_live(detect_cid) || !auto_evolve_cid_live(fix_cid)) {
+                auto_evolve_note_freed();
+                return make_int(0);
             }
-            current = ev.pairs_[idx].cdr;
-        }
-        return make_int(fixed);
-    });
+            auto detect_result = ev.apply_closure(detect_cid, {});
+            if (!detect_result)
+                return make_int(0);
+            EvalValue current = *detect_result;
+            std::int64_t fixed = 0;
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= ev.pairs_.size())
+                    break;
+                auto gap = ev.pairs_[idx].car;
+                // Re-check fix before each apply (may free mid-list).
+                if (!auto_evolve_cid_live(fix_cid)) {
+                    auto_evolve_note_freed();
+                    break;
+                }
+                auto fix_result = ev.apply_closure(fix_cid, {gap});
+                if (fix_result) {
+                    if (is_bool(*fix_result) && as_bool(*fix_result))
+                        ++fixed;
+                }
+                current = ev.pairs_[idx].cdr;
+            }
+            return make_int(fixed);
+        });
 
     // (auto-evolve-loop "interval" detect-fn fix-fn) → starts background loop
+    // Lifetime contract (#1713): detect-fn / fix-fn must remain live for the
+    // whole loop. Freeing either stops the next tick gracefully.
     add("auto-evolve-loop", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_closure(a[1]) || !is_closure(a[2]))
             return make_int(0);
@@ -213,35 +246,53 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("auto-evolve-running?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.auto_evolve_running_); });
 
-    add("auto-evolve-tick", [&ev](const auto&) -> EvalValue {
-        if (!ev.auto_evolve_running_)
-            return make_bool(false);
-        if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
-            return make_bool(false);
-        // Issue #1205 Phase 1: GC safepoint on long-running agent tick.
-        if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
-            fn();
-        ++ev.auto_evolve_cycle_count_;
-        // Issue #1712: removed production debug stderr prints on every tick
-        // (log pollution + stdio lock cost on the agent background path).
-        auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
-        if (!detect_result)
-            return make_bool(true);
-        EvalValue current = *detect_result;
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= ev.pairs_.size())
-                break;
-            auto gap = ev.pairs_[idx].car;
-            auto fix_result = ev.apply_closure(ev.auto_evolve_fix_closure_, {gap});
-            if (fix_result) {
-                if (is_bool(*fix_result) && as_bool(*fix_result))
-                    ++ev.auto_evolve_total_fixed_;
+    add("auto-evolve-tick",
+        [&ev, auto_evolve_cid_live, auto_evolve_note_freed](const auto&) -> EvalValue {
+            if (!ev.auto_evolve_running_)
+                return make_bool(false);
+            if (ev.auto_evolve_detect_closure_ == 0 || ev.auto_evolve_fix_closure_ == 0)
+                return make_bool(false);
+            // Issue #1713: validate stored ClosureIds still live before apply.
+            if (!auto_evolve_cid_live(ev.auto_evolve_detect_closure_) ||
+                !auto_evolve_cid_live(ev.auto_evolve_fix_closure_)) {
+                ev.auto_evolve_running_ = false;
+                ev.auto_evolve_detect_closure_ = 0;
+                ev.auto_evolve_fix_closure_ = 0;
+                auto_evolve_note_freed();
+                return make_bool(false);
             }
-            current = ev.pairs_[idx].cdr;
-        }
-        return make_bool(true);
-    });
+            // Issue #1205 Phase 1: GC safepoint on long-running agent tick.
+            if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
+                fn();
+            ++ev.auto_evolve_cycle_count_;
+            // Issue #1712: removed production debug stderr prints on every tick
+            // (log pollution + stdio lock cost on the agent background path).
+            auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
+            if (!detect_result)
+                return make_bool(true);
+            EvalValue current = *detect_result;
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= ev.pairs_.size())
+                    break;
+                auto gap = ev.pairs_[idx].car;
+                // Re-check fix mid-tick if agent freed it during detect.
+                if (!auto_evolve_cid_live(ev.auto_evolve_fix_closure_)) {
+                    ev.auto_evolve_running_ = false;
+                    ev.auto_evolve_detect_closure_ = 0;
+                    ev.auto_evolve_fix_closure_ = 0;
+                    auto_evolve_note_freed();
+                    return make_bool(false);
+                }
+                auto fix_result = ev.apply_closure(ev.auto_evolve_fix_closure_, {gap});
+                if (fix_result) {
+                    if (is_bool(*fix_result) && as_bool(*fix_result))
+                        ++ev.auto_evolve_total_fixed_;
+                }
+                current = ev.pairs_[idx].cdr;
+            }
+            return make_bool(true);
+        });
 
     add("auto-evolve-cycle-count", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.auto_evolve_cycle_count_));
