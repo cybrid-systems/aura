@@ -1970,7 +1970,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                           aura::ast::FlatAST::kGeneralDirty |
                                               aura::ast::FlatAST::kConstraintDirty);
 
-                // ── Auto-typecheck (Issue #107 / #526 / #1684) ──
+                // ── Auto-typecheck (Issue #107 / #526 / #1684 / #1686) ──
+                // #1686: set-body sibling of rebind — throws must mark_failed.
                 {
                     std::string threw;
                     if (!guard->run_or_rollback(
@@ -1981,7 +1982,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                 }
 
-                // ── Ownership validation (Issue #1458 / #1684) ──
+                // ── Ownership validation (Issue #1458 / #1684 / #1686) ──
                 if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
                     std::string threw;
                     if (!guard->run_or_rollback(
@@ -2110,15 +2111,33 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     continue;
                 // Found target at parent=id, child index=ci.
                 // Route the structural mutation through RemoveChildMutator.
-                auto result = aura::ast::mutators::apply_mutation(
-                    flat, id,
-                    aura::ast::mutators::RemoveChildMutator{static_cast<std::uint32_t>(ci)});
-                if (!result) {
+                // Issue #1686: wrap strategy apply so a throw does not commit.
+                std::string mut_err;
+                bool mut_ok = false;
+                std::string threw;
+                if (!guard.run_or_rollback(
+                        [&] {
+                            auto result = aura::ast::mutators::apply_mutation(
+                                flat, id,
+                                aura::ast::mutators::RemoveChildMutator{
+                                    static_cast<std::uint32_t>(ci)});
+                            if (!result) {
+                                mut_err = std::string(result.error().message);
+                                return;
+                            }
+                            flat.add_structural_mutation_log_entry(
+                                id, static_cast<std::uint32_t>(ci), target, aura::ast::NULL_NODE,
+                                "remove-node");
+                            mut_ok = true;
+                        },
+                        &threw)) {
                     ok = false;
-                    return mev("mutation-error", std::string(result.error().message));
+                    return mev("mutation-threw", std::string("remove-node apply threw: ") + threw);
                 }
-                flat.add_structural_mutation_log_entry(id, static_cast<std::uint32_t>(ci), target,
-                                                       aura::ast::NULL_NODE, "remove-node");
+                if (!mut_ok) {
+                    ok = false;
+                    return mev("mutation-error", mut_err.empty() ? "remove-node failed" : mut_err);
+                }
                 removed = true;
                 break;
             }
@@ -2207,26 +2226,38 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // InsertChildMutator strategy. The strategy validates the
         // target id (gen-aware), calls flat.insert_child, and
         // marks dirty upward. AuraResult carries errors uniformly.
-        auto result = aura::ast::mutators::apply_mutation(
-            flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
-        if (!result) {
+        // Issue #1686: wrap apply so a throw does not commit.
+        std::string mut_err;
+        std::string mut_tag = "mutation-error";
+        bool mut_ok = false;
+        std::string threw;
+        if (!guard.run_or_rollback(
+                [&] {
+                    auto result = aura::ast::mutators::apply_mutation(
+                        flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
+                    if (!result) {
+                        mut_err = std::string(result.error().message);
+                        if (result.error().kind ==
+                                aura::core::AuraErrorKind::MutationInvalidTarget ||
+                            result.error().kind ==
+                                aura::core::AuraErrorKind::MutationInvalidParent) {
+                            mut_tag = "out-of-range";
+                        }
+                        return;
+                    }
+                    // Log to workspace mutation log (Aura-specific).
+                    flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE,
+                                                           pr.root, "insert-child");
+                    mut_ok = true;
+                },
+                &threw)) {
             ok = false;
-            // Map AuraErrorKind -> Aura error tag for backward compat.
-            std::string tag = "mutation-error";
-            if (result.error().kind == aura::core::AuraErrorKind::MutationInvalidTarget) {
-                tag = "out-of-range";
-            } else if (result.error().kind == aura::core::AuraErrorKind::MutationInvalidParent) {
-                tag = "out-of-range";
-            }
-            return mev(tag, std::string(result.error().message));
+            return mev("mutation-threw", std::string("insert-child apply threw: ") + threw);
         }
-
-        // Log to workspace mutation log (Aura-specific, stays in wrapper).
-        std::string summary = (a.size() > 3 && is_string(a[3]))
-                                  ? safe_str(a[3])
-                                  : "insert child at " + std::to_string(pos);
-        flat.add_structural_mutation_log_entry(parent, pos, aura::ast::NULL_NODE, pr.root,
-                                               "insert-child");
+        if (!mut_ok) {
+            ok = false;
+            return mev(mut_tag, mut_err.empty() ? "insert-child failed" : mut_err);
+        }
 
         return make_int(static_cast<std::int64_t>(pr.root));
     });
@@ -2889,8 +2920,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1685: snapshot size; re-validate parent slot after append.
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto pr = aura::parser::parse_to_flat(new_code, flat, *ev.workspace_pool_);
-        if (!pr.success || pr.root == NULL_NODE)
+        if (!pr.success || pr.root == NULL_NODE) {
+            ok = false;
             return mev("parse-error", "new code could not be parsed");
+        }
         // Note: we do NOT set flat.root = pr.root here. The new
         // subtree is attached at the original slot via set_child
         // below. Overwriting root would lose the parent linkage
@@ -3017,12 +3050,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         // ── Replace target in parent's children list ──────────
-        flat.set_child(parent_id, child_idx, pr.root);
-        flat.mark_dirty_upward(parent_id);
-
-        // ── Record mutation with subtree rollback data ───────
-        flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source, "replace-subtree",
-                                  summary);
+        // Issue #1686: set_child / dirty / log under run_or_rollback so
+        // a mid-op throw does not commit a half-applied subtree swap.
+        {
+            std::string threw;
+            if (!guard.run_or_rollback(
+                    [&] {
+                        flat.set_child(parent_id, child_idx, pr.root);
+                        flat.mark_dirty_upward(parent_id);
+                        flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source,
+                                                  "replace-subtree", summary);
+                    },
+                    &threw)) {
+                ok = false;
+                return mev("mutation-threw", std::string("replace-subtree apply threw: ") + threw);
+            }
+        }
 
         // ── Return value: #t on success, or a captured-vars list
         //    so LLM callers can see what was implicitly captured.
@@ -3220,35 +3263,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             //   eval_flat_apply_mutate_inline_call (Issue #1900)
             // Anything else: unsupported (bump unsupported_op metric + abort).
             EvalResult sub_result{types::make_void()};
-            if (op_name == "mutate:rebind") {
-                sub_result = ev.eval_flat_apply_mutate_rebind(op_args);
-            } else if (op_name == "mutate:replace-value") {
-                sub_result = ev.eval_flat_apply_mutate_replace_value(op_args);
-            } else if (op_name == "mutate:tweak-literal") {
-                sub_result = ev.eval_flat_apply_mutate_tweak_literal(op_args);
-            } else if (op_name == "mutate:remove-node") {
-                // Issue #396 Phase 2: lockless variant extracted.
-                sub_result = ev.eval_flat_apply_mutate_remove_node(op_args);
-            } else if (op_name == "mutate:insert-child") {
-                // Issue #396 Phase 2: lockless variant extracted.
-                sub_result = ev.eval_flat_apply_mutate_insert_child(op_args);
-            } else if (op_name == "mutate:set-body") {
-                sub_result = ev.eval_flat_apply_mutate_set_body(op_args);
-            } else if (op_name == "mutate:replace-pattern") {
-                sub_result = ev.eval_flat_apply_mutate_replace_pattern(op_args);
-            } else if (op_name == "mutate:replace-subtree") {
-                sub_result = ev.eval_flat_apply_mutate_replace_subtree(op_args);
-            } else if (op_name == "mutate:splice") {
-                sub_result = ev.eval_flat_apply_mutate_splice(op_args);
-            } else if (op_name == "mutate:wrap") {
-                sub_result = ev.eval_flat_apply_mutate_wrap(op_args);
-            } else if (op_name == "mutate:rename-symbol") {
-                sub_result = ev.eval_flat_apply_mutate_rename_symbol(op_args);
-            } else if (op_name == "mutate:move-node") {
-                sub_result = ev.eval_flat_apply_mutate_move_node(op_args);
-            } else if (op_name == "mutate:inline-call") {
-                sub_result = ev.eval_flat_apply_mutate_inline_call(op_args);
-            } else {
+            if (op_name != "mutate:rebind" && op_name != "mutate:replace-value" &&
+                op_name != "mutate:tweak-literal" && op_name != "mutate:remove-node" &&
+                op_name != "mutate:insert-child" && op_name != "mutate:set-body" &&
+                op_name != "mutate:replace-pattern" && op_name != "mutate:replace-subtree" &&
+                op_name != "mutate:splice" && op_name != "mutate:wrap" &&
+                op_name != "mutate:rename-symbol" && op_name != "mutate:move-node" &&
+                op_name != "mutate:inline-call") {
                 // Unsupported sub-op name. This path should now
                 // only fire for future-version primitives that
                 // land before their lockless helper ships, or for
@@ -3274,6 +3295,57 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                      ":replace-pattern / :replace-subtree / :splice / :wrap / "
                                      ":rename-symbol / :move-node / :inline-call)")
                                         .c_str());
+            }
+            // Issue #1686: lockless sub-ops must not throw past the
+            // outer Guard (would commit a partial multi-step batch).
+            {
+                std::string threw;
+                if (!guard.run_or_rollback(
+                        [&] {
+                            if (op_name == "mutate:rebind") {
+                                sub_result = ev.eval_flat_apply_mutate_rebind(op_args);
+                            } else if (op_name == "mutate:replace-value") {
+                                sub_result = ev.eval_flat_apply_mutate_replace_value(op_args);
+                            } else if (op_name == "mutate:tweak-literal") {
+                                sub_result = ev.eval_flat_apply_mutate_tweak_literal(op_args);
+                            } else if (op_name == "mutate:remove-node") {
+                                sub_result = ev.eval_flat_apply_mutate_remove_node(op_args);
+                            } else if (op_name == "mutate:insert-child") {
+                                sub_result = ev.eval_flat_apply_mutate_insert_child(op_args);
+                            } else if (op_name == "mutate:set-body") {
+                                sub_result = ev.eval_flat_apply_mutate_set_body(op_args);
+                            } else if (op_name == "mutate:replace-pattern") {
+                                sub_result = ev.eval_flat_apply_mutate_replace_pattern(op_args);
+                            } else if (op_name == "mutate:replace-subtree") {
+                                sub_result = ev.eval_flat_apply_mutate_replace_subtree(op_args);
+                            } else if (op_name == "mutate:splice") {
+                                sub_result = ev.eval_flat_apply_mutate_splice(op_args);
+                            } else if (op_name == "mutate:wrap") {
+                                sub_result = ev.eval_flat_apply_mutate_wrap(op_args);
+                            } else if (op_name == "mutate:rename-symbol") {
+                                sub_result = ev.eval_flat_apply_mutate_rename_symbol(op_args);
+                            } else if (op_name == "mutate:move-node") {
+                                sub_result = ev.eval_flat_apply_mutate_move_node(op_args);
+                            } else { // mutate:inline-call
+                                sub_result = ev.eval_flat_apply_mutate_inline_call(op_args);
+                            }
+                        },
+                        &threw)) {
+                    ok = false;
+                    guard_ok = false;
+                    ev.workspace_flat_->rollback_since(initial_log_size);
+                    ev.workspace_flat_->rollback_atomic_batch();
+                    ev.workspace_flat_->rebuild_parent_links_from_children();
+                    (void)ev.linear_post_mutate_enforce_all();
+                    ev.atomic_batch_domain_.rollbacks++;
+                    ev.bump_edsl_nested_atomic_rollback();
+                    if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                                  static_cast<std::size_t>(batch_snap_id)))
+                        ev.bump_atomic_batch_snapshot_rollback();
+                    ev.rollback_atomic_batch_pinning();
+                    return ev.make_merr("batch-threw",
+                                        ("mutate:atomic-batch sub-op threw: " + threw).c_str());
+                }
             }
             if (!sub_result) {
                 ok = false;

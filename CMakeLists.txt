@@ -5356,6 +5356,9 @@ aura_issue_test_link_llvm_jit(test_mutate_guard_exception_safety_1684)
 # Issue #1685: re-resolve Define after parse_to_flat (rebind/set-body).
 aura_add_issue_test(test_mutate_rebind_stale_define_1685)
 aura_issue_test_link_llvm_jit(test_mutate_rebind_stale_define_1685)
+# Issue #1686: set-body / sibling run_or_rollback exception safety.
+aura_add_issue_test(test_mutate_set_body_exception_safety_1686)
+aura_issue_test_link_llvm_jit(test_mutate_set_body_exception_safety_1686)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
