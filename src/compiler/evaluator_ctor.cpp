@@ -341,17 +341,22 @@ Evaluator::~Evaluator() {
     // set_temp_arena install `this` as arena_owner_; ~Evaluator must
     // clear those links before any further teardown (same hygiene as
     // g_yield_hook_evaluator / g_query_evaluator below).
-    if (arena_) {
-        arena_->clear_arena_owner();
-        arena_->set_on_compact_hook({});
-        arena_ = nullptr;
+    // Issue #1663: hold arena_set_mtx_ so concurrent set_arena cannot
+    // interleave with teardown.
+    {
+        std::lock_guard<std::mutex> lock(arena_set_mtx_);
+        if (arena_) {
+            arena_->clear_arena_owner();
+            arena_->set_on_compact_hook({});
+            arena_ = nullptr;
+        }
+        if (temp_arena_) {
+            temp_arena_->clear_arena_owner();
+            temp_arena_ = nullptr;
+        }
+        if (arena_group_)
+            arena_group_->clear_default_arena_owner();
     }
-    if (temp_arena_) {
-        temp_arena_->clear_arena_owner();
-        temp_arena_ = nullptr;
-    }
-    if (arena_group_)
-        arena_group_->clear_default_arena_owner();
 
     // Issue #63723: clear all thread-local Evaluator* slots
     // that might still point at this dying instance. Without

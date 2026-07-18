@@ -7,6 +7,8 @@ module;
 #include <functional>
 #include <memory>
 #include <memory_resource>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -503,18 +505,37 @@ public:
     // (owner unset) keep the unlimited path. Callback is C-style so
     // aura.core.arena never imports the compiler Evaluator module.
     // allow_fn returns true if the allocation is permitted.
+    //
+    // Issue #1663: owner + allow_fn are a dual-word critical section —
+    // concurrent set/clear vs allocate_raw must not observe a torn pair
+    // (owner set, fn null → silent quota bypass). Updates take
+    // unique_lock; allocate holds shared_lock across the allow_fn call
+    // so ~Evaluator cannot clear+destroy owner mid-callback (UAF).
+    // allow_fn must not re-enter set/clear_arena_owner (would deadlock).
     using ArenaQuotaAllowFn = bool (*)(void* owner, std::size_t size) noexcept;
     void set_arena_owner(void* owner, ArenaQuotaAllowFn allow_fn) noexcept {
+        std::unique_lock lock(owner_mtx_);
         arena_owner_ = owner;
         quota_allow_fn_ = allow_fn;
     }
     void clear_arena_owner() noexcept {
+        std::unique_lock lock(owner_mtx_);
         arena_owner_ = nullptr;
         quota_allow_fn_ = nullptr;
     }
-    [[nodiscard]] void* arena_owner() const noexcept { return arena_owner_; }
+    [[nodiscard]] void* arena_owner() const noexcept {
+        std::shared_lock lock(owner_mtx_);
+        return arena_owner_;
+    }
     [[nodiscard]] bool has_arena_owner() const noexcept {
+        std::shared_lock lock(owner_mtx_);
         return arena_owner_ != nullptr && quota_allow_fn_ != nullptr;
+    }
+    // Issue #1663 test/observability seam: under one lock, owner and
+    // allow_fn are both non-null or both null (no torn half-state).
+    [[nodiscard]] bool owner_pair_consistent() const noexcept {
+        std::shared_lock lock(owner_mtx_);
+        return (arena_owner_ != nullptr) == (quota_allow_fn_ != nullptr);
     }
 
     ~ASTArena() {
@@ -947,12 +968,17 @@ public:
                 aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
                                       std::string("ASTArena::allocate_checked size==0")});
         }
-        if (quota_allow_fn_ && arena_owner_) {
-            if (!quota_allow_fn_(arena_owner_, size)) {
-                return std::unexpected(aura::core::AuraError{
-                    aura::core::AuraErrorKind::ResourceQuotaExceeded,
-                    std::string("ASTArena::allocate_checked: resource quota exceeded (") +
-                        std::to_string(size) + " bytes)"});
+        // Issue #1663: hold shared_lock across allow_fn so clear cannot
+        // destroy owner mid-callback (snapshot-then-call would UAF).
+        {
+            std::shared_lock lock(owner_mtx_);
+            if (quota_allow_fn_ && arena_owner_) {
+                if (!quota_allow_fn_(arena_owner_, size)) {
+                    return std::unexpected(aura::core::AuraError{
+                        aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                        std::string("ASTArena::allocate_checked: resource quota exceeded (") +
+                            std::to_string(size) + " bytes)"});
+                }
             }
         }
         // Quota already enforced (or unbound) — do not re-enter allow_fn.
@@ -1026,13 +1052,20 @@ private:
     // ASTArena::allocate_checked / Evaluator::allocate_checked.
     void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
         pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
-        // ── Resource quota (Issue #1546 / #1481 / #1554) ──
+        // ── Resource quota (Issue #1546 / #1481 / #1554 / #1663) ──
         // Owner-threaded Evaluator::check_arena_quota (or equivalent).
         // Orphan arenas skip this branch entirely.
-        if (quota_allow_fn_ && arena_owner_) {
-            if (!quota_allow_fn_(arena_owner_, size)) {
-                // Rejected — no allocation, no stats bump.
-                return nullptr;
+        // Issue #1663: hold shared_lock across allow_fn so concurrent
+        // set/clear cannot tear the pair AND ~Evaluator cannot destroy
+        // owner mid-callback (unique_lock waits for shared_lock release).
+        // allow_fn must not call set/clear_arena_owner (deadlock).
+        {
+            std::shared_lock lock(owner_mtx_);
+            if (quota_allow_fn_ && arena_owner_) {
+                if (!quota_allow_fn_(arena_owner_, size)) {
+                    // Rejected — no allocation, no stats bump.
+                    return nullptr;
+                }
             }
         }
         return allocate_raw_impl(size, alignment);
@@ -1197,6 +1230,8 @@ private:
     std::atomic<bool> defrag_requested_{false};
     std::function<void()> on_compact_hook_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
+    // Issue #1663: owner_mtx_ protects the dual-word owner pair.
+    mutable std::shared_mutex owner_mtx_;
     void* arena_owner_ = nullptr;
     ArenaQuotaAllowFn quota_allow_fn_ = nullptr;
 };
