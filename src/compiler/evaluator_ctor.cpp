@@ -405,13 +405,51 @@ Evaluator::~Evaluator() {
     error_values_.clear();
     opaque_heap_.clear();
     string_heap_.clear();
-    strategies_.clear();
+    {
+        // Issue #1720: strategies_ guarded for concurrent fiber access.
+        std::unique_lock<std::shared_mutex> lk(strategies_mtx_);
+        strategies_.clear();
+    }
     // Issue #911: free Evaluator-owned TypeRegistry
     if (owns_type_registry_ && type_registry_) {
         delete static_cast<aura::core::TypeRegistry*>(type_registry_);
         type_registry_ = nullptr;
         owns_type_registry_ = false;
     }
+}
+
+// Issue #1720: concurrent-safe timeline / intend-history API.
+void Evaluator::timeline_clear() {
+    std::unique_lock<std::shared_mutex> lk(timeline_mtx_);
+    timeline_.clear();
+}
+void Evaluator::timeline_push(std::string line) {
+    std::unique_lock<std::shared_mutex> lk(timeline_mtx_);
+    timeline_.push_back(std::move(line));
+}
+std::string Evaluator::timeline_snapshot() const {
+    std::shared_lock<std::shared_mutex> lk(timeline_mtx_);
+    std::string result;
+    for (std::size_t i = 0; i < timeline_.size(); ++i)
+        result += std::to_string(i) + ":" + timeline_[i] + "\n";
+    return result;
+}
+std::string Evaluator::timeline_tail(std::size_t max_n) const {
+    std::shared_lock<std::shared_mutex> lk(timeline_mtx_);
+    if (timeline_.empty())
+        return "  (empty)\n";
+    std::string out;
+    std::size_t start = timeline_.size() > max_n ? timeline_.size() - max_n : 0;
+    for (std::size_t i = start; i < timeline_.size(); ++i)
+        out += "  " + std::to_string(i) + ":" + timeline_[i] + "\n";
+    return out;
+}
+void Evaluator::intend_history_push(IntendRecord rec) {
+    std::unique_lock<std::shared_mutex> lk(intend_history_mtx_);
+    rec.record_id = next_record_id_++;
+    intend_history_.push_back(std::move(rec));
+    if (intend_history_.size() > MAX_HISTORY_SIZE)
+        intend_history_.erase(intend_history_.begin());
 }
 
 } // namespace aura::compiler

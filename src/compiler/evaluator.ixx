@@ -3184,6 +3184,8 @@ private:
         std::string parent;              // parent strategy name
     };
     std::vector<StrategyDef> strategies_;
+    // Issue #1720: concurrent fiber access to strategy/intend vectors.
+    mutable std::shared_mutex strategies_mtx_;
     // ── Intend history (E4 Phase 1) ────────────────────────────
     struct IntendRecord {
         std::uint64_t record_id;
@@ -3201,8 +3203,15 @@ private:
         std::uint64_t parent_record_id;
     };
     std::vector<IntendRecord> intend_history_;
+    mutable std::shared_mutex intend_history_mtx_; // Issue #1720
     std::uint64_t next_record_id_ = 1;
     static constexpr std::size_t MAX_HISTORY_SIZE = 1000;
+    // Issue #1720: concurrent-safe timeline / intend-history API.
+    void timeline_clear();
+    void timeline_push(std::string line);
+    [[nodiscard]] std::string timeline_snapshot() const;
+    [[nodiscard]] std::string timeline_tail(std::size_t max_n) const;
+    void intend_history_push(IntendRecord rec);
     // ── Coverage counters (fuzz Phase 3) ──────────────────────
     // 0=parser, 1=typecheck, 2=eval, 3=jit, 4=macro, 5=edsl-set-code,
     // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
@@ -3934,7 +3943,8 @@ private:
     std::unordered_map<std::string, std::uint64_t> functor_instance_cache_;
 
     // ── Timeline for intend (E2, backward compat) ───────────────
-    std::vector<std::string> timeline_; //
+    std::vector<std::string> timeline_;      //
+    mutable std::shared_mutex timeline_mtx_; // Issue #1720
     // Issue #145 Phase 2.4 — pmr-backed (matches cells_/pairs_
     // backing). Vector metadata lives in runtime_resource_;
     // std::string char buffers still heap-allocate per string

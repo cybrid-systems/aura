@@ -777,8 +777,12 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         };
         auto active_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(ev.active_strategy_.empty() ? std::string("none")
-                                                              : ev.active_strategy_);
+        {
+            // Issue #1720: active_strategy_ guarded by strategies_mtx_.
+            std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            ev.string_heap_.push_back(ev.active_strategy_.empty() ? std::string("none")
+                                                                  : ev.active_strategy_);
+        }
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"iterations-to-closure", make_int(static_cast<std::int64_t>(iterations))},
             {"coverage-improvement", make_int(static_cast<std::int64_t>(verify_total))},

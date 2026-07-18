@@ -74,6 +74,9 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #1720 helpers as Evaluator members (implemented below namespace).
+// Declared in evaluator.ixx.
+
 namespace {
     std::vector<std::pair<std::string, std::string>> g_template_patterns;
     std::vector<std::vector<std::string>> g_template_params;
@@ -430,7 +433,11 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 std::string("unknown strategy: \"") + name +
                     "\" (expected: coverage-greedy | bug-fix-priority | minimal-mutation)");
         }
-        ev.active_strategy_ = name;
+        {
+            // Issue #1720: guard active_strategy_ with strategies_mtx_.
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            ev.active_strategy_ = name;
+        }
         // Bump the hits counter for the new strategy.
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
@@ -441,14 +448,19 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             else if (name == "minimal-mutation")
                 m->strategy_minimal_hits.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_int(static_cast<std::int64_t>(ev.active_strategy_.size()));
+        return make_int(static_cast<std::int64_t>(name.size()));
     });
 
     add("strategy:active", [&ev](const auto&) -> EvalValue {
-        if (ev.active_strategy_.empty())
-            return make_void();
+        std::string active;
+        {
+            std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            if (ev.active_strategy_.empty())
+                return make_void();
+            active = ev.active_strategy_;
+        }
         auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(ev.active_strategy_);
+        ev.string_heap_.push_back(std::move(active));
         return make_string(sidx);
     });
 
@@ -551,8 +563,12 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 minimal_s = m->strategy_minimal_successes.load(std::memory_order_relaxed);
                 escalations = m->strategy_escalations.load(std::memory_order_relaxed);
             }
-            // active-strategy as a string field.
-            std::string active = ev.active_strategy_;
+            // active-strategy as a string field (Issue #1720 lock).
+            std::string active;
+            {
+                std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+                active = ev.active_strategy_;
+            }
             auto active_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(active);
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -1478,6 +1494,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (k == ":strategy" && types::is_string(a[i + 1])) {
                 strategy_name = heap_str_from(ev.string_heap_, a[i + 1]);
                 // Look up the strategy's max_attempts (overrides int arg)
+                std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
                 for (auto& s : ev.strategies_) {
                     if (s.name == strategy_name) {
                         max_attempts = s.max_attempts;
@@ -1493,8 +1510,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
 
         auto t0 = std::chrono::steady_clock::now();
-        ev.timeline_.clear();
-        ev.timeline_.push_back("start:" + goal);
+        ev.timeline_clear();
+        ev.timeline_push("start:" + goal);
 
         std::string current_code_str;
         std::string last_error;
@@ -1531,7 +1548,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                            std::initializer_list<types::EvalValue> args) -> std::string {
             if (!agent_cid_live(ev, cid)) {
                 agent_note_closure_freed_call(ev);
-                ev.timeline_.push_back("attempt:closure-freed:" + std::to_string(cid));
+                ev.timeline_push("attempt:closure-freed:" + std::to_string(cid));
                 return {};
             }
             auto opt = ev.apply_closure(cid, args);
@@ -1560,16 +1577,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 code_str = call_fn(gen_cid, {types::make_string(gs)});
                 llm_call_count++;
                 if (code_str.empty()) {
-                    ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
-                                           ":empty from generator");
+                    ev.timeline_push("attempt_" + std::to_string(attempt) +
+                                     ":empty from generator");
                     errors.push_back("empty from generator");
                     error_types.push_back("empty");
                     continue;
                 }
             } else {
                 if (!has_fixer) {
-                    ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
-                                           ":no fixer, stopping");
+                    ev.timeline_push("attempt_" + std::to_string(attempt) + ":no fixer, stopping");
                     break;
                 }
                 auto cs = ev.string_heap_.size();
@@ -1582,8 +1598,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                              types::make_string(gs)});
                 llm_call_count++;
                 if (code_str.empty()) {
-                    ev.timeline_.push_back("attempt_" + std::to_string(attempt) +
-                                           ":empty from fixer");
+                    ev.timeline_push("attempt_" + std::to_string(attempt) + ":empty from fixer");
                     errors.push_back("empty from fixer");
                     error_types.push_back("empty");
                     continue;
@@ -1597,7 +1612,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
             if (ver.find("#t") == 0) {
                 current_code_str = code_str;
-                ev.timeline_.push_back("attempt_" + std::to_string(attempt) + ":success");
+                ev.timeline_push("attempt_" + std::to_string(attempt) + ":success");
                 auto result = "#(status:\"ok\" goal:\"" + goal +
                               "\" iterations:" + std::to_string(attempt) + ")";
                 auto rs = ev.string_heap_.size();
@@ -1607,7 +1622,6 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto duration =
                     std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
                 Evaluator::IntendRecord rec;
-                rec.record_id = ev.next_record_id_++;
                 rec.strategy_name = strategy_name;
                 rec.task_desc = goal;
                 rec.success = true;
@@ -1620,9 +1634,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 rec.duration_ms = static_cast<std::uint64_t>(duration);
                 rec.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
                 rec.parent_record_id = 0;
-                ev.intend_history_.push_back(rec);
-                if (ev.intend_history_.size() > Evaluator::MAX_HISTORY_SIZE)
-                    ev.intend_history_.erase(ev.intend_history_.begin());
+                ev.intend_history_push(std::move(rec));
                 restore();
                 return types::make_string(rs);
             }
@@ -1631,13 +1643,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             last_error = ver.empty() ? "verification failed" : ver;
             errors.push_back(last_error);
             error_types.push_back(classify_error(last_error));
-            ev.timeline_.push_back("attempt_" + std::to_string(attempt) + ":" + last_error);
+            ev.timeline_push("attempt_" + std::to_string(attempt) + ":" + last_error);
         }
 
         auto t1 = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
         Evaluator::IntendRecord rec;
-        rec.record_id = ev.next_record_id_++;
         rec.strategy_name = strategy_name;
         rec.task_desc = goal;
         rec.success = false;
@@ -1650,14 +1661,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         rec.duration_ms = static_cast<std::uint64_t>(duration);
         rec.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
         rec.parent_record_id = 0;
-        ev.intend_history_.push_back(rec);
-        if (ev.intend_history_.size() > Evaluator::MAX_HISTORY_SIZE)
-            ev.intend_history_.erase(ev.intend_history_.begin());
+        ev.intend_history_push(std::move(rec));
 
         auto result = "#(status:\"failed\" goal:\"" + goal +
                       "\" iterations:" + std::to_string(max_attempts) + " last-error:\"" +
                       last_error + "\")";
-        ev.timeline_.push_back("failed:" + last_error);
+        ev.timeline_push("failed:" + last_error);
         auto rs = ev.string_heap_.size();
         ev.string_heap_.push_back(result);
         restore();
@@ -1665,10 +1674,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     });
     // ── intend-history — 查询意图执行时间线 ────────────────────
     add("intend-history", [&ev](const auto&) -> EvalValue {
-        std::string result;
-        for (std::size_t i = 0; i < ev.timeline_.size(); ++i) {
-            result += std::to_string(i) + ":" + ev.timeline_[i] + "\n";
-        }
+        // Issue #1720: shared lock while snapshotting timeline.
+        std::string result = ev.timeline_snapshot();
         if (result.empty())
             result = "(empty)";
         auto sidx = ev.string_heap_.size();
@@ -1705,14 +1712,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
         if (define_count == 0)
             out += "(no defines)\n";
-        // Recent mutations: last 10 timeline entries
+        // Recent mutations: last 10 timeline entries (Issue #1720 locked)
         out += "MUTATIONS (last 10):\n";
-        if (ev.timeline_.empty()) {
-            out += "  (none)\n";
-        } else {
-            std::size_t start = ev.timeline_.size() > 10 ? ev.timeline_.size() - 10 : 0;
-            for (std::size_t i = start; i < ev.timeline_.size(); ++i)
-                out += "  " + std::to_string(i) + ":" + ev.timeline_[i] + "\n";
+        {
+            auto tail = ev.timeline_tail(10);
+            out += (tail == "  (empty)\n") ? "  (none)\n" : tail;
         }
         // Prepend a one-line summary header so the LLM has an
         // easy parse target: "WORKSPACE: <n> defines".
@@ -1746,37 +1750,41 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         std::map<std::string, std::uint64_t> error_type_counts;
         std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> task_stats;
 
-        for (auto& rec : ev.intend_history_) {
-            if (!filter_strategy.empty() && rec.strategy_name != filter_strategy)
-                continue;
-            if (!filter_field.empty()) {
-                if (filter_field == "error-type") {
-                    bool matches = false;
-                    for (auto& et : rec.error_types) {
-                        if (et.find(filter_value) != std::string::npos) {
-                            matches = true;
-                            break;
-                        }
-                    }
-                    if (!matches)
-                        continue;
-                } else
+        {
+            // Issue #1720: snapshot under shared lock then aggregate offline.
+            std::shared_lock<std::shared_mutex> lk(ev.intend_history_mtx_);
+            for (auto& rec : ev.intend_history_) {
+                if (!filter_strategy.empty() && rec.strategy_name != filter_strategy)
                     continue;
+                if (!filter_field.empty()) {
+                    if (filter_field == "error-type") {
+                        bool matches = false;
+                        for (auto& et : rec.error_types) {
+                            if (et.find(filter_value) != std::string::npos) {
+                                matches = true;
+                                break;
+                            }
+                        }
+                        if (!matches)
+                            continue;
+                    } else
+                        continue;
+                }
+                total++;
+                if (rec.success)
+                    successes++;
+                total_attempts += rec.attempts;
+                total_llm_calls += rec.llm_call_count;
+                total_duration += rec.duration_ms;
+                for (auto& et : rec.error_types)
+                    error_type_counts[et]++;
+                auto key = rec.task_desc.substr(
+                    0, std::min<std::size_t>(rec.task_desc.size(), std::size_t{60}));
+                auto& ts = task_stats[key];
+                ts.second++;
+                if (rec.success)
+                    ts.first++;
             }
-            total++;
-            if (rec.success)
-                successes++;
-            total_attempts += rec.attempts;
-            total_llm_calls += rec.llm_call_count;
-            total_duration += rec.duration_ms;
-            for (auto& et : rec.error_types)
-                error_type_counts[et]++;
-            auto key = rec.task_desc.substr(
-                0, std::min<std::size_t>(rec.task_desc.size(), std::size_t{60}));
-            auto& ts = task_stats[key];
-            ts.second++;
-            if (rec.success)
-                ts.first++;
         }
 
         std::string result = "#(analytics";
@@ -1857,16 +1865,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 new_spt = heap_str_from(ev.string_heap_, a[i + 1]);
             }
         }
-        for (auto& s : ev.strategies_) {
-            if (s.name == name) {
-                s.body = body;
-                s.max_attempts = new_max;
-                s.temperature = new_temp;
-                s.sys_prompt_template = new_spt;
-                return make_bool(true);
+        {
+            // Issue #1720: unique lock for strategies_ mutate.
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            for (auto& s : ev.strategies_) {
+                if (s.name == name) {
+                    s.body = body;
+                    s.max_attempts = new_max;
+                    s.temperature = new_temp;
+                    s.sys_prompt_template = new_spt;
+                    return make_bool(true);
+                }
             }
+            ev.strategies_.push_back({name, body, new_max, new_temp, new_spt, 0, ""});
         }
-        ev.strategies_.push_back({name, body, new_max, new_temp, new_spt, 0, ""});
         return make_bool(true);
     });
     // ── register-strategy! — 注册/更新策略 ──────────────
@@ -1875,13 +1887,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_bool(false);
         auto name = heap_str_from(ev.string_heap_, a[0]);
         auto body = heap_str_from(ev.string_heap_, a[1]);
-        for (auto& s : ev.strategies_) {
-            if (s.name == name) {
-                s.body = body;
-                return make_bool(true);
+        {
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            for (auto& s : ev.strategies_) {
+                if (s.name == name) {
+                    s.body = body;
+                    return make_bool(true);
+                }
             }
+            ev.strategies_.push_back({name, body, 3, 0.3, "", 0, ""});
         }
-        ev.strategies_.push_back({name, body, 3, 0.3, "", 0, ""});
         return make_bool(true);
     });
     // ── strategy-field — 读取策略字段 ──────────────────────
@@ -1891,6 +1906,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
         auto field = heap_str_from(ev.string_heap_, a[1]);
+        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
@@ -1928,6 +1944,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_bool(false);
         auto field = heap_str_from(ev.string_heap_, a[1]);
         auto name = heap_str_from(ev.string_heap_, a[0]);
+        std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
@@ -1965,6 +1982,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
+        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
         for (auto& s : ev.strategies_) {
             if (s.name == name) {
                 std::string result = "#(strategy-inspect";
@@ -2010,16 +2028,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
 
-        // Find the source strategy
-        const Evaluator::StrategyDef* src = nullptr;
-        for (auto& s : ev.strategies_) {
-            if (s.name == name) {
-                src = &s;
-                break;
+        // Find the source strategy (copy under lock — Issue #1720)
+        Evaluator::StrategyDef src_copy;
+        bool found_src = false;
+        {
+            std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            for (auto& s : ev.strategies_) {
+                if (s.name == name) {
+                    src_copy = s;
+                    found_src = true;
+                    break;
+                }
             }
         }
-        if (!src)
+        if (!found_src)
             return make_void();
+        const Evaluator::StrategyDef* src = &src_copy;
 
         // Get analytics: either passed as 2nd arg, or call
         // intend-analytics ourselves on this strategy.
@@ -2143,25 +2167,27 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (reason.empty())
             reason = "no heuristics matched; clone unchanged";
 
-        ev.timeline_.push_back("evolve:" + evolved.name + " from " + src->name + " (" + reason +
-                               ")");
+        ev.timeline_push("evolve:" + evolved.name + " from " + src->name + " (" + reason + ")");
 
         // Insert into ev.strategies_ (avoid name collision: bump suffix)
-        std::string final_name = evolved.name;
-        for (int bump = 2;; ++bump) {
-            bool taken = false;
-            for (auto& s : ev.strategies_) {
-                if (s.name == final_name) {
-                    taken = true;
-                    break;
+        {
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
+            std::string final_name = evolved.name;
+            for (int bump = 2;; ++bump) {
+                bool taken = false;
+                for (auto& s : ev.strategies_) {
+                    if (s.name == final_name) {
+                        taken = true;
+                        break;
+                    }
                 }
+                if (!taken)
+                    break;
+                final_name = evolved.name + "-" + std::to_string(bump);
             }
-            if (!taken)
-                break;
-            final_name = evolved.name + "-" + std::to_string(bump);
+            evolved.name = final_name;
+            ev.strategies_.push_back(evolved);
         }
-        evolved.name = final_name;
-        ev.strategies_.push_back(evolved);
 
         auto sid = ev.string_heap_.size();
         ev.string_heap_.push_back(evolved.name);
