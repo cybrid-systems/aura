@@ -1956,7 +1956,23 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("csv-select", {Dyn, Dyn}, Dyn);
     register_primitive("csv-filter", {reg_.register_func({Dyn}, Bool), Dyn}, Dyn);
     register_primitive("csv-header", {Dyn}, Dyn);
-    register_primitive("column-names", {Dyn}, Dyn);
+    // Issue #1906 B5: type-checker primitive registration for
+    // `column-names` shadows the std/csv definition at runtime for
+    // DIRECT application of the symbol. The stdlib defines
+    // `(define (column-names rows) (csv-header rows))` (lib/std/csv.aura:47),
+    // but the primitive registration installs a runtime binding that
+    // takes precedence, so `(column-names rows)` returns the type-checker
+    // placeholder `()` instead of the stdlib wrapper's result.
+    // Workaround (pre-fix) was let-binding to capture the stdlib binding;
+    // root cause is this redundant primitive registration. The type checker
+    // does not strictly need it - `column-names` resolves to a stdlib
+    // `define` which the type checker can analyze via the global binding
+    // (no primitive registration needed). Drop fixes the runtime shadow
+    // without affecting type-checker arity/return-type inference for the
+    // remaining 6 csv.* primitives (csv-header, csv-parse, csv->rows,
+    // csv->table, csv-select, csv-filter).
+    // Related: B9a / B9d (engine dispatcher hijacks json-stringify +
+    // json-value - same bug family, pending in #1906 follow-ups).
 
     // std/json
     register_primitive("json-parse", {String}, Dyn);
