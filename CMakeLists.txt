@@ -5428,6 +5428,9 @@ aura_issue_test_link_llvm_jit(test_pair_unchecked_safety_1710)
 # Issue #1711: aura_prim_call clamps argc to args[3] capacity.
 aura_add_issue_test(test_prim_call_count_clamp_1711)
 aura_issue_test_link_llvm_jit(test_prim_call_count_clamp_1711)
+# Issue #1712: auto-evolve-tick has no production [DBG tick] fprintf.
+aura_add_issue_test(test_auto_evolve_tick_no_dbg_1712)
+aura_issue_test_link_llvm_jit(test_auto_evolve_tick_no_dbg_1712)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

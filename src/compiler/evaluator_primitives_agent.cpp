@@ -222,14 +222,11 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
             fn();
         ++ev.auto_evolve_cycle_count_;
-        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n",
-                     (size_t)ev.auto_evolve_detect_closure_, (size_t)ev.auto_evolve_fix_closure_);
+        // Issue #1712: removed production debug stderr prints on every tick
+        // (log pollution + stdio lock cost on the agent background path).
         auto detect_result = ev.apply_closure(ev.auto_evolve_detect_closure_, {});
-        if (!detect_result) {
-            std::fprintf(stderr, "  no detect result\n");
+        if (!detect_result)
             return make_bool(true);
-        }
-        std::fprintf(stderr, "  detect.val=0x%lx\n", static_cast<long>((*detect_result).val));
         EvalValue current = *detect_result;
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
