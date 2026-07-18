@@ -5374,6 +5374,9 @@ aura_issue_test_link_llvm_jit(test_mutate_insert_child_stale_parent_1690)
 # Issue #1691: no dead define_str string_heap_ push in refactor/extract.
 aura_add_issue_test(test_mutate_dead_heap_define_str_1691)
 aura_issue_test_link_llvm_jit(test_mutate_dead_heap_define_str_1691)
+# Issue #1692: no dead circular-dep string_heap_ push in module loader.
+aura_add_issue_test(test_module_loader_dead_heap_circular_1692)
+aura_issue_test_link_llvm_jit(test_module_loader_dead_heap_circular_1692)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
