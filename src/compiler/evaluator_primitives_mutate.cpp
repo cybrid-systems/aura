@@ -2673,19 +2673,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
 
-            // Parse the filled replacement into workspace
-            // Issue #1685 / #1687: re-validate parent/slot after append.
+            // Parse the filled replacement into workspace.
+            // Issue #1694 / #1685: parent_id is captured before parse_to_flat
+            // (loop may parse many times — each append can stress topology).
+            // Re-validate parent+slot after parse; re-derive from StableNodeRef
+            // if the pre-parse edge is no longer attached.
             const auto size_before_parse = static_cast<std::size_t>(flat.size());
             auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *ev.workspace_pool_);
             if (!repl_pr.success || repl_pr.root == NULL_NODE)
                 continue;
-            if (parent_id == NULL_NODE ||
-                static_cast<std::size_t>(parent_id) >= size_before_parse ||
-                parent_id >= flat.size() || flat.is_free_slot(parent_id))
-                continue;
-            {
+            auto parent_ok = [&]() -> bool {
+                if (parent_id == NULL_NODE ||
+                    static_cast<std::size_t>(parent_id) >= size_before_parse ||
+                    !flat.is_live_node(parent_id))
+                    return false;
                 auto pv = flat.get(parent_id);
-                if (*child_idx_opt >= pv.children.size() || pv.child(*child_idx_opt) != match_id)
+                return *child_idx_opt < pv.children.size() && pv.child(*child_idx_opt) == match_id;
+            };
+            if (!parent_ok()) {
+                // Re-derive edge after parse (match may still be live).
+                match_id = match.match_ref.id;
+                if (!flat.is_live_node(match_id) ||
+                    static_cast<std::size_t>(match_id) >= size_before_parse)
+                    continue;
+                child_idx_opt = parent_child_index_if_attached(flat, match_id);
+                if (!child_idx_opt)
+                    continue;
+                parent_id = flat.parent_of(match_id);
+                if (!parent_ok())
                     continue;
             }
 

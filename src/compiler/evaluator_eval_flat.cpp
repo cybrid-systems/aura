@@ -2096,24 +2096,47 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         if (!match_sub(id, pat_pr.root))
             continue;
         std::string filled_repl = repl_template;
+        // Issue #1694: snapshot pre-parse size; resolve parent only in that
+        // range after parse (do not treat parse-appended nodes as parents).
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *workspace_pool_);
         if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
             continue;
-        aura::ast::NodeId parent_id = aura::ast::NULL_NODE;
+        if (static_cast<std::size_t>(id) >= size_before_parse || !flat.is_live_node(id))
+            continue;
+        aura::ast::NodeId parent_id = flat.parent_of(id);
         std::uint32_t child_idx = 0;
         bool found = false;
-        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-            auto pv = flat.get(pid);
+        if (parent_id != aura::ast::NULL_NODE &&
+            static_cast<std::size_t>(parent_id) < size_before_parse &&
+            flat.is_live_node(parent_id)) {
+            auto pv = flat.get(parent_id);
             for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
                 if (pv.child(ci) == id) {
-                    parent_id = pid;
                     child_idx = static_cast<std::uint32_t>(ci);
                     found = true;
                     break;
                 }
             }
-            if (found)
-                break;
+        }
+        if (!found) {
+            // Fallback scan limited to pre-parse nodes only.
+            for (aura::ast::NodeId pid = 0; static_cast<std::size_t>(pid) < size_before_parse;
+                 ++pid) {
+                if (!flat.is_live_node(pid))
+                    continue;
+                auto pv = flat.get(pid);
+                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                    if (pv.child(ci) == id) {
+                        parent_id = pid;
+                        child_idx = static_cast<std::uint32_t>(ci);
+                        found = true;
+                        break;
+                    }
+                }
+                if (found)
+                    break;
+            }
         }
         if (!found)
             continue;
