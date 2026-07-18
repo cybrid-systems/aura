@@ -3557,12 +3557,24 @@ public:
         return children_safe_view(id);
     }
 
-    // Issue #1520: preferred columnar children accessor (alias of
+    // Issue #1520 / #1624: preferred columnar children accessor (alias of
     // children_safe with explicit SoA-path metrics). Hot paths
     // (query:pattern, mark_dirty_upward children walk, walk_children)
     // should use this instead of raw children() spans.
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
         return children_safe_view(id);
+    }
+
+    // Issue #1624: contract-guarded single-child read via columnar path
+    // (SafePCVSpan / PCV data). Prefer over raw children()[i] on hot paths.
+    [[nodiscard]] NodeId get_child(NodeId id, std::uint32_t idx) const
+        pre(id == NULL_NODE || id < children_.size()) {
+        if (id == NULL_NODE || id >= children_.size())
+            return NULL_NODE;
+        auto col = children_columnar(id);
+        if (idx >= col.size())
+            return NULL_NODE;
+        return col[idx];
     }
 
     // Issue #1520: zero-overhead columnar children metrics (for Agents).
@@ -3571,6 +3583,19 @@ public:
     }
     [[nodiscard]] std::uint64_t pcv_pin_count() const noexcept {
         return pcv_pin_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #1624: DOD migration progress (columnar hits as progress units).
+    [[nodiscard]] std::uint64_t soa_dod_migration_progress() const noexcept {
+        return children_column_soa_hits_.load(std::memory_order_relaxed);
+    }
+    // pcv_columnar hit rate in basis points: columnar / (columnar+raw) * 10000
+    [[nodiscard]] std::uint64_t pcv_columnar_hit_rate_bp() const noexcept {
+        const auto col = children_column_soa_hits_.load(std::memory_order_relaxed);
+        const auto raw = children_call_count_.load(std::memory_order_relaxed);
+        const auto den = col + raw;
+        if (den == 0)
+            return 0;
+        return (col * 10000) / den;
     }
     [[nodiscard]] std::uint64_t region_dense_hits() const noexcept {
         return region_dense_hits_.load(std::memory_order_relaxed);
@@ -3739,14 +3764,19 @@ public:
     //
     // The body is identical to the public version except for the
     // guard acquisition.
-    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+    // Issue #1624: Contracts on structural child mutation — pre(id valid).
+    // post: children count preserved (with_set), dirty bits via mark paths.
+    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
+        contract_assert(id < children_.size());
         const auto& list = children_[id];
         if (idx >= list.size())
             return;
+        const auto old_size = list.size();
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
         children_[id] = list.with_set(idx, child);
+        contract_assert(children_[id].size() == old_size);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
         add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
@@ -3774,9 +3804,10 @@ public:
         }
     }
 
-    void set_child(NodeId id, std::uint32_t idx, NodeId child) {
+    void set_child(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         // Issue #222: acquire the structural mutation guard. The
         // guard's dtor bumps generation_ + releases the lock.
+        // Issue #1624: Contracts on public structural mutate entry.
         StructuralMutationGuard guard(this);
         set_child_locked(id, idx, child);
     }

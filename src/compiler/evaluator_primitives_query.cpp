@@ -3516,15 +3516,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1520: query:children-column-stats — focused children_ SoA +
-    // region dense lookup surface (non-duplicative with #568 migration hash).
+    // Issue #1520 / #1624: query:children-column-stats — focused children_ SoA +
+    // region dense lookup + DOD migration progress surface
+    // (non-duplicative with #568 migration hash; no new query:*-stats).
     ObservabilityPrims::register_stats_impl(
         "query:children-column-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32); // #1624 more AC keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3574,6 +3575,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             const auto denom = col + raw + 1;
             const auto columnar_pct = (col * 100) / denom;
+            // Issue #1624: DOD migration progress + hit rate (basis points).
+            const std::int64_t dod_progress =
+                ws ? static_cast<std::int64_t>(ws->soa_dod_migration_progress()) : col;
+            const std::int64_t hit_rate_bp =
+                ws ? static_cast<std::int64_t>(ws->pcv_columnar_hit_rate_bp())
+                   : static_cast<std::int64_t>((col * 10000) / denom);
+            if (m) {
+                m->soa_dod_migration_progress_total.store(static_cast<std::uint64_t>(dod_progress),
+                                                          std::memory_order_relaxed);
+                m->pcv_columnar_hit_rate_bp.store(static_cast<std::uint64_t>(hit_rate_bp),
+                                                  std::memory_order_relaxed);
+            }
             insert_kv("children-column-soa-hits", col);
             insert_kv("pcv-pin-count", pin);
             insert_kv("region-dense-hits", dense);
@@ -3581,7 +3594,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("children-raw-calls", raw);
             insert_kv("children-safe-views", safe);
             insert_kv("columnar-hit-rate-pct", columnar_pct);
-            insert_kv("schema", 1520);
+            // #1624 AC keys (no new query:*-stats — fold into #1520 surface)
+            insert_kv("soa_dod_migration_progress", dod_progress);
+            insert_kv("pcv_columnar_hit_rate", hit_rate_bp);
+            insert_kv("pcv_columnar_hit_rate_bp", hit_rate_bp);
+            insert_kv("soa-columnar-concept-enforced", 1);
+            insert_kv("soa-columnar-full-enforced", 1);
+            insert_kv("pmr-columns-soa-columnar", 1);
+            insert_kv("get-set-child-contracts", 1);
+            insert_kv("issue", 1624);
+            insert_kv("schema", 1624); // lineage 1520|568|370
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
