@@ -1711,10 +1711,17 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
             aura::diag::ErrorKind::ArityMismatch,
             "batch :rebind: no existing Define for '" + name +
                 "' (new-binding path not yet supported; use standalone mutate:rebind)"});
+    // Issue #1685 / #1687: snapshot + re-resolve after parse_to_flat.
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
                                                       "batch :rebind: parse failed for new code"});
+    old_define = flat.resolve_define_after_parse(sym, old_define, size_before_parse);
+    if (old_define == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :rebind: define not found after parse for '" + name + "'"});
     aura::ast::NodeId new_value = pr.root;
     auto root_v = flat.get(pr.root);
     if (root_v.tag == aura::ast::NodeTag::Define) {
@@ -1923,6 +1930,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :insert-child: string index out of range"});
     auto& flat = *workspace_flat_;
+    // Issue #1685 / #1687: re-validate parent after parse append.
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
+    if (parent == aura::ast::NULL_NODE || static_cast<std::size_t>(parent) >= size_before_parse ||
+        flat.is_free_slot(parent))
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :insert-child: parent out of range"});
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         std::string parse_err = "batch :insert-child: parse failed";
@@ -1938,6 +1951,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, parse_err});
     }
+    if (static_cast<std::size_t>(parent) >= flat.size() || flat.is_free_slot(parent) ||
+        static_cast<std::size_t>(parent) >= size_before_parse)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :insert-child: parent invalid after parse"});
     auto result = aura::ast::mutators::apply_mutation(
         flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
     if (!result)
@@ -1994,10 +2012,23 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :set-body: function \"" + name + "\" not found"});
+    // Issue #1687: capture size before parse; re-resolve BOTH Define and
+    // Lambda (double-stale NodeId risk, sibling of #1685 rebind path).
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ParseError, "batch :set-body: parse failed for new body"});
+    target = flat.resolve_define_after_parse(sym, target, size_before_parse);
+    if (target == aura::ast::NULL_NODE)
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :set-body: define not found after parse for \"" + name + "\""});
+    lambda_id = flat.resolve_lambda_child_of_define(target);
+    if (lambda_id == aura::ast::NULL_NODE)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                   "batch :set-body: define body is not a Lambda after parse"});
     auto root_v = flat.get(pr.root);
     aura::ast::NodeId body_to_set = pr.root;
     if (root_v.tag == aura::ast::NodeTag::Define) {
@@ -2163,10 +2194,25 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-subtree: target has no parent slot to replace"});
+    // Issue #1685 / #1687: re-validate parent/slot after parse append.
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
     auto pr = aura::parser::parse_to_flat(new_code, flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
                                                       "batch :replace-subtree: parse failed"});
+    if (parent_id == aura::ast::NULL_NODE ||
+        static_cast<std::size_t>(parent_id) >= size_before_parse || parent_id >= flat.size() ||
+        flat.is_free_slot(parent_id))
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-subtree: parent invalid after parse"});
+    {
+        auto pv = flat.get(parent_id);
+        if (child_idx >= pv.children.size() || pv.child(child_idx) != target)
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :replace-subtree: child slot invalid after parse"});
+    }
     flat.set_child(parent_id, child_idx, pr.root);
     flat.mark_dirty_upward_fast(parent_id, aura::ast::FlatAST::kGeneralDirty);
     flat.add_mutation_subtree(pr.root, parent_id, child_idx, "<batch-captured>", "replace-subtree",
