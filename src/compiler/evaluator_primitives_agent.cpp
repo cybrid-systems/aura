@@ -803,36 +803,44 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 continue;
             auto& response = ev.string_heap_[ri];
 
-            // Extract code from JSON response
+            // Issue #1715: extract choices[0].message.content via json-parse +
+            // hash-ref structure walk (replaces prior substring content scan).
+            // Handles pretty-print whitespace, embedded quotes, null content;
+            // size-capped. Unicode \uXXXX is decoded by json-parse.
+            constexpr std::size_t kMaxSynthCodeBytes = 256 * 1024;
             std::string code;
-            auto cp = response.find("content");
-            if (cp == std::string::npos)
-                continue;
-            auto cq = response.find('"', cp + 9);
-            if (cq == std::string::npos)
-                continue;
-            cq++;
-            bool esc = false;
-            for (; cq < response.size(); ++cq) {
-                char c = response[cq];
-                if (esc) {
-                    if (c == 'n')
-                        code += '\n';
-                    else if (c == 't')
-                        code += '\t';
-                    else if (c == '"')
-                        code += '"';
-                    else if (c == '\\')
-                        code += '\\';
-                    else
-                        code += c;
-                    esc = false;
-                } else if (c == '\\') {
-                    esc = true;
-                } else if (c == '"') {
-                    break;
-                } else {
-                    code += c;
+            auto parse_fn = ev.primitives_.lookup("json-parse");
+            auto href_fn = ev.primitives_.lookup("hash-ref");
+            if (parse_fn && href_fn) {
+                auto root = (*parse_fn)({make_string(ri)});
+                auto push_key = [&ev](const char* k) -> EvalValue {
+                    auto i = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    return make_string(i);
+                };
+                if (is_hash(root)) {
+                    auto choices = (*href_fn)({root, push_key("choices")});
+                    if (is_pair(choices)) {
+                        auto cidx = as_pair_idx(choices);
+                        if (cidx < ev.pairs_.size()) {
+                            auto choice0 = ev.pairs_[cidx].car;
+                            if (is_hash(choice0)) {
+                                auto message = (*href_fn)({choice0, push_key("message")});
+                                if (is_hash(message)) {
+                                    auto content = (*href_fn)({message, push_key("content")});
+                                    if (is_string(content)) {
+                                        auto sidx = as_string_idx(content);
+                                        if (sidx < ev.string_heap_.size()) {
+                                            code = ev.string_heap_[sidx];
+                                            if (code.size() > kMaxSynthCodeBytes)
+                                                code.resize(kMaxSynthCodeBytes);
+                                        }
+                                    }
+                                    // null / non-string content → empty (retry)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

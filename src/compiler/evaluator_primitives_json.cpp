@@ -264,6 +264,43 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         case 'r':
                             result += '\r';
                             break;
+                        case 'u': {
+                            // Issue #1715: decode \uXXXX to UTF-8 (BMP).
+                            if (pos + 4 < json_str.size()) {
+                                unsigned code = 0;
+                                bool ok = true;
+                                for (int i = 1; i <= 4; ++i) {
+                                    char h = json_str[pos + i];
+                                    code <<= 4;
+                                    if (h >= '0' && h <= '9')
+                                        code |= static_cast<unsigned>(h - '0');
+                                    else if (h >= 'a' && h <= 'f')
+                                        code |= static_cast<unsigned>(h - 'a' + 10);
+                                    else if (h >= 'A' && h <= 'F')
+                                        code |= static_cast<unsigned>(h - 'A' + 10);
+                                    else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                if (ok) {
+                                    pos += 4; // last hex; loop pos++ advances past it
+                                    if (code < 0x80) {
+                                        result += static_cast<char>(code);
+                                    } else if (code < 0x800) {
+                                        result += static_cast<char>(0xC0 | (code >> 6));
+                                        result += static_cast<char>(0x80 | (code & 0x3F));
+                                    } else {
+                                        result += static_cast<char>(0xE0 | (code >> 12));
+                                        result += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                                        result += static_cast<char>(0x80 | (code & 0x3F));
+                                    }
+                                    break;
+                                }
+                            }
+                            result += 'u';
+                            break;
+                        }
                         default:
                             result += json_str[pos];
                             break;
@@ -321,7 +358,15 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             std::vector<EvalValue> elems;
             while (pos < json_str.size() && json_str[pos] != ']') {
                 skip_ws();
+                const auto before = pos;
                 elems.push_back(parse_value());
+                // Advance on stuck parse to avoid infinite loops (#1715).
+                if (pos == before) {
+                    if (pos < json_str.size())
+                        ++pos;
+                    else
+                        break;
+                }
                 skip_ws();
                 if (pos < json_str.size() && json_str[pos] == ',')
                     pos++;
@@ -350,12 +395,20 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto cap = ht->capacity;
             while (pos < json_str.size() && json_str[pos] != '}') {
                 skip_ws();
+                const auto before = pos;
                 auto key_val = parse_string();
                 skip_ws();
                 if (pos < json_str.size() && json_str[pos] == ':')
                     pos++;
                 skip_ws();
                 auto val = parse_value();
+                // Advance on stuck parse to avoid infinite loops (#1715).
+                if (pos == before) {
+                    if (pos < json_str.size())
+                        ++pos;
+                    else
+                        break;
+                }
                 // Compute hash for key (string or number keys)
                 std::uint64_t kh = 0x9e3779b97f4a7c15ull;
                 if (types::is_string(key_val)) {
