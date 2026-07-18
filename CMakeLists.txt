@@ -5022,6 +5022,9 @@ aura_issue_test_link_llvm_jit(test_issue_1511)
 # consistency compare API (strict mode + fuzz harness).
 aura_add_issue_test(test_issue_1512)
 aura_issue_test_link_llvm_jit(test_issue_1512)
+# Issue #1658: full opcode coverage + strict consistency default mandate.
+aura_add_issue_test(test_jit_full_opcode_coverage_1658)
+aura_issue_test_link_llvm_jit(test_jit_full_opcode_coverage_1658)
 # Issue #1513: invalidate → live IRClosure/EnvFrame safety closed
 # loop (bridge_epoch + env_version dual-check + expire on invalidate).
 aura_add_issue_test(test_issue_1513)

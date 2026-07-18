@@ -75,9 +75,10 @@ static void ac2_unhandled_mask() {
 static void ac3_strict_mode() {
     std::println("\n--- AC3: strict_consistency_mode ---");
     AuraJIT jit;
-    CHECK(!jit.strict_consistency_mode(), "strict mode default off");
+    // Issue #1658: strict mode default ON (was off under #1512).
+    CHECK(jit.strict_consistency_mode(), "strict mode default on (#1658)");
     jit.set_strict_consistency_mode(true);
-    CHECK(jit.strict_consistency_mode(), "strict mode enabled");
+    CHECK(jit.strict_consistency_mode(), "strict mode remains enabled");
 
     // Mirror AuraJIT::compile failure under strict mode:
     // unhandled → consistency_violations++.
@@ -89,6 +90,8 @@ static void ac3_strict_mode() {
 
     jit.set_strict_consistency_mode(false);
     CHECK(!jit.strict_consistency_mode(), "strict mode disabled");
+    jit.set_strict_consistency_mode(true);
+    CHECK(jit.strict_consistency_mode(), "strict mode re-enabled");
 }
 
 static void ac4_record_consistency() {

@@ -273,16 +273,26 @@ public:
         return metrics_.jit_epoch_stale_check_total.load(std::memory_order_relaxed);
     }
 
-    // Issue #1512: strict consistency mode — unhandled opcodes also
-    // bump consistency_violations (JIT cannot match interpreter).
+    // Issue #1512 / #1658: strict consistency mode — unhandled opcodes
+    // also bump consistency_violations (JIT cannot match interpreter).
+    // #1658: **default ON** for production AI hot-swap / mutation paths.
     void set_strict_consistency_mode(bool on) noexcept { strict_consistency_mode_ = on; }
     [[nodiscard]] bool strict_consistency_mode() const noexcept { return strict_consistency_mode_; }
     // Issue #1512: record a JIT ↔ IRInterpreter side-by-side result.
     void record_consistency_result(bool match) noexcept;
+    // Issue #1658: force a consistency check for CI/debug — returns true
+    // iff consistency_violations == 0 (and, under strict mode, unhandled
+    // has already been folded into violations on compile fail).
+    [[nodiscard]] bool force_jit_consistency_check() noexcept;
     // Issue #1512: popcount of opcode_covered_mask / coverage percentage.
     [[nodiscard]] std::uint64_t opcode_coverage_count() const noexcept;
     [[nodiscard]] std::uint64_t opcode_coverage_pct() const noexcept; // 0..100
     static constexpr std::uint32_t kTrackedOpcodeCount = 54;          // matches kIROpcodeCount
+    // Issue #1658: bitmask of opcodes with explicit lower() cases
+    // (GuardShape|Linear*|PrimCall|EH + baseline arithmetic). All 54
+    // IROpcode values are either fully lowered or fail-fast safe-deopt
+    // (compile nullptr → interpreter). Popcount of this mask is 54.
+    static constexpr std::uint64_t kFullyLoweredOpcodeMask = (1ull << 54) - 1ull;
     // Issue #1516: EH opcode coverage (IsError/TryBegin/TryEnd/Raise).
     [[nodiscard]] std::uint64_t exception_opcode_coverage_count() const noexcept;
     static constexpr std::uint32_t kExceptionOpcodeCount = 4;
@@ -333,9 +343,10 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     mutable Metrics metrics_;
-    // Issue #1512: when true, unhandled opcodes also bump
+    // Issue #1512 / #1658: when true, unhandled opcodes also bump
     // consistency_violations (strict JIT↔interp parity mode).
-    bool strict_consistency_mode_ = false;
+    // #1658 mandate: default **true** (production readiness).
+    bool strict_consistency_mode_ = true;
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.

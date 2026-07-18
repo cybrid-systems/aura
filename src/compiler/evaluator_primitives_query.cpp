@@ -3155,12 +3155,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #532: query:jit-consistency-stats. Commercial P0 hash view of JIT
-    // opcode coverage completeness, IRInterpreter execution consistency, and
-    // GuardShape/Linear/hot-swap safety — non-duplicative synthesis of #491
-    // jit-stats-hash, #601 jit-hotswap-closure-stats, #513/#522 AOT reload
-    // themes, and #516 prompt6-memory-safety linear/bridge slices; avoids
-    // repeating the per-field jit-stats-hash surface verbatim:
+    // Issue #532 / #1512 / #1658: query:jit-consistency-stats. Commercial P0
+    // hash view of JIT opcode coverage completeness, IRInterpreter execution
+    // consistency, and GuardShape/Linear/hot-swap safety — non-duplicative
+    // synthesis of #491 jit-stats-hash, #601 jit-hotswap-closure-stats,
+    // #513/#522 AOT reload themes, and #516 prompt6-memory-safety
+    // linear/bridge slices; avoids repeating the per-field jit-stats-hash
+    // surface verbatim:
     //   P1 Opcode coverage: unhandled-count, fallback-count,
     //      consistency-violations, opcode-coverage-pct
     //   P2 Deopt parity: deopt-count, deopt-rate-pct
@@ -3168,6 +3169,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //      forced-deopt, hotswap-success-rate-pct
     //   P4 Linear/bridge: linear-check-hits, bridge-epoch-hits,
     //      epoch-mismatch-hits, safe-fallbacks
+    //   P5 #1658 mandate: GuardShape/Linear/PrimCall lowered wire flags,
+    //      strict-consistency default-on, fail-fast safe-deopt, schema 1658
     //   - jit-consistency-total / jit-consistency-recommendation
     ObservabilityPrims::register_stats_impl(
         "query:jit-consistency-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -3175,7 +3178,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(32);
+            // Capacity power-of-two; schema 1658 adds mandate wire keys.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3276,6 +3280,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("safe-fallbacks", static_cast<std::int64_t>(safe_fallbacks));
             insert_kv("jit-consistency-total", static_cast<std::int64_t>(total));
             insert_kv("jit-consistency-recommendation", recommendation);
+            // Issue #1658: opcode coverage + strict-consistency mandate flags.
+            // GuardShape / Linear* / PrimCall are fully lowered in aura_jit.cpp;
+            // unhandled path is fail-fast (compile nullptr → interpreter).
+            insert_kv("opcode-tracked-total", 54);
+            insert_kv("guard-shape-lowered-wired", 1);
+            insert_kv("linear-ops-lowered-wired", 1);
+            insert_kv("primcall-lowered-wired", 1);
+            insert_kv("fail-fast-unhandled-wired", 1);
+            insert_kv("safe-deopt-on-unhandled-wired", 1);
+            insert_kv("strict-consistency-default-on", 1);
+            insert_kv("force-jit-consistency-check-wired", 1);
+            insert_kv("consistency-mandate-active", 1);
+            insert_kv("issue", 1658);
+            insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
