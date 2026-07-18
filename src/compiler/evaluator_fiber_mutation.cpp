@@ -1484,6 +1484,14 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
         std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
 
+        // Issue #1903: track the IDs of refreshed frames so the caller
+        // (complete_post_resume_steal_refresh) can run a final
+        // ensure_dual_path_consistent pass on each. Doing it here would
+        // require an outer vector to outlive the lock scope; deferring
+        // to the caller keeps the lock window tight.
+        std::vector<EnvId> refreshed_ids;
+        refreshed_ids.reserve(16);
+
         auto consider_frame = [&](EnvId id) {
             if (id == NULL_ENV_ID)
                 return;
@@ -1502,6 +1510,7 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 ++version_mismatch;
                 refresh_stale_frame_in_walk(id, "refresh_stale_frames_after_steal");
                 ++refreshed;
+                refreshed_ids.push_back(id);
             }
         };
 
@@ -1517,6 +1526,22 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
                 ++bridge_mismatch;
             consider_frame(cl.env_id);
+        }
+
+        // Issue #1903: dual-path consistency enforcement on every
+        // refreshed frame. After refresh_stale_frame_in_walk bumps the
+        // version_ the bindings_ vs bindings_symid_ arrays should be in
+        // sync, but a concurrent mutate path between the bump and the
+        // walk exit could have introduced drift. Re-run the canonical
+        // helper here so the post-steal counter family
+        // (envframe_post_steal_dual_synced_) records the actual sync
+        // call count. Routed through env_frames_ directly (still under
+        // the shared lock held above) so frames can't shift index.
+        for (const EnvId rid : refreshed_ids) {
+            if (rid < env_frames_.size()) {
+                const_cast<EnvFrame&>(env_frames_[rid]).ensure_dual_path_consistent();
+                bump_envframe_post_steal_dual_synced();
+            }
         }
     }
 

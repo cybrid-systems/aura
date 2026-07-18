@@ -8876,6 +8876,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(desync + dual_sync + stale + mismatch + gc_skips));
         });
 
+    // Issue #1903: query:envframe-dual-consistency-stats.
+    // Returns the #1903 dual-path consistency enforcement counters:
+    //   - envframe_dual_consistency_asserted_: every bind/bind_symid +
+    //     post-steal + post-materialize ensure_dual_path_consistent() call.
+    //     Expected to grow linearly with mutation + steal + materialize
+    //     throughput (the "did we run the check?" signal).
+    //   - envframe_post_steal_dual_synced_: # of frames where
+    //     refresh_stale_frames_after_steal ran ensure_dual_path_consistent
+    //     on a refreshed frame. Should roughly track fiber resume count.
+    //   - envframe_materialize_consistency_checks_: # of materialize_call_env
+    //     invocations that explicitly asserted consistency post-copy. Should
+    //     roughly track apply_closure + TCO call count.
+    //   - envframe_gc_walk_legacy_fallback_uses_: # of GC walk frames where
+    //     bindings_symid_ was empty and walk fell back to bindings_. Should
+    //     trend toward 0 as the SymId-keyed primary path saturates.
+    //
+    // Like the dualpath-stats cousin, P0 ships a single integer sum;
+    // a follow-up returns a 4-tuple so the Agent can react to each
+    // counter independently (a spike in legacy-fallback is the early
+    // signal that pool intern coverage is regressing).
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-dual-consistency-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t asserted = ev->get_envframe_dual_consistency_asserted();
+            const std::uint64_t post_steal = ev->get_envframe_post_steal_dual_synced();
+            const std::uint64_t materialize = ev->get_envframe_materialize_consistency_checks();
+            const std::uint64_t legacy_fallback = ev->get_envframe_gc_walk_legacy_fallback_uses();
+            return make_int(
+                static_cast<std::int64_t>(asserted + post_steal + materialize + legacy_fallback));
+        });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

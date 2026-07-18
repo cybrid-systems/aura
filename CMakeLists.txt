@@ -2133,6 +2133,23 @@ aura_issue_test_link_llvm_jit(test_aot_hotupdate_versioning)
 # regression. Non-duplicative with #242/#286/#322.
 aura_add_issue_test(test_soa_envframe_dualpath_consistency)
 aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
+# Issue #1903: dual-path consistency enforcement on every bind/bind_symid
+# + post-steal refresh + post-materialize + GCEnvWalkFn INVALID_VERSION
+# skip + prefer bindings_symid_ + (query:envframe-dual-consistency-stats)
+# primitive. Non-duplicative with #355/#418/#485/#488/#1269/#1550:
+# #1903 is the P0 ship that turns the existing observability counter
+# family into an enforced invariant (ensure_dual_path_consistent on
+# every mutate path) plus INVALID_VERSION GC walk filter. Scenarios:
+#   - bind_with_linear_state / bind_symid_with_linear_state maintain
+#     length + content parity after every call (pool_ set + null)
+#   - post-copy materialize_call_env keeps dual-path consistent
+#   - walk_env_frame_roots skips INVALID_VERSION + prefers bindings_symid_
+#     (legacy bindings_ fallback bumps envframe_gc_walk_legacy_fallback_uses_)
+#   - (gc-heap) cycle does not collect INVALID_VERSION / inconsistent frames
+#   - concurrent mutate + steal + GC + (query:envframe-dual-consistency-stats)
+#     10k iter: counters grow, no desync leak
+aura_add_issue_test(test_issue_1903)
+aura_issue_test_link_llvm_jit(test_issue_1903)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 # stress binary complementing #321/#345 with: 8-50
