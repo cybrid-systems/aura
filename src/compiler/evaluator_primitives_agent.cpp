@@ -22,6 +22,7 @@ module;
 #include <algorithm>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <thread>
 
 module aura.compiler.evaluator;
@@ -76,6 +77,21 @@ using types::make_void;
 namespace {
     std::vector<std::pair<std::string, std::string>> g_template_patterns;
     std::vector<std::vector<std::string>> g_template_params;
+
+    // Issue #1716: thread-local PRNG for synthesize:optimize GA mutations.
+    // std::rand() is not thread-safe and races under concurrent fibers.
+    std::mt19937& agent_prng() {
+        thread_local std::mt19937 rng{std::random_device{}()};
+        return rng;
+    }
+    unsigned agent_rand_below(unsigned n) {
+        if (n == 0)
+            return 0;
+        return std::uniform_int_distribution<unsigned>(0, n - 1)(agent_prng());
+    }
+    double agent_rand_unit() {
+        return std::uniform_real_distribution<double>(0.0, 1.0)(agent_prng());
+    }
 
     // Issue #1236: JSON string escape for LLM payload construction.
     std::string json_escape(std::string_view s) {
@@ -1094,15 +1110,15 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 for (int p = 0; p < pop_size; ++p) {
                     std::string variant = best_code;
 
-                    // Apply mutations
+                    // Apply mutations (Issue #1716: agent_prng, not std::rand)
                     for (int m = 0; m < 5; ++m) {
-                        if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
+                        if (agent_rand_unit() >= mutation_rate)
                             continue;
                         // Operator swap
                         for (const char* op = "+-*/"; *op; ++op) {
                             auto opos = variant.find(*op);
                             if (opos != std::string::npos && opos > 0) {
-                                variant[opos] = "+-*/"[std::rand() % 4];
+                                variant[opos] = "+-*/"[agent_rand_below(4)];
                                 break;
                             }
                         }
@@ -1117,18 +1133,19 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         if (old_n.empty())
                             continue;
                         int val = std::stoi(old_n);
-                        val += (std::rand() % 21) - 10;
+                        val += static_cast<int>(agent_rand_below(21)) - 10;
                         if (val < 0)
                             val = 0;
                         variant.replace(npos, nend - npos, std::to_string(val));
                     }
 
                     // Crossover: text-level or AST-level
-                    if (!elite.empty() && std::rand() % 3 == 0) {
-                        auto& other = elite[std::rand() % elite.size()].first;
+                    if (!elite.empty() && agent_rand_below(3) == 0) {
+                        auto& other =
+                            elite[agent_rand_below(static_cast<unsigned>(elite.size()))].first;
                         // Try AST expression-level crossover via node swapping
                         // Use a child workspace and mutate:replace-value
-                        if (ev.workspace_tree_ && std::rand() % 2 == 0) {
+                        if (ev.workspace_tree_ && agent_rand_below(2) == 0) {
                             auto* tree =
                                 static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
                             // Create a temporary workspace, set-code the variant,
@@ -1155,7 +1172,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                              nid <
                                              (ev.workspace_flat_ ? ev.workspace_flat_->size() : 0);
                                              ++nid) {
-                                            if (std::rand() % 5 != 0)
+                                            if (agent_rand_below(5) != 0)
                                                 continue; // 20% chance per node
                                             auto v = ev.workspace_flat_->get(nid);
                                             if (v.tag == aura::ast::NodeTag::LiteralInt) {
