@@ -2199,8 +2199,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
                                    "batch :replace-subtree: target has no parent slot to replace"});
     // Issue #1697 / #1685: re-validate parent/slot after parse; re-derive
     // from target if the pre-parse edge is no longer attached.
+    // Use is_live_node not StableNodeRef::is_valid_in — parse_to_flat
+    // restamps generations (#273 / #1699).
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
-    const auto target_ref = flat.make_ref(target);
     auto pr = aura::parser::parse_to_flat(new_code, flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
@@ -2214,13 +2215,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
         return child_idx < pv.children.size() && pv.child(child_idx) == target;
     };
     if (!parent_slot_ok()) {
-        if (!target_ref.is_valid_in(flat) ||
-            static_cast<std::size_t>(target_ref.id) >= size_before_parse ||
-            !flat.is_live_node(target_ref.id))
+        if (static_cast<std::size_t>(target) >= size_before_parse || !flat.is_live_node(target))
             return std::unexpected(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                        "batch :replace-subtree: target invalid after parse"});
-        target = target_ref.id;
         parent_id = flat.parent_of(target);
         if (parent_id == aura::ast::NULL_NODE ||
             static_cast<std::size_t>(parent_id) >= size_before_parse ||
@@ -2262,7 +2260,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
     auto pos = static_cast<std::uint32_t>(as_int(a[1]));
     auto& flat = *workspace_flat_;
-    // Issue #1690: parent must stay a live pre-parse node across each append.
+    // Issue #1699 / #1690: parent must stay a live pre-parse node across
+    // each append in the multi-arg loop (6th capture-before-parse site).
+    // Do not use StableNodeRef::is_valid_in post-parse: parse_to_flat
+    // restamps all node generations (#273), which would false-fail.
     if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :splice: parent out of range"});
@@ -2292,6 +2293,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
         auto pr = aura::parser::parse_to_flat(string_heap_[cidx], flat, *workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             continue;
+        // Parent is user-supplied insert target — no child edge to re-derive.
         if (static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent))
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError, "batch :splice: parent invalid after parse"});

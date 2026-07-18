@@ -5392,6 +5392,9 @@ aura_issue_test_link_llvm_jit(test_mutate_multi_node_log_null_1696)
 # Issue #1697: replace-subtree re-validate/re-derive parent after parse_to_flat.
 aura_add_issue_test(test_mutate_replace_subtree_stale_parent_1697)
 aura_issue_test_link_llvm_jit(test_mutate_replace_subtree_stale_parent_1697)
+# Issue #1699: splice re-validate parent after each multi-arg parse_to_flat.
+aura_add_issue_test(test_mutate_splice_stale_parent_1699)
+aura_issue_test_link_llvm_jit(test_mutate_splice_stale_parent_1699)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

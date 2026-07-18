@@ -182,8 +182,8 @@ int main() {
                   "public path has parent_slot_ok");
             CHECK(mutate_src.find("parent_child_index_if_attached") != std::string::npos,
                   "public path re-derives via parent_child_index_if_attached");
-            CHECK(mutate_src.find("target_ref") != std::string::npos,
-                  "public path captures StableNodeRef target_ref");
+            CHECK(mutate_src.find("is_live_node(target)") != std::string::npos,
+                  "public path re-derive uses is_live_node (not is_valid_in post-restamp)");
         }
         if (!flat_src.empty()) {
             CHECK(flat_src.find("Issue #1697") != std::string::npos, "lockless path cites #1697");
