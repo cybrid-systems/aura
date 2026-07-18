@@ -76,6 +76,10 @@ extern "C" __attribute__((weak)) int aura_closure_exists(std::int64_t /*closure_
     return 0;
 }
 
+extern "C" __attribute__((weak)) std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
+    return 0;
+}
+
 extern "C" __attribute__((weak)) std::uint64_t
 aura_get_closure_bridge_epoch(std::int64_t /*closure_id*/) {
     return 0;

@@ -87,6 +87,8 @@ std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 int aura_closure_exists(std::int64_t closure_id);
 std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id);
 std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id);
+// Issue #1707: lifetime count of closure inline-cache generation mismatches.
+std::uint64_t aura_closure_cache_generation_mismatch_total(void);
 
 
 // aura_aot_probe_fn_version — read version for original_name from a
