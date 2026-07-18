@@ -5332,6 +5332,9 @@ aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
 # Issue #1677: render prim template + AI Native query/mutate evolution.
 aura_add_issue_test(test_render_ai_native_template_1677)
 aura_issue_test_link_llvm_jit(test_render_ai_native_template_1677)
+# Issue #1678: workspace_marker_macro_introduced max(walk, snapshot).
+aura_add_issue_test(test_workspace_marker_macro_max_1678)
+aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max_1678)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
