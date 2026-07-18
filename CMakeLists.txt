@@ -5250,6 +5250,9 @@ aura_issue_test_link_llvm_jit(test_invalidate_consistency_1627)
 # Issue #1608: fiber resume post-steal EnvFrame/linear refresh.
 aura_add_issue_test(test_fiber_resume_post_steal_1608)
 aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_1608)
+# Issue #1631: mandate EnvFrame/bridge refresh + linear probe on Fiber::resume
+aura_add_issue_test(test_fiber_resume_lifecycle_1631)
+aura_issue_test_link_llvm_jit(test_fiber_resume_lifecycle_1631)
 # Issue #1609: query:pattern MacroIntroduced hygiene force-filter.
 aura_add_issue_test(test_query_pattern_hygiene_1609)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)

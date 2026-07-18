@@ -1401,5 +1401,9 @@ AURA_COMPILER_METRICS_FIELD(aot_closure_bridge_refresh_total)
 AURA_COMPILER_METRICS_FIELD(stable_ref_fiber_mismatch_prevented_total)
 AURA_COMPILER_METRICS_FIELD(boundary_pinned_auto_restamp_total)
 AURA_COMPILER_METRICS_FIELD(cross_cow_provenance_enforced_total)
+// Issue #1631: post-resume EnvFrame/bridge + linear probe mandate
+AURA_COMPILER_METRICS_FIELD(resume_forced_refresh_total)
+AURA_COMPILER_METRICS_FIELD(bridge_epoch_drift_post_steal_total)
+AURA_COMPILER_METRICS_FIELD(bridge_epoch_deopt_walk_post_steal_total)
 
 #undef AURA_COMPILER_METRICS_FIELD

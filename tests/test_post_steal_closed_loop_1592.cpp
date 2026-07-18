@@ -100,7 +100,9 @@ static void ac4_query_schema() {
     cs.evaluator().complete_post_resume_steal_refresh(nullptr);
     auto h = cs.eval("(engine:metrics \"query:post-steal-closed-loop-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1608 || href(cs, "schema") == 1592, "schema 1592");
+    CHECK(href(cs, "schema") == 1631 || href(cs, "schema") == 1612 || href(cs, "schema") == 1608 ||
+              href(cs, "schema") == 1592,
+          "schema 1631|1612|1608|1592");
     CHECK(href(cs, "issue") == 1608 || href(cs, "issue") == 1592, "issue 1592");
     CHECK(href(cs, "post-steal-refresh-count") >= 1, "refresh count");
     CHECK(href(cs, "stable-ref-steal-auto-refresh-total") >= 0, "stable-ref steal");

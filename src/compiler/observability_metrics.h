@@ -2203,8 +2203,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_version_mismatch_post_steal_total{0};
     std::atomic<std::uint64_t> envframe_dualpath_repair_total{0};
 
+    // Issue #1631: mandate post-resume EnvFrame/bridge refresh + linear probe.
+    //   resume_forced_refresh_total — complete_post_resume_steal_refresh calls
+    //   bridge_epoch_drift_post_steal_total — IRClosure bridge drift detections
+    //   bridge_epoch_deopt_walk_post_steal_total — JIT walk deopts after drift
+    std::atomic<std::uint64_t> resume_forced_refresh_total{0};
+    std::atomic<std::uint64_t> bridge_epoch_drift_post_steal_total{0};
+    std::atomic<std::uint64_t> bridge_epoch_deopt_walk_post_steal_total{0};
+
     // Issue #1612: MacroIntroduced marker/provenance refresh on fiber
-    // resume / steal / GC compact (query:post-steal-closed-loop-stats schema 1612).
+    // resume / steal / GC compact (query:post-steal-closed-loop-stats schema 1612+).
     std::atomic<std::uint64_t> macro_stale_ref_prevented_total{0};
     std::atomic<std::uint64_t> macro_provenance_repin_total{0};
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
