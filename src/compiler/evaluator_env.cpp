@@ -449,6 +449,8 @@ void EnvFrame::bind_with_linear_state(const std::string& n, types::EvalValue v,
         bindings_symid_.emplace_back(s, v);
         bindings_linear_ownership_state_.push_back(state);
     }
+    // Issue #1903: assert dual-path consistency after every bind.
+    ensure_dual_path_consistent();
 }
 
 void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v,
@@ -460,6 +462,78 @@ void EnvFrame::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue
         if (!sv.empty())
             bindings_.emplace_back(std::string(sv), v);
     }
+    // Issue #1903: assert dual-path consistency after every bind_symid.
+    // bind_symid_with_linear_state has an asymmetry: when pool_ is set
+    // but pool_->resolve(s) returns empty (e.g. synthetic / unresolved
+    // SymId), the bindings_ array is shorter than bindings_symid_ — a
+    // real desync. The helper bumps envframe_desync_detected_ in that
+    // case so observability surfaces it.
+    ensure_dual_path_consistent();
+}
+
+// Issue #1903: dual-path consistency enforcement. Three checks:
+//   1. Length: bindings_.size() == bindings_symid_.size()
+//   2. Linear ownership state length matches bindings_symid_.size()
+//   3. Content parity (when pool_ is set AND lengths match):
+//      for each index i, bindings_[i].second == bindings_symid_[i].second
+//      AND (when pool_->resolve(symid) is non-empty)
+//           bindings_[i].first == pool_->resolve(symid).
+//
+// Bumps envframe_dual_consistency_asserted_ on every call (regardless
+// of pass/fail). On desync: also bumps envframe_desync_detected_.
+// On pass: bumps bindings_dual_sync_count_. When owner_ is nullptr
+// (stack-local test frames), the helper still runs the checks but
+// skips the counter bumps (counters live on the owning Evaluator).
+//
+// Returns true iff both paths are equivalent.
+bool EnvFrame::ensure_dual_path_consistent() const noexcept {
+    if (owner_)
+        owner_->bump_envframe_dual_consistency_asserted();
+
+    bool ok = true;
+    // Check 1: length equality. The most common drift mode after
+    // bind_symid_with_linear_state when pool_->resolve(s) returns
+    // empty (bindings_ stays shorter than bindings_symid_).
+    if (bindings_.size() != bindings_symid_.size()) {
+        ok = false;
+    }
+    // Check 2: linear ownership SoA must mirror bindings_symid_.
+    if (bindings_linear_ownership_state_.size() != bindings_symid_.size()) {
+        ok = false;
+    }
+    // Check 3: content parity (only when pool_ is set AND lengths
+    // agree — comparing content when lengths disagree would crash
+    // or be misleading). When pool_ is null, the frame uses only
+    // bindings_ as primary (legacy pool-less mode); dual-path
+    // consistency degenerates to length-only (already checked).
+    if (ok && pool_ && bindings_.size() == bindings_symid_.size()) {
+        const std::size_t n = bindings_symid_.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            // Value parity (compare the EvalValue — operator== exists
+            // for POD copy semantics on the int64 storage).
+            if (bindings_[i].second != bindings_symid_[i].second) {
+                ok = false;
+                break;
+            }
+            // Name parity: only check when the SymId resolves to a
+            // non-empty string (synthetic SymIds legitimately have
+            // no name; the empty-skip in bind_symid_with_linear_state
+            // is intentional).
+            const std::string_view expected = pool_->resolve(bindings_symid_[i].first);
+            if (!expected.empty() && bindings_[i].first != expected) {
+                ok = false;
+                break;
+            }
+        }
+    }
+
+    if (owner_) {
+        if (ok)
+            owner_->bump_bindings_dual_sync_count();
+        else
+            owner_->bump_envframe_desync_detected();
+    }
+    return ok;
 }
 
 bool EnvFrame::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
@@ -549,7 +623,12 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // by is_env_frame_stale once defuse_version_ > 0).
     EnvFrame fr(parent_id, primitives, defuse_version_.load(std::memory_order_acquire));
     env_frames_.push_back(std::move(fr));
-    return static_cast<EnvId>(env_frames_.size() - 1);
+    const EnvId id = static_cast<EnvId>(env_frames_.size() - 1);
+    // Issue #1903: set the owner_ back-pointer so the frame's
+    // ensure_dual_path_consistent() can route counter bumps through
+    // the owning Evaluator. Set AFTER push_back (index stable).
+    env_frames_[id].set_owner(this);
+    return id;
 }
 
 // Evaluator::alloc_env_frame_from_env — Issue #145 Phase 2.3.
@@ -598,6 +677,9 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     } else if (fr.bindings_linear_ownership_state_.size() > fr.bindings_symid_.size()) {
         fr.bindings_linear_ownership_state_.resize(fr.bindings_symid_.size());
     }
+    // Issue #1903: owner_ back-pointer so ensure_dual_path_consistent()
+    // (called below) can route counter bumps through the owning Evaluator.
+    fr.set_owner(this);
     ensure_envframe_dual_path_consistency(fr);
     // Issue #1384: re-stamp version_ AFTER all assignments so the
     // frame captures defuse_version_ at COMPLETION, not at the
@@ -610,29 +692,22 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     return id;
 }
 
-// Issue #1482 Commit 3 (desync strengthen, part A): post-Commit 1/2 the legacy
-// `bindings_` array is no longer eagerly populated — it stays empty until a
-// caller invokes `Env::bindings_with_names()` (which materializes via
-// `pool_->resolve()` + `"@<symid:N>"` fallback). The legacy size-only
-// check `bindings_.size() != bindings_symid_.size()` will now always fire
-// (0 vs N) for any non-empty frame, which is observability noise, not
-// semantic desync. Kept the legacy `bump_envframe_desync_detected()` counter
-// as a "lazy materialization not yet fired" hint; the real semantic check
-// (compare `Env::bindings_with_names()` output against a synthesized expected
-// view from `bindings_symid_` + `pool_->resolve()`) is deferred to followup
-// `#1550` (dual-path consistency validation in walk/GC paths).
-//
-// Future work (Commit 3 part B, deferred): replace this size-only check with
-// a semantic comparison that compares `Env::bindings_with_names()` output
-// against a synthesized expected view derived from `bindings_symid_` +
-// `pool_->resolve()`. That is O(N) per frame at consistency-check time but
-// catches actual mismatches (not just empty-vs-populated).
-void Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept {
-    if (fr.bindings_.size() != fr.bindings_symid_.size()) {
-        bump_envframe_desync_detected();
-    } else {
-        bump_bindings_dual_sync_count();
-    }
+// Issue #1482 Commit 3 (desync strengthen, part A) + #1903:
+// post-Commit 1/2 the legacy `bindings_` array is no longer eagerly
+// populated — it stays empty until a caller invokes
+// `Env::bindings_with_names()` (which materializes via
+// `pool_->resolve()` + `"@<symid:N>"` fallback). Issue #1903 turned
+// the size-only check into a full 3-check semantic comparison
+// (length + linear-ownership SoA + content parity when pool_ is set)
+// inside EnvFrame::ensure_dual_path_consistent(). This free function
+// now delegates to the member helper for the canonical
+// implementation. The legacy `bump_envframe_desync_detected()` and
+// `bump_bindings_dual_sync_count()` counter family is preserved;
+// #1903 also added `envframe_dual_consistency_asserted_` which counts
+// every check (pass + fail) so dashboards can compute the
+// fail-rate.
+bool Evaluator::ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept {
+    return fr.ensure_dual_path_consistent();
 }
 
 // Evaluator::materialize_call_env — Issue #145 Phase 2.3.
@@ -842,6 +917,17 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         ne.set_owner(this);
         ne.set_parent_id(fr.parent_id);
     }
+    // Issue #1903: post-copy dual-path consistency observability.
+    // Source frame was checked before the copy (ensure_envframe_dual_path_consistency
+    // above) - the materialized Env now has its own SoA arrays; the copy is
+    // field-by-field from the source frame, so by construction it carries the
+    // same dual-path state. We bump envframe_materialize_consistency_checks_
+    // here so dashboards can correlate materialize throughput with the
+    // pre-materialize dual-path state captured by envframe_dual_consistency_asserted_.
+    // (Env doesn't carry an ensure_dual_path_consistent() method since it has
+    // no EnvFrame-style bind emit site - the consistency invariant lives on the
+    // EnvFrame source; Env's post-copy state is a literal mirror.)
+    bump_envframe_materialize_consistency_checks();
     // Issue #286: stamp the new Env with the current
     // defuse_version_. This gives the materialized Env the same
     // snapshot semantics as the EnvFrame it was built from,
@@ -1508,6 +1594,16 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
     std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
     for (EnvId cur = 0; cur < env_frames_.size(); ++cur) {
         const EnvFrame& fr = env_frames_[cur];
+        // Issue #1903: skip frames marked INVALID_VERSION (post-rollback
+        // / doomed transaction). These are never walk-safe: their bindings
+        // may reference AST nodes / pool strings that no longer exist.
+        // The legacy [#356] fallback in materialize_call_env returns an
+        // empty Env for these; the GC walk must match - never include
+        // an INVALID_VERSION frame's roots in the mark set.
+        if (fr.version_ == INVALID_VERSION) {
+            bump_envframe_gc_walk_safe_skips();
+            continue;
+        }
         // Issue #543: skip frames stamped before the current
         // mutation epoch (stale under concurrent mutate/compact).
         // Bumping gc_walk_safe_skips_ lets
@@ -1524,35 +1620,39 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
             refresh_stale_frame_in_walk(cur, "walk_env_frame_roots");
             continue;
         }
-        // Dual-path length/order consistency check (#543).
-        // The two storage arrays should hold the same number
-        // of entries (one per binding). A mismatch indicates
-        // either a desync in the bind path or a future bug
-        // where one array is updated without the other. Bump
-        // the desync counter (warning only — the GC walk
-        // still walks both arrays below, so this is purely
-        // observability). Stats-only (relaxed-ordering).
-        if (fr.bindings_.size() != fr.bindings_symid_.size()) {
+        // Issue #1903: dual-path consistency check (length parity +
+        // linear-ownership SoA + content when pool_ set). Routes through
+        // the canonical EnvFrame helper which bumps the dedicated
+        // observability counters via the frame's owner_ back-pointer.
+        // The legacy size-only bump below is kept as a fast-path signal
+        // for callers that only check this single counter.
+        if (fr.owner())
+            (void)const_cast<EnvFrame&>(fr).ensure_dual_path_consistent();
+        else if (fr.bindings_.size() != fr.bindings_symid_.size())
             bump_envframe_desync_detected();
-        }
-        // Walk the name-keyed bindings. bindings_symid_ is
-        // populated when pool_ is set; bindings_ is always
-        // populated. We walk BOTH to be safe (they should
-        // hold the same values, but checking is cheap).
-        for (const auto& [name, val] : fr.bindings_) {
-            (void)name;
-            if (is_pair(val)) {
-                pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
-            } else if (is_closure(val)) {
-                closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
+        // Issue #1903: prefer bindings_symid_ for GC root discovery
+        // (the SymId-keyed array is the canonical primary store per
+        // the Phase 2.3 migration; bindings_ is the legacy secondary).
+        // Fall back to bindings_ only when symid is empty (rare; only
+        // happens when no pool was set at bind time) and bump the
+        // legacy-fallback counter so dashboards can monitor how often
+        // the legacy path is exercised.
+        if (!fr.bindings_symid_.empty()) {
+            for (const auto& [sym, val] : fr.bindings_symid_) {
+                (void)sym;
+                if (is_pair(val))
+                    pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
+                else if (is_closure(val))
+                    closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
             }
-        }
-        for (const auto& [sym, val] : fr.bindings_symid_) {
-            (void)sym;
-            if (is_pair(val)) {
-                pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
-            } else if (is_closure(val)) {
-                closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
+        } else if (!fr.bindings_.empty()) {
+            bump_envframe_gc_walk_legacy_fallback_uses();
+            for (const auto& [name, val] : fr.bindings_) {
+                (void)name;
+                if (is_pair(val))
+                    pair_roots_out.push_back(static_cast<std::int64_t>(as_pair_idx(val)));
+                else if (is_closure(val))
+                    closure_roots_out.push_back(static_cast<std::int64_t>(as_closure_id(val)));
             }
         }
     }

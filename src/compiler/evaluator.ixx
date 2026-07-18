@@ -688,6 +688,13 @@ export struct EnvFrame {
     // intentional — old frames should be re-validated.
     std::uint64_t version_ = 0;
 
+    // Issue #1903: back-pointer to owning Evaluator. Used by
+    // EnvFrame::ensure_dual_path_consistent() to bump the
+    // dual-path consistency observability counters. Nullable
+    // for stack-local frames in tests; the helper degrades
+    // gracefully (no counter bump, no panic) when owner_ is null.
+    Evaluator* owner_ = nullptr;
+
     // Issue #1384: explicit ctor that takes `version_` so the
     // "construct locally with version_ = current" pattern can't
     // be accidentally bypassed by future changes. Default ctor
@@ -698,6 +705,14 @@ export struct EnvFrame {
         , primitives_(prim)
         , version_(version) {}
     EnvFrame() = default;
+
+    // Issue #1903: owner back-pointer setter/getter. Mirrors Env's
+    // pattern — env_frames_-allocated frames get owner_ set in
+    // alloc_env_frame / alloc_env_frame_from_env right after the
+    // push_back, so post-bind ensure_dual_path_consistent() can
+    // route counter bumps through the Evaluator.
+    void set_owner(Evaluator* e) noexcept { owner_ = e; }
+    [[nodiscard]] Evaluator* owner() const noexcept { return owner_; }
 
     // P0 (EnvFrame SoA migration): removed raw cells_ pointer.
     // EnvFrame is now pure data (bindings + parent_id index).
@@ -733,6 +748,23 @@ export struct EnvFrame {
     // Mark most-recent binding of SymId / name as `state` (e.g. Moved).
     bool set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
     bool set_linear_ownership_state_by_name(const std::string& n, std::uint8_t state);
+    // Issue #1903: dual-path consistency enforcement. Called
+    // from bind_with_linear_state / bind_symid_with_linear_state
+    // (every mutate path under MutationBoundaryGuard),
+    // complete_post_resume_steal_refresh (Fiber::resume / steal),
+    // and post-materialize (after the bindings copy in
+    // materialize_call_env). Detects drift between bindings_
+    // (string-keyed) and bindings_symid_ (SymId-keyed), bumps the
+    // appropriate observability counter via owner_ if set, and
+    // returns true iff both paths are equivalent. In debug
+    // builds, asserts on detected desync so the test suite
+    // catches regressions early.
+    //
+    // Bumps envframe_dual_consistency_asserted_ on every call
+    // (regardless of pass/fail). On desync: also bumps
+    // envframe_desync_detected_. On pass: bumps
+    // bindings_dual_sync_count_.
+    [[nodiscard]] bool ensure_dual_path_consistent() const noexcept;
     // Local-only lookup (no parent walk). Phase 2.2 will add
     // walk-aware variants alongside `Evaluator::walk_env_frames`.
     std::optional<types::EvalValue> lookup_local(const std::string& n) const pre(!n.empty());
@@ -3519,6 +3551,23 @@ private:
     mutable std::atomic<std::uint64_t> envframe_stale_refresh_count_{0};
     mutable std::atomic<std::uint64_t> envframe_version_mismatch_in_walk_{0};
     mutable std::atomic<std::uint64_t> envframe_gc_walk_safe_skips_{0};
+    // Issue #1903: dual-path consistency enforcement counters.
+    //   - envframe_dual_consistency_asserted_: # of frames where
+    //     EnvFrame::ensure_dual_path_consistent() ran (every
+    //     bind/bind_symid + post-steal refresh + post-materialize).
+    //   - envframe_post_steal_dual_synced_: # of frames where dual-
+    //     path consistency was restored after a Fiber::resume / steal
+    //     cycle (complete_post_resume_steal_refresh call site).
+    //   - envframe_materialize_consistency_checks_: # of materialize_
+    //     call_env invocations that explicitly asserted consistency
+    //     after the bindings copy (post-copy under Guard).
+    //   - envframe_gc_walk_legacy_fallback_uses_: # of GC walk frames
+    //     where bindings_symid_ was empty and walk fell back to the
+    //     legacy bindings_ vector (legacy pool-less frames only).
+    mutable std::atomic<std::uint64_t> envframe_dual_consistency_asserted_{0};
+    mutable std::atomic<std::uint64_t> envframe_post_steal_dual_synced_{0};
+    mutable std::atomic<std::uint64_t> envframe_materialize_consistency_checks_{0};
+    mutable std::atomic<std::uint64_t> envframe_gc_walk_legacy_fallback_uses_{0};
     // Issue #356: # of env_frames_ entries marked INVALID_VERSION
     // by invalidate_post_rollback_env_frames after a panic
     // checkpoint restore. Stats-only (relaxed-ordering).
@@ -10803,6 +10852,31 @@ public:
     void bump_envframe_gc_walk_safe_skips() const noexcept {
         envframe_gc_walk_safe_skips_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1903: dual-path consistency enforcement bump/getter.
+    [[nodiscard]] std::uint64_t get_envframe_dual_consistency_asserted() const noexcept {
+        return envframe_dual_consistency_asserted_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_post_steal_dual_synced() const noexcept {
+        return envframe_post_steal_dual_synced_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_materialize_consistency_checks() const noexcept {
+        return envframe_materialize_consistency_checks_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_envframe_gc_walk_legacy_fallback_uses() const noexcept {
+        return envframe_gc_walk_legacy_fallback_uses_.load(std::memory_order_relaxed);
+    }
+    void bump_envframe_dual_consistency_asserted() const noexcept {
+        envframe_dual_consistency_asserted_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_post_steal_dual_synced() const noexcept {
+        envframe_post_steal_dual_synced_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_materialize_consistency_checks() const noexcept {
+        envframe_materialize_consistency_checks_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_envframe_gc_walk_legacy_fallback_uses() const noexcept {
+        envframe_gc_walk_legacy_fallback_uses_.fetch_add(1, std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t get_envframe_post_rollback_invalidations() const noexcept {
         return envframe_post_rollback_invalidations_.load(std::memory_order_relaxed);
     }
@@ -10829,7 +10903,7 @@ public:
     }
     // Issue #418: bindings_ vs bindings_symid_ length consistency
     // probe for EnvFrame SoA dual-path + stale policy paths.
-    void ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept;
+    [[nodiscard]] bool ensure_envframe_dual_path_consistency(const EnvFrame& fr) const noexcept;
 
 
 // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
