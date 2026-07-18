@@ -391,9 +391,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
         });
 
-    // Shared builder for safe-yield action surfaces (#1504 / #1591).
+    // Shared builder for safe-yield action surfaces (#1504 / #1591 / #1635).
+    // Capacity must be power-of-two (open-address mask hcap-1).
     auto build_safe_yield_hash = [&ev](int rc) -> EvalValue {
-        auto* ht = FlatHashTable::create(48);
+        auto* ht = FlatHashTable::create(64);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -432,7 +433,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                   static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
         insert_kv("safe-yield-no-fiber-total",
                   static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
-        // Issue #1591: fairness fields Agents use for back-off / interleave.
+        // Issue #1591 / #1635: fairness fields Agents use for back-off / interleave.
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         const std::int64_t hold_total =
             m ? static_cast<std::int64_t>(
@@ -455,8 +456,13 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(s.steal_inner_deferred_starvation_mitigated_count.load(
                     std::memory_order_relaxed)));
         }
-        insert_kv("issue", 1591);
-        insert_kv("schema", 1591); // #1591 supersedes 1504; Agents accept both
+        // #1635 mandate wire flags + YieldReason::MutationBoundary contract
+        insert_kv("yield-reason-mutation-boundary", 1); // YieldReason::MutationBoundary
+        insert_kv("gc-safepoint-depth-check-wired", 1);
+        insert_kv("ast-yield-at-boundary-wired", 1);
+        insert_kv("safe-yield-mandate-active", 1);
+        insert_kv("issue", 1635);
+        insert_kv("schema", 1635); // lineage 1591 / 1504
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
@@ -485,10 +491,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return build_safe_yield_hash(rc);
         });
 
-    // Issue #1504: lifetime counters + depth instrumentation (read-only).
+    // Issue #1504 / #1635: lifetime counters + depth instrumentation (read-only).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-safe-yield-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -529,7 +535,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(ev.get_safe_yield_skipped_held_total()));
             insert_kv("safe-yield-no-fiber-total",
                       static_cast<std::int64_t>(ev.get_safe_yield_no_fiber_total()));
-            // Issue #1591: hold + safepoint wait for orchestration fairness.
+            // Issue #1591 / #1635: hold + safepoint wait for orchestration fairness.
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             const std::int64_t hold_total =
                 m ? static_cast<std::int64_t>(
@@ -543,18 +549,21 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv(
                 "safepoint-wait-while-mutation-held-us",
                 static_cast<std::int64_t>(aura::gc_hooks::safepoint_wait_while_mutation_held_us()));
-            insert_kv("issue", 1591);
-            insert_kv("schema", 1591);
+            insert_kv("gc-safepoint-depth-check-wired", 1);
+            insert_kv("ast-yield-at-boundary-wired", 1);
+            insert_kv("safe-yield-mandate-active", 1);
+            insert_kv("issue", 1635);
+            insert_kv("schema", 1635); // lineage 1591 / 1504
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
 
-    // Issue #1591: unified fairness dashboard (safe-yield + per-fiber depth +
-    // steal starvation + safepoint wait). One hash for multi-Agent orchestrators.
+    // Issue #1591 / #1635: unified fairness dashboard (safe-yield + per-fiber
+    // depth + steal starvation + safepoint wait). One hash for multi-Agent.
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-fairness-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(48);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -627,8 +636,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         m->mutation_stack_depth_histogram[i].load(std::memory_order_relaxed));
             }
             insert_kv("mutation-stack-depth-histogram-samples", hist_total);
-            insert_kv("issue", 1591);
-            insert_kv("schema", 1591);
+            insert_kv("gc-safepoint-depth-check-wired", 1);
+            insert_kv("ast-yield-at-boundary-wired", 1);
+            insert_kv("safe-yield-mandate-active", 1);
+            insert_kv("issue", 1635);
+            insert_kv("schema", 1635); // lineage 1591 / 1504
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

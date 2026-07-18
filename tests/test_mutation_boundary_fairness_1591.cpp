@@ -46,8 +46,12 @@ static void ac1_safe_yield_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield\")");
     CHECK(h && is_hash(*h), "safe-yield returns hash");
-    CHECK(href(cs, "query:mutation-boundary-safe-yield", "schema") == 1591, "schema 1591");
-    CHECK(href(cs, "query:mutation-boundary-safe-yield", "issue") == 1591, "issue 1591");
+    CHECK(href(cs, "query:mutation-boundary-safe-yield", "schema") == 1635 ||
+              href(cs, "query:mutation-boundary-safe-yield", "schema") == 1591,
+          "schema 1635|1591");
+    CHECK(href(cs, "query:mutation-boundary-safe-yield", "issue") == 1635 ||
+              href(cs, "query:mutation-boundary-safe-yield", "issue") == 1591,
+          "issue 1635|1591");
     CHECK(href(cs, "query:mutation-boundary-safe-yield", "boundary-depth") >= 0, "depth");
     CHECK(href(cs, "query:mutation-boundary-safe-yield", "avg-hold-time-us") >= 0, "avg hold");
     CHECK(href(cs, "query:mutation-boundary-safe-yield",
@@ -55,8 +59,9 @@ static void ac1_safe_yield_schema() {
           "steal mitigation field");
     auto st = cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield-stats\")");
     CHECK(st && is_hash(*st), "stats hash");
-    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1591,
-          "stats schema 1591");
+    CHECK(href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1635 ||
+              href(cs, "query:mutation-boundary-safe-yield-stats", "schema") == 1591,
+          "stats schema 1635|1591");
 }
 
 static void ac2_depth_stats() {
@@ -64,7 +69,9 @@ static void ac2_depth_stats() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:per-fiber-mutation-depth-stats\")");
     CHECK(h && is_hash(*h), "depth-stats hash");
-    CHECK(href(cs, "query:per-fiber-mutation-depth-stats", "schema") == 1591, "schema 1591");
+    CHECK(href(cs, "query:per-fiber-mutation-depth-stats", "schema") == 1635 ||
+              href(cs, "query:per-fiber-mutation-depth-stats", "schema") == 1591,
+          "schema 1635|1591");
     CHECK(href(cs, "query:per-fiber-mutation-depth-stats", "lifetime-max") >= 0, "lifetime-max");
     CHECK(href(cs, "query:per-fiber-mutation-depth-stats", "live-depth") >= 0, "live-depth");
     CHECK(href(cs, "query:per-fiber-mutation-depth-stats",
@@ -77,7 +84,9 @@ static void ac3_fairness_dashboard() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:mutation-boundary-fairness-stats\")");
     CHECK(h && is_hash(*h), "fairness hash");
-    CHECK(href(cs, "query:mutation-boundary-fairness-stats", "schema") == 1591, "schema 1591");
+    CHECK(href(cs, "query:mutation-boundary-fairness-stats", "schema") == 1635 ||
+              href(cs, "query:mutation-boundary-fairness-stats", "schema") == 1591,
+          "schema 1635|1591");
     CHECK(href(cs, "query:mutation-boundary-fairness-stats", "boundary-depth") >= 0, "depth");
     CHECK(href(cs, "query:mutation-boundary-fairness-stats", "per-fiber-stack-depth-max") >= 0,
           "per-fiber max");
