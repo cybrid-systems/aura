@@ -80,6 +80,11 @@ std::uint64_t aura_aot_metrics_explicit_sets_total(void);
 // LLVM pattern change). For now the C-side aura_closure_call wrapper
 // check is the authoritative JIT-side gate; LLVM IR emit-side probe
 // fires when wired up.
+//
+// Issue #1706: bridge_epoch / defuse_version return 0 for out-of-range
+// ids (legacy #1485), but 0 is also a valid stamp. Call
+// aura_closure_exists(id) first to disambiguate (1 = slot allocated).
+int aura_closure_exists(std::int64_t closure_id);
 std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id);
 std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id);
 

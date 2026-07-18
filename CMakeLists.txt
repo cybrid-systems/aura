@@ -5410,6 +5410,9 @@ aura_issue_test_link_llvm_jit(test_mutate_refactor_extract_stale_parent_1703)
 # Issue #1704: sv-add-coverpoint / sv-weaken-property MutationBoundaryGuard.
 aura_add_issue_test(test_mutate_sv_guard_1704)
 aura_issue_test_link_llvm_jit(test_mutate_sv_guard_1704)
+# Issue #1706: aura_closure_exists disambiguates epoch OOR vs 0.
+aura_add_issue_test(test_closure_exists_epoch_1706)
+aura_issue_test_link_llvm_jit(test_closure_exists_epoch_1706)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
