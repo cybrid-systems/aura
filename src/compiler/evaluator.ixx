@@ -2123,10 +2123,12 @@ public:
         std::size_t marked_invalid = 0;
     };
     LinearLiveClosureScanResult
-    // Issue #1545 / #1486 / #1494: scan live TW closures for linear captures.
-    // mark_invalid → bridge_epoch=0 (safe_fallback). only_if_moved → only
-    // mark when a binding is Moved. filter_env_id != NULL_ENV_ID → only
-    // closures capturing that EnvFrame (#1494 env-scoped enforce).
+    // Issue #1545 / #1486 / #1494 / #1659: scan live TW closures for linear
+    // captures. mark_invalid → bridge_epoch=0 (tombstone / safe_fallback).
+    // only_if_moved → only mark when a binding is Moved. filter_env_id !=
+    // NULL_ENV_ID → only closures capturing that EnvFrame (#1494 env-scoped).
+    // #1659: end-to-end with IRInstruction::linear_ownership_state,
+    // linear_heap_ live flag, GC safepoint probe, and JIT Apply dual-check.
     scan_live_closures_for_linear_captures(bool mark_invalid = true, bool only_if_moved = false,
                                            EnvId filter_env_id = NULL_ENV_ID) noexcept;
     // Test/helper: register a Closure in closures_ (stamps bridge_epoch).
