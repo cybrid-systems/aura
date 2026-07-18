@@ -142,11 +142,11 @@ static void ac6_render_stats() {
     CHECK(r && is_hash(*r), "render-stats is hash");
     // Schema advanced to 1674 when #1674 wired full bump surface; still accept 1673.
     const auto schema = href(cs, "(stats:get \"query:render-stats\")", "schema");
-    CHECK(schema == 1674 || schema == 1673, "schema 1673/1674");
+    CHECK(schema == 1676 || schema == 1674 || schema == 1673, "schema 1673/1674/1676");
     CHECK(href(cs, "(stats:get \"query:render-stats\")", "present-calls") >= 1, "present-calls");
     CHECK(href(cs, "(stats:get \"query:render-stats\")", "buffer-creates") >= 1, "buffer-creates");
     const auto issue = href(cs, "(stats:get \"query:render-stats\")", "issue");
-    CHECK(issue == 1674 || issue == 1673, "issue field");
+    CHECK(issue == 1676 || issue == 1674 || issue == 1673, "issue field");
 }
 
 } // namespace

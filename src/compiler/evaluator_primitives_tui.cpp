@@ -169,7 +169,9 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // 4. (tui:cell col row char [fg [bg [attr]]])
+    // Issue #1676: participate in render-tier fence (draw half of TUI hot path).
     add("tui:cell", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        Evaluator::RenderHotEntryGuard hot_entry(ev);
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
             return make_bool(false);
         auto& tui = aura::tui::global_tui();
@@ -210,7 +212,9 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // 6. (tui:present)
+    // Issue #1676: dual-epoch + linear fence + render hotpath depth.
     add("tui:present", [&ev](std::span<const EvalValue>) -> EvalValue {
+        Evaluator::RenderHotEntryGuard hot_entry(ev);
         auto& tui = aura::tui::global_tui();
         if (tui.is_initialized()) {
             tui.present();
@@ -406,6 +410,23 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         aura::tui::global_tui().inject_key(first_codepoint(ev.string_heap_[i]));
         return make_bool(true);
     });
+
+    // Issue #1676: promote TUI present/draw into render-critical hot tier so
+    // invoke_prim_with_telemetry takes the trusted fast path (capability bypass).
+    ev.primitives().set_meta_for_name(
+        "tui:present",
+        RENDER_PRIMITIVE_META(0, "Present TUI framebuffer (linear/epoch fenced, #1676).",
+                              "() -> void"));
+    ev.primitives().set_meta_for_name(
+        "tui:cell", RENDER_PRIMITIVE_META(3, "Write TUI cell (render-tier hot path, #1676).",
+                                          "(int int string [int [int [int]]]) -> bool"));
+    ev.primitives().set_meta_for_name(
+        "tui:clear",
+        RENDER_PRIMITIVE_META(0, "Clear TUI framebuffer (#1676 render-tier).", "() -> void"));
+    ev.primitives().set_meta_for_name(
+        "tui:frame-ansi",
+        RENDER_PRIMITIVE_META(0, "Last TUI frame as ANSI string (#1676 render-tier).",
+                              "() -> string"));
 }
 
 } // namespace aura::compiler::primitives_detail

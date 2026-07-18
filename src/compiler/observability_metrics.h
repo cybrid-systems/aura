@@ -6504,6 +6504,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_hotpath_enter_total{0};
     // #1559: dirty short-circuit skip counter (mirrors arena_policy::render_hotpath_skip_total)
     std::atomic<std::uint64_t> render_hotpath_skip_total{0};
+    // Issue #1676: render-tier prim dispatch + linear/epoch entry fences
+    std::atomic<std::uint64_t> render_hotpath_dispatch_fast_total{0};
+    std::atomic<std::uint64_t> render_hotpath_dispatch_full_total{0};
+    std::atomic<std::uint64_t> render_hotpath_linear_fence_total{0};
+    std::atomic<std::uint64_t> render_hotpath_epoch_fence_total{0};
+    std::atomic<std::uint64_t> render_hotpath_linear_block_total{0};
+    std::atomic<std::uint64_t> render_hotpath_epoch_stale_total{0};
     // #1562: dirty-region differential present metrics
     std::atomic<std::uint64_t> render_dirty_region_skips_total{0};
     std::atomic<std::uint64_t> render_dirty_cells_emitted_total{0};
