@@ -2109,6 +2109,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
     //
+    // Issue #1690 / #1685: parent NodeId is captured before parse_to_flat;
+    // re-validate after parse so SoA growth / free-list recycle cannot
+    // redirect InsertChildMutator to the wrong node.
+    //
     // Phase 4 follow-up #3a: the structural mutation is now
     // routed through aura::ast::mutators::InsertChildMutator.
     // The wrapper keeps the Aura-specific boilerplate (mutation
@@ -2141,10 +2145,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "code string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
-        // Issue #1685: capture pre-parse parent; re-validate after append.
+        // Issue #1690 / #1685: snapshot size; parent must be a live pre-parse node.
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
         if (parent == aura::ast::NULL_NODE ||
-            static_cast<std::size_t>(parent) >= size_before_parse || flat.is_free_slot(parent)) {
+            static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent)) {
             ok = false;
             return mev("out-of-range", "insert-child: parent-id out of range");
         }
@@ -2168,9 +2172,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("parse-error", parse_err);
         }
 
-        // Issue #1685: parent NodeId must still refer to a live pre-parse node.
-        if (static_cast<std::size_t>(parent) >= flat.size() || flat.is_free_slot(parent) ||
-            static_cast<std::size_t>(parent) >= size_before_parse) {
+        // Issue #1690 / #1685: re-validate parent after SoA growth / append.
+        // NodeId indices are stable under vector growth, but free-list recycle
+        // or bulk topology restore can still invalidate the slot.
+        if (static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent)) {
             ok = false;
             return mev("stale-ref", "insert-child: parent invalid after parse");
         }
@@ -3472,7 +3477,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
         auto& flat = *ev.workspace_flat_;
-        if (parent >= flat.size()) {
+        // Issue #1690: parent captured once; re-validate after each parse_to_flat.
+        if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent)) {
             ok = false;
             return ev.make_merr("out-of-range", "parent node ID " + std::to_string(parent) +
                                                     " >= flat size " + std::to_string(flat.size()));
@@ -3510,9 +3516,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (cidx >= ev.string_heap_.size())
                 continue;
 
+            // Issue #1690: snapshot size before each append-parse.
+            const auto size_before_parse = static_cast<std::size_t>(flat.size());
             auto pr = aura::parser::parse_to_flat(ev.string_heap_[cidx], flat, *ev.workspace_pool_);
             if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 continue;
+            if (static_cast<std::size_t>(parent) >= size_before_parse ||
+                !flat.is_live_node(parent)) {
+                ok = false;
+                return ev.make_merr("stale-ref", "splice: parent invalid after parse");
+            }
 
             flat.insert_child(parent, insert_pos, pr.root);
 
