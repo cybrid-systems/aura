@@ -5344,6 +5344,9 @@ aura_issue_test_link_llvm_jit(test_module_export_cache_1680)
 # Issue #1681: stale-ref errors must not pollute string_heap_.
 aura_add_issue_test(test_stale_ref_string_heap_1681)
 aura_issue_test_link_llvm_jit(test_stale_ref_string_heap_1681)
+# Issue #1682: occurrence-dirty subtree walk cycle guard.
+aura_add_issue_test(test_occurrence_dirty_cycle_guard_1682)
+aura_issue_test_link_llvm_jit(test_occurrence_dirty_cycle_guard_1682)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
