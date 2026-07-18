@@ -2211,6 +2211,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> bridge_epoch_drift_post_steal_total{0};
     std::atomic<std::uint64_t> bridge_epoch_deopt_walk_post_steal_total{0};
 
+    // Issue #1634: Guard dtor failure path forced linear + closure probe.
+    std::atomic<std::uint64_t> guard_failure_linear_enforce_total{0};
+
     // Issue #1612: MacroIntroduced marker/provenance refresh on fiber
     // resume / steal / GC compact (query:post-steal-closed-loop-stats schema 1612+).
     std::atomic<std::uint64_t> macro_stale_ref_prevented_total{0};

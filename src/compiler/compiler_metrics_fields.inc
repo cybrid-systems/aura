@@ -1405,5 +1405,7 @@ AURA_COMPILER_METRICS_FIELD(cross_cow_provenance_enforced_total)
 AURA_COMPILER_METRICS_FIELD(resume_forced_refresh_total)
 AURA_COMPILER_METRICS_FIELD(bridge_epoch_drift_post_steal_total)
 AURA_COMPILER_METRICS_FIELD(bridge_epoch_deopt_walk_post_steal_total)
+// Issue #1634: Guard failure path linear enforce + try_acquire unify
+AURA_COMPILER_METRICS_FIELD(guard_failure_linear_enforce_total)
 
 #undef AURA_COMPILER_METRICS_FIELD

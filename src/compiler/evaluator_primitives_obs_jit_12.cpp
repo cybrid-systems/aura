@@ -363,8 +363,9 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("manager-wired", 1);
             insert_kv("panic-quota-distinguished", 1);
             insert_kv("typed-reject-not-panic", 1);
-            // Issue #1628: MutationBoundaryGuard::try_acquire factory
+            // Issue #1628 / #1634: MutationBoundaryGuard::try_acquire factory
             // (replace panic-checkpoint quota path; typed AuraError).
+            // #1634: unify invalidate + AC metric aliases.
             const std::int64_t try_acq =
                 m ? static_cast<std::int64_t>(
                         m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed))
@@ -373,15 +374,31 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed))
                   : 0;
+            const std::int64_t atomic_inv =
+                m ? static_cast<std::int64_t>(
+                        m->typed_mutate_atomic_invalidations_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_fail_lin =
+                m ? static_cast<std::int64_t>(
+                        m->guard_failure_linear_enforce_total.load(std::memory_order_relaxed))
+                  : 0;
             insert_kv("mutation_guard_try_acquire_total", try_acq);
             insert_kv("mutation_guard_try_acquire_reject_total", try_rej);
+            // #1634 AC3 issue-body alias
+            insert_kv("mutation_boundary_try_acquire_fail_total", try_rej);
+            insert_kv("resource_quota_rejects_total", rejects_total);
+            insert_kv("typed_mutate_atomic_invalidations_total", atomic_inv);
+            insert_kv("guard_failure_linear_enforce_total", guard_fail_lin);
             insert_kv("try_acquire_wired", 1);
             insert_kv("panic_checkpoint_quota_replaced", 1);
             insert_kv("eval_on_current_try_acquire", 1);
             insert_kv("typed_mutate_try_acquire", 1);
+            insert_kv("typed_mutate_atomic_unified_invalidate", 1);
+            insert_kv("atomic_bump_epochs_unified", 1);
             insert_kv("legacy_ctor_deprecated", 1);
-            insert_kv("issue", 1628);
-            insert_kv("schema", 1628); // lineage 1618|1600|1590|1547
+            insert_kv("guard_failure_linear_probe_wired", 1);
+            insert_kv("issue", 1634);
+            insert_kv("schema", 1634); // lineage 1628|1618|1600|1590|1547|1476
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

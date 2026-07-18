@@ -11165,12 +11165,29 @@ public:
             if (outermost && !success)
                 ev_->bump_mutation_boundary_rollback();
             ev_->exit_mutation_boundary(success);
-            // Issue #1486 / #1545 / #1568: post-boundary linear closed-loop.
+            // Issue #1486 / #1545 / #1568 / #1634: post-boundary linear closed-loop.
             // Unified consistency: scan Moved captures + enforce_all +
             // epoch fence + GC root audit (only_if_moved for Guard exit).
+            // #1634: on failure, force full linear_post_mutate_enforce_all +
+            // probe active closures so rollback cannot leave dangling
+            // linear/JIT state after dual-epoch restore.
             if (outermost) {
-                (void)ev_->enforce_linear_boundary_consistency(
-                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+                if (!success) {
+                    (void)ev_->linear_post_mutate_enforce_all();
+                    (void)ev_->enforce_linear_boundary_consistency(
+                        Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/true);
+                    // Walk live closures so JIT/IR see post-rollback epoch.
+                    ev_->walk_active_closures([](ClosureId, Closure&) {
+                        // Metrics-only probe; deopt is driven by is_bridge_stale
+                        // on next apply. Walk ensures registry is hot.
+                    });
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics()))
+                        m->guard_failure_linear_enforce_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                } else {
+                    (void)ev_->enforce_linear_boundary_consistency(
+                        Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+                }
             }
             // Issue #1500: after restamp_all_node_generations inside
             // exit_mutation_boundary, pinned StableNodeRefs still hold
