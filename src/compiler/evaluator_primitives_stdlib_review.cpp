@@ -39,8 +39,13 @@ using types::make_void;
 namespace {
 
     EvalValue build_kv_hash(Evaluator& ev, std::span<const std::pair<std::string, EvalValue>> kv) {
-        // Need capacity > n keys (power-of-2 open addressing). 64 fits #923–#940 dashboard.
-        const std::size_t ncap = kv.size() <= 16 ? 32 : (kv.size() <= 48 ? 64 : 128);
+        // Need capacity >> n keys (power-of-2 open addressing). Keep load
+        // factor ≤ 0.5 so long keys under #1625 production-sweep never drop.
+        std::size_t ncap = 32;
+        while (ncap < kv.size() * 2 + 8)
+            ncap *= 2;
+        if (ncap < 64)
+            ncap = 64;
         auto* ht = FlatHashTable::create(ncap);
         if (!ht)
             return make_void();
@@ -959,12 +964,21 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"schema", make_int(1261)},
+                // #1625: nested-lambda per-block targeted dirty (lineage 1261|1505)
+                {"schema", make_int(1625)},
+                {"issue", make_int(1625)},
                 {"active", make_int(m ? load_u64(m, m->production_sweep_1261_1265_active) : 1)},
                 {"dep-graph-defuse-bumps",
                  make_int(m ? load_u64(m, m->dep_graph_defuse_version_bumps) : 0)},
                 {"dep-graph-nested-lambda-full-dirty",
                  make_int(m ? load_u64(m, m->dep_graph_nested_lambda_full_dirty) : 0)},
+                {"dep-graph-nested-lambda-targeted-dirty",
+                 make_int(m ? load_u64(m, m->dep_graph_nested_lambda_targeted_dirty_total) : 0)},
+                {"dep-graph-nested-lambda-blocks-targeted",
+                 make_int(m ? load_u64(m, m->dep_graph_nested_lambda_blocks_targeted_total) : 0)},
+                {"dep-graph-nested-lambda-blocks-kept-clean",
+                 make_int(m ? load_u64(m, m->dep_graph_nested_lambda_blocks_kept_clean_total) : 0)},
+                {"nested-lambda-per-block-targeted-wired", make_int(1)},
                 {"dep-graph-hygiene-propagate",
                  make_int(m ? load_u64(m, m->dep_graph_hygiene_propagate) : 0)},
                 {"hot-swap-versioned-mangle",

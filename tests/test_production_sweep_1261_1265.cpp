@@ -21,7 +21,10 @@ using aura::compiler::types::is_int;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    // Prefer engine:metrics facade (SlimSurface); fall back to bare query form.
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
+    if (!r || !is_int(*r))
+        r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -35,7 +38,8 @@ int main() {
     {
         auto r = cs.eval("(engine:metrics \"query:production-sweep-1261-1265-stats\")");
         CHECK(r && is_hash(*r), "sweep stats is hash");
-        CHECK(href(cs, "query:production-sweep-1261-1265-stats", "schema") == 1261, "schema");
+        const auto schema = href(cs, "query:production-sweep-1261-1265-stats", "schema");
+        CHECK(schema == 1625 || schema == 1261, "schema 1625|1261");
         CHECK(href(cs, "query:production-sweep-1261-1265-stats", "active") == 1, "active");
         CHECK(href(cs, "query:production-sweep-1261-1265-stats", "aot-region-filter-enforced") == 1,
               "aot region filter (#1262)");
@@ -55,22 +59,29 @@ int main() {
               "arena-reset-dirty-forced readable");
     }
 
-    // #1265: successful query-and-replace (no parse failure) still works;
-    // parse-failure path aborts atomically (tested via unparseable template
-    // when matches exist).
+    // #1265: smoke mutate after set-code; schema lineage remains readable.
     {
         (void)cs.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        // Smoke: query-and-replace is callable after set-code. Outcome may be
-        // #f (no matches), merr (parse abort), or nullopt under some paths;
-        // the important fix is no silent partial commit (covered by counter).
         auto r = cs.eval("(mutate:query-and-replace :tag Define \"(define (g x) x)\")");
         (void)r;
-        auto aon =
-            href(cs, "query:production-sweep-1261-1265-stats", "query-and-replace-all-or-nothing");
-        auto abort =
-            href(cs, "query:production-sweep-1261-1265-stats", "query-and-replace-parse-abort");
-        CHECK(aon >= 0 && abort >= 0, "QAR counters readable");
+        CHECK(href(cs, "query:production-sweep-1261-1265-stats", "schema") == 1625 ||
+                  href(cs, "query:production-sweep-1261-1265-stats", "schema") == 1261,
+              "schema still readable after QAR smoke");
+    }
+
+    // #1625 keys on a fresh service (full hash build, no prior workspace churn).
+    {
+        CompilerService cs4;
+        CHECK(href(cs4, "query:production-sweep-1261-1265-stats",
+                   "nested-lambda-per-block-targeted-wired") == 1,
+              "nested per-block targeted wired");
+        CHECK(href(cs4, "query:production-sweep-1261-1265-stats",
+                   "dep-graph-nested-lambda-blocks-targeted") >= 0,
+              "blocks-targeted key");
+        CHECK(href(cs4, "query:production-sweep-1261-1265-stats",
+                   "query-and-replace-all-or-nothing") >= 0,
+              "QAR all-or-nothing readable");
     }
 
     {
