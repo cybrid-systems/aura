@@ -167,15 +167,15 @@ bool test_escalate() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// AC6: invalid strategy name → no-op (void)
+// AC6: invalid strategy name → tagged merr pair (Issue #1714)
 // ═══════════════════════════════════════════════════════════
 bool test_invalid_strategy_name() {
-    std::println("\n--- AC6: invalid strategy name is no-op ---");
+    std::println("\n--- AC6: invalid strategy name is tagged merr ---");
     aura::compiler::CompilerService cs;
     auto r = run_on(cs, "(strategy:set-strategy \"not-a-real-strategy\")");
-    // The primitive returns void on unknown strategy.
-    bool ok = aura::compiler::types::is_void(r);
-    CHECK(ok, "invalid strategy name returns void (no crash)");
+    // make_merr → (kind . (msg . nil)) pair, not silent void (#1714).
+    bool ok = aura::compiler::types::is_pair(r);
+    CHECK(ok, "invalid strategy name returns merr pair (no crash)");
     return true;
 }
 
