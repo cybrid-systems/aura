@@ -5434,6 +5434,9 @@ aura_issue_test_link_llvm_jit(test_auto_evolve_tick_no_dbg_1712)
 # Issue #1713: auto-evolve-tick/once validate ClosureId live before apply.
 aura_add_issue_test(test_auto_evolve_closure_live_1713)
 aura_issue_test_link_llvm_jit(test_auto_evolve_closure_live_1713)
+# Issue #1714: strategy:set-strategy tagged merr on invalid name/args.
+aura_add_issue_test(test_strategy_set_errors_1714)
+aura_issue_test_link_llvm_jit(test_strategy_set_errors_1714)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

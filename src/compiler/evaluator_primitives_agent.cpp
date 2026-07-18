@@ -354,15 +354,21 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //   if (coverage_delta < threshold) &&
     //      (successes_in_window == 0):
     //     escalate (e.g. coverage-greedy → bug-fix-priority)
+    // Issue #1714: invalid name / bad args return tagged make_merr pairs
+    // (not silent make_void) so EDSL callers can distinguish typos from
+    // success (int) and from deliberate void returns elsewhere.
     add("strategy:set-strategy", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
-            return make_void();
+            return ev.make_merr("bad-arg", "usage: (strategy:set-strategy strategy-name)");
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
-            return make_void();
+            return ev.make_merr("bad-arg", "string index out of range");
         const std::string& name = ev.string_heap_[idx];
         if (name != "coverage-greedy" && name != "bug-fix-priority" && name != "minimal-mutation") {
-            return make_void();
+            return ev.make_merr(
+                "unknown-strategy",
+                std::string("unknown strategy: \"") + name +
+                    "\" (expected: coverage-greedy | bug-fix-priority | minimal-mutation)");
         }
         ev.active_strategy_ = name;
         // Bump the hits counter for the new strategy.
