@@ -2102,6 +2102,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         };
         double success_rate = 0.0;
         double avg_attempts = 0.0;
+        // Issue #1724: narrow catch + metric (was silent catch(...)).
+        // Keep defaults on malformed analytics — evolve is best-effort.
         try {
             auto sr = find_after(analytics, "success-rate");
             if (!sr.empty())
@@ -2109,8 +2111,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto aa = find_after(analytics, "avg-attempts");
             if (!aa.empty())
                 avg_attempts = std::stod(aa);
-        } catch (...) {
-            /* [SILENCE-PRIM-#615] malformed → keep defaults */
+        } catch (const std::exception& e) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->agent_evolve_analytics_parse_failures.fetch_add(1, std::memory_order_relaxed);
+#ifdef AURA_DEBUG_INTEND
+            std::fprintf(stderr, "evolve-strategy analytics parse failure: %s\n", e.what());
+#else
+            (void)e;
+#endif
         }
 
         // Parse top-errors: walk "(k1:n1 k2:n2 ...)" inside top-errors:(...)
@@ -2130,7 +2138,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ++te_end;
             }
             if (te_depth == 0) {
-                auto te = analytics.substr(te_pos, te_end - te_pos);
+                // Interior only (exclude the "top-errors:(" label — Issue #1724).
+                auto te = analytics.substr(content, te_end - content);
                 std::size_t i = 0;
                 while (i < te.size()) {
                     // find pattern "k:n"
@@ -2148,10 +2157,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         ++i;
                     try {
                         top_errors[k] = std::stoi(te.substr(nstart, i - nstart));
-                    } catch (...) {
-                        // [SILENCE-PRIM-#615] Top-errors array parse failure
-                        // leaves slot at its zero-init default; this is
-                        // best-effort telemetry extraction, not user input.
+                    } catch (const std::exception&) {
+                        // Issue #1724: top-errors stoi failure — keep slot default
+                        // + bump shared analytics parse metric (best-effort).
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                            m->agent_evolve_analytics_parse_failures.fetch_add(
+                                1, std::memory_order_relaxed);
                     }
                 }
             }

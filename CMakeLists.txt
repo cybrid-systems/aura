@@ -5464,6 +5464,9 @@ aura_issue_test_link_llvm_jit(test_strategies_mtx_1722)
 # Issue #1723: paren-aware find_after in evolve-strategy analytics parse.
 aura_add_issue_test(test_find_after_parens_1723)
 aura_issue_test_link_llvm_jit(test_find_after_parens_1723)
+# Issue #1724: evolve-strategy analytics stod/stoi parse metric (#1669).
+aura_add_issue_test(test_evolve_analytics_parse_1724)
+aura_issue_test_link_llvm_jit(test_evolve_analytics_parse_1724)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
