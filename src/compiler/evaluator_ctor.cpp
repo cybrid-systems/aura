@@ -335,6 +335,14 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
+    // Issue #1667: release process-wide PanicCheckpoint GC defer if this
+    // Evaluator still holds the arm (save without commit/restore, or
+    // exception mid-window). Without this, g_gc_defer_pending_panic_depth
+    // leaks until process exit and every request_gc_safepoint defers.
+    // Mirrors #63723 / #1662 teardown hygiene for process-wide / owner links.
+    // release is idempotent (no-op when not armed) and noexcept.
+    release_gc_defer_for_pending_panic();
+
     // Issue #1662 (P0): clear arena owner + compact hooks FIRST so a
     // surviving ASTArena cannot UAF into this dying Evaluator via
     // allocate_raw (quota callback) or on_compact_hook. set_arena /

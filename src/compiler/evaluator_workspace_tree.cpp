@@ -381,7 +381,11 @@ bool Evaluator::restore_panic_checkpoint() {
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
-        // Issue #1489: recovery complete — restore GC scheduling.
+        // Issue #1489 / #1667: recovery complete — restore GC scheduling.
+        // Release after clearing checkpoint fields so a mid-restore
+        // exception before this line is still recovered by ~Evaluator
+        // (#1667). On success path we release here; on failure path
+        // the checkpoint remains live and defer stays armed.
         release_gc_defer_for_pending_panic();
     }
     // Issue #1583: always sample restore latency (success or fail attempt
