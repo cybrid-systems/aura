@@ -5274,6 +5274,10 @@ aura_issue_test_link_llvm_jit(test_resource_quota_manager_1618)
 aura_add_issue_test(test_soa_view_enforcement_1619)
 aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1619)
 
+# Issue #1629: IR SoA dual-emit flag default-off AC closed-loop
+aura_add_issue_test(test_ir_soa_dual_emit_flag_1629)
+aura_issue_test_link_llvm_jit(test_ir_soa_dual_emit_flag_1629)
+
 # Issue #1624: PCV / pmr SoAColumnarFull DOD + Contracts
 aura_add_issue_test(test_soa_dod_pcv_pmr_1624)
 aura_issue_test_link_llvm_jit(test_soa_dod_pcv_pmr_1624)
