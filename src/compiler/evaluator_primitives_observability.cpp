@@ -417,20 +417,21 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:work-steal-stats",
     "query:fiber-migration-stats",
     "query:mutation-coordination-stats",
-    "query:envframe-stale-stats",
-    "query:envframe-bump-stats",
+    // Issue #1672: removed ghost catalog entries (never registered as
+    // register_stats_impl / public residual): envframe-stale/bump-stats.
     "query:dirty-subtree",
     "query:epoch-stats",
     "query:macro-introduced",
     "query:by-marker",
-    // Compile: stats (Issue #560 enumeration source of truth)
-    "compile:compiler-cache-stats",
-    "compile:compiler-incremental-stats",
-    "compile:typecheck-stats",
-    "compile:jit-stats",
+    // Compile / query stats (Issue #560 + #1672 name alignment to impls)
+    "query:compiler-cache-stats",          // was compile:compiler-cache-stats
+    "query:compiler-incremental-stats",    // was compile:compiler-incremental-stats
+    "compile:incremental-typecheck-stats", // was compile:typecheck-stats
+    "query:jit-stats",                     // was compile:jit-stats
     // Issue #491 — JIT opcode coverage + hot-swap safety hash
     "query:jit-stats-hash",
-    "compile:arena-stats",
+    // Issue #1672: removed compile:arena-stats (impl is gc-arena-stats) and
+    // compile:mutation-impact-stats (no register_stats_impl).
     "compile:dead-coercion-stats",
     // Issue #574 — coercion elimination summary
     "query:coercion-elim-stats",
@@ -438,7 +439,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:dead-coercion-zerooverhead-stats",
     "compile:per-defuse-index-stats",
     "compile:mutator-dispatch-stats",
-    "compile:mutation-impact-stats",
     "compile:inline-pass-stats",
     "compile:type-cache-stats",
     "compile:dirty-impact-stats",
@@ -1412,6 +1412,110 @@ bool ObservabilityPrims::stats_impl_registered(std::string_view name) {
     // Issue #1671: existence check without constructing optional PrimFn.
     auto& m = legacy_stats_impls();
     return m.find(name) != m.end();
+}
+
+EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
+    // Issue #1672: cross-check kObservabilityStatsPrimitives vs legacy_stats_impls
+    // (+ residual public Primitives aliases still resolvable via lookup).
+    // Hash schema 1672:
+    //   schema, catalog-size, impl-size, missing-impl-count, missing-catalog-count,
+    //   ok (1 if both drift lists empty), missing-impl / missing-catalog name lists.
+    const auto& catalog = kObservabilityStatsPrimitives;
+    auto& impls = legacy_stats_impls();
+
+    auto name_resolvable = [&](std::string_view name) -> bool {
+        if (impls.find(name) != impls.end())
+            return true;
+        // Residual public aliases (#1450) remain on Primitives.
+        return ev.primitives_.slot_for_name(name) < ev.primitives_.slot_count();
+    };
+
+    std::vector<std::string> missing_impl;
+    std::unordered_set<std::string_view> catalog_set;
+    catalog_set.reserve(catalog.size() * 2);
+    for (const auto& n : catalog) {
+        catalog_set.insert(n);
+        if (!name_resolvable(n))
+            missing_impl.push_back(n);
+    }
+
+    std::vector<std::string> missing_catalog;
+    for (const auto& [n, _] : impls) {
+        // Meta diagnostic itself is intentionally not required on the catalog.
+        if (n == "stats:drift-check")
+            continue;
+        // Only flag names that *should* appear on the public catalog
+        // (legacy stats naming). Non-stats keys accidentally registered via
+        // register_stats_impl are a separate hygiene track.
+        if (!catalog_set.contains(n) && is_legacy_stats_name(n))
+            missing_catalog.push_back(n);
+    }
+
+    auto make_name_list = [&](const std::vector<std::string>& names) -> EvalValue {
+        EvalValue result = make_void();
+        for (auto it = names.rbegin(); it != names.rend(); ++it) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(*it);
+            auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    };
+
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    kv.reserve(10);
+    kv.push_back({"schema", make_int(1672)});
+    kv.push_back({"catalog-size", make_int(static_cast<std::int64_t>(catalog.size()))});
+    kv.push_back({"impl-size", make_int(static_cast<std::int64_t>(impls.size()))});
+    kv.push_back({"missing-impl-count", make_int(static_cast<std::int64_t>(missing_impl.size()))});
+    kv.push_back(
+        {"missing-catalog-count", make_int(static_cast<std::int64_t>(missing_catalog.size()))});
+    const bool ok = missing_impl.empty() && missing_catalog.empty();
+    kv.push_back({"ok", make_int(ok ? 1 : 0)});
+    kv.push_back({"missing-impl", make_name_list(missing_impl)});
+    kv.push_back({"missing-catalog", make_name_list(missing_catalog)});
+
+    // Build open-addressed hash (same shape as engine:metrics builders).
+    std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
+    std::uint64_t cap = 16;
+    while (cap < need)
+        cap <<= 1;
+    auto* ht = FlatHashTable::create(cap);
+    if (!ht)
+        return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    for (auto& [k, v] : kv) {
+        std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+        for (char c : k)
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+        auto fp = ::aura::compiler::hash::fingerprint(h);
+        auto kidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(k);
+        EvalValue key_ev = make_string(kidx);
+        bool inserted = false;
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = v.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    return make_hash(hidx);
 }
 
 void ObservabilityPrims::register_eval_all(PrimRegistrar add, Evaluator& ev) {

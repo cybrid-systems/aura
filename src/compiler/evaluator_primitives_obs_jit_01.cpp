@@ -498,6 +498,12 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         return make_int(static_cast<std::int64_t>(ObservabilityPrims::stats_primitives().size()));
     });
 
+    // Issue #1672: catalog ↔ impl drift diagnostic (facade-only, not public add).
+    // (stats:get "stats:drift-check") / (engine:metrics "stats:drift-check")
+    ObservabilityPrims::register_stats_impl("stats:drift-check", [&ev](const auto&) -> EvalValue {
+        return ObservabilityPrims::stats_drift_check(ev);
+    });
+
     // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
