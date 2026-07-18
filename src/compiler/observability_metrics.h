@@ -383,6 +383,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> shape_linear_elide_count{0};
     std::atomic<std::uint64_t> shape_narrow_check_count{0};
     std::atomic<std::uint64_t> guard_shape_hits{0};
+    // Issue #1661: specialized_for / GuardShape collaborative fold opportunities.
+    std::atomic<std::uint64_t> shape_specialized_fold_opportunities{0};
 
     // Issue #463: SoA Phase 2 adoption counters (lifetime totals).
     // Bumped in service.ixx by SoAtoAoSBridgePass accumulators

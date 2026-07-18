@@ -2292,15 +2292,22 @@ public:
         }
         metrics_.linear_ownership_escape_check_total.fetch_add(1, std::memory_order_relaxed);
 
-        // Issue #462: ShapeAwareFoldingPass — runs AFTER
-        // EscapeAnalysis so it can use the per-function
-        // escape_maps to drive linear elision (MoveOp on
-        // a non-escaping Owned slot is a no-op). Also runs
-        // AFTER ConstantFolding so any fold-attempted ops
-        // are already reduced to a stable form. Accumulates
-        // fold_count / linear_elide_count / narrow_check_count
-        // into the lifetime metrics for (query:shape-folding-stats).
+        // Issue #462 / #1661: ShapeAwareFoldingPass — runs AFTER
+        // EscapeAnalysis (consumes IRFunction::escape_map) + LinearOwnership
+        // + ConstantFolding so shape/linear/narrow collaborative folds
+        // see stable IR. Accumulates into (query:shape-folding-stats)
+        // schema 1661 (shape_aware_fold_hits / linear_ownership_dce /
+        // guardshape hits + specialized opportunities).
         ShapeAwareFoldingPass saf;
+        // Optional name-keyed override from EscapeAnalysisWrap maps
+        // (IRFunction::escape_map from EscapeAnalysisPass is primary).
+        {
+            const auto& wrap_maps = escape_pass.all_maps();
+            for (std::size_t fi = 0; fi < ir_mod.functions.size() && fi < wrap_maps.size(); ++fi) {
+                if (!wrap_maps[fi].empty())
+                    saf.set_escape_map(ir_mod.functions[fi].name, wrap_maps[fi]);
+            }
+        }
         saf.run(ir_mod);
         if (saf.fold_count() > 0) {
             metrics_.shape_fold_count.fetch_add(saf.fold_count(), std::memory_order_relaxed);
@@ -2315,6 +2322,10 @@ public:
         }
         if (saf.guard_shape_hits() > 0) {
             metrics_.guard_shape_hits.fetch_add(saf.guard_shape_hits(), std::memory_order_relaxed);
+        }
+        if (saf.specialized_shape_fold_opportunities() > 0) {
+            metrics_.shape_specialized_fold_opportunities.fetch_add(
+                saf.specialized_shape_fold_opportunities(), std::memory_order_relaxed);
         }
 
         last_ir_mod_ = ir_mod;
