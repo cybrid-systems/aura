@@ -2321,6 +2321,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
 }
 
 // Issue #1900: lockless variant of (mutate:wrap).
+// Issue #1700: re-validate parent_of_target after parse; resolve parents
+// via parent_of (not O(N×C)); is_live_node not is_valid_in post-restamp.
 EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{
@@ -2333,24 +2335,21 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :wrap: template string index out of range"});
     auto& flat = *workspace_flat_;
-    if (node >= flat.size())
+    if (node == aura::ast::NULL_NODE || node >= flat.size() || !flat.is_live_node(node))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :wrap: node out of range"});
     std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
                                                             : "wrap node " + std::to_string(node);
-    aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
+    auto parent_of_target = flat.parent_of(node);
     int child_idx_in_parent = -1;
-    for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-        auto pv = flat.get(pid);
+    if (parent_of_target != aura::ast::NULL_NODE && flat.is_live_node(parent_of_target)) {
+        auto pv = flat.get(parent_of_target);
         for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
             if (pv.child(ci) == node) {
-                parent_of_target = pid;
                 child_idx_in_parent = static_cast<int>(ci);
                 break;
             }
         }
-        if (parent_of_target != aura::ast::NULL_NODE)
-            break;
     }
     if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
         return std::unexpected(
@@ -2364,35 +2363,68 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
                                    "batch :wrap: wrapper-template must contain a '_' placeholder"});
     std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
     auto parsed_tmpl = tmpl.substr(0, sentinel_pos) + sentinel + tmpl.substr(sentinel_pos + 1);
+    const auto size_before_parse = static_cast<std::size_t>(flat.size());
     auto pr = aura::parser::parse_to_flat(parsed_tmpl, flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ParseError, "batch :wrap: wrapper template parse failed"});
+    // Re-validate target + re-derive parent edge after parse (#1700).
+    if (static_cast<std::size_t>(node) >= size_before_parse || !flat.is_live_node(node))
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "batch :wrap: target invalid after parse"});
+    auto parent_slot_ok = [&]() -> bool {
+        if (parent_of_target == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent_of_target) >= size_before_parse ||
+            !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+            return false;
+        auto pv = flat.get(parent_of_target);
+        return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+               pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+    };
+    if (!parent_slot_ok()) {
+        parent_of_target = flat.parent_of(node);
+        child_idx_in_parent = -1;
+        if (parent_of_target != aura::ast::NULL_NODE &&
+            static_cast<std::size_t>(parent_of_target) < size_before_parse &&
+            flat.is_live_node(parent_of_target)) {
+            auto pv = flat.get(parent_of_target);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == node) {
+                    child_idx_in_parent = static_cast<int>(ci);
+                    break;
+                }
+            }
+        }
+        if (!parent_slot_ok())
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "batch :wrap: parent invalid after parse"});
+    }
     auto sentinel_sym = workspace_pool_->intern(sentinel);
     aura::ast::NodeId sentinel_id = aura::ast::NULL_NODE;
     aura::ast::NodeId sentinel_parent = aura::ast::NULL_NODE;
     int sentinel_child_idx = -1;
-    for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+    for (aura::ast::NodeId sid = static_cast<aura::ast::NodeId>(size_before_parse);
+         sid < flat.size(); ++sid) {
+        if (!flat.is_live_node(sid))
+            continue;
         auto sv = flat.get(sid);
         if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sentinel_sym) {
             sentinel_id = sid;
-            for (aura::ast::NodeId p2 = 0; p2 < flat.size(); ++p2) {
-                auto p2v = flat.get(p2);
+            sentinel_parent = flat.parent_of(sid);
+            if (sentinel_parent != aura::ast::NULL_NODE && flat.is_live_node(sentinel_parent)) {
+                auto p2v = flat.get(sentinel_parent);
                 for (std::size_t ci = 0; ci < p2v.children.size(); ++ci) {
                     if (p2v.child(ci) == sid) {
-                        sentinel_parent = p2;
                         sentinel_child_idx = static_cast<int>(ci);
                         break;
                     }
                 }
-                if (sentinel_parent != aura::ast::NULL_NODE)
-                    break;
             }
             break;
         }
     }
     if (sentinel_id == aura::ast::NULL_NODE || sentinel_parent == aura::ast::NULL_NODE ||
-        sentinel_child_idx < 0)
+        sentinel_child_idx < 0 || !flat.is_live_node(sentinel_parent))
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
             "batch :wrap: sentinel placeholder not found in parsed wrapper"});
