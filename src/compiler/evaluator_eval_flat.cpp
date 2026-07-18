@@ -1910,10 +1910,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :insert-child: string index out of range"});
     auto& flat = *workspace_flat_;
-    // Issue #1685 / #1687: re-validate parent after parse append.
+    // Issue #1690 / #1685: re-validate parent after parse append (live pre-parse).
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
     if (parent == aura::ast::NULL_NODE || static_cast<std::size_t>(parent) >= size_before_parse ||
-        flat.is_free_slot(parent))
+        !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :insert-child: parent out of range"});
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
@@ -1931,8 +1931,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, parse_err});
     }
-    if (static_cast<std::size_t>(parent) >= flat.size() || flat.is_free_slot(parent) ||
-        static_cast<std::size_t>(parent) >= size_before_parse)
+    if (static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent))
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :insert-child: parent invalid after parse"});
@@ -2209,7 +2208,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
     auto pos = static_cast<std::uint32_t>(as_int(a[1]));
     auto& flat = *workspace_flat_;
-    if (parent >= flat.size())
+    // Issue #1690: parent must stay a live pre-parse node across each append.
+    if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :splice: parent out of range"});
     std::vector<types::EvalValue> code_args;
@@ -2234,9 +2234,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
         auto cidx = as_string_idx(code_val);
         if (cidx >= string_heap_.size())
             continue;
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto pr = aura::parser::parse_to_flat(string_heap_[cidx], flat, *workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             continue;
+        if (static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "batch :splice: parent invalid after parse"});
         flat.insert_child(parent, insert_pos, pr.root);
         flat.add_mutation(parent, "splice", std::to_string(insert_pos), string_heap_[cidx],
                           summary);
