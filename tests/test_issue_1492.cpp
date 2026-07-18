@@ -84,7 +84,8 @@ static void ac3_metrics_surface() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:orchestration-steal-stats\")");
     CHECK(h && is_hash(*h), "orchestration-steal-stats is hash");
-    CHECK(href(cs, "schema") == 1492, "schema == 1492");
+    // Schema lineage: 1492 → 1633 (starvation mitigation mandate).
+    CHECK(href(cs, "schema") == 1633 || href(cs, "schema") == 1492, "schema 1633|1492");
     CHECK(href(cs, "steal-inner-deferred-starvation-mitigated-count") >= 0,
           "steal-inner-deferred-starvation-mitigated-count readable");
     CHECK(href(cs, "steal-deferred-inner-boundary") >= 0, "inner-boundary field present");

@@ -19,6 +19,16 @@ namespace aura::serve {
 extern "C" void aura_scheduler_init_record_ok();
 extern "C" void aura_scheduler_init_record_err();
 
+// Issue #1633: C ABI from aura_jit_bridge — Guard dtor invokes this when
+// hold > long_mutation_threshold_us. Wire to g_scheduler->on_long_mutation_held.
+extern "C" void aura_set_long_mutation_scheduler_hook(void (*fn)(std::uint64_t fiber_id,
+                                                                 std::uint64_t duration_us));
+
+static void long_mutation_hook_trampoline(std::uint64_t fiber_id,
+                                          std::uint64_t duration_us) noexcept {
+    if (g_scheduler != nullptr)
+        g_scheduler->on_long_mutation_held(fiber_id, duration_us);
+}
 
 // ── Constructor ───────────────────────────────────────
 
@@ -369,33 +379,26 @@ Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
 
 void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us) {
     (void)duration_us;
-    // Issue #1445 AC6: bump starvation_mitigated_count so observability
-    // surfaces the long-holder event. Default impl is telemetry-only;
-    // production deployments may override via Scheduler subclass or
-    // by calling AdaptiveStealStats counters directly.
+    // Issue #1445 AC6 / #1633: long-holder event is a first-class
+    // starvation-mitigation signal (linked to steal-defer fairness).
     metrics::adaptive_steal_stats().starvation_mitigated_count.fetch_add(1,
                                                                          std::memory_order_relaxed);
-    // Issue #1445 follow-up: priority-degrade signal — also bump
-    // deferred_pressure_boosts so worker.cpp's adaptive budget path
-    // (which already consumes this counter) prefers ring-neighbor steal
-    // + extra budget for the next round. The actual queue manipulation
-    // is handled by WorkerThread; this hook just signals.
+    // Issue #1633: full apply_starvation_mitigation when fiber is
+    // resolvable — same package as steal-path inner defer (priority
+    // boost + deferred_pressure + steal_inner_deferred_starvation_mitigated).
+    if (fiber_id != 0) {
+        if (Fiber* f = fiber_by_id(fiber_id)) {
+            apply_starvation_mitigation(f);
+            return;
+        }
+    }
+    // Fiber unknown (unit tests / pointer-id legacy): bump metrics only.
     metrics::adaptive_steal_stats().deferred_pressure_boosts.fetch_add(1,
                                                                        std::memory_order_relaxed);
-    // Issue #1492: long-mutation held often coincides with nested
-    // MutationBoundary (inner Guard). Link the same starvation-
-    // mitigation signal used by the steal-defer path so agents can
-    // correlate long-holder events with inner-defer fairness.
     metrics::adaptive_steal_stats().steal_inner_deferred_starvation_mitigated_count.fetch_add(
         1, std::memory_order_relaxed);
     metrics::adaptive_steal_stats().starvation_priority_boosts.fetch_add(1,
                                                                          std::memory_order_relaxed);
-    // Boost the long-holding fiber if we can resolve it (helps it
-    // finish outermost and release the nested guard sooner).
-    if (fiber_id != 0) {
-        if (Fiber* f = fiber_by_id(fiber_id))
-            f->apply_steal_priority_boost();
-    }
 }
 
 bool Scheduler::has_waiting_fibers() const {
@@ -475,6 +478,9 @@ int Scheduler::next_worker_id_load_aware() {
 
 void Scheduler::run() {
     g_scheduler = this;
+    // Issue #1633: wire MutationBoundaryGuard long-hold → on_long_mutation_held
+    // so nested/long mutation always triggers starvation mitigation.
+    aura_set_long_mutation_scheduler_hook(&long_mutation_hook_trampoline);
 
     // Issue #743: wire arena fiber-context probes for tests and
     // serve paths that construct Scheduler without serve_async.
@@ -648,6 +654,7 @@ void Scheduler::run() {
         w->join();
     }
 
+    aura_set_long_mutation_scheduler_hook(nullptr); // #1633: unwire long-hold hook
     g_scheduler = nullptr;
 }
 

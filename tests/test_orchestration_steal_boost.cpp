@@ -38,7 +38,7 @@ static void ac3_primitive_shape(CompilerService& cs) {
     auto r = cs.eval("(engine:metrics \"query:orchestration-steal-stats\")");
     CHECK(r && is_hash(*r), "primitive returns hash");
     const auto schema = href(cs, "schema");
-    CHECK(schema == 1445 || schema == 1492, "schema is 1445 or 1492");
+    CHECK(schema == 1633 || schema == 1492 || schema == 1445, "schema is 1633|1492|1445");
 }
 
 // AC2: new counters start at 0 on a fresh service.

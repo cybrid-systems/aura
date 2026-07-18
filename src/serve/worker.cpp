@@ -233,11 +233,11 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             return true;
         }
 
-        // Issue #1492 / #1254 / #783: defer steal when victim is at a
-        // MutationBoundary that is not outermost-safe (depth > 0 inner
-        // Guard, or other non-safe MB yield). Inner path always runs
-        // apply_starvation_mitigation so nested long mutations do not
-        // starve other agent fibers.
+        // Issue #1492 / #1254 / #783 / #1633: MANDATE defer + starvation
+        // mitigation when victim is at a MutationBoundary that is not
+        // outermost-safe (depth > 0 inner Guard, or other non-safe MB yield).
+        // Inner path always runs apply_starvation_mitigation so nested long
+        // mutations do not starve other agent fibers (50+ fiber AI orch).
         if (stolen->is_stealable() &&
             stolen->last_yield_reason() == YieldReason::MutationBoundary) {
             stolen->bump_steal_deferred_mutation_boundary();
@@ -247,7 +247,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             metrics::adaptive_steal_stats().mutation_bias_hits.fetch_add(1,
                                                                          std::memory_order_relaxed);
             if (stolen->is_at_inner_mutation_boundary()) {
-                // AC1: bump_deferred_inner + apply_starvation_mitigation + defer
+                // #1633 AC1: bump_deferred_inner + apply_starvation_mitigation + defer
                 stolen->bump_steal_inner_mutation_boundary_deferred();
                 metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(
                     1, std::memory_order_relaxed);
