@@ -2909,8 +2909,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1697 / #1685: snapshot size; re-validate parent+slot
         // after append. If the pre-parse edge broke, re-derive from
         // the (still-live) target — same pattern as #1694 replace-pattern.
+        // Do not use StableNodeRef::is_valid_in post-parse: parse_to_flat
+        // restamps all node generations (#273 / #1699).
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
-        const auto target_ref = flat.make_ref(target);
         auto pr = aura::parser::parse_to_flat(new_code, flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == NULL_NODE) {
             ok = false;
@@ -2931,14 +2932,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return child_idx < pv.children.size() && pv.child(child_idx) == target;
         };
         if (!parent_slot_ok()) {
-            // Re-derive edge from target (StableNodeRef gen + live check).
-            if (!target_ref.is_valid_in(flat) ||
-                static_cast<std::size_t>(target_ref.id) >= size_before_parse ||
-                !flat.is_live_node(target_ref.id)) {
+            // Re-derive edge from still-live target (not is_valid_in).
+            if (static_cast<std::size_t>(target) >= size_before_parse ||
+                !flat.is_live_node(target)) {
                 ok = false;
                 return mev("stale-ref", "replace-subtree: target invalid after parse");
             }
-            target = target_ref.id;
             auto child_idx_opt = parent_child_index_if_attached(flat, target);
             if (!child_idx_opt) {
                 ok = false;
@@ -3517,12 +3516,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
         auto& flat = *ev.workspace_flat_;
-        // Issue #1690: parent captured once; re-validate after each parse_to_flat.
+        // Issue #1699 / #1690: parent captured once; re-validate after
+        // EVERY parse_to_flat in the multi-arg loop (6th capture-before-
+        // parse instance — loop amplifies SoA / free-list stress).
         if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent)) {
             ok = false;
             return ev.make_merr("out-of-range", "parent node ID " + std::to_string(parent) +
                                                     " >= flat size " + std::to_string(flat.size()));
         }
+        // Note: do NOT gate on StableNodeRef::is_valid_in after parse —
+        // parse_to_flat restamps all node generations (#273), so a
+        // pre-parse make_ref would spuriously fail. Parent is a
+        // user-supplied insert target with no child edge to re-derive;
+        // is_live_node + pre-parse size bounds are the contract.
 
         // Collect all code strings (variadic) before the optional summary
         std::vector<EvalValue> code_args;
@@ -3556,11 +3562,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (cidx >= ev.string_heap_.size())
                 continue;
 
-            // Issue #1690: snapshot size before each append-parse.
+            // Issue #1699: snapshot size before each append-parse.
             const auto size_before_parse = static_cast<std::size_t>(flat.size());
             auto pr = aura::parser::parse_to_flat(ev.string_heap_[cidx], flat, *ev.workspace_pool_);
             if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 continue;
+            // Parent is the insert target (user-supplied), not re-derivable
+            // from a child edge. Require live pre-parse id (not is_valid_in).
             if (static_cast<std::size_t>(parent) >= size_before_parse ||
                 !flat.is_live_node(parent)) {
                 ok = false;
