@@ -6511,6 +6511,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> render_hotpath_epoch_fence_total{0};
     std::atomic<std::uint64_t> render_hotpath_linear_block_total{0};
     std::atomic<std::uint64_t> render_hotpath_epoch_stale_total{0};
+    // Issue #1677: AI Native render evolution (rebind/optimize of draw logic)
+    std::atomic<std::uint64_t> render_evolution_rebind_total{0};
+    std::atomic<std::uint64_t> render_evolution_optimize_total{0};
+    std::atomic<std::uint64_t> render_evolution_savings_total{0};
+    std::atomic<std::uint64_t> render_template_phase{1};
     // #1562: dirty-region differential present metrics
     std::atomic<std::uint64_t> render_dirty_region_skips_total{0};
     std::atomic<std::uint64_t> render_dirty_cells_emitted_total{0};

@@ -5329,6 +5329,9 @@ aura_issue_test_link_llvm_jit(test_render_memory_predictability_1675)
 # Issue #1676: render-tier fast dispatch + linear/epoch TUI/render fences.
 aura_add_issue_test(test_render_dispatch_linear_epoch_1676)
 aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
+# Issue #1677: render prim template + AI Native query/mutate evolution.
+aura_add_issue_test(test_render_ai_native_template_1677)
+aura_issue_test_link_llvm_jit(test_render_ai_native_template_1677)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

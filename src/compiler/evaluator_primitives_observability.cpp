@@ -232,6 +232,11 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:render-stats",
     // Issue #1675: frame arena + zero-copy + live cell-grid memory bounds
     "query:render-memory-stats",
+    // Issue #1677: AI Native render closure/buffer/evolution + optimize facade
+    "query:render-closure-stats",
+    "query:render-buffer-stats",
+    "query:render-evolution-stats",
+    "mutate:render-optimize",
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",

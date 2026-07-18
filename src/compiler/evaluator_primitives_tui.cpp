@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "primitives_detail.h"
+#include "render_prim_template.hh"
 #include "security_capabilities.h"
 #include "tui/tui_input.hh"
 #include "tui/tui_runtime.hh"
@@ -169,9 +170,9 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // 4. (tui:cell col row char [fg [bg [attr]]])
-    // Issue #1676: participate in render-tier fence (draw half of TUI hot path).
+    // Issue #1676/#1677: template hot entry (draw half of TUI hot path).
     add("tui:cell", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        Evaluator::RenderHotEntryGuard hot_entry(ev);
+        AURA_RENDER_HOT_ENTRY(ev);
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
             return make_bool(false);
         auto& tui = aura::tui::global_tui();
@@ -212,9 +213,9 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // 6. (tui:present)
-    // Issue #1676: dual-epoch + linear fence + render hotpath depth.
+    // Issue #1676/#1677: template hot entry (fence + hotpath depth).
     add("tui:present", [&ev](std::span<const EvalValue>) -> EvalValue {
-        Evaluator::RenderHotEntryGuard hot_entry(ev);
+        AURA_RENDER_HOT_ENTRY(ev);
         auto& tui = aura::tui::global_tui();
         if (tui.is_initialized()) {
             tui.present();
