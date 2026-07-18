@@ -84,24 +84,26 @@ static bool validate_code_against_schema_simple(const std::string& code,
                                                 std::string& violation_reason,
                                                 std::string& violation_field);
 
-// Issue #514 / #501: count MacroIntroduced nodes in the workspace marker column.
+// Issue #514 / #501 / #1678: count MacroIntroduced nodes in the workspace
+// marker column. Prefer max(live walk, snapshot) so a partial/stale walk
+// never undercounts a prior COW snapshot. The old `count > 0 ? count : snapshot`
+// returned the walk alone whenever both were non-zero (walk=1, snapshot=5 → 1).
+// Snapshot + walk are read under the same WorkspaceSharedLock so a concurrent
+// workspace_flat_ swap cannot pair an old snapshot with a new walk (#917).
 static std::uint64_t workspace_marker_macro_introduced(Evaluator* ev) {
     if (!ev)
         return 0;
-    const std::uint64_t snapshot = ev->get_macro_markers_in_snapshot();
-    // Issue #917: RAII shared lock (no manual unlock on early return).
     Evaluator::WorkspaceSharedLock lock(*ev);
-    std::uint64_t count = 0;
+    const std::uint64_t snapshot = ev->get_macro_markers_in_snapshot();
+    std::uint64_t walk = 0;
     if (auto* ws = ev->workspace_flat()) {
         const auto& markers = ws->marker_column();
-        if (!markers.empty()) {
-            for (auto m : markers) {
-                if (m == aura::ast::SyntaxMarker::MacroIntroduced)
-                    ++count;
-            }
+        for (auto m : markers) {
+            if (m == aura::ast::SyntaxMarker::MacroIntroduced)
+                ++walk;
         }
     }
-    return count > 0 ? count : snapshot;
+    return walk > snapshot ? walk : snapshot;
 }
 
 static std::uint64_t ir_inline_hygiene_skipped(Evaluator* ev) {
