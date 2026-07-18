@@ -2214,6 +2214,10 @@ public:
                                            EnvId filter_env_id = NULL_ENV_ID) noexcept;
     // Test/helper: register a Closure in closures_ (stamps bridge_epoch).
     ClosureId register_active_closure(Closure cl);
+    // Issue #1665: erase tree-walker Closure from closures_ (TW free).
+    // Distinct from aura_free_closure (JIT g_closure_freed table).
+    // Returns true if an entry was removed.
+    bool erase_active_closure(ClosureId id) noexcept;
     // Test/helper: snapshot a live Closure by id (nullopt if missing).
     [[nodiscard]] std::optional<Closure> find_active_closure(ClosureId id) const;
     // Issue #1543: linear GC root registration consistency audit.
