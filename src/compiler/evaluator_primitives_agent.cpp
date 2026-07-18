@@ -434,7 +434,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     "\" (expected: coverage-greedy | bug-fix-priority | minimal-mutation)");
         }
         {
-            // Issue #1720: guard active_strategy_ with strategies_mtx_.
+            // Issue #1720 / #1722: guard active_strategy_ with strategies_mtx_.
             std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
             ev.active_strategy_ = name;
         }
@@ -1875,7 +1875,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
         }
         {
-            // Issue #1720: unique lock for strategies_ mutate.
+            // Issue #1720 / #1722: unique lock for strategies_ mutate.
             std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
             for (auto& s : ev.strategies_) {
                 if (s.name == name) {
@@ -1897,7 +1897,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto name = heap_str_from(ev.string_heap_, a[0]);
         auto body = heap_str_from(ev.string_heap_, a[1]);
         {
-            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
             for (auto& s : ev.strategies_) {
                 if (s.name == name) {
                     s.body = body;
@@ -1915,7 +1915,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
         auto field = heap_str_from(ev.string_heap_, a[1]);
-        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
+        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
@@ -1953,7 +1953,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_bool(false);
         auto field = heap_str_from(ev.string_heap_, a[1]);
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
+        std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
         for (auto& s : ev.strategies_) {
             if (s.name != name)
                 continue;
@@ -1991,7 +1991,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
+        std::shared_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
         for (auto& s : ev.strategies_) {
             if (s.name == name) {
                 std::string result = "#(strategy-inspect";
@@ -2037,7 +2037,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return make_void();
         auto name = heap_str_from(ev.string_heap_, a[0]);
 
-        // Find the source strategy (copy under lock — Issue #1720)
+        // Find the source strategy (copy under lock — #1720/#1722)
         Evaluator::StrategyDef src_copy;
         bool found_src = false;
         {
@@ -2180,7 +2180,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         // Insert into ev.strategies_ (avoid name collision: bump suffix)
         {
-            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // Issue #1720
+            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
             std::string final_name = evolved.name;
             for (int bump = 2;; ++bump) {
                 bool taken = false;

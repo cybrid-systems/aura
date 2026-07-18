@@ -3184,7 +3184,8 @@ private:
         std::string parent;              // parent strategy name
     };
     std::vector<StrategyDef> strategies_;
-    // Issue #1720: concurrent fiber access to strategy/intend vectors.
+    // Issue #1720 / #1722: concurrent fiber access to strategies_ /
+    // active_strategy_ (define-strategy, strategy-field, evolve-strategy, …).
     mutable std::shared_mutex strategies_mtx_;
     // ── Intend history (E4 Phase 1) ────────────────────────────
     struct IntendRecord {
