@@ -1101,12 +1101,21 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 int total_tests = 0;
                 auto eval_fn = ev.primitives_.lookup("eval");
 
+                // Issue #1718: reuse one string_heap slot for probe sources
+                // across try_probe calls (Option C-style fixed slot, not
+                // global index 0). Avoids unbounded push_back growth and
+                // realloc churn during GA fitness (gen × pop × probes).
+                std::size_t probe_slot = std::numeric_limits<std::size_t>::max();
                 auto try_probe = [&](const std::string& call_src) {
                     ++total_tests;
-                    auto ci = ev.string_heap_.size();
-                    ev.string_heap_.push_back(call_src);
+                    if (probe_slot >= ev.string_heap_.size()) {
+                        probe_slot = ev.string_heap_.size();
+                        ev.string_heap_.push_back(call_src);
+                    } else {
+                        ev.string_heap_[probe_slot] = call_src;
+                    }
                     if (eval_fn) {
-                        auto r = (*eval_fn)({make_string(ci)});
+                        auto r = (*eval_fn)({make_string(probe_slot)});
                         if (!types::is_error(r))
                             ++successes;
                     }
