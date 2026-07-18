@@ -93,6 +93,48 @@ namespace {
         return std::uniform_real_distribution<double>(0.0, 1.0)(agent_prng());
     }
 
+    // Issue #1717: RAII swap of evaluator workspace onto a temporary
+    // WorkspaceTree child. Restores flat/pool and delete_child on scope exit
+    // (exception-safe; closes the bare-swap UAF / leak window).
+    class WorkspaceSwapGuard {
+    public:
+        WorkspaceSwapGuard(Evaluator& ev, WorkspaceTree& tree, const char* child_name)
+            : ev_(ev)
+            , tree_(tree)
+            , saved_flat_(ev.workspace_flat())
+            , saved_pool_(ev.workspace_pool())
+            , ws_id_(tree.create_child(child_name, tree.active_idx(), saved_flat_, saved_pool_))
+            , valid_(ws_id_ > 0) {
+            if (!valid_)
+                return;
+            tree_.ensure_local_flat(ws_id_);
+            auto& ws = tree_.nodes_[ws_id_];
+            // Public setters (guard lives outside Evaluator friend body).
+            ev_.set_workspace_flat(ws.flat);
+            ev_.set_workspace_pool(ws.pool);
+        }
+        ~WorkspaceSwapGuard() { release(); }
+        WorkspaceSwapGuard(const WorkspaceSwapGuard&) = delete;
+        WorkspaceSwapGuard& operator=(const WorkspaceSwapGuard&) = delete;
+        [[nodiscard]] bool valid() const noexcept { return valid_; }
+        void release() noexcept {
+            if (!valid_)
+                return;
+            ev_.set_workspace_flat(saved_flat_);
+            ev_.set_workspace_pool(saved_pool_);
+            tree_.delete_child(ws_id_);
+            valid_ = false;
+        }
+
+    private:
+        Evaluator& ev_;
+        WorkspaceTree& tree_;
+        ast::FlatAST* saved_flat_;
+        ast::StringPool* saved_pool_;
+        std::uint32_t ws_id_;
+        bool valid_;
+    };
+
     // Issue #1236: JSON string escape for LLM payload construction.
     std::string json_escape(std::string_view s) {
         std::string out;
@@ -1148,18 +1190,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         if (ev.workspace_tree_ && agent_rand_below(2) == 0) {
                             auto* tree =
                                 static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
-                            // Create a temporary workspace, set-code the variant,
-                            // find a LiteralInt node, replace it with one from other
-                            auto ws_id = tree->create_child("xover", tree->active_idx(),
-                                                            ev.workspace_flat_, ev.workspace_pool_);
-                            if (ws_id > 0) {
-                                tree->ensure_local_flat(ws_id);
-                                auto& ws = tree->nodes_[ws_id];
-                                auto saved_f = ev.workspace_flat_;
-                                auto saved_p = ev.workspace_pool_;
-                                ev.workspace_flat_ = ws.flat;
-                                ev.workspace_pool_ = ws.pool;
-
+                            // Issue #1717: RAII child workspace for AST crossover.
+                            WorkspaceSwapGuard guard(ev, *tree, "xover");
+                            if (guard.valid()) {
                                 // Set variant as current code
                                 auto vi = ev.string_heap_.size();
                                 ev.string_heap_.push_back(variant);
@@ -1168,13 +1201,12 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     auto sr = (*sc_fn)({make_string(vi)});
                                     if (is_bool(sr) && as_bool(sr)) {
                                         // Find LiteralInt nodes and swap value with other variant
+                                        auto* flat = ev.workspace_flat();
                                         for (aura::ast::NodeId nid = 0;
-                                             nid <
-                                             (ev.workspace_flat_ ? ev.workspace_flat_->size() : 0);
-                                             ++nid) {
+                                             nid < (flat ? flat->size() : 0); ++nid) {
                                             if (agent_rand_below(5) != 0)
                                                 continue; // 20% chance per node
-                                            auto v = ev.workspace_flat_->get(nid);
+                                            auto v = flat->get(nid);
                                             if (v.tag == aura::ast::NodeTag::LiteralInt) {
                                                 // Extract a random int from "other"
                                                 auto nums = other;
@@ -1236,11 +1268,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                         }
                                     }
                                 }
-
-                                ev.workspace_flat_ = saved_f;
-                                ev.workspace_pool_ = saved_p;
-                                tree->delete_child(ws_id);
-                            }
+                            } // guard dtor: restore + delete_child
                         } else {
                             // Text-level crossover (fallback)
                             auto b1 = variant.find("(lambda");
@@ -1277,20 +1305,11 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                         continue;
 
                     if (ev.workspace_tree_) {
-                        // Use child workspace for isolation
+                        // Issue #1717: RAII child workspace for isolated evaluate.
                         auto* tree =
                             static_cast<aura::compiler::WorkspaceTree*>(ev.workspace_tree_);
-                        auto ws_id = tree->create_child("evolve-variant", tree->active_idx(),
-                                                        ev.workspace_flat_, ev.workspace_pool_);
-                        // Switch to child and try the variant
-                        if (ws_id > 0) {
-                            tree->ensure_local_flat(ws_id);
-                            auto& ws = tree->nodes_[ws_id];
-                            auto saved_flat = ev.workspace_flat_;
-                            auto saved_pool = ev.workspace_pool_;
-                            ev.workspace_flat_ = ws.flat;
-                            ev.workspace_pool_ = ws.pool;
-
+                        WorkspaceSwapGuard guard(ev, *tree, "evolve-variant");
+                        if (guard.valid()) {
                             auto vi = ev.string_heap_.size();
                             ev.string_heap_.push_back(variant);
                             auto sc_r = (*sc_fn)({make_string(vi)});
@@ -1305,11 +1324,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     evaluated = true;
                                 }
                             }
-
-                            ev.workspace_flat_ = saved_flat;
-                            ev.workspace_pool_ = saved_pool;
-                            tree->delete_child(ws_id);
-                        }
+                        } // guard dtor: restore + delete_child
                     }
 
                     if (!evaluated) {
