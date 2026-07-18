@@ -166,10 +166,11 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
             epoch_stale = true;
             if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+                m->compiler_closure_envframe_stale_total.fetch_add(1, std::memory_order_relaxed);
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Issue #1478: linear post-mutate enforcement (passive MVP).
+        // Issue #1478 / #1626: linear post-mutate dual-check (third arm).
         // Parallel to the #1475 epoch check above. The helper bumps
         // linear_post_mutate_enforcements; we bump linear_ownership_
         // violation_prevented on violation (matching the closure_
@@ -228,14 +229,25 @@ invoke_closure_bridge_checked(Evaluator& ev, Evaluator::ClosureBridgeFn& bridge,
 
     bool stale = false;
     if (provenance) {
-        // Dual check — same contract as closure_needs_safe_fallback, but
-        // counters are bridge-entry specific (#1511).
+        // Issue #1511 / #1626: forced dual-check + linear arm —
+        // same contract as closure_needs_safe_fallback.
         if (Evaluator::is_bridge_stale(provenance->bridge_epoch, ev.current_bridge_epoch()))
             stale = true;
         if (provenance->env_id != NULL_ENV_ID) {
             if (ev.is_env_frame_invalid(provenance->env_id) ||
-                ev.is_env_frame_stale(provenance->env_id))
+                ev.is_env_frame_stale(provenance->env_id)) {
                 stale = true;
+                if (metrics)
+                    metrics->compiler_closure_envframe_stale_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+            // #1626: linear third arm at bridge entry (parity with map path).
+            if (!ev.linear_post_mutate_enforce(provenance->env_id)) {
+                stale = true;
+                if (metrics)
+                    metrics->linear_ownership_violation_prevented.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
         }
     }
 
@@ -458,6 +470,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             1, std::memory_order_relaxed);
                         metrics->closure_bridge_epoch_safety_enforced.fetch_add(
                             1, std::memory_order_relaxed);
+                        if (env_stale)
+                            metrics->compiler_closure_envframe_stale_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         metrics->closure_stale_apply_count_total.fetch_add(
                             1, std::memory_order_relaxed);
                         metrics->closure_safe_fallback_apply_count_total.fetch_add(

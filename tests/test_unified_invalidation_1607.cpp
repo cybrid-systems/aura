@@ -142,9 +142,10 @@ static void ac5_query_schema() {
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
     const auto schema = href(cs, "schema");
-    CHECK(schema == 1607 || schema == 1604 || schema == 1598,
-          std::format("schema 1607|1604|1598 (got {})", schema));
-    CHECK(href(cs, "issue") == 1607 || href(cs, "issue") == 1604 || href(cs, "issue") == 1598,
+    CHECK(schema == 1626 || schema == 1607 || schema == 1604 || schema == 1598,
+          std::format("schema 1626|1607|1604|1598 (got {})", schema));
+    CHECK(href(cs, "issue") == 1626 || href(cs, "issue") == 1607 || href(cs, "issue") == 1604 ||
+              href(cs, "issue") == 1598,
           "issue lineage");
     CHECK(href(cs, "invalidate_cascade_depth") >= 0, "invalidate_cascade_depth");
     CHECK(href(cs, "bridge_epoch_bumps") >= 1, "bridge_epoch_bumps advanced");

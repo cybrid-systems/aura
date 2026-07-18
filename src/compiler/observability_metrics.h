@@ -206,6 +206,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_inval_bridge_epoch_total{0};
     std::atomic<std::uint64_t> compiler_closure_epoch_mismatch_hits{0};
     std::atomic<std::uint64_t> compiler_closure_safe_fallbacks{0};
+    // Issue #1626: EnvFrame-domain stale on apply_closure dual-check
+    // (distinct from bridge_epoch mismatch). Bumped when
+    // is_env_frame_stale / invalid at map/bridge/IR apply entry.
+    std::atomic<std::uint64_t> compiler_closure_envframe_stale_total{0};
     // Issue #1508: JIT aura_closure_call dual check (bridge_epoch +
     // env_frame/defuse) + interpreter-deopt fallback counters.
     //   - jit_closure_dual_check_total: every is_jit_closure_fresh probe

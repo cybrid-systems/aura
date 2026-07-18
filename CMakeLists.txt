@@ -5201,6 +5201,10 @@ aura_add_issue_test(test_epoch_apply_hotpath_1598)
 aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
 # Issue #1604: stale closure fallback on apply_closure + JIT aura_closure_call.
 aura_add_issue_test(test_stale_closure_fallback)
+
+# Issue #1626: forced dual-check apply_closure + JIT aura_closure_call
+aura_add_issue_test(test_closure_dual_check_1626)
+aura_issue_test_link_llvm_jit(test_closure_dual_check_1626)
 aura_issue_test_link_llvm_jit(test_stale_closure_fallback)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
 aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
