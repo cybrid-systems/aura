@@ -6687,6 +6687,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_closure_dependency_reemit_total{0}; // #1480
     std::atomic<std::uint64_t> aot_region_filtered_skips{0};           // #1480
     std::atomic<std::uint64_t> aot_closure_bridge_refresh_total{0};    // #1480
+
+    // ── Issue #1630: mandate full StableNodeRef provenance ──
+    // fiber_id mismatch fail-fast (unpinned); boundary_pinned auto-restamp
+    // across steal; cross-COW provenance enforcement counts.
+    std::atomic<std::uint64_t> stable_ref_fiber_mismatch_prevented_total{0};
+    std::atomic<std::uint64_t> boundary_pinned_auto_restamp_total{0};
+    std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
 };
 
 

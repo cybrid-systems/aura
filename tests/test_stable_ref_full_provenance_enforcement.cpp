@@ -69,9 +69,10 @@ int main() {
         CompilerService cs;
         auto h = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
         CHECK(h && is_hash(*h), "provenance-stats is hash");
-        CHECK(href_m(cs, "schema") == 1564, "schema 1564");
+        // Schema lineage: #1564 → #1630 mandate full provenance.
+        CHECK(href_m(cs, "schema") == 1630, "schema 1630 (lineage 1564)");
         CHECK(href_m(cs, "active") == 1, "active");
-        CHECK(href_m(cs, "phase") == 2, "phase 2");
+        CHECK(href_m(cs, "phase") == 3, "phase 3");
         CHECK(href_m(cs, "auto-refresh-policy") == 1, "default AutoRefreshOnBoundary");
     }
 
@@ -228,14 +229,14 @@ int main() {
         CHECK(href_m(cs, "cross-layer-provenance-mismatch-total") >= 0, "cross-layer field");
     }
 
-    // Phase constants
+    // Phase constants (lineage #1564 → #1630)
     {
-        CHECK(aura::core::provenance::kProvenanceTrackerPhase == 2, "phase 2");
-        CHECK(aura::core::provenance::kProvenanceTrackerIssue == 1564, "issue 1564");
+        CHECK(aura::core::provenance::kProvenanceTrackerPhase == 3, "phase 3");
+        CHECK(aura::core::provenance::kProvenanceTrackerIssue == 1630, "issue 1630");
     }
 
     if (g_failed)
         return 1;
-    std::println("stable_ref_full_provenance_enforcement #1564: OK ({} passed)", g_passed);
+    std::println("stable_ref_full_provenance_enforcement #1564→#1630: OK ({} passed)", g_passed);
     return 0;
 }

@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "serve/fiber.h" // Issue #1630: aura_fiber_current_id for query:stable-ref
 
 module aura.compiler.evaluator;
 
@@ -308,13 +309,19 @@ void register_workspace_query_primitives(
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
         auto gen = flat.generation();
-        // Issue #738: auto-pin captured refs for COW boundary tracking.
+        // Issue #738 / #1630: auto-pin captured refs with full provenance
+        // (fiber_id + cow/wrap) and force ensure_valid_or_refresh so query
+        // returns only refs that survived full validation.
         std::uint32_t layer = 0;
         if (ev.workspace_tree()) {
             auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
             layer = wt->active_idx();
         }
-        ev.pin_stable_ref_for_cow_boundary(flat.make_safe_ref(node, layer));
+        const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+        auto ref = flat.make_safe_ref(node, layer, cur_fiber);
+        if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value())
+            return mev("stale-ref", "query:stable-ref: provenance ensure failed");
+        ev.pin_stable_ref_for_cow_boundary(ref);
         // Build (node-id . gen) pair
         auto gen_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(gen)), make_void()});

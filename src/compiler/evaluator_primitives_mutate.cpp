@@ -436,36 +436,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (ref.workspace_id != 0 && ref.workspace_id != active_ws) {
                 ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
             }
-            if (ref.is_valid_in(flat) && flat.get_safe(ref)) {
-                (void)ref.validate_with_provenance(flat);
-                // Issue #1250 Phase 1: mandatory COW boundary pin on every
-                // mutate:* StableNodeRef resolution (not opt-in).
+            // Issue #1630: force full provenance (fiber_id / cow / wrap /
+            // boundary_pinned) via ensure_valid_or_refresh on every mutate
+            // StableNodeRef input — supersedes bare validate_or_refresh.
+            const bool was_valid = ref.is_valid_in(flat) && flat.get_safe(ref).has_value();
+            if (ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
+                if (!was_valid) {
+                    ev.bump_stable_ref_cross_cow_refresh();
+                }
                 if (!ref.boundary_pinned) {
                     ev.pin_stable_ref_for_cow_boundary(ref);
                     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                         m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                // Issue #1279: auto-refresh path bookkeeping when already valid
-                // (refresh_if_stale is a no-op but counts boundary auto-use).
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
                 ev.bump_stable_ref_provenance_enforced();
-                out_node = ref.id;
-                return make_void();
-            }
-            // Cross-COW / generation drift: try auto-refresh before fail.
-            // Issue #1279: validate_or_refresh is the automatic boundary
-            // refresh for multi-layer / COW stale refs.
-            if (ref.validate_or_refresh(flat)) {
-                ev.bump_stable_ref_cross_cow_refresh();
-                ev.bump_stable_ref_provenance_enforced();
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->stable_ref_boundary_auto_refresh.fetch_add(1, std::memory_order_relaxed);
-                if (!ref.boundary_pinned) {
-                    ev.pin_stable_ref_for_cow_boundary(ref);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->stable_ref_auto_pin_total.fetch_add(1, std::memory_order_relaxed);
-                }
                 out_node = ref.id;
                 return make_void();
             }

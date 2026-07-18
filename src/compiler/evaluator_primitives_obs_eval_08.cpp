@@ -474,9 +474,11 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1564: unified StableNodeRef full-provenance enforcement stats.
+    // Issue #1564 / #1630: unified StableNodeRef full-provenance enforcement.
     // Contract: all holders of StableNodeRef must call ensure_valid_or_refresh
     // (or validate_or_refresh) on query/mutate/GC/steal/JIT boundaries.
+    // Schema **1630** (lineage 1564): fiber mismatch prevented, boundary-pinned
+    // auto-restamp, cross-COW provenance enforced.
     ObservabilityPrims::register_stats_impl(
         "query:stable-ref-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -488,10 +490,32 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                                                           std::memory_order_relaxed);
                 m->cross_layer_provenance_mismatch_total.store(snap.cross_layer_mismatch,
                                                                std::memory_order_relaxed);
+                // Prefer live CompilerMetrics for #1630 AC counters when set;
+                // fall back to process-wide provenance snapshot.
+                if (m->boundary_pinned_auto_restamp_total.load(std::memory_order_relaxed) == 0 &&
+                    snap.boundary_pinned_auto_restamp > 0)
+                    m->boundary_pinned_auto_restamp_total.store(snap.boundary_pinned_auto_restamp,
+                                                                std::memory_order_relaxed);
+                if (m->cross_cow_provenance_enforced_total.load(std::memory_order_relaxed) == 0 &&
+                    snap.cross_cow_provenance_enforced > 0)
+                    m->cross_cow_provenance_enforced_total.store(snap.cross_cow_provenance_enforced,
+                                                                 std::memory_order_relaxed);
             }
             auto* ws = ev.workspace_flat();
             const auto flat_auto = ws ? ws->stale_ref_auto_refresh_count() : 0;
-            auto* ht = FlatHashTable::create(24);
+            const std::int64_t fiber_mismatch_prevented =
+                m ? static_cast<std::int64_t>(m->stable_ref_fiber_mismatch_prevented_total.load(
+                        std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(snap.fiber_mismatch);
+            const std::int64_t boundary_restamp =
+                m ? static_cast<std::int64_t>(
+                        m->boundary_pinned_auto_restamp_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(snap.boundary_pinned_auto_restamp);
+            const std::int64_t cross_cow_enforced =
+                m ? static_cast<std::int64_t>(
+                        m->cross_cow_provenance_enforced_total.load(std::memory_order_relaxed))
+                  : static_cast<std::int64_t>(snap.cross_cow_provenance_enforced);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -518,9 +542,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
-            insert_kv("schema", 1564);
+            insert_kv("schema", 1630);
             insert_kv("active", 1);
             insert_kv("phase", snap.phase);
+            insert_kv("issue", snap.issue);
             insert_kv("auto-refresh-policy", ev.stable_ref_auto_refresh_policy() ? 1 : 0);
             insert_kv("stable-ref-auto-refresh-total",
                       static_cast<std::int64_t>(snap.auto_refresh));
@@ -533,6 +558,9 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ensure-valid-success", static_cast<std::int64_t>(snap.ensure_success));
             insert_kv("ensure-valid-fail", static_cast<std::int64_t>(snap.ensure_fail));
             insert_kv("fiber-id-mismatch", static_cast<std::int64_t>(snap.fiber_mismatch));
+            insert_kv("stable-ref-fiber-mismatch-prevented-total", fiber_mismatch_prevented);
+            insert_kv("boundary-pinned-auto-restamp-total", boundary_restamp);
+            insert_kv("cross-cow-provenance-enforced-total", cross_cow_enforced);
             insert_kv("policy-enforced", static_cast<std::int64_t>(snap.policy_enforced));
             insert_kv("hot-path-auto-refresh", static_cast<std::int64_t>(snap.hot_path_refresh));
             insert_kv("provenance-mismatch",

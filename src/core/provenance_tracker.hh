@@ -1,5 +1,5 @@
-// provenance_tracker.hh — Issues #1180/#1500/#1564: full StableNodeRef provenance
-// enforcement surface (header form for evaluator + tests).
+// provenance_tracker.hh — Issues #1180/#1500/#1564/#1630: full StableNodeRef
+// provenance enforcement surface (header form for evaluator + tests).
 // Complements FlatAST::StableNodeRef; does not replace it.
 
 #ifndef AURA_CORE_PROVENANCE_TRACKER_HH
@@ -10,8 +10,8 @@
 
 namespace aura::core::provenance {
 
-inline constexpr int kProvenanceTrackerPhase = 2; // #1564 full enforcement
-inline constexpr int kProvenanceTrackerIssue = 1564;
+inline constexpr int kProvenanceTrackerPhase = 3; // #1630 mandate full provenance
+inline constexpr int kProvenanceTrackerIssue = 1630;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
@@ -31,6 +31,9 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> fiber_id_mismatch_total{0};
     std::atomic<std::uint64_t> policy_enforced_total{0};
     std::atomic<std::uint64_t> hot_path_auto_refresh_total{0};
+    // Issue #1630 AC counters (aliases for Agent dashboards).
+    std::atomic<std::uint64_t> boundary_pinned_auto_restamp_total{0};
+    std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
 };
 
 inline ProvenanceEnforcementMetrics& g_provenance_enforcement() noexcept {
@@ -68,6 +71,14 @@ inline void record_policy_enforced() noexcept {
 inline void record_hot_path_auto_refresh(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().hot_path_auto_refresh_total.fetch_add(n, std::memory_order_relaxed);
 }
+inline void record_boundary_pinned_auto_restamp(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().boundary_pinned_auto_restamp_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline void record_cross_cow_provenance_enforced(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().cross_cow_provenance_enforced_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
 
 inline void reset_provenance_enforcement_for_test() noexcept {
     auto& m = g_provenance_enforcement();
@@ -80,6 +91,8 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.fiber_id_mismatch_total.store(0, std::memory_order_relaxed);
     m.policy_enforced_total.store(0, std::memory_order_relaxed);
     m.hot_path_auto_refresh_total.store(0, std::memory_order_relaxed);
+    m.boundary_pinned_auto_restamp_total.store(0, std::memory_order_relaxed);
+    m.cross_cow_provenance_enforced_total.store(0, std::memory_order_relaxed);
 }
 
 struct ProvenanceStatsSnapshot {
@@ -92,6 +105,8 @@ struct ProvenanceStatsSnapshot {
     std::uint64_t fiber_mismatch = 0;
     std::uint64_t policy_enforced = 0;
     std::uint64_t hot_path_refresh = 0;
+    std::uint64_t boundary_pinned_auto_restamp = 0;
+    std::uint64_t cross_cow_provenance_enforced = 0;
     int phase = kProvenanceTrackerPhase;
     int issue = kProvenanceTrackerIssue;
 };
@@ -108,6 +123,8 @@ struct ProvenanceStatsSnapshot {
         m.fiber_id_mismatch_total.load(std::memory_order_relaxed),
         m.policy_enforced_total.load(std::memory_order_relaxed),
         m.hot_path_auto_refresh_total.load(std::memory_order_relaxed),
+        m.boundary_pinned_auto_restamp_total.load(std::memory_order_relaxed),
+        m.cross_cow_provenance_enforced_total.load(std::memory_order_relaxed),
         kProvenanceTrackerPhase,
         kProvenanceTrackerIssue,
     };
