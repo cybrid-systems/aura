@@ -60,6 +60,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstring>
 #include <new>
 #include <atomic>
+#include <cassert>
 #include <chrono>
 #include <mutex>
 #include <shared_mutex>
@@ -676,8 +677,30 @@ static void stamp_closure_provenance_locked(size_t cid) {
     g_closure_defuse_versions[cid] = defuse;
 }
 
+// Issue #1709: func_ids is the canonical "slot allocated" length; envs
+// (and other parallel columns) must be in range for capture/set_name.
+static bool closure_slot_in_bounds(size_t cid) noexcept {
+    return cid < g_closure_func_ids.size() && cid < g_closure_envs.size();
+}
+
+#ifndef NDEBUG
+static void assert_closure_vectors_consistent() {
+    const auto n = g_closure_func_ids.size();
+    assert(g_closure_envs.size() == n);
+    assert(g_closure_is_arena.size() == n);
+    assert(g_arena_closure_envs.size() == n);
+    assert(g_closure_names.size() == n);
+    assert(g_closure_freed.size() == n);
+    assert(g_closure_bridge_epochs.size() == n);
+    assert(g_closure_defuse_versions.size() == n);
+}
+#endif
+
 // Issue #1361: allocate or reuse a closure slot. Caller holds write lock.
 static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena) {
+#ifndef NDEBUG
+    assert_closure_vectors_consistent();
+#endif
     if (!g_closure_free_list.empty()) {
         size_t cid = g_closure_free_list.back();
         g_closure_free_list.pop_back();
@@ -823,8 +846,10 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
         return;
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
-    if (static_cast<size_t>(closure_id) < g_closure_names.size()) {
-        g_closure_names[static_cast<size_t>(closure_id)] = name ? std::string(name) : std::string();
+    const auto cid = static_cast<size_t>(closure_id);
+    // Issue #1709: require allocated slot (func_ids), not only names column.
+    if (cid < g_closure_func_ids.size() && cid < g_closure_names.size()) {
+        g_closure_names[cid] = name ? std::string(name) : std::string();
     }
     aura_unlock_workspace_write();
 }
@@ -838,7 +863,8 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         return;
     }
     size_t cid = static_cast<size_t>(closure_id);
-    if (cid >= g_closure_envs.size()) {
+    // Issue #1709: check func_ids (canonical) AND envs — not envs alone.
+    if (!closure_slot_in_bounds(cid)) {
         aura_unlock_workspace_write();
         return;
     }

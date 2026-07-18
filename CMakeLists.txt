@@ -5419,6 +5419,9 @@ aura_issue_test_link_llvm_jit(test_jit_closure_cache_race_1707)
 # Issue #1708: free_list push before freed=1 (slot leak on throw).
 aura_add_issue_test(test_closure_free_list_order_1708)
 aura_issue_test_link_llvm_jit(test_closure_free_list_order_1708)
+# Issue #1709: capture bounds on func_ids+envs (not envs alone).
+aura_add_issue_test(test_closure_capture_bounds_1709)
+aura_issue_test_link_llvm_jit(test_closure_capture_bounds_1709)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
