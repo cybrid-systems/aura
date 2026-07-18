@@ -66,10 +66,9 @@ See also `docs/design/agent-decision-metrics.md` (#1553 fold-ins) and
 When `(mutate:atomic-batch ops summary)` runs successfully:
 
 1. `FlatAST::begin_atomic_batch()` sets `bump_generation_suppressed_`.
-2. Each supported sub-op (`mutate:rebind`, `mutate:replace-value`,
-   `mutate:tweak-literal`) runs through **lockless helpers** that mutate
-   the flat without acquiring a nested `MutationBoundaryGuard` (avoids
-   deadlock on the non-recursive `workspace_mtx_`).
+2. Each supported sub-op (all 14 below) runs through **lockless helpers**
+   that mutate the flat without acquiring a nested `MutationBoundaryGuard`
+   (avoids deadlock on the non-recursive `workspace_mtx_`).
 3. Per-op generation bumps are **skipped** while the batch is open.
 4. `FlatAST::commit_atomic_batch()` performs **one** generation bump and
    records how many per-op bumps were suppressed.
@@ -86,23 +85,48 @@ This is **strong atomicity** for generation / snapshot visibility. It does
 `workspace_mtx_` until the batch completes, then observe the committed
 state.
 
-## Supported sub-ops
+The outer `MutationBoundaryGuard` (acquired at batch entry, released at
+batch exit) holds `workspace_mtx_` as a `std::unique_lock<std::shared_mutex>`
+member for the **entire** outermost Guard lifetime — only the outermost
+Guard actually acquires the lock (nested guards are detected via a
+thread-local depth counter and skip the acquire, per the #236 nesting
+rule). This means the batch is also **strongly atomic against concurrent
+mutators**: any other fiber / thread that tries to acquire `workspace_mtx_`
+unique_lock during the batch waits until the batch commits or rolls back.
+`atomic_batch_interleaved_mutation_prevented` (Issue #1900 AC3) counts how
+many strong-atomicity sessions ran.
 
-The Aura primitive currently routes:
+## Supported sub-ops (Issue #1900 dispatch expanded 5 → 14)
+
+All 14 lockless helpers live in `evaluator_eval_flat.cpp` and are
+extracted from the wrapper primitives, stripped of `MutationBoundaryGuard`
++ `g_fiber_yield_mutation_boundary` + `workspace_read_only_` check +
+lazy COW trigger + post-mutate typecheck + linear ownership validation
++ defuse_version_ bumps + dep-graph propagation (those are outer-batch
+responsibilities, performed once per batch).
 
 | Sub-op | Lockless helper | Topology atomicity | Status |
 |--------|-----------------|--------------------|--------|
 | `mutate:rebind` | `eval_flat_apply_mutate_rebind` | **Full** (MutationRecord inverse + Guard `restore_children` + parent rebuild) | #250 / #1441 / #1502 |
-| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` | n/a (errors out) | #250 stub |
-| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` | n/a (errors out) | #250 stub |
+| `mutate:replace-value` | `eval_flat_apply_mutate_replace_value` | **Full** (LiteralInt / LiteralFloat / Variable / LiteralString) | **#1900** (was stub) |
+| `mutate:tweak-literal` | `eval_flat_apply_mutate_tweak_literal` | **Full** (LiteralInt delta, clamped ≥ 0) | **#1900** (was stub) |
 | `mutate:remove-node` | `eval_flat_apply_mutate_remove_node` | **Full** (structural inverse + Guard topology) | **#396 Phase 2** / #1502 |
 | `mutate:insert-child` | `eval_flat_apply_mutate_insert_child` | **Full** (structural inverse + Guard topology) | **#396 Phase 2** / #1502 |
+| `mutate:set-body` | `eval_flat_apply_mutate_set_body` | **Full** (Define → Lambda body replacement) | **#1900** |
+| `mutate:replace-pattern` | `eval_flat_apply_mutate_replace_pattern` | **Full** (pattern match + replacement, Kleene single-subtree in batch context) | **#1900** |
+| `mutate:replace-subtree` | `eval_flat_apply_mutate_replace_subtree` | **Full** (subtree swap + hygiene gate) | **#1900** |
+| `mutate:splice` | `eval_flat_apply_mutate_splice` | **Full** (variadic code-string insertion) | **#1900** |
+| `mutate:wrap` | `eval_flat_apply_mutate_wrap` | **Full** (sentinel-placeholder substitution) | **#1900** |
+| `mutate:rename-symbol` | `eval_flat_apply_mutate_rename_symbol` | **Full** (Variable/Define/DefineType/DefineModule + Lambda params) | **#1900** |
+| `mutate:move-node` | `eval_flat_apply_mutate_move_node` | **Full** (cycle-checked subtree move) | **#1900** |
+| `mutate:inline-call` | `eval_flat_apply_mutate_inline_call` | **Full** (body clone + param substitution) | **#1900** |
 
-Other mutate primitives still return `batch-unsupported-op` rather than
-deadlocking on a nested guard. `mutate:replace-value` and
-`mutate:tweak-literal` are intentional stubs (would need lockless
-extraction from the wrapper primitives — the existing
-`eval_flat_apply_mutate_*` stubs are TODO and not part of #396 scope).
+Any other mutate primitive name (e.g., a future `mutate:foo`) hits the
+unsupported-op else branch, which bumps `atomic_batch_unsupported_op_total`
+(Issue #1900 AC3) and aborts with `batch-unsupported-op` listing the 14
+supported names. This counter is a forward-compatibility signal: when it
+stays at 0 in production telemetry, the dispatch table is complete; when
+it increments, a new sub-op has landed before its lockless helper.
 
 ## Structural topology rollback (Issue #1502)
 

@@ -10648,6 +10648,31 @@ public:
     void bump_atomic_batch_hygiene_violation() noexcept {
         atomic_batch_domain_.hygiene_violations_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1900: AC3 — dispatch-coverage + interleaving-prevention telemetry.
+    // `unsupported_op_total` only ever increments when a future-version primitive
+    // name lands before its lockless helper ships (i.e. the 14-op dispatch is now
+    // complete and any new sub-op name must trigger this counter).
+    // `interleaved_mutation_prevented` increments whenever the batch's outer
+    // MutationBoundaryGuard successfully serialized a concurrent mutate attempt
+    // (observed via the workspace_mtx_ unique_lock acquisition in eval_flat_apply_mutate_*).
+    void bump_atomic_batch_unsupported_op() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->atomic_batch_unsupported_op_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_interleaved_prevented() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->atomic_batch_interleaved_mutation_prevented.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_unsupported_op_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
+            return m->atomic_batch_unsupported_op_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_interleaved_prevented_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
+            return m->atomic_batch_interleaved_mutation_prevented.load(std::memory_order_relaxed);
+        return 0;
+    }
     // Issue #790: public accessors for the 2 NEW
     // atomic_batch_* fields (mirror the existing
     // atomic_batch_count() / atomic_batch_domain_.rollbacks
@@ -11520,6 +11545,20 @@ public:
     // still use these internally too.
     EvalResult eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a);
     EvalResult eval_flat_apply_mutate_insert_child(std::span<const types::EvalValue> a);
+    // Issue #1900: 10 lockless helpers extracted to expand (mutate:atomic-batch)
+    // dispatch from 5 → 14 ops. Each helper does the inner mutation work WITHOUT
+    // acquiring a nested MutationBoundaryGuard (the outer atomic-batch Guard
+    // already holds workspace_mtx_ for the whole batch). Helpers also skip the
+    // workspace_read_only_ check, lazy COW trigger, post-mutate typecheck, and
+    // linear-ownership validation — the outer batch performs these once.
+    EvalResult eval_flat_apply_mutate_set_body(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_replace_pattern(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_replace_subtree(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_splice(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_wrap(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_rename_symbol(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_move_node(std::span<const types::EvalValue> a);
+    EvalResult eval_flat_apply_mutate_inline_call(std::span<const types::EvalValue> a);
 
     // Issue #165 Phase 1B: post-mutation macro re-expansion.
     // Walks the affected subtree of a mutation record looking
