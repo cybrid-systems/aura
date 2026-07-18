@@ -5338,6 +5338,9 @@ aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max_1678)
 # Issue #1679: reflect validate terminates on cyclic FlatAST children.
 aura_add_issue_test(test_reflect_validate_cycle_guard_1679)
 aura_issue_test_link_llvm_jit(test_reflect_validate_cycle_guard_1679)
+# Issue #1680: query:module-exports mtime cache.
+aura_add_issue_test(test_module_export_cache_1680)
+aura_issue_test_link_llvm_jit(test_module_export_cache_1680)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

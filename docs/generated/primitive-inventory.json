@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 520,
-  "frozen_count": 442,
+  "frozen_count": 443,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -232,6 +232,7 @@
     "query:macro-reflect-validation-stats",
     "query:metrics-meta-reflection-stats",
     "query:mf-mailbox-stats",
+    "query:module-export-cache-stats",
     "query:multi-fiber-orchestration-stats",
     "query:mutate-atomic-batch-e2e-stats",
     "query:mutate-batch-atomic-stats",
@@ -979,7 +980,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 419,
+  "stats_count": 420,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1193,6 +1194,7 @@
     "query:macro-reflect-validation-stats",
     "query:metrics-meta-reflection-stats",
     "query:mf-mailbox-stats",
+    "query:module-export-cache-stats",
     "query:multi-fiber-orchestration-stats",
     "query:mutate-atomic-batch-e2e-stats",
     "query:mutate-batch-atomic-stats",
