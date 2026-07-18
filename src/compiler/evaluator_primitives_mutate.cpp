@@ -3639,7 +3639,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return ev.make_merr("bad-arg", "template string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
+        if (node == aura::ast::NULL_NODE || node >= flat.size() || !flat.is_live_node(node)) {
             ok = false;
             return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
                                                     " >= flat size " + std::to_string(flat.size()));
@@ -3651,27 +3651,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         auto tmpl = ev.string_heap_[tmpl_idx];
 
-        // Find the parent of the target node
-        aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
-        int child_idx_in_parent = -1;
-        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-            auto pv = flat.get(pid);
-            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == node) {
-                    parent_of_target = pid;
-                    child_idx_in_parent = static_cast<int>(ci);
-                    break;
-                }
-            }
-            if (parent_of_target != aura::ast::NULL_NODE)
-                break;
-        }
-
-        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
+        // Issue #1700 / #1689: parent via parent_of + attached index
+        // (not O(N×C) scan). Captured before parse; re-derived after.
+        auto parent_of_target = flat.parent_of(node);
+        auto child_idx_opt = parent_child_index_if_attached(flat, node);
+        if (parent_of_target == aura::ast::NULL_NODE || !child_idx_opt) {
             ok = false;
             return ev.make_merr("no-parent",
                                 "node " + std::to_string(node) + " has no parent in the AST");
         }
+        auto child_idx_in_parent = static_cast<int>(*child_idx_opt);
 
         // Replace `_` in the template with a unique variable
         std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
@@ -3682,6 +3671,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto parsed_tmpl = tmpl.substr(0, sentinel_pos) + sentinel + tmpl.substr(sentinel_pos + 1);
 
         // Parse the wrapper into workspace
+        // Issue #1700: 7th capture-before-parse site — re-validate node +
+        // parent_of_target after append. Use is_live_node not is_valid_in
+        // (parse_to_flat restamps generations — #273 / #1699).
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto pr = aura::parser::parse_to_flat(parsed_tmpl, flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             std::string parse_err;
@@ -3696,40 +3689,68 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             } else {
                 parse_err = "wrapper template could not be parsed";
             }
+            ok = false;
             return ev.make_merr("parse-error", parse_err);
         }
 
-        // Find the sentinel variable and its parent in the parsed AST
+        // Re-validate target + re-derive parent edge after parse.
+        if (static_cast<std::size_t>(node) >= size_before_parse || !flat.is_live_node(node)) {
+            ok = false;
+            return ev.make_merr("stale-ref", "wrap: target node invalid after parse");
+        }
+        auto parent_slot_ok = [&]() -> bool {
+            if (parent_of_target == aura::ast::NULL_NODE ||
+                static_cast<std::size_t>(parent_of_target) >= size_before_parse ||
+                !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+                return false;
+            auto pv = flat.get(parent_of_target);
+            return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+                   pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+        };
+        if (!parent_slot_ok()) {
+            child_idx_opt = parent_child_index_if_attached(flat, node);
+            if (!child_idx_opt) {
+                ok = false;
+                return ev.make_merr("stale-ref", "wrap: parent edge lost after parse");
+            }
+            parent_of_target = flat.parent_of(node);
+            child_idx_in_parent = static_cast<int>(*child_idx_opt);
+            if (!parent_slot_ok()) {
+                ok = false;
+                return ev.make_merr("stale-ref", "wrap: parent invalid after parse");
+            }
+        }
+
+        // Find the sentinel variable and its parent in the parsed AST.
+        // Search only among nodes appended by this parse (post-parse
+        // indices); resolve parent via parent_of (not O(N×C) scan).
         auto sentinel_sym = ev.workspace_pool_->intern(sentinel);
         aura::ast::NodeId sentinel_id = aura::ast::NULL_NODE;
         aura::ast::NodeId sentinel_parent = aura::ast::NULL_NODE;
         int sentinel_child_idx = -1;
 
-        for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+        for (aura::ast::NodeId sid = static_cast<aura::ast::NodeId>(size_before_parse);
+             sid < flat.size(); ++sid) {
+            if (!flat.is_live_node(sid))
+                continue;
             auto sv = flat.get(sid);
             if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sentinel_sym) {
                 sentinel_id = sid;
-                // Find this variable's parent
-                for (aura::ast::NodeId p2 = 0; p2 < flat.size(); ++p2) {
-                    auto p2v = flat.get(p2);
-                    for (std::size_t ci = 0; ci < p2v.children.size(); ++ci) {
-                        if (p2v.child(ci) == sid) {
-                            sentinel_parent = p2;
-                            sentinel_child_idx = static_cast<int>(ci);
-                            break;
-                        }
-                    }
-                    if (sentinel_parent != aura::ast::NULL_NODE)
-                        break;
+                auto sp_opt = parent_child_index_if_attached(flat, sid);
+                if (sp_opt) {
+                    sentinel_parent = flat.parent_of(sid);
+                    sentinel_child_idx = static_cast<int>(*sp_opt);
                 }
                 break;
             }
         }
 
         if (sentinel_id == aura::ast::NULL_NODE || sentinel_parent == aura::ast::NULL_NODE ||
-            sentinel_child_idx < 0)
+            sentinel_child_idx < 0 || !flat.is_live_node(sentinel_parent)) {
+            ok = false;
             return ev.make_merr("internal",
                                 "sentinel placeholder not found in parsed wrapper template");
+        }
 
         // Replace the sentinel variable in the wrapper with the target node
         flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
@@ -3738,6 +3759,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), pr.root);
 
         flat.add_mutation(node, "wrap", parsed_tmpl, summary, summary);
+        flat.mark_dirty_upward(parent_of_target);
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
