@@ -140,10 +140,13 @@ static void ac6_render_stats() {
     ::close(nfd);
     auto r = cs.eval("(stats:get \"query:render-stats\")");
     CHECK(r && is_hash(*r), "render-stats is hash");
-    CHECK(href(cs, "(stats:get \"query:render-stats\")", "schema") == 1673, "schema 1673");
+    // Schema advanced to 1674 when #1674 wired full bump surface; still accept 1673.
+    const auto schema = href(cs, "(stats:get \"query:render-stats\")", "schema");
+    CHECK(schema == 1674 || schema == 1673, "schema 1673/1674");
     CHECK(href(cs, "(stats:get \"query:render-stats\")", "present-calls") >= 1, "present-calls");
     CHECK(href(cs, "(stats:get \"query:render-stats\")", "buffer-creates") >= 1, "buffer-creates");
-    CHECK(href(cs, "(stats:get \"query:render-stats\")", "issue") == 1673, "issue field");
+    const auto issue = href(cs, "(stats:get \"query:render-stats\")", "issue");
+    CHECK(issue == 1674 || issue == 1673, "issue field");
 }
 
 } // namespace

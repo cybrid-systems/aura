@@ -155,32 +155,12 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
                         std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_enforcement_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("predicate-hits", f_predicate_hits);
             insert_kv("index-hit-rate-pct", f_index_hit_rate_pct);
@@ -228,32 +208,12 @@ void ObservabilityPrims::register_jit_p49(PrimRegistrar add, Evaluator& ev) {
                         m->mutate_batch_e2e_panic_recoveries_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_e2e_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("batches-started", f_batches_started);
             insert_kv("suppressed-bumps", f_suppressed_bumps);
@@ -290,32 +250,12 @@ void ObservabilityPrims::register_jit_p50(PrimRegistrar add, Evaluator& ev) {
                         m->jit_fiber_ex_deopt_interpreter_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_fiber_local_policy_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("fiber-local-ex-stack", f_fiber_local_ex_stack);
             insert_kv("cross-fiber-prevented", f_cross_fiber_prevented);
@@ -353,32 +293,12 @@ void ObservabilityPrims::register_jit_p51(PrimRegistrar add, Evaluator& ev) {
                         m->l2_spec_linear_probe_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_l2_maturity_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("pair-fastpath", f_pair_fastpath);
             insert_kv("deopt-version-mismatch", f_deopt_version_mismatch);
@@ -413,32 +333,12 @@ void ObservabilityPrims::register_jit_p52(PrimRegistrar add, Evaluator& ev) {
                         m->opcode_cov_per_fn_deopt_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_zero_fallback_policy = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("coverage-hits", f_coverage_hits);
             insert_kv("unhandled-hot", f_unhandled_hot);
@@ -480,32 +380,12 @@ void ObservabilityPrims::register_jit_p53(PrimRegistrar add, Evaluator& ev) {
                         m->term_render_present_ns_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_module_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("clear-total", f_clear_total);
             insert_kv("draw-batch-total", f_draw_batch_total);
@@ -545,32 +425,12 @@ void ObservabilityPrims::register_jit_p54(PrimRegistrar add, Evaluator& ev) {
                         m->render_ffi_allocs_frame_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_buffer_path_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("batch-ffi-calls", f_batch_ffi_calls);
             insert_kv("zerocopy-views", f_zerocopy_views);
@@ -609,32 +469,12 @@ void ObservabilityPrims::register_jit_p55(PrimRegistrar add, Evaluator& ev) {
                         m->render_hp_mutation_impact_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t f_hotpath_active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
+                                                                   make_string, make_int);
             };
             insert_kv("dirty-hits", f_dirty_hits);
             insert_kv("present-delta", f_present_delta);
