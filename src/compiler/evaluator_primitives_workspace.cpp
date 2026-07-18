@@ -102,6 +102,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 if (id < ev.snapshot_sources_.size())
                     return (*restore_fn)({make_int(static_cast<std::int64_t>(id))});
             } catch (...) {
+                // [SILENCE-PRIM-#615] snapshot-N name parse failure → #f
+                // (documented error→value pattern; #1669 class A).
                 return make_bool(false);
             }
         }

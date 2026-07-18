@@ -356,6 +356,9 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             r.type_ok = visitor.worst_status() != aura::ast::InvariantStatus::Warnings ||
                         visitor.notes().empty();
         } catch (...) {
+            // [SILENCE-PRIM-#615] post-mutation type visitor failure →
+            // type_ok=false (report field is the failure signal;
+            // #1669 class A intentional-return-value).
             r.type_ok = false;
         }
     }

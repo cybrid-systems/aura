@@ -448,6 +448,9 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
                 }
                 return make_bool(false);
             } catch (...) {
+                // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
+                // (eda_guard_uncaught_exception_total); dtor restores
+                // (#1669 class A intentional-return-value).
                 guard_ok = false;
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
@@ -530,6 +533,9 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
             }
             return make_bool(false);
         } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
             guard_ok = false;
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);

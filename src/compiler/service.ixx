@@ -5663,6 +5663,9 @@ public:
                 }
             }
         } catch (...) {
+            // [SILENCE-PRIM-#615] directory_iterator / cache unlink
+            // best-effort; always fall through to legacy path remove
+            // (#1669 class B intentional-state).
         }
         // Also try without hash (legacy format)
         aura::compiler::cache::remove_cache(module_cache_dir() + sanitized + ".abfc");
@@ -8448,7 +8451,8 @@ private:
                 if (consumed == ts.size())
                     return make_int(v);
             } catch (...) {
-                // Fall through to slow path
+                // [SILENCE-PRIM-#615] int parse fail — fall through to
+                // float/bool/void cascade (#1669 class A).
             }
         }
         // Float?
@@ -8460,6 +8464,8 @@ private:
                 if (consumed == ts.size())
                     return make_float(v);
             } catch (...) {
+                // [SILENCE-PRIM-#615] float parse fail — fall through to
+                // bool/void cascade (#1669 class A).
             }
         }
         // Booleans

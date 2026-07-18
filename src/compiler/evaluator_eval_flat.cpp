@@ -5069,6 +5069,9 @@ std::int64_t Evaluator::capture_workspace_snapshot_under_lock(std::string_view n
                 fs.cow_epoch = node->cow_epoch;
         }
     } catch (...) {
+        // [SILENCE-PRIM-#615] OOM / copy failure during snapshot — keep
+        // source-only snapshot (has_flat=false); same contract as
+        // ast:snapshot deep-copy path (#1669 class A).
         fs.has_flat = false;
     }
     auto id = snapshot_sources_.size();
@@ -5102,6 +5105,9 @@ bool Evaluator::restore_workspace_snapshot_under_lock(std::size_t id) noexcept {
                 pre_cache_workspace_defines_fn_();
             return true;
         } catch (...) {
+            // [SILENCE-PRIM-#615] restore_workspace_snapshot_under_lock is
+            // noexcept bool API — false is the documented failure signal
+            // (#1669 class A intentional-return-value).
             return false;
         }
     }

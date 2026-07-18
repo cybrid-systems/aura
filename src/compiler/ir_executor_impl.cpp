@@ -489,6 +489,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 try {
                     return static_cast<std::int64_t>(std::stoll(string_heap_[idx]));
                 } catch (...) {
+                    // [SILENCE-PRIM-#615] string→int coerce failure —
+                    // log + return 0 (#1669 class A IR coerce contract).
                     std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
                                  string_heap_[idx]);
                     return 0;
@@ -789,6 +791,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                         locals[ops[0]] = make_int(static_cast<std::int64_t>(
                                             std::stoll(string_heap_[idx])));
                                     } catch (...) {
+                                        // [SILENCE-PRIM-#615] string→int
+                                        // coerce fail → 0 (#1669 class A).
                                         locals[ops[0]] = make_int(0);
                                     }
                                 } else {
@@ -842,6 +846,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                     try {
                                         locals[ops[0]] = make_float(std::stod(string_heap_[idx]));
                                     } catch (...) {
+                                        // [SILENCE-PRIM-#615] string→float
+                                        // coerce fail → 0.0 (#1669 class A).
                                         locals[ops[0]] = make_float(0.0);
                                     }
                                 } else {

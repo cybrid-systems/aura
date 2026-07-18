@@ -2281,6 +2281,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         tr.error = ex.what();
                         ash->errors[i] = tr.error;
                     } catch (...) {
+                        // [SILENCE-PRIM-#615] task result records
+                        // ok=false + error string for join/status
+                        // (#1669 class A intentional-return-value).
                         tr.ok = false;
                         tr.error = "unknown-exception";
                         ash->errors[i] = tr.error;
@@ -2452,7 +2455,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 std::lock_guard lock(orch_eval_mu);
                 (void)ev.apply_closure(*cid, {});
             } catch (...) {
-                // swallow: agent body errors surface via join/status only
+                // [SILENCE-PRIM-#615] swallow: agent body errors surface
+                // via join/status only (#1669 class B intentional-state).
             }
         };
         auto handle = aura::orch::spawn_agent_with_mailbox(
