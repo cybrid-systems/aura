@@ -1492,6 +1492,16 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_396)
 aura_add_issue_test(test_issue_1900)
 aura_issue_test_link_llvm_jit_minimal(test_issue_1900)
 
+# Issue #1901 (refine #1822): EDA self-evolution
+# StableNodeRef refresh-after-mutate contract. Validates:
+# (a) eda:demo-sv-self-evolution runs clean for 1000+ iter
+# without stale-ref crash; (b) stable_ref_auto_refresh_in_eda_total
+# + eda_self_evolution_stale_ref_prevented metrics bump correctly;
+# (c) explicit stale-ref refresh path works; (d) primitive
+# call surface intact. Pure CompilerService tests.
+aura_add_issue_test(test_eda_self_evolution_stable_ref)
+aura_issue_test_link_llvm_jit_minimal(test_eda_self_evolution_stable_ref)
+
 # Issue #397: centralize SyntaxMarker::MacroIntroduced
 # checks behind FlatAST::is_macro_introduced helper. 8
 # inline call sites refactored. Pure CompilerService tests

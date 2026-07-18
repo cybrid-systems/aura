@@ -526,6 +526,53 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
         auto weaken_fn = ev.primitives_.lookup("eda:weaken-property");
         auto add_bin_fn = ev.primitives_.lookup("eda:add-coverpoint-bin");
         auto gc_fn = ev.primitives_.lookup("mutate:request-gc-safepoint");
+        // Issue #1901 (refine #1822): pre-loop ref creation is
+        // dangerous because every feedback_fn / weaken_fn /
+        // add_bin_fn call can mutate the workspace and stale
+        // the refs. The pre-#1901 code only checked is_valid_in
+        // at the *start* of each iteration, which left a
+        // window where the previous iteration's mutate had
+        // already invalidated the ref but no check ran before
+        // the next mutate — UAF risk under fiber steal + GC
+        // compact. New contract: refresh_if_stale() after
+        // EVERY mutate call (and the gc_safepoint which can
+        // compact). If refresh fails (node physically gone),
+        // re-make_ref from the still-valid NodeId pointer
+        // table. bump metrics on each refresh path.
+        auto refresh_after_mutate = [&](auto& ref, aura::ast::NodeId& id_slot,
+                                        const char* ref_label) {
+            if (ref.refresh_if_stale(*ws)) {
+                if (m)
+                    m->stable_ref_auto_refresh_in_eda_total.fetch_add(1, std::memory_order_relaxed);
+                if (m)
+                    m->eda_self_evolution_stale_ref_prevented.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                return;
+            }
+            // refresh_if_stale returned false — either the
+            // ref is still valid (no-op, common case) or the
+            // node was physically removed. Re-make_ref from
+            // the live workspace scan so the ref tracks the
+            // node wherever it is now.
+            aura::ast::NodeId new_id = aura::ast::NULL_NODE;
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                if ((std::string_view(ref_label) == "property" &&
+                     ws->get(id).tag == aura::ast::NodeTag::Property) ||
+                    (std::string_view(ref_label) == "coverpoint" &&
+                     ws->get(id).tag == aura::ast::NodeTag::Coverpoint)) {
+                    new_id = id;
+                    break;
+                }
+            }
+            if (new_id != aura::ast::NULL_NODE) {
+                ref = ws->make_ref(new_id);
+                id_slot = new_id;
+                if (m)
+                    m->stable_ref_auto_refresh_in_eda_total.fetch_add(1, std::memory_order_relaxed);
+            } else if (m) {
+                m->eda_sv_stable_ref_invalidation_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
         for (int i = 0; i < cycles; ++i) {
             if (m)
                 m->eda_sv_evolution_cycles_total.fetch_add(1, std::memory_order_relaxed);
@@ -562,8 +609,26 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
                     {make_int(static_cast<std::int64_t>(coverpoint_id)), make_string(bin_idx)});
                 ok = is_bool(r) && as_bool(r);
             }
-            if ((i & 7) == 0 && gc_fn)
+            // Issue #1901: refresh refs after every mutate call.
+            // weaken_fn mutates the property → prop_ref may stale.
+            if (ok && (i & 3) == 0 && weaken_fn)
+                refresh_after_mutate(prop_ref, property_id, "property");
+            // add_bin_fn mutates the coverpoint → cp_ref may stale.
+            if (ok && (i & 3) == 2 && add_bin_fn)
+                refresh_after_mutate(cp_ref, coverpoint_id, "coverpoint");
+            // feedback_fn mutates the workspace generically — both
+            // refs may stale. Refresh both conservatively.
+            if (ok && feedback_fn) {
+                refresh_after_mutate(prop_ref, property_id, "property");
+                refresh_after_mutate(cp_ref, coverpoint_id, "coverpoint");
+            }
+            if ((i & 7) == 0 && gc_fn) {
                 (void)(*gc_fn)(std::span<const EvalValue>{});
+                // GC safepoint can compact the AST → both refs
+                // may go stale. Refresh after the safepoint.
+                refresh_after_mutate(prop_ref, property_id, "property");
+                refresh_after_mutate(cp_ref, coverpoint_id, "coverpoint");
+            }
             if (ok) {
                 ++successes;
                 if (m) {
