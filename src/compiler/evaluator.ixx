@@ -1182,18 +1182,32 @@ public:
         std::lock_guard<std::mutex> lock(arena_set_mtx_);
         // Issue #1546: drop owner link from previous arena if any.
         // Issue #1662: also clear compact hook (captures `this`).
-        if (arena_ && arena_ != a) {
+        const bool switching = (arena_ != a);
+        if (arena_ && switching) {
             arena_->clear_arena_owner();
             arena_->set_on_compact_hook({});
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
         // compaction re-pins pinned StableNodeRef / COW children in
-        // the active Guard stack. The hook captures `this` and calls
-        // on_arena_compact_hook() which delegates to
-        // re_pin_cow_children_from_snapshot().
+        // the active Guard stack via on_arena_compact_hook().
+        //
+        // Issue #1666: set_on_compact_hook **replaces** (does not append).
+        // On first claim of an arena (switching or empty hook), take any
+        // prior listener and chain: prior first, then re_pin — so external
+        // hooks are not silently dropped. Idempotent set_arena(same):
+        // leave an already-installed hook alone (avoids double re_pin wrap).
+        // Multi-listener installs *after* set_arena must take+chain
+        // (CompilerService ShapeProfiler does this).
         if (arena_) {
-            arena_->set_on_compact_hook([this]() { this->on_arena_compact_hook(); });
+            if (switching || !arena_->has_on_compact_hook()) {
+                auto prior = arena_->take_on_compact_hook();
+                arena_->set_on_compact_hook([this, prior = std::move(prior)]() {
+                    if (prior)
+                        prior();
+                    this->on_arena_compact_hook();
+                });
+            }
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
             // every allocation (orphan arenas stay unlimited).

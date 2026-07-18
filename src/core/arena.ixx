@@ -497,7 +497,20 @@ public:
 
     // Issue #685: optional hook invoked after compact()/defrag()
     // reclaims bytes (ShapeProfiler invalidate, dirty cascade).
+    //
+    // Issue #1666: set_on_compact_hook **replaces** any prior hook
+    // (not append). Callers that need multiple listeners MUST use
+    // take_on_compact_hook() + reinstall a chain. Silent overwrite
+    // previously dropped Evaluator re_pin when CompilerService
+    // installed ShapeProfiler after set_arena.
     void set_on_compact_hook(std::function<void()> hook) { on_compact_hook_ = std::move(hook); }
+    // Move out the current hook (leaves arena with no hook).
+    [[nodiscard]] std::function<void()> take_on_compact_hook() {
+        return std::move(on_compact_hook_);
+    }
+    [[nodiscard]] bool has_on_compact_hook() const noexcept {
+        return static_cast<bool>(on_compact_hook_);
+    }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
     // When set, allocate_raw consults allow_fn(owner, size) before
