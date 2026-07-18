@@ -2074,6 +2074,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Format: #(analytics total-runs:N success-rate:X avg-attempts:Y
         //          total-llm-calls:N avg-duration-ms:N top-errors:( k:n ...)
         //          by-task:( ... ))
+        // Issue #1723: track paren depth so nested values like
+        // top-errors:( a:1 (nested) ) are not truncated at the first ')'.
         auto find_after = [](const std::string& s, const std::string& key) -> std::string {
             auto p = s.find(key);
             if (p == std::string::npos)
@@ -2082,10 +2084,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // skip ':' and spaces
             while (p < s.size() && (s[p] == ':' || s[p] == ' '))
                 ++p;
-            auto end = p;
-            while (end < s.size() && s[end] != ' ' && s[end] != ')')
-                ++end;
-            return s.substr(p, end - p);
+            auto start = p;
+            int depth = 0;
+            while (p < s.size()) {
+                if (s[p] == '(') {
+                    ++depth;
+                } else if (s[p] == ')') {
+                    if (depth == 0)
+                        break; // end of value at outer ')'
+                    --depth;
+                } else if (s[p] == ' ' && depth == 0) {
+                    break; // end of atom at top-level space
+                }
+                ++p;
+            }
+            return s.substr(start, p - start);
         };
         double success_rate = 0.0;
         double avg_attempts = 0.0;
@@ -2101,11 +2114,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         }
 
         // Parse top-errors: walk "(k1:n1 k2:n2 ...)" inside top-errors:(...)
+        // Issue #1723: match the closing ')' by paren depth, not first ')'.
         std::map<std::string, int> top_errors;
         auto te_pos = analytics.find("top-errors:(");
         if (te_pos != std::string::npos) {
-            auto te_end = analytics.find(")", te_pos);
-            if (te_end != std::string::npos) {
+            auto content = te_pos + std::string("top-errors:(").size();
+            int te_depth = 1;
+            auto te_end = content;
+            while (te_end < analytics.size() && te_depth > 0) {
+                if (analytics[te_end] == '(')
+                    ++te_depth;
+                else if (analytics[te_end] == ')')
+                    --te_depth;
+                if (te_depth > 0)
+                    ++te_end;
+            }
+            if (te_depth == 0) {
                 auto te = analytics.substr(te_pos, te_end - te_pos);
                 std::size_t i = 0;
                 while (i < te.size()) {
