@@ -1392,233 +1392,35 @@ bool ObservabilityPrims::stats_impl_registered(std::string_view name) {
 }
 
 void ObservabilityPrims::register_eval_all(PrimRegistrar add, Evaluator& ev) {
-    register_eval_p0(add, ev);
-    register_eval_p1(add, ev);
-    register_eval_p2(add, ev);
-    register_eval_p3(add, ev);
-    register_eval_p4(add, ev);
-    register_eval_p5(add, ev);
-    register_eval_p6(add, ev);
-    register_eval_p7(add, ev);
-    register_eval_p8(add, ev);
-    register_eval_p9(add, ev);
-    register_eval_p10(add, ev);
-    register_eval_p11(add, ev);
-    register_eval_p12(add, ev);
-    register_eval_p13(add, ev);
-    register_eval_p14(add, ev);
-    register_eval_p15(add, ev);
-    register_eval_p16(add, ev);
-    register_eval_p17(add, ev);
-    register_eval_p18(add, ev);
-    register_eval_p19(add, ev);
-    register_eval_p20(add, ev);
-    register_eval_p21(add, ev);
-    register_eval_p22(add, ev);
-    register_eval_p23(add, ev);
-    register_eval_p24(add, ev);
-    register_eval_p25(add, ev);
-    register_eval_p26(add, ev);
-    register_eval_p27(add, ev);
-    register_eval_p28(add, ev);
-    register_eval_p29(add, ev);
-    register_eval_p30(add, ev);
-    register_eval_p31(add, ev);
-    register_eval_p32(add, ev);
-    register_eval_p33(add, ev);
-    register_eval_p34(add, ev);
-    register_eval_p35(add, ev);
-    register_eval_p36(add, ev);
-    register_eval_p37(add, ev);
-    register_eval_p38(add, ev);
-    register_eval_p39(add, ev);
-    register_eval_p40(add, ev);
-    register_eval_p41(add, ev);
-    register_eval_p42(add, ev);
-    register_eval_p43(add, ev);
-    register_eval_p44(add, ev);
-    register_eval_p45(add, ev);
-    register_eval_p46(add, ev);
-    register_eval_p47(add, ev);
-    register_eval_p48(add, ev);
-    register_eval_p49(add, ev);
-    register_eval_p50(add, ev);
-    register_eval_p51(add, ev);
-    register_eval_p52(add, ev);
-    register_eval_p53(add, ev);
-    register_eval_p54(add, ev);
-    register_eval_p55(add, ev);
-    register_eval_p56(add, ev);
-    register_eval_p57(add, ev);
-    register_eval_p58(add, ev);
-    register_eval_p59(add, ev);
-    register_eval_p60(add, ev);
-    register_eval_p61(add, ev);
-    register_eval_p62(add, ev);
-    register_eval_p63(add, ev);
-    register_eval_p64(add, ev);
-    register_eval_p65(add, ev);
-    register_eval_p66(add, ev);
-    register_eval_p67(add, ev);
-    register_eval_p68(add, ev);
-    register_eval_p69(add, ev);
-    register_eval_p70(add, ev);
-    register_eval_p71(add, ev);
-    register_eval_p72(add, ev);
-    register_eval_p73(add, ev);
-    register_eval_p74(add, ev);
-    register_eval_p75(add, ev);
-    register_eval_p76(add, ev);
-    register_eval_p77(add, ev);
-    register_eval_p78(add, ev);
-    register_eval_p79(add, ev);
-    register_eval_p80(add, ev);
-    register_eval_p81(add, ev);
-    register_eval_p82(add, ev);
-    register_eval_p83(add, ev);
-    register_eval_p84(add, ev);
-    register_eval_p85(add, ev);
-    register_eval_p86(add, ev);
-    register_eval_p87(add, ev);
-    register_eval_p88(add, ev);
-    register_eval_p89(add, ev);
-    register_eval_p90(add, ev);
-    register_eval_p91(add, ev);
-    register_eval_p92(add, ev);
-    register_eval_p93(add, ev);
-    register_eval_p94(add, ev);
-    register_eval_p95(add, ev);
-    register_eval_p96(add, ev);
-    register_eval_p97(add, ev);
-    register_eval_p98(add, ev);
-    register_eval_p99(add, ev);
-    register_eval_p100(add, ev);
-    register_eval_p101(add, ev);
-    register_eval_p102(add, ev);
-    register_eval_p103(add, ev);
-    register_eval_p104(add, ev);
+    // Issue #1670: data-driven peel dispatch — one function-pointer table
+    // instead of 105 sequential register_eval_pN calls. Tier bodies stay in
+    // obs_eval_*.cpp (real add/register_stats_impl lambdas, not 1-line wrappers).
+    using TierFn = void (*)(PrimRegistrar, Evaluator&);
+    static constexpr TierFn kEvalTiers[] = {
+#define OBS_EVAL_TIER(N) &ObservabilityPrims::register_eval_p##N,
+#include "compiler/observability_eval_tiers.inc"
+#undef OBS_EVAL_TIER
+    };
+    for (auto fn : kEvalTiers)
+        fn(add, ev);
 }
 
 void ObservabilityPrims::register_jit_all(PrimRegistrar add, Evaluator& ev) {
-    register_jit_p0(add, ev);
-    register_jit_p1(add, ev);
-    register_jit_p2(add, ev);
-    register_jit_p3(add, ev);
-    register_jit_p4(add, ev);
-    register_jit_p5(add, ev);
-    register_jit_p6(add, ev);
-    register_jit_p7(add, ev);
-    register_jit_p8(add, ev);
-    register_jit_p9(add, ev);
-    register_jit_p10(add, ev);
-    register_jit_p11(add, ev);
-    register_jit_p12(add, ev);
-    register_jit_p13(add, ev);
-    register_jit_p14(add, ev);
-    register_jit_p15(add, ev);
-    register_jit_p16(add, ev);
-    register_jit_p17(add, ev);
-    register_jit_p18(add, ev);
-    register_jit_p19(add, ev);
-    register_jit_p20(add, ev);
-    register_jit_p21(add, ev);
-    register_jit_p22(add, ev);
-    register_jit_p23(add, ev);
-    register_jit_p24(add, ev);
-    register_jit_p25(add, ev);
-    register_jit_p26(add, ev);
-    register_jit_p27(add, ev);
-    register_jit_p28(add, ev);
-    register_jit_p29(add, ev);
-    register_jit_p30(add, ev);
-    register_jit_p31(add, ev);
-    register_jit_p32(add, ev);
-    register_jit_p33(add, ev);
-    register_jit_p34(add, ev);
-    register_jit_p35(add, ev);
-    register_jit_p36(add, ev);
-    register_jit_p37(add, ev);
-    register_jit_p38(add, ev);
-    register_jit_p39(add, ev);
-    register_jit_p40(add, ev);
-    register_jit_p41(add, ev);
-    register_jit_p42(add, ev);
-    register_jit_p43(add, ev);
-    register_jit_p44(add, ev);
-    register_jit_p45(add, ev);
-    register_jit_p46(add, ev);
-    register_jit_p47(add, ev);
-    register_jit_p48(add, ev);
-    register_jit_p49(add, ev);
-    register_jit_p50(add, ev);
-    register_jit_p51(add, ev);
-    register_jit_p52(add, ev);
-    register_jit_p53(add, ev);
-    register_jit_p54(add, ev);
-    register_jit_p55(add, ev);
-    register_jit_p56(add, ev);
-    register_jit_p57(add, ev);
-    register_jit_p58(add, ev);
-    register_jit_p59(add, ev);
-    register_jit_p60(add, ev);
-    register_jit_p61(add, ev);
-    register_jit_p62(add, ev);
-    register_jit_p63(add, ev);
-    register_jit_p64(add, ev);
-    register_jit_p65(add, ev);
-    register_jit_p66(add, ev);
-    register_jit_p67(add, ev);
-    register_jit_p68(add, ev);
-    register_jit_p69(add, ev);
-    register_jit_p70(add, ev);
-    register_jit_p71(add, ev);
-    register_jit_p72(add, ev);
-    register_jit_p73(add, ev);
-    register_jit_p74(add, ev);
-    register_jit_p75(add, ev);
-    register_jit_p76(add, ev);
-    register_jit_p77(add, ev);
-    register_jit_p78(add, ev);
-    register_jit_p79(add, ev);
-    register_jit_p80(add, ev);
-    register_jit_p81(add, ev);
-    register_jit_p82(add, ev);
-    register_jit_p83(add, ev);
-    register_jit_p84(add, ev);
-    register_jit_p85(add, ev);
-    register_jit_p86(add, ev);
-    register_jit_p87(add, ev);
-    register_jit_p88(add, ev);
-    register_jit_p89(add, ev);
-    register_jit_p90(add, ev);
-    register_jit_p91(add, ev);
-    register_jit_p92(add, ev);
-    register_jit_p93(add, ev);
-    register_jit_p94(add, ev);
-    register_jit_p95(add, ev);
-    register_jit_p96(add, ev);
-    register_jit_p97(add, ev);
-    register_jit_p98(add, ev);
-    register_jit_p99(add, ev);
-    register_jit_p100(add, ev);
-    register_jit_p101(add, ev);
-    register_jit_p102(add, ev);
-    register_jit_p103(add, ev);
-    register_jit_p104(add, ev);
-    register_jit_p105(add, ev);
-    register_jit_p106(add, ev);
-    register_jit_p107(add, ev);
-    register_jit_p108(add, ev);
-    register_jit_p109(add, ev);
-    register_jit_p110(add, ev);
-    register_jit_p111(add, ev);
-    register_jit_p112(add, ev);
-    register_jit_p113(add, ev);
+    // Issue #1670: data-driven peel dispatch (114 jit tiers).
+    using TierFn = void (*)(PrimRegistrar, Evaluator&);
+    static constexpr TierFn kJitTiers[] = {
+#define OBS_JIT_TIER(N) &ObservabilityPrims::register_jit_p##N,
+#include "compiler/observability_jit_tiers.inc"
+#undef OBS_JIT_TIER
+    };
+    for (auto fn : kJitTiers)
+        fn(add, ev);
     // Issue #1434: mark top-20 stats as deprecated after full registration.
     ObservabilityPrims::mark_p1b_top_stats_deprecated(ev);
     // Issue #1450: residual public *-stats aliases (arena/gc/ast/…).
     ObservabilityPrims::mark_residual_public_stats_deprecated(ev);
 }
+
 
 // Issue #1434 / P1b: top-20 query:*-stats → prefer (engine:metrics "…").
 // Names pinned by scripts/find_top_stats.py (usage rank). Still registered
