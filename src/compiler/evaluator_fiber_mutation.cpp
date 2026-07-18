@@ -347,43 +347,58 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     auto* ws = workspace_flat();
     if (!ws)
         return 0;
+    // Issue #1630: restamp fiber_id to current fiber for all pinned refs
+    // so steal/yield does not leave cross-fiber provenance drift.
+    std::uint32_t current_fiber = 0;
+    if (g_current_fiber_void != nullptr) {
+        current_fiber = static_cast<std::uint32_t>(
+            static_cast<aura::serve::Fiber*>(g_current_fiber_void)->id());
+    }
     std::size_t refreshed = 0;
     std::size_t boundary_refreshed = 0;
-    for (auto& ref : atomic_batch_pinned_refs_) {
-        if (ref.refresh_if_stale(*ws))
+    auto restamp_one = [&](aura::ast::FlatAST::StableNodeRef& ref) {
+        if (current_fiber != 0 && ref.fiber_id != 0 && ref.fiber_id != current_fiber &&
+            ref.boundary_pinned) {
+            ref.fiber_id = current_fiber;
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->boundary_pinned_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            aura::core::provenance::record_boundary_pinned_auto_restamp();
+        }
+        const bool was_pinned = ref.boundary_pinned;
+        const bool was_valid = ref.is_valid_in(*ws);
+        if (ref.refresh_if_stale(*ws)) {
+            if (was_pinned)
+                ref.boundary_pinned = true;
             ++refreshed;
-    }
+            if (was_pinned && !was_valid)
+                ++boundary_refreshed;
+        }
+    };
+    for (auto& ref : atomic_batch_pinned_refs_)
+        restamp_one(ref);
     {
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
-        for (auto& ref : cow_boundary_pinned_refs_) {
-            const bool was_pinned = ref.boundary_pinned;
-            // Count boundary_pinned_refresh only when the pin was stale
-            // and restamped (not when already valid).
-            const bool was_valid = ref.is_valid_in(*ws);
-            if (ref.refresh_if_stale(*ws)) {
-                // refresh_if_stale preserves boundary_pinned; re-assert
-                // so COW survival semantics stay intact after restamp.
-                if (was_pinned)
-                    ref.boundary_pinned = true;
-                ++refreshed;
-                if (was_pinned && !was_valid)
-                    ++boundary_refreshed;
-            }
-        }
+        for (auto& ref : cow_boundary_pinned_refs_)
+            restamp_one(ref);
     }
     if (refreshed > 0) {
         bump_stable_ref_steal_auto_refresh(refreshed);
         bump_stable_ref_cross_cow_refresh(refreshed);
         aura::core::provenance::record_hot_path_auto_refresh(refreshed);
         aura::core::provenance::record_policy_enforced();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->cross_cow_provenance_enforced_total.fetch_add(refreshed, std::memory_order_relaxed);
+        aura::core::provenance::record_cross_cow_provenance_enforced(refreshed);
     }
     if (boundary_refreshed > 0)
         bump_boundary_pinned_refresh(boundary_refreshed);
     return refreshed;
 }
 
-// Issue #1564: policy-gated ensure_valid_or_refresh — production default
-// for any primitive holding a StableNodeRef across mutate/query/GC/steal.
+// Issue #1564 / #1630: policy-gated ensure_valid_or_refresh — production
+// default for any primitive holding a StableNodeRef across mutate/query/GC/steal.
+// Full provenance: fiber_id (unless boundary_pinned auto-restamp), cow_epoch,
+// wrap_epoch via validate_or_refresh / refresh_if_stale.
 std::optional<aura::ast::NodeView>
 aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNodeRef& ref,
                                                    bool auto_refresh) noexcept {
@@ -394,14 +409,31 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
         aura::core::provenance::record_ensure_valid_fail();
         return std::nullopt;
     }
-    // Fiber provenance: non-zero capture + non-zero current must match.
-    // (Current fiber id is 0 outside fiber context — skip in that case.)
-    const auto current_fiber = 0u; // fiber TLS optional; mismatch tracked when both non-zero
+    // Issue #1630: real fiber_id provenance (g_current_fiber_void TLS).
+    // Non-zero capture + non-zero current must match unless boundary_pinned
+    // (then restamp fiber_id onto the current fiber and continue).
+    std::uint32_t current_fiber = 0;
+    if (g_current_fiber_void != nullptr) {
+        current_fiber = static_cast<std::uint32_t>(
+            static_cast<aura::serve::Fiber*>(g_current_fiber_void)->id());
+    }
     if (ref.fiber_id != 0 && current_fiber != 0 && ref.fiber_id != current_fiber) {
-        aura::core::provenance::record_fiber_id_mismatch();
-        bump_provenance_mismatch();
-        aura::core::provenance::record_ensure_valid_fail();
-        return std::nullopt;
+        if (ref.boundary_pinned && auto_refresh) {
+            // Pinned refs survive steal: restamp fiber provenance + gen/cow.
+            ref.fiber_id = current_fiber;
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->boundary_pinned_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            aura::core::provenance::record_boundary_pinned_auto_restamp();
+            (void)ref.refresh_if_stale(*ws);
+        } else {
+            aura::core::provenance::record_fiber_id_mismatch();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->stable_ref_fiber_mismatch_prevented_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            bump_provenance_mismatch();
+            aura::core::provenance::record_ensure_valid_fail();
+            return std::nullopt;
+        }
     }
     const bool policy_on =
         auto_refresh && stable_ref_auto_refresh_policy_.load(std::memory_order_relaxed);
@@ -416,12 +448,18 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
         aura::core::provenance::record_ensure_valid_success();
         return ws->get_safe(ref);
     }
-    // AutoRefreshOnBoundary (default).
+    // AutoRefreshOnBoundary (default) — full validate_or_refresh.
     auto view = ref.validate_or_refresh(*ws);
     if (!view) {
         aura::core::provenance::record_ensure_valid_fail();
         bump_provenance_mismatch();
         return std::nullopt;
+    }
+    // Issue #1630: count COW provenance enforcement when pin survived.
+    if (ref.boundary_pinned) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->cross_cow_provenance_enforced_total.fetch_add(1, std::memory_order_relaxed);
+        aura::core::provenance::record_cross_cow_provenance_enforced();
     }
     aura::core::provenance::record_ensure_valid_success();
     return view;
