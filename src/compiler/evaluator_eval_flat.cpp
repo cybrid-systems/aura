@@ -1862,6 +1862,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
 // the MutationBoundaryGuard + fiber-yield + read-only check (the
 // outer atomic-batch guard already owns these). Called from
 // (mutate:atomic-batch) for the "mutate:remove-node" sub-op.
+// Issue #1688: removes target from ALL parents (DAG), same as public.
 EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a) {
     if (a.empty() || !is_int(a[0]))
         return std::unexpected(aura::diag::Diagnostic{
@@ -1876,36 +1877,15 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :remove-node: node ID " + std::to_string(target) +
                                        " >= flat size " + std::to_string(flat.size())});
-    // Walk all parents to find the (parent, child_index) of
-    // `target`. Same logic as the wrapper primitive; can be
-    // batched into the log later.
-    bool removed = false;
-    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-        auto v = flat.get(id);
-        if (v.children.empty())
-            continue;
-        const auto& children = flat.children(id);
-        for (std::size_t ci = 0; ci < children.size(); ++ci) {
-            if (children[ci] != target)
-                continue;
-            auto result = aura::ast::mutators::apply_mutation(
-                flat, id, aura::ast::mutators::RemoveChildMutator{static_cast<std::uint32_t>(ci)});
-            if (!result)
-                return std::unexpected(aura::diag::Diagnostic{
-                    aura::diag::ErrorKind::InternalError,
-                    std::string("batch :remove-node: ") + std::string(result.error().message)});
-            flat.add_structural_mutation_log_entry(id, static_cast<std::uint32_t>(ci), target,
-                                                   aura::ast::NULL_NODE, "remove-node");
-            removed = true;
-            break;
-        }
-        if (removed)
-            break;
-    }
-    if (!removed)
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :remove-node: node " + std::to_string(target) + " has no parent in the AST"});
+    auto result = aura::ast::mutators::remove_node_from_all_parents(
+        flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
+            flat.add_structural_mutation_log_entry(parent, ci, target, aura::ast::NULL_NODE,
+                                                   "remove-node");
+        });
+    if (!result)
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      std::string("batch :remove-node: ") +
+                                                          std::string(result.error().message)});
     return make_bool(true);
 }
 

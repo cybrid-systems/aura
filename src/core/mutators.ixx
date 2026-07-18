@@ -83,7 +83,9 @@ export struct ReplaceChildMutator {
     NodeId new_child = NULL_NODE;
 
     [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
-        if (!flat.is_valid(target)) {
+        // Issue #1688: is_live_node — multi-step mutates bump generation_
+        // between ops; is_valid would reject still-live parents.
+        if (!flat.is_live_node(target)) {
             return std::unexpected(
                 make_unexpected(AuraErrorKind::MutationInvalidTarget,
                                 std::format("ReplaceChildMutator: invalid target NodeId {}",
@@ -116,7 +118,10 @@ export struct InsertChildMutator {
     NodeId new_child = NULL_NODE;
 
     [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
-        if (!flat.is_valid(target)) {
+        // Issue #1688: use is_live_node (not is_valid). is_valid requires
+        // node_gen == current generation_; each structural op bumps gen, so
+        // multi-edge / multi-step mutates would spuriously reject live parents.
+        if (!flat.is_live_node(target)) {
             return std::unexpected(
                 make_unexpected(AuraErrorKind::MutationInvalidTarget,
                                 std::format("InsertChildMutator: invalid target NodeId {}",
@@ -140,7 +145,8 @@ export struct RemoveChildMutator {
     std::uint32_t index = 0;
 
     [[nodiscard]] AuraResult<NodeId> apply(FlatAST& flat, NodeId target) const {
-        if (!flat.is_valid(target)) {
+        // Issue #1688: is_live_node — see InsertChildMutator note.
+        if (!flat.is_live_node(target)) {
             return std::unexpected(
                 make_unexpected(AuraErrorKind::MutationInvalidTarget,
                                 std::format("RemoveChildMutator: invalid target NodeId {}",
@@ -282,6 +288,64 @@ export template <aura::core::Mutator<FlatAST> M>
         dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
     }
     return r;
+}
+
+// Issue #1688: FlatAST is a DAG — a node may be a child of multiple
+// parents (shared subexpressions, macro-shared bodies). Collect every
+// (parent, child_index) edge pointing at `target`, ordered for safe
+// multi-remove: same parent → higher child index first so RemoveChild
+// does not shift still-pending indices.
+export struct IncomingChildEdge {
+    NodeId parent = NULL_NODE;
+    std::uint32_t child_index = 0;
+};
+
+export [[nodiscard]] std::vector<IncomingChildEdge>
+collect_incoming_child_edges(const FlatAST& flat, NodeId target) {
+    std::vector<IncomingChildEdge> edges;
+    if (target == NULL_NODE || target >= flat.size())
+        return edges;
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_free_slot(id))
+            continue;
+        auto children = flat.children(id);
+        for (std::size_t ci = 0; ci < children.size(); ++ci) {
+            if (children[ci] == target)
+                edges.push_back(IncomingChildEdge{id, static_cast<std::uint32_t>(ci)});
+        }
+    }
+    std::ranges::sort(edges, [](const IncomingChildEdge& a, const IncomingChildEdge& b) {
+        if (a.parent != b.parent)
+            return a.parent < b.parent;
+        return a.child_index > b.child_index; // higher index first per parent
+    });
+    return edges;
+}
+
+// Issue #1688: remove `target` from ALL parents via RemoveChildMutator.
+// Returns the number of edges removed, or an error on the first failed apply.
+// Optional `on_edge` is invoked after each successful removal (for mutation log).
+export template <typename OnEdge = std::nullptr_t>
+[[nodiscard]] AuraResult<std::size_t> remove_node_from_all_parents(FlatAST& flat, NodeId target,
+                                                                   OnEdge&& on_edge = {}) {
+    auto edges = collect_incoming_child_edges(flat, target);
+    if (edges.empty()) {
+        return std::unexpected(
+            make_unexpected(AuraErrorKind::MutationInvalidTarget,
+                            std::format("remove_node_from_all_parents: node {} has no parent",
+                                        static_cast<std::uint64_t>(target))));
+    }
+    std::size_t removed = 0;
+    for (const auto& e : edges) {
+        auto result = apply_mutation(flat, e.parent, RemoveChildMutator{e.child_index});
+        if (!result)
+            return std::unexpected(result.error());
+        if constexpr (!std::is_same_v<std::remove_cvref_t<OnEdge>, std::nullptr_t>) {
+            on_edge(e.parent, e.child_index);
+        }
+        ++removed;
+    }
+    return removed;
 }
 
 // ── StrategyKind (tag enum for runtime dispatch) ────────────
