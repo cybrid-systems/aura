@@ -8,8 +8,9 @@ module;
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
 #include "observability_metrics.h"
-#include "hash_meta.h"            // FNV constants for stats hash
-#include "typed_mutation_audit.h" // Issue #1589
+#include "hash_meta.h"             // FNV constants for stats hash
+#include "typed_mutation_audit.h"  // Issue #1589
+#include "render_prim_template.hh" // Issue #1677: aura_is_render_evolution_name
 
 module aura.compiler.evaluator;
 
@@ -1755,6 +1756,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                        ev.panic_auto_rollback_
                            ? ("mutation rejected — auto-rolled back: " + ev.last_mutate_error_)
                            : ("mutation rejected: " + ev.last_mutate_error_));
+        }
+
+        // Issue #1677: track render-logic rebinds for AI Native evolution stats.
+        if (aura_is_render_evolution_name(name)) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->render_evolution_rebind_total.fetch_add(1, std::memory_order_relaxed);
         }
 
         return make_bool(true);
@@ -4730,7 +4737,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.empty() || !is_keyword(a[0]))
             return mev("bad-arg",
                        "usage: (mutate :op …)  ops: :rebind :replace :move :extract :validate "
-                       ":atomic");
+                       ":atomic :render-optimize");
 
         const std::string op = kw_name(a[0]);
         auto rest = a.subspan(1);
@@ -4738,6 +4745,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // (mutate :rebind name code [summary] …)
         if (op == "rebind")
             return call_named("mutate:rebind", rest);
+
+        // Issue #1677: (mutate :render-optimize [buf-id])
+        // Facade-backed pattern optimize (no new public add name).
+        if (op == "render-optimize" || op == "optimize-render") {
+            auto fn = ObservabilityPrims::lookup_stats_impl("mutate:render-optimize");
+            if (!fn)
+                return mev("no-prim", "mutate:render-optimize facade missing");
+            return (*fn)(rest);
+        }
 
         // (mutate :replace target kind expr…)
         // kind ∈ pattern | subtree | value | type  (keyword or string)
@@ -4796,7 +4812,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return call_named("mutate:atomic-batch", rest);
 
         return mev("bad-arg", "unknown mutate op ':" + op +
-                                  "' — use :rebind :replace :move :extract :validate :atomic");
+                                  "' — use :rebind :replace :move :extract :validate :atomic "
+                                  ":render-optimize");
     });
 
     // Issue #1436: deprecate core mutate:* aliases in favor of (mutate :op).
