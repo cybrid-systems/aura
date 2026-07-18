@@ -610,25 +610,58 @@ extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id
 // ── Closure inline cache (monomorphic, direct-mapped) ──
 // Caches the resolved function pointer + metadata for recently-accessed closures.
 // This eliminates vector lookup overhead on repeated calls to the same closure.
+//
+// Issue #1707: seqlock-style generation on each entry. Plain struct
+// assignment was not atomic; invalidate under shared table lock (stale
+// deopt path) could tear with concurrent fast-path readers. Odd generation
+// means write in progress; even + matching g1/g2 means a consistent snapshot.
 static constexpr int CLOSURE_CACHE_SIZE = 64;
 struct ClosureCacheEntry {
-    int64_t closure_id;
-    int64_t (*fn)(int64_t*, uint32_t);
-    int32_t local_count;
-    int32_t arg_count;
-    int32_t env_count;
+    std::atomic<std::uint64_t> generation{0}; // even = stable, odd = write
+    int64_t closure_id{-1};
+    int64_t (*fn)(int64_t*, uint32_t){nullptr};
+    int32_t local_count{0};
+    int32_t arg_count{0};
+    int32_t env_count{0};
 };
-static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE] = {{-1, nullptr, 0, 0, 0}};
+static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE];
+static std::atomic<std::uint64_t> g_closure_cache_generation_mismatch_total{0};
+
+static void clear_closure_cache_entry(ClosureCacheEntry& e) {
+    e.generation.fetch_add(1, std::memory_order_release); // odd: writing
+    e.closure_id = -1;
+    e.fn = nullptr;
+    e.local_count = 0;
+    e.arg_count = 0;
+    e.env_count = 0;
+    e.generation.fetch_add(1, std::memory_order_release); // even: stable
+}
+
+static void write_closure_cache_entry(ClosureCacheEntry& e, int64_t closure_id,
+                                      int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
+                                      int32_t arg_count, int32_t env_count) {
+    e.generation.fetch_add(1, std::memory_order_release);
+    e.closure_id = closure_id;
+    e.fn = fn;
+    e.local_count = local_count;
+    e.arg_count = arg_count;
+    e.env_count = env_count;
+    e.generation.fetch_add(1, std::memory_order_release);
+}
 
 static void invalidate_closure_cache_for(int64_t closure_id) {
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
     if (g_closure_cache[cache_idx].closure_id == closure_id)
-        g_closure_cache[cache_idx] = {-1, nullptr, 0, 0, 0};
+        clear_closure_cache_entry(g_closure_cache[cache_idx]);
     // Also scan in case of collisions that left other slots (rare; size=64)
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i) {
         if (g_closure_cache[i].closure_id == closure_id)
-            g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
+            clear_closure_cache_entry(g_closure_cache[i]);
     }
+}
+
+extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
+    return g_closure_cache_generation_mismatch_total.load(std::memory_order_relaxed);
 }
 
 // Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
@@ -981,56 +1014,63 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         }
     }
 
-    // ── Inline cache check ──
+    // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
-    if (g_closure_cache[cache_idx].closure_id == closure_id) {
+    {
         auto& ce = g_closure_cache[cache_idx];
-        if (ce.fn) {
-            // Fast path: use cached function pointer directly
+        const auto g1 = ce.generation.load(std::memory_order_acquire);
+        // Odd generation ⇒ write in progress; miss to slow path.
+        if ((g1 & 1ull) == 0 && ce.closure_id == closure_id && ce.fn) {
+            // Snapshot payload before second generation load.
+            auto* fn = ce.fn;
             int32_t nlocals = ce.local_count > 0 ? ce.local_count : 16;
-            int32_t nargs = argc < ce.arg_count ? static_cast<int32_t>(argc) : ce.arg_count;
+            int32_t arg_count = ce.arg_count;
             int32_t env_count = ce.env_count;
-
-            // Stack buffer for small locals, fallback to heap for large
-            std::array<int64_t, 64> stack_buf;
-            std::vector<int64_t> heap_buf;
-            int64_t* locals = stack_buf.data();
-            if (static_cast<size_t>(nlocals) > stack_buf.size()) {
-                heap_buf.resize(static_cast<size_t>(nlocals), 0);
-                locals = heap_buf.data();
+            const auto g2 = ce.generation.load(std::memory_order_acquire);
+            if (g1 != g2 || ce.closure_id != closure_id || fn == nullptr) {
+                g_closure_cache_generation_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                // Fall through to slow path — torn or invalidated mid-read.
             } else {
-                for (int32_t i = 0; i < nlocals; ++i)
-                    locals[i] = 0;
-            }
+                // Fast path: use snapshot (not live ce fields after gen check).
+                int32_t nargs = argc < arg_count ? static_cast<int32_t>(argc) : arg_count;
 
-            // Place captured env values first (arena-mode freeable env, else heap)
-            size_t cid_cast = static_cast<size_t>(closure_id);
-            const bool use_arena =
-                cid_cast < g_closure_is_arena.size() && g_closure_is_arena[cid_cast] != 0 &&
-                cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast];
-            if (use_arena) {
-                int64_t* arena_env = g_arena_closure_envs[cid_cast];
-                // Issue #1302: bound by recorded arena allocation size.
-                size_t asz = cid_cast < g_arena_closure_env_sizes.size()
-                                 ? g_arena_closure_env_sizes[cid_cast]
-                                 : 0;
-                for (int32_t i = 0; i < env_count; ++i) {
-                    if (static_cast<size_t>(i) < asz)
-                        locals[i] = arena_env[i];
+                std::array<int64_t, 64> stack_buf;
+                std::vector<int64_t> heap_buf;
+                int64_t* locals = stack_buf.data();
+                if (static_cast<size_t>(nlocals) > stack_buf.size()) {
+                    heap_buf.resize(static_cast<size_t>(nlocals), 0);
+                    locals = heap_buf.data();
+                } else {
+                    for (int32_t i = 0; i < nlocals; ++i)
+                        locals[i] = 0;
                 }
-            } else {
-                auto& env = g_closure_envs[cid_cast];
-                for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
-                    locals[i] = env[i];
+
+                size_t cid_cast = static_cast<size_t>(closure_id);
+                const bool use_arena =
+                    cid_cast < g_closure_is_arena.size() && g_closure_is_arena[cid_cast] != 0 &&
+                    cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast];
+                if (use_arena) {
+                    int64_t* arena_env = g_arena_closure_envs[cid_cast];
+                    size_t asz = cid_cast < g_arena_closure_env_sizes.size()
+                                     ? g_arena_closure_env_sizes[cid_cast]
+                                     : 0;
+                    for (int32_t i = 0; i < env_count; ++i) {
+                        if (static_cast<size_t>(i) < asz)
+                            locals[i] = arena_env[i];
+                    }
+                } else {
+                    auto& env = g_closure_envs[cid_cast];
+                    for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
+                        locals[i] = env[i];
+                }
+
+                for (int32_t i = 0; i < nargs; ++i)
+                    locals[env_count + i] = args[i];
+
+                int64_t fast_result = fn(locals, static_cast<uint32_t>(argc));
+                aura_unlock_workspace_read();
+                return fast_result;
             }
-
-            // Place call arguments after env
-            for (int32_t i = 0; i < nargs; ++i)
-                locals[env_count + i] = args[i];
-
-            int64_t fast_result = ce.fn(locals, static_cast<uint32_t>(argc));
-            aura_unlock_workspace_read();
-            return fast_result;
         }
     }
 
@@ -1123,13 +1163,11 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // ── Update cache (Issue #1305: write under exclusive lock — not read lock) ──
     // Pre-#1305 updated 5 fields under read lock → TOCTOU with concurrent
     // fast-path readers sharing the same cache_idx (hash collision).
+    // Issue #1707: generation bumps bracket the multi-field write.
     aura_unlock_workspace_read();
     aura_lock_workspace_write();
-    g_closure_cache[cache_idx].closure_id = closure_id;
-    g_closure_cache[cache_idx].fn = entry.fn;
-    g_closure_cache[cache_idx].local_count = entry.local_count;
-    g_closure_cache[cache_idx].arg_count = entry.arg_count;
-    g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env_count_check);
+    write_closure_cache_entry(g_closure_cache[cache_idx], closure_id, entry.fn, entry.local_count,
+                              entry.arg_count, static_cast<int32_t>(env_count_check));
     aura_unlock_workspace_write();
     return result;
 }
@@ -1933,7 +1971,7 @@ void aura_reset_runtime() {
     g_closure_freed.clear();     // Issue #1361
     g_closure_free_list.clear(); // Issue #1361
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
-        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
+        clear_closure_cache_entry(g_closure_cache[i]);
     g_jit_fns_overflow.clear(); // Issue #1304
     g_jit_fns_by_name.clear();
     g_cell_heap.clear();
@@ -1970,9 +2008,9 @@ void aura_reset_runtime() {
     for (auto* fht : g_hash_tables)
         FlatHashTable::destroy(fht);
     g_hash_tables.clear();
-    // Clear closure inline cache
+    // Clear closure inline cache (again after hash free — keep even gens)
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
-        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
+        clear_closure_cache_entry(g_closure_cache[i]);
     // Keep prim table (registered once)
     // Clear JIT function entries but NOT prim table
     for (int i = 0; i < 512; ++i)

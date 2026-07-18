@@ -109,6 +109,8 @@ extern "C" int aura_closure_is_freed(std::int64_t closure_id);
 // (may still be freed — use aura_closure_is_freed for live-call gate).
 // Disambiguates provenance accessors that return 0 for both OOR and epoch 0.
 extern "C" int aura_closure_exists(std::int64_t closure_id);
+// Issue #1707: count of closure-cache generation mismatches (torn-read prevented).
+extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void);
 
 // ── JIT / runtime C ABI (defined in aura_jit_runtime.cpp, aura_jit_bridge.cpp) ──
 extern "C" std::int64_t aura_jit_test();
