@@ -1863,6 +1863,10 @@ public:
 
     // Clear the checkpoint (call after successful mutation commit).
     void commit_panic_checkpoint() {
+        // Issue #1489 / #1667: release process-wide GC defer FIRST so a
+        // throw from later bookkeeping cannot leave depth permanently
+        // elevated (exception-safe dual of ~Evaluator release).
+        release_gc_defer_for_pending_panic();
         panic_safe_source_.clear();
         // Issue #242: clear the arena-size snapshots too so a
         // subsequent save_panic_checkpoint() starts fresh.
@@ -1870,8 +1874,6 @@ public:
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
-        // Issue #1489: recovery complete — allow GC compact again.
-        release_gc_defer_for_pending_panic();
         // Issue #548: bump panic_checkpoint_commit_count_
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.

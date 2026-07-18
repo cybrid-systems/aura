@@ -5277,6 +5277,9 @@ aura_issue_test_link_llvm_jit(test_scan_skip_freed_closures_1665)
 # Issue #1666: compact hook replace/chain (no silent overwrite).
 aura_add_issue_test(test_compact_hook_chain_1666)
 aura_issue_test_link_llvm_jit(test_compact_hook_chain_1666)
+# Issue #1667: ~Evaluator releases PanicCheckpoint GC defer (no depth leak).
+aura_add_issue_test(test_gc_defer_dtor_release_1667)
+aura_issue_test_link_llvm_jit(test_gc_defer_dtor_release_1667)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
