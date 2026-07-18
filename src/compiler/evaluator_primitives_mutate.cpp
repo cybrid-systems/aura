@@ -3836,7 +3836,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // 4. Replace the original expression with a call to the new function
 
             // Get the parent of the target (parent_of, not O(N×C)).
-            // Issue #1701 sibling: re-validate after parse_to_flat like #1700.
+            // Issue #1703: 8th capture-before-parse_to_flat instance
+            // (landed with #1701 sibling harden; locked here with dedicated AC).
             if (node == aura::ast::NULL_NODE || !flat.is_live_node(node)) {
                 ok = false;
                 return ev.make_merr("out-of-range", "extract target not a live node");
@@ -3876,7 +3877,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return ev.make_merr("parse-error", parse_err);
             }
 
-            // Re-validate target + parent edge after parse (#1701 / #1700).
+            // Issue #1703: re-validate target + parent edge after parse
+            // (is_live_node only — parse_to_flat restamps gens #273 / #1699).
             if (static_cast<std::size_t>(node) >= size_before_parse || !flat.is_live_node(node)) {
                 ok = false;
                 return ev.make_merr("stale-ref", "refactor/extract: target invalid after parse");
