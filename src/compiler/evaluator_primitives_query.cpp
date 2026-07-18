@@ -17,6 +17,10 @@ module;
 #include "hash_meta.h"                 // FNV constants (#901)
 #include "typed_mutation_audit.h"      // Issue #1613 macro hygiene audit trail
 
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -111,6 +115,184 @@ static std::uint64_t ir_inline_hygiene_skipped(Evaluator* ev) {
         return 0;
     return ev->get_macro_hygiene_skipped_fn_();
 }
+
+// ── Issue #1680: query:module-exports mtime cache + extractable parser ──
+namespace module_export_cache {
+
+    struct Entry {
+        std::filesystem::file_time_type mtime{};
+        std::vector<std::string> exports;
+        bool valid = false; // true if file was readable and parsed
+    };
+
+    std::mutex g_mtx;
+    std::unordered_map<std::string, Entry> g_by_path;
+    std::atomic<std::uint64_t> g_hit{0};
+    std::atomic<std::uint64_t> g_miss{0};
+    std::atomic<std::uint64_t> g_stat_fail{0};
+    std::atomic<std::uint64_t> g_open_fail{0};
+
+    // Extract (export SYM...) names from Aura source. Skips ; line comments,
+    // #| |# block comments, and "…" strings (incl. simple backslash escapes).
+    // Mirrors historical behavior: first top-level (export …) form only.
+    [[nodiscard]] std::vector<std::string> parse_module_exports(std::string_view content) {
+        std::vector<std::string> exports;
+        const std::size_t n = content.size();
+        std::size_t i = 0;
+        auto skip_ws = [&] {
+            while (i < n && (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
+                             content[i] == '\r'))
+                ++i;
+        };
+        auto skip_line_comment = [&] {
+            while (i < n && content[i] != '\n')
+                ++i;
+        };
+        auto skip_block_comment = [&] {
+            i += 2; // past #|
+            while (i + 1 < n) {
+                if (content[i] == '|' && content[i + 1] == '#') {
+                    i += 2;
+                    return;
+                }
+                ++i;
+            }
+            i = n;
+        };
+        auto skip_string = [&] {
+            ++i; // opening "
+            while (i < n) {
+                if (content[i] == '\\' && i + 1 < n) {
+                    i += 2;
+                    continue;
+                }
+                if (content[i] == '"') {
+                    ++i;
+                    return;
+                }
+                ++i;
+            }
+        };
+        auto is_sym_char = [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                   c == '_' || c == '?' || c == '!' || c == '<' || c == '>' || c == '=' ||
+                   c == '*' || c == '+' || c == '-' || c == '/' || c == '.' || c == '$';
+        };
+
+        while (i < n) {
+            if (content[i] == ';') {
+                skip_line_comment();
+                continue;
+            }
+            if (content[i] == '#' && i + 1 < n && content[i + 1] == '|') {
+                skip_block_comment();
+                continue;
+            }
+            if (content[i] == '"') {
+                skip_string();
+                continue;
+            }
+            if (content[i] == '(' && i + 7 <= n && content.substr(i, 7) == "(export" &&
+                (i + 7 == n || content[i + 7] == ' ' || content[i + 7] == '\t' ||
+                 content[i + 7] == '\n' || content[i + 7] == '\r' || content[i + 7] == ')')) {
+                // Boundary: start of file or whitespace/'(' before (export
+                if (i > 0) {
+                    const char prev = content[i - 1];
+                    if (prev != '\n' && prev != ' ' && prev != '\t' && prev != '\r' &&
+                        prev != '(') {
+                        ++i;
+                        continue;
+                    }
+                }
+                i += 7;
+                while (i < n && content[i] != ')') {
+                    skip_ws();
+                    if (i >= n || content[i] == ')')
+                        break;
+                    if (content[i] == ';') {
+                        skip_line_comment();
+                        continue;
+                    }
+                    if (content[i] == '#' && i + 1 < n && content[i + 1] == '|') {
+                        skip_block_comment();
+                        continue;
+                    }
+                    if (content[i] == '"') {
+                        skip_string();
+                        continue;
+                    }
+                    if (!is_sym_char(content[i])) {
+                        ++i;
+                        continue;
+                    }
+                    const std::size_t s = i;
+                    while (i < n && is_sym_char(content[i]))
+                        ++i;
+                    if (i > s)
+                        exports.emplace_back(content.substr(s, i - s));
+                }
+                break; // first (export …) only (historical contract)
+            }
+            ++i;
+        }
+        return exports;
+    }
+
+    // Returns (valid, exports). Copies exports under the lock to avoid dangling
+    // map pointers across concurrent miss rehash.
+    [[nodiscard]] std::pair<bool, std::vector<std::string>>
+    lookup_or_load(const std::string& resolved) {
+        std::error_code ec;
+        const auto mtime = std::filesystem::last_write_time(resolved, ec);
+        if (ec) {
+            g_stat_fail.fetch_add(1, std::memory_order_relaxed);
+            g_miss.fetch_add(1, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(g_mtx);
+            g_by_path[resolved] = Entry{};
+            return {false, {}};
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_mtx);
+            auto it = g_by_path.find(resolved);
+            if (it != g_by_path.end() && it->second.valid && it->second.mtime == mtime) {
+                g_hit.fetch_add(1, std::memory_order_relaxed);
+                return {true, it->second.exports};
+            }
+        }
+        // Miss: read + parse outside lock (I/O), then store.
+        g_miss.fetch_add(1, std::memory_order_relaxed);
+        std::ifstream f(resolved);
+        Entry fresh;
+        fresh.mtime = mtime;
+        if (!f.is_open()) {
+            g_open_fail.fetch_add(1, std::memory_order_relaxed);
+            fresh.valid = false;
+        } else {
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            fresh.exports = parse_module_exports(content);
+            fresh.valid = true;
+        }
+        std::lock_guard<std::mutex> lock(g_mtx);
+        // Another thread may have filled the cache; prefer freshest valid entry.
+        auto& slot = g_by_path[resolved];
+        if (!(slot.valid && slot.mtime == mtime))
+            slot = std::move(fresh);
+        if (!slot.valid)
+            return {false, {}};
+        return {true, slot.exports};
+    }
+
+    void reset_for_test() {
+        std::lock_guard<std::mutex> lock(g_mtx);
+        g_by_path.clear();
+        g_hit.store(0, std::memory_order_relaxed);
+        g_miss.store(0, std::memory_order_relaxed);
+        g_stat_fail.store(0, std::memory_order_relaxed);
+        g_open_fail.store(0, std::memory_order_relaxed);
+    }
+
+} // namespace module_export_cache
 
 // Issue #750: runtime AST subtree validation for macro/EDSL self-evo safety.
 struct ReflectRuntimeValidateResult {
@@ -215,6 +397,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                std::pmr::vector<std::string>& string_heap, void*& type_registry,
                                ModulePathResolver resolve_module_path, Evaluator& ev) {
 
+    // Issue #1680: mtime-keyed cache; amortize re-read/re-parse of module files.
     add("query:module-exports",
         [&pairs, &string_heap, resolve_module_path](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_string(a[0]))
@@ -226,63 +409,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto resolved = resolve_module_path(path);
             if (resolved.empty())
                 return make_void();
-            std::ifstream f(resolved);
-            if (!f.is_open())
+            auto [ok, exports] = module_export_cache::lookup_or_load(resolved);
+            if (!ok)
                 return make_void();
-            std::string content((std::istreambuf_iterator<char>(f)),
-                                std::istreambuf_iterator<char>());
-            f.close();
-            std::vector<std::string> exports;
-            std::size_t pos = 0;
-            while (pos < content.size()) {
-                auto export_pos = content.find("(export", pos);
-                if (export_pos == std::string::npos)
-                    break;
-                if (export_pos > 0) {
-                    char prev = content[export_pos - 1];
-                    if (prev != '\n' && prev != ' ' && prev != '\t' && prev != '(') {
-                        pos = export_pos + 1;
-                        continue;
-                    }
-                }
-                auto sym_start = export_pos + 7;
-                while (sym_start < content.size() &&
-                       (content[sym_start] == ' ' || content[sym_start] == '\t' ||
-                        content[sym_start] == '\n' || content[sym_start] == '\r')) {
-                    ++sym_start;
-                }
-                std::size_t i = sym_start;
-                while (i < content.size() && content[i] != ')') {
-                    if (content[i] == ' ' || content[i] == '\t' || content[i] == '\n' ||
-                        content[i] == '\r') {
-                        ++i;
-                        continue;
-                    }
-                    if (content[i] == ';') {
-                        while (i < content.size() && content[i] != '\n')
-                            ++i;
-                        continue;
-                    }
-                    std::size_t s = i;
-                    while (i < content.size()) {
-                        char c = content[i];
-                        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                            (c >= '0' && c <= '9') || c == '_' || c == '?' || c == '!' ||
-                            c == '<' || c == '>' || c == '=' || c == '*' || c == '+' || c == '-' ||
-                            c == '/' || c == '.' || c == '$') {
-                            ++i;
-                        } else {
-                            break;
-                        }
-                    }
-                    if (i > s) {
-                        exports.push_back(content.substr(s, i - s));
-                    } else {
-                        ++i;
-                    }
-                }
-                break;
-            }
             EvalValue lst = make_void();
             for (auto it = exports.rbegin(); it != exports.rend(); ++it) {
                 auto sidx = string_heap.size();
@@ -292,6 +421,60 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 lst = make_pair(pid);
             }
             return lst;
+        });
+
+    // Facade-only (#1680): (stats:get "query:module-export-cache-stats")
+    ObservabilityPrims::register_stats_impl(
+        "query:module-export-cache-stats", [&string_heap](std::span<const EvalValue>) -> EvalValue {
+            auto load = [](const std::atomic<std::uint64_t>& a) {
+                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
+            };
+            std::size_t size = 0;
+            {
+                std::lock_guard<std::mutex> lock(module_export_cache::g_mtx);
+                size = module_export_cache::g_by_path.size();
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1680);
+            insert_kv("issue", 1680);
+            insert_kv("hits", load(module_export_cache::g_hit));
+            insert_kv("misses", load(module_export_cache::g_miss));
+            insert_kv("stat-fail", load(module_export_cache::g_stat_fail));
+            insert_kv("open-fail", load(module_export_cache::g_open_fail));
+            insert_kv("entries", static_cast<std::int64_t>(size));
+            const auto h = load(module_export_cache::g_hit);
+            const auto m = load(module_export_cache::g_miss);
+            const auto denom = h + m;
+            insert_kv("hit-rate-bp", denom > 0 ? (h * 10000) / denom : 0);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     ObservabilityPrims::register_stats_impl(

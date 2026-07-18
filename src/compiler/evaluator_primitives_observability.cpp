@@ -237,6 +237,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:render-buffer-stats",
     "query:render-evolution-stats",
     "mutate:render-optimize",
+    // Issue #1680: query:module-exports mtime cache observability
+    "query:module-export-cache-stats",
     "query:shape-value-hotpath-contracts-stats",
     "query:ir-soa-full-enforcement-stats",
     "query:arena-live-defrag-stats",
