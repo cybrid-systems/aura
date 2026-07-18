@@ -365,6 +365,13 @@ private:
 // Phase 2.2 SoA-walk migration (Issue #145).
 export class Evaluator;
 
+// Issue #348 / #1682: mark IfExpr nodes under a subtree for occurrence dirty
+// (cycle-safe iterative DFS). Defined in evaluator_primitives_mutate.cpp.
+export void auto_wire_k_occurrence_dirty_for_subtree(
+    aura::ast::FlatAST& flat,
+    const std::function<bool(aura::ast::NodeId, bool)>& set_occurrence_dirty_fn,
+    aura::ast::NodeId root);
+
 // EnvId — uint32_t index into Evaluator::env_frames_ arena.
 // Full SoA documentation in §2.7.5 / §2.7.6 of
 // C++26 module conventions (.clang-format). Declared here (above Env) so
