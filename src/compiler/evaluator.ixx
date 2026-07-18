@@ -1359,6 +1359,29 @@ public:
             return m->envframe_compact_bridge_restamps_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #1904: mutation guard coverage accessors. Read-only on
+    // CompilerMetrics counters; the bump sites live inside
+    // MutationBoundaryGuard ctor (wrapped) and the legacy sites (manual).
+    [[nodiscard]] std::uint64_t get_mutation_boundary_primitives_wrapped() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mutation_legacy_manual_lock_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->mutation_legacy_manual_lock_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mutation_guard_try_acquire_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mutation_guard_try_acquire_reject_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     // Issue #682: compiler GC root flush hook (service.ixx
     // implements flush_compiler_gc_roots). Called from
     // flush_gc_roots at safepoint after runtime heap roots.
@@ -5276,6 +5299,20 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->mutation_boundary_recovery_failures_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1904: public bump helper for the legacy mutate:* lock + bump
+    // counter. Called from legacy migration sites (#1904 Commit 2) BEFORE
+    // they are migrated to MutationBoundaryGuard RAII; the linter
+    // (scripts/check_legacy_mutate_lock.py) will fail the build when any
+    // legacy pattern is reintroduced, so this counter monotonically
+    // decreases to 0 as the migration completes. Public so tests +
+    // Commit 2 migration use the same API and never touch the
+    // CompilerMetrics struct directly (no module dependency).
+    void bump_mutation_legacy_manual_lock_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_legacy_manual_lock_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Issue #718: fine-grained per-block re-lower observability

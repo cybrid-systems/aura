@@ -176,20 +176,32 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     // only when the direct copy is missing (e.g. for snapshots
     // taken before this feature shipped).
     add("ast:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
+        // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
+        // defuse_version_ + rollback. ok = false on every error path so
+        // the Guard's dtor triggers rollback consistently.
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+            ok = false;
             return make_int(-1);
+        }
 
         // Get current source
         auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn)
+        if (!src_fn) {
+            ok = false;
             return make_int(-1);
+        }
         auto src = (*src_fn)({});
-        if (!is_string(src))
+        if (!is_string(src)) {
+            ok = false;
             return make_int(-1);
+        }
         auto src_idx = as_string_idx(src);
-        if (src_idx >= ev.string_heap_.size())
+        if (src_idx >= ev.string_heap_.size()) {
+            ok = false;
             return make_int(-1);
+        }
         auto source = ev.string_heap_[src_idx];
 
         // Optional name
@@ -430,9 +442,13 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         // are all preserved bit-for-bit.
         bool did_direct = false;
         {
-            std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-            if (ev.workspace_read_only_)
+            // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
+            bool ok = true;
+            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            if (ev.workspace_read_only_) {
+                ok = false;
                 return make_bool(false);
+            }
             if (id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].has_flat &&
                 ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool && ev.workspace_flat_ &&
                 ev.workspace_pool_) {
@@ -1088,17 +1104,25 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (ast:recycle-nodes) — mark unreachable slots free for reuse.
     add("ast:recycle-nodes", [&ev](const auto&) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-        if (!ev.workspace_flat_)
+        // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (!ev.workspace_flat_) {
+            ok = false;
             return make_int(0);
+        }
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->recycle_dead_nodes()));
     });
 
     // (ast:compact-nodes) — densify live nodes into 0..n-1 slots.
     add("ast:compact-nodes", [&ev](const auto&) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-        if (!ev.workspace_flat_)
+        // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (!ev.workspace_flat_) {
+            ok = false;
             return make_int(0);
+        }
         const auto reclaimed = ev.workspace_flat_->compact_nodes();
         // Issue #490: compact remaps NodeIds — drop stale Evaluator
         // index entries, then optionally eager-rebuild per policy.

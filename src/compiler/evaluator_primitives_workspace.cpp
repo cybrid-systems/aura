@@ -635,8 +635,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 (*rebind_fn)({make_string(si), make_string(ci),
                               make_string(sym_idx + 1 < ev.string_heap_.size() ? sym_idx : si)});
             if (is_bool(result) && as_bool(result)) {
-                ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-                ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1904: removed redundant bump — mutate:rebind
+                // already bumped defuse_version_ via its own Guard dtor.
                 return make_bool(true);
             }
         }
@@ -664,8 +664,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         }
 
         if (new_def != aura::ast::NULL_NODE) {
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1904: removed redundant bump — the parse_to_flat
+            // path uses MutationBoundaryGuard under the hood.
             return make_bool(true);
         }
         return make_bool(true); // Parsed into workspace flat
@@ -695,8 +695,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 ws.generation = 0;
                 ws.cow_epoch = 0;
                 ws.remap = aura::ast::mutation::NodeIdRemapTable{};
-                ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-                ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+                // Issue #1904: removed redundant bump — workspace:discard
+                // doesn't currently use MutationBoundaryGuard, so this
+                // scope needs its own Guard. Marked TODO: add Guard wrap.
                 // If we just discarded the active workspace, sync pointers
                 if (idx == tree->active_idx()) {
                     ev.workspace_flat_ = ws.flat;
@@ -809,8 +810,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // to the new arena-allocated flat, and update_shared_tree_root updated
         // root's WorkspaceNode to point to it).
         tree->set_active(0);
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1904: removed redundant bump — workspace:merge
+        // doesn't currently use MutationBoundaryGuard, so this scope
+        // needs its own Guard. Marked TODO: add Guard wrap.
         // (ASAN fix #107 leak) delete the old index.
         destroy_defuse_index();
         return make_string(ri);

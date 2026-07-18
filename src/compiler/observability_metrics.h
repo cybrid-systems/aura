@@ -6214,10 +6214,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_primitives_wrapped{0};   // #1252
     std::atomic<std::uint64_t> mutation_boundary_linear_revalidations{0}; // #1252
     std::atomic<std::uint64_t> mutation_boundary_steal_recoveries{0};     // #1252
-    std::atomic<std::uint64_t> mutation_hold_duration_us_total{0};        // #1253
-    std::atomic<std::uint64_t> mutation_hold_samples{0};                  // #1253
-    std::atomic<std::uint64_t> mutation_hold_duration_us_max{0};          // #1253
-    std::atomic<std::uint64_t> mutation_too_long_total{0};                // #1253
+    // Issue #1904: legacy mutate:* primitives still using manual
+    // std::unique_lock<std::shared_mutex> on workspace_mtx_ + explicit
+    // defuse_version_ fetch_add instead of MutationBoundaryGuard RAII.
+    // Goal of #1904: drive this counter to 0 by migrating every legacy
+    // site to Guard. Surfaced by
+    // (engine:metrics "query:mutation-guard-coverage") + the
+    // scripts/check_legacy_mutate_lock.py CI linter.
+    std::atomic<std::uint64_t> mutation_legacy_manual_lock_total{0}; // #1904
+    std::atomic<std::uint64_t> mutation_hold_duration_us_total{0};   // #1253
+    std::atomic<std::uint64_t> mutation_hold_samples{0};             // #1253
+    std::atomic<std::uint64_t> mutation_hold_duration_us_max{0};     // #1253
+    std::atomic<std::uint64_t> mutation_too_long_total{0};           // #1253
     // Issue #1443: long-mutation policy knobs + starvation prevention counter.
     // Reads in dtor are racy by design (best-effort policy, not safety critical).
     // Threshold default 500ms (500'000 µs); max_extreme default 30s (strict-mode ceiling).

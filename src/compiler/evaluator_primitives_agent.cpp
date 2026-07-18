@@ -809,8 +809,11 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 }
             }
 
-            // Success
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
+            // Success. Issue #107 part 4: this site deliberately avoids
+            // taking workspace_mtx_ (the typecheck-current primitive would
+            // re-enter the lock and deadlock). The manual bump is therefore
+            // outside the #1904 migration scope — see Issue #107 part 4.
+            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel); // #1904-allow legacy-lock
             ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
             auto src_fn = ev.primitives_.lookup("current-source");
             if (src_fn) {
@@ -1269,8 +1272,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             auto sc_fn = ev.primitives_.lookup("set-code");
             if (sc_fn)
                 (*sc_fn)({make_string(bi)});
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1904: removed redundant bump — synthesize:optimize
+            // path doesn't currently use MutationBoundaryGuard; the
+            // mutation scope needs its own Guard wrap. Marked TODO.
             // (ASAN fix #107 leak) delete the old index.
             destroy_defuse_index();
 

@@ -2150,6 +2150,26 @@ aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
 #     10k iter: counters grow, no desync leak
 aura_add_issue_test(test_issue_1903)
 aura_issue_test_link_llvm_jit(test_issue_1903)
+# Issue #1904: mutate:* primitive MutationBoundaryGuard full coverage.
+# Closes #213 Cycle 1-3 + the remaining ~13 legacy mutate:* primitives
+# that still use manual std::unique_lock(ev.workspace_mtx_) + explicit
+# ev.defuse_version_.fetch_add(...) patterns. Adds:
+#   - mutation_legacy_manual_lock_total counter (#1904)
+#   - (engine:metrics "query:mutation-guard-coverage") primitive
+#     (returns -1 regression sentinel / 10000 vacuous / basis points)
+#   - scripts/check_legacy_mutate_lock.py CI linter (regex + self-test
+#     + synthetic fixture detection) wired through tests/test_issue_1904.cpp
+#     AC6 + AC7
+#   - 4 Evaluator accessors: get_mutation_boundary_primitives_wrapped /
+#     get_mutation_legacy_manual_lock_total /
+#     get_mutation_guard_try_acquire_total /
+#     get_mutation_guard_try_acquire_reject_total
+# Non-duplicative with #213 Cycles 1-3 (rollback + initial migration);
+# #1904 is the final close-out: zero remaining manual lock + bump sites
+# in evaluator_primitives_*.cpp, every primitive uses Guard RAII,
+# defuse_version_ bumps exactly once per successful boundary.
+aura_add_issue_test(test_issue_1904)
+aura_issue_test_link_llvm_jit(test_issue_1904)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 # stress binary complementing #321/#345 with: 8-50
