@@ -1287,9 +1287,29 @@ const std::vector<std::string>& ObservabilityPrims::stats_primitives() {
 
 // Issue #1439: private map for query:/compile:*-stats hash builders.
 // Not exposed via Primitives / api-reference; only engine:metrics + stats:list catalog.
+//
+// Issue #1671: transparent hash/eq so lookup_stats_impl(string_view) does
+// not allocate a temporary std::string on every hot-path find (stats:get /
+// engine:metrics :all / :prefix iterate the catalog — 400+ lookups).
+// Same pattern as Primitives::StringHash / StringEq (#891/#914).
 namespace {
-    std::unordered_map<std::string, PrimFn>& legacy_stats_impls() {
-        static std::unordered_map<std::string, PrimFn> m;
+    struct StatsNameHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+        std::size_t operator()(const std::string& s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    struct StatsNameEq {
+        using is_transparent = void;
+        bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+    };
+    using LegacyStatsMap = std::unordered_map<std::string, PrimFn, StatsNameHash, StatsNameEq>;
+
+    LegacyStatsMap& legacy_stats_impls() {
+        static LegacyStatsMap m;
         return m;
     }
 } // namespace
@@ -1380,15 +1400,18 @@ void ObservabilityPrims::register_stats_impl(std::string name, PrimFn fn) {
 }
 
 std::optional<PrimFn> ObservabilityPrims::lookup_stats_impl(std::string_view name) {
+    // Issue #1671: heterogeneous find(string_view) — no temporary std::string.
     auto& m = legacy_stats_impls();
-    auto it = m.find(std::string(name));
+    auto it = m.find(name);
     if (it == m.end())
         return std::nullopt;
     return it->second;
 }
 
 bool ObservabilityPrims::stats_impl_registered(std::string_view name) {
-    return lookup_stats_impl(name).has_value();
+    // Issue #1671: existence check without constructing optional PrimFn.
+    auto& m = legacy_stats_impls();
+    return m.find(name) != m.end();
 }
 
 void ObservabilityPrims::register_eval_all(PrimRegistrar add, Evaluator& ev) {

@@ -5311,6 +5311,9 @@ aura_issue_test_link_llvm_jit(test_gc_defer_dtor_release_1667)
 # Issue #1670: observability peel tier table (data-driven register_*_all).
 aura_add_issue_test(test_observability_tier_table_1670)
 aura_issue_test_link_llvm_jit(test_observability_tier_table_1670)
+# Issue #1671: lookup_stats_impl heterogeneous find (no per-call string alloc).
+aura_add_issue_test(test_lookup_stats_impl_heterogeneous_1671)
+aura_issue_test_link_llvm_jit(test_lookup_stats_impl_heterogeneous_1671)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
