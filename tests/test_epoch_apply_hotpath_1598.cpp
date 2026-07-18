@@ -174,13 +174,15 @@ static void ac5_query_metrics() {
 
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1632 || href(cs, "schema") == 1627 || href(cs, "schema") == 1626 ||
-              href(cs, "schema") == 1607 || href(cs, "schema") == 1604 ||
-              href(cs, "schema") == 1598,
-          "schema 1632|1627|1626|1607|1604|1598");
-    CHECK(href(cs, "issue") == 1627 || href(cs, "issue") == 1626 || href(cs, "issue") == 1607 ||
-              href(cs, "issue") == 1604 || href(cs, "issue") == 1598,
-          "issue 1604|1598");
+    // Lineage: #1660 bumps schema; accept 1660|1632|…|1598.
+    CHECK(href(cs, "schema") == 1660 || href(cs, "schema") == 1632 || href(cs, "schema") == 1627 ||
+              href(cs, "schema") == 1626 || href(cs, "schema") == 1607 ||
+              href(cs, "schema") == 1604 || href(cs, "schema") == 1598,
+          "schema 1660|1632|1627|1626|1607|1604|1598");
+    CHECK(href(cs, "issue") == 1660 || href(cs, "issue") == 1632 || href(cs, "issue") == 1627 ||
+              href(cs, "issue") == 1626 || href(cs, "issue") == 1607 || href(cs, "issue") == 1604 ||
+              href(cs, "issue") == 1598,
+          "issue 1660|lineage");
     CHECK(href(cs, "stale_closure_prevented") >= 0, "stale_closure_prevented");
     CHECK(href(cs, "closure_epoch_mismatch_fallback") >= 0, "closure_epoch_mismatch_fallback");
     CHECK(href(cs, "post_steal_refresh_count") >= 1, "post_steal_refresh_count");
