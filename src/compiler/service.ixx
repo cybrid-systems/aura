@@ -4523,7 +4523,11 @@ public:
             }
         }
 
-        // Issue #1261 / #1476: bump both epochs via unified helper.
+        // Issue #1627: soft-path pre-cascade parity with invalidate_function
+        // (live closures + linear + GC root audit before epoch publish).
+        prepare_unified_invalidation_pre_cascade_(name);
+
+        // Issue #1261 / #1476 / #1627: bump both epochs via unified helper.
         atomic_bump_epochs_and_stamp_bridge(name);
 
         auto it = ir_cache_v2_.find(name);
@@ -8879,13 +8883,10 @@ private:
         OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
 
-        // Issue #1545 / #1494 / #1606: pre-cascade walk_active_closures
-        // via scan_live_closures_for_linear_captures — mark invalid
-        // (bridge_epoch=0) so apply takes safe_fallback before IR/JIT
-        // teardown races with linear state. Then EnvFrame enforce so
-        // Moved frames bump linear_ownership_violation_prevented.
-        (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
-        (void)evaluator_.linear_post_mutate_enforce_all();
+        // Issue #1545 / #1494 / #1606 / #1627: shared pre-cascade
+        // (live closures + linear + GC root audit) — same helper as
+        // mark_define_dirty soft path.
+        prepare_unified_invalidation_pre_cascade_(name);
 
         // Issue #1496 / #1476: SINGLE dual-epoch + bridge stamp + JIT
         // soft-deopt protocol — same helper as mark_define_dirty.
@@ -10149,6 +10150,17 @@ public:
     // name empty → stamp every known bridge / ir_cache_v2 entry (typed_mutate
     // catch-all when the affected define set is unknown).
     //
+    // Issue #1627: shared pre-cascade for soft mark_define_dirty and
+    // hard invalidate_function — live closures + linear enforce + GC
+    // root audit before publishing new epochs (no half-update window).
+    void prepare_unified_invalidation_pre_cascade_(const std::string& name) {
+        (void)evaluator_.scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+        (void)evaluator_.linear_post_mutate_enforce_all();
+        on_compiler_invalidate_gc_coordination(name);
+        (void)evaluator_.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditInvalidate);
+        metrics_.invalidate_pre_cascade_prepare_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #1523 lock order: mutate_mtx_ unique FIRST (if not held),
     // then epoch + bridge stamp (no dep_graph / workspace).
     void atomic_bump_epochs_and_stamp_bridge(const std::string& name) {

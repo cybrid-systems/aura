@@ -397,15 +397,21 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-dual-check-wired", 1);    // #1626 third arm
             insert_kv("post-steal-path-wired", 1);
             insert_kv("compact-refresh-wired", 1);
-            // #1607 AC5: unified soft/hard invalidation aliases (no new
-            // public query:*-stats — SlimSurface / #1448 freeze).
+            // #1607 / #1627 AC: unified soft/hard invalidation aliases
+            // (no new public query:*-stats — SlimSurface / #1448 freeze).
             insert_kv("live_closure_stale_prevented",
                       m ? L(&m->compiler_live_closure_stale_prevented_total) : 0);
+            insert_kv("linear_gc_root_audit_checks_total",
+                      m ? L(&m->linear_gc_root_audit_checks_total) : 0);
+            insert_kv("invalidate_pre_cascade_prepare_total",
+                      m ? L(&m->invalidate_pre_cascade_prepare_total) : 0);
             insert_kv("soft-hard-same-protocol", 1);
             insert_kv("atomic-bump-release-fence-wired", 1);
             insert_kv("jit-batch-deopt-wired", 1);
-            insert_kv("issue", 1626);
-            insert_kv("schema", 1626); // lineage 1607 / 1604 / 1598 / 1508
+            insert_kv("soft-pre-cascade-wired", 1);       // #1627
+            insert_kv("invalidate-consistency-wired", 1); // #1627
+            insert_kv("issue", 1627);
+            insert_kv("schema", 1627); // lineage 1626 / 1607 / 1604 / 1598
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

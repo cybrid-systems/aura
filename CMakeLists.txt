@@ -5224,6 +5224,10 @@ aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)
 # Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
 aura_add_issue_test(test_unified_invalidation_1607)
 aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
+
+# Issue #1627: soft/hard invalidate consistency + pre-cascade unify
+aura_add_issue_test(test_invalidate_consistency_1627)
+aura_issue_test_link_llvm_jit(test_invalidate_consistency_1627)
 # Issue #1608: fiber resume post-steal EnvFrame/linear refresh.
 aura_add_issue_test(test_fiber_resume_post_steal_1608)
 aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_1608)
