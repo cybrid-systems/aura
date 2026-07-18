@@ -1566,15 +1566,37 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return {};
         };
 
+        // Issue #1721: reuse fixed string_heap slots for intermediate
+        // gen/ver/fix args (goal / code / error). Avoids O(attempts)
+        // unbounded push pollution; safer than end-of-loop pop_back under
+        // concurrent fibers that also use string_heap_ (Option C refined).
+        std::size_t slot_goal = std::numeric_limits<std::size_t>::max();
+        std::size_t slot_code = std::numeric_limits<std::size_t>::max();
+        std::size_t slot_err = std::numeric_limits<std::size_t>::max();
+        auto put_slot = [&](std::size_t& slot, const std::string& s) -> types::EvalValue {
+            if (slot >= ev.string_heap_.size()) {
+                slot = ev.string_heap_.size();
+                ev.string_heap_.push_back(s);
+            } else {
+                ev.string_heap_[slot] = s;
+            }
+            return types::make_string(slot);
+        };
+        auto finish_result = [&](std::string result_str) -> EvalValue {
+            // Only the final status string is retained on the heap.
+            auto rs = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::move(result_str));
+            restore();
+            return types::make_string(rs);
+        };
+
         for (int attempt = 1; attempt <= max_attempts; ++attempt) {
             // Issue #1205 Phase 1: GC safepoint on each intend attempt.
             if (auto* fn = aura::gc_hooks::g_arena_safepoint_check.load(std::memory_order_relaxed))
                 fn();
             std::string code_str;
             if (attempt == 1 || current_code_str.empty()) {
-                auto gs = ev.string_heap_.size();
-                ev.string_heap_.push_back(goal);
-                code_str = call_fn(gen_cid, {types::make_string(gs)});
+                code_str = call_fn(gen_cid, {put_slot(slot_goal, goal)});
                 llm_call_count++;
                 if (code_str.empty()) {
                     ev.timeline_push("attempt_" + std::to_string(attempt) +
@@ -1588,14 +1610,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ev.timeline_push("attempt_" + std::to_string(attempt) + ":no fixer, stopping");
                     break;
                 }
-                auto cs = ev.string_heap_.size();
-                ev.string_heap_.push_back(current_code_str);
-                auto es = ev.string_heap_.size();
-                ev.string_heap_.push_back(last_error);
-                auto gs = ev.string_heap_.size();
-                ev.string_heap_.push_back(goal);
-                code_str = call_fn(fix_cid, {types::make_string(cs), types::make_string(es),
-                                             types::make_string(gs)});
+                code_str =
+                    call_fn(fix_cid, {put_slot(slot_code, current_code_str),
+                                      put_slot(slot_err, last_error), put_slot(slot_goal, goal)});
                 llm_call_count++;
                 if (code_str.empty()) {
                     ev.timeline_push("attempt_" + std::to_string(attempt) + ":empty from fixer");
@@ -1606,17 +1623,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             generated_codes.push_back(code_str);
 
-            auto cv = ev.string_heap_.size();
-            ev.string_heap_.push_back(code_str);
-            auto ver = call_fn(ver_cid, {types::make_string(cv)});
+            auto ver = call_fn(ver_cid, {put_slot(slot_code, code_str)});
 
             if (ver.find("#t") == 0) {
                 current_code_str = code_str;
                 ev.timeline_push("attempt_" + std::to_string(attempt) + ":success");
                 auto result = "#(status:\"ok\" goal:\"" + goal +
                               "\" iterations:" + std::to_string(attempt) + ")";
-                auto rs = ev.string_heap_.size();
-                ev.string_heap_.push_back(result);
 
                 auto t1 = std::chrono::steady_clock::now();
                 auto duration =
@@ -1635,8 +1648,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 rec.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
                 rec.parent_record_id = 0;
                 ev.intend_history_push(std::move(rec));
-                restore();
-                return types::make_string(rs);
+                return finish_result(std::move(result));
             }
 
             current_code_str = code_str;
@@ -1667,10 +1679,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       "\" iterations:" + std::to_string(max_attempts) + " last-error:\"" +
                       last_error + "\")";
         ev.timeline_push("failed:" + last_error);
-        auto rs = ev.string_heap_.size();
-        ev.string_heap_.push_back(result);
-        restore();
-        return types::make_string(rs);
+        return finish_result(std::move(result));
     });
     // ── intend-history — 查询意图执行时间线 ────────────────────
     add("intend-history", [&ev](const auto&) -> EvalValue {
