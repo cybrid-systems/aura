@@ -5366,6 +5366,9 @@ aura_issue_test_link_llvm_jit(test_mutation_guard_typed_error)
 # Issue #1628: try_acquire factory + typed ResourceQuotaExceeded closed-loop
 aura_add_issue_test(test_mutation_guard_try_acquire_1628)
 aura_issue_test_link_llvm_jit(test_mutation_guard_try_acquire_1628)
+# Issue #1634: unify invalidate + try_acquire typed quota mandate
+aura_add_issue_test(test_unify_invalidate_try_acquire_1634)
+aura_issue_test_link_llvm_jit(test_unify_invalidate_try_acquire_1634)
 # Issue #1630: mandate full StableNodeRef provenance (fiber/cow/wrap/pin)
 aura_add_issue_test(test_stable_ref_provenance_mandate_1630)
 aura_issue_test_link_llvm_jit(test_stable_ref_provenance_mandate_1630)

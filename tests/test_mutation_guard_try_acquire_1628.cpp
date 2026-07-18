@@ -118,9 +118,9 @@ static void ac4_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1628 || href(cs, "schema") == 1618 || href(cs, "schema") == 1600 ||
-              href(cs, "schema") == 1590,
-          "schema 1628|lineage");
+    CHECK(href(cs, "schema") == 1634 || href(cs, "schema") == 1628 || href(cs, "schema") == 1618 ||
+              href(cs, "schema") == 1600 || href(cs, "schema") == 1590,
+          "schema 1634|1628|lineage");
     CHECK(href(cs, "try_acquire_wired") == 1, "try_acquire_wired");
     CHECK(href(cs, "panic_checkpoint_quota_replaced") == 1, "panic replaced");
     CHECK(href(cs, "eval_on_current_try_acquire") == 1, "eval_on_current");
