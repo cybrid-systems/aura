@@ -2889,6 +2889,14 @@ private:
     // SEGV at address 0x8 in the test_issue_164 heap trace).
     // Reader (apply_closure, materialize_call_env) takes a
     // shared lock; writer (closures_[cid] = ...) takes unique.
+    //
+    // Issue #1664 — dual-lock order when BOTH are held:
+    //   1. closures_mtx_  (shared or unique)
+    //   2. env_frames_mtx_ (shared)
+    // Matches scan_live_closures_for_linear_captures / apply_closure.
+    // NEVER acquire env_frames_mtx_ then closures_mtx_ (deadlock footgun).
+    // Exception: compact_env_frames holds compact_env_frames_lock_ first,
+    // then env unique, then briefly closures (documented there).
     mutable std::shared_mutex closures_mtx_;
     ClosureBridgeFn closure_bridge_;
     // Issue #252: optional pointer to CompilerMetrics for
@@ -3012,6 +3020,10 @@ public:
     // mutate_mtx_ + workspace_mtx_. dep_graph_mtx_ acquires
     // AFTER this one. Canonical order is mutate → workspace →
     // env_frames → dep_graph. Reverse order is NOT allowed.
+    //
+    // Issue #1664 — when held together with closures_mtx_:
+    // always take closures_mtx_ FIRST, then env_frames_mtx_
+    // (see closures_mtx_ comment). Solo env_frames acquires OK.
     mutable std::shared_mutex env_frames_mtx_;
     // Issue #206: pair remap table. Rebuilt by compact_pairs().
     // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).

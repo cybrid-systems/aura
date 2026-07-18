@@ -970,8 +970,9 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
 
-    // Lock order: closures unique → env_frames shared (same as apply
-    // materialize relative ordering; no reverse acquire elsewhere).
+    // Issue #1664 / #1486: canonical dual-lock order —
+    // closures unique → env_frames shared (same as apply / GC probe).
+    // probe_linear_ownership_at_gc_safepoint must use the same order.
     std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     for (auto& [id, cl] : closures_) {
