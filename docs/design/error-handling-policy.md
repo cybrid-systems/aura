@@ -38,6 +38,22 @@ Full `Diagnostic` struct conversion stays out of `error.ixx` (no circular deps).
 - `(query:error-handling-policy-stats)` schema **809**
   - `interop-conversions`, `contract-as-aura-error`, `policy-doc-active`, `hot-path-uses-result`
 
+## MutationBoundaryGuard quota (#1628)
+
+Mutation quota enforcement uses **typed** `AuraResult` via
+`MutationBoundaryGuard::try_acquire` — **not** `std::runtime_error` /
+PanicCheckpoint. On reject:
+
+- `AuraErrorKind::ResourceQuotaExceeded`
+- message includes `mutation quota exceeded`
+- `resource_quota_rejects_total` / `mutation_guard_try_acquire_reject_total`
+
+Legacy ctor is `[[deprecated]]` and soft-fails to an inert guard
+(`success_flag=false`) when quota is exceeded.
+
+See `docs/design/core/mutate_api.md` (try_acquire section) and
+`query:resource-quota-stats` schema **1628**.
+
 ## Related issues
 
 | Issue | Topic |
@@ -48,3 +64,4 @@ Full `Diagnostic` struct conversion stays out of `error.ixx` (no circular deps).
 | #810 | Fiber/Scheduler init |
 | #811 | JIT exception bridge classification |
 | #813 | MutationBoundaryGuard AuraResult path |
+| #1547 / #1628 | try_acquire typed ResourceQuotaExceeded |

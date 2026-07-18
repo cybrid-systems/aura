@@ -363,8 +363,25 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("manager-wired", 1);
             insert_kv("panic-quota-distinguished", 1);
             insert_kv("typed-reject-not-panic", 1);
-            insert_kv("issue", 1618);
-            insert_kv("schema", 1618); // lineage 1600|1590|1579|…
+            // Issue #1628: MutationBoundaryGuard::try_acquire factory
+            // (replace panic-checkpoint quota path; typed AuraError).
+            const std::int64_t try_acq =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t try_rej =
+                m ? static_cast<std::int64_t>(
+                        m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("mutation_guard_try_acquire_total", try_acq);
+            insert_kv("mutation_guard_try_acquire_reject_total", try_rej);
+            insert_kv("try_acquire_wired", 1);
+            insert_kv("panic_checkpoint_quota_replaced", 1);
+            insert_kv("eval_on_current_try_acquire", 1);
+            insert_kv("typed_mutate_try_acquire", 1);
+            insert_kv("legacy_ctor_deprecated", 1);
+            insert_kv("issue", 1628);
+            insert_kv("schema", 1628); // lineage 1618|1600|1590|1547
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
