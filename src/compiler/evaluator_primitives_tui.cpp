@@ -212,8 +212,11 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
     // 6. (tui:present)
     add("tui:present", [&ev](std::span<const EvalValue>) -> EvalValue {
         auto& tui = aura::tui::global_tui();
-        if (tui.is_initialized())
+        if (tui.is_initialized()) {
             tui.present();
+            // Issue #1674: wire term_render_present (was dead).
+            ev.bump_term_render_present();
+        }
         bump_tui_metrics(ev);
         return make_void();
     });

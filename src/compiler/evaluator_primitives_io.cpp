@@ -779,6 +779,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     s_term_bufs.push_back(std::move(buf));
                 }
             }
+            // Issue #1674: buffer init is a clear of the cell grid.
+            ev.bump_term_render_clear();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_buffer_creates.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_buffer_live.fetch_add(1, std::memory_order_relaxed);
@@ -1005,6 +1007,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto oid = as_int(a[0]);
             auto nid = as_int(a[1]);
             std::int64_t changed = 0;
+            std::uint64_t savings = 0;
             {
                 std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (oid < 0 || nid < 0 || static_cast<std::size_t>(oid) >= s_term_bufs.size() ||
@@ -1026,6 +1029,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                         changed = static_cast<std::int64_t>(n.cells.size());
                         n.dirty.mark_all_dirty(static_cast<std::uint32_t>(n.w),
                                                static_cast<std::uint32_t>(n.h));
+                        savings = 0;
                     } else {
                         const auto w = static_cast<std::uint32_t>(n.w);
                         for (std::size_t i = 0; i < o.cells.size(); ++i) {
@@ -1035,6 +1039,10 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                                    static_cast<std::uint32_t>(i / w));
                             }
                         }
+                        savings = static_cast<std::uint64_t>(
+                            o.cells.size() > static_cast<std::size_t>(changed)
+                                ? o.cells.size() - static_cast<std::size_t>(changed)
+                                : 0);
                     }
                 } else {
                     std::unique_lock<std::shared_mutex> ln(n.rwlock);
@@ -1043,6 +1051,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                         changed = static_cast<std::int64_t>(n.cells.size());
                         n.dirty.mark_all_dirty(static_cast<std::uint32_t>(n.w),
                                                static_cast<std::uint32_t>(n.h));
+                        savings = 0;
                     } else {
                         const auto w = static_cast<std::uint32_t>(n.w);
                         for (std::size_t i = 0; i < o.cells.size(); ++i) {
@@ -1052,9 +1061,19 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                                    static_cast<std::uint32_t>(i / w));
                             }
                         }
+                        savings = static_cast<std::uint64_t>(
+                            o.cells.size() > static_cast<std::size_t>(changed)
+                                ? o.cells.size() - static_cast<std::size_t>(changed)
+                                : 0);
                     }
                 }
             }
+            // Issue #1674: wire term_buf_diff bump_* (were dead).
+            ev.bump_term_buf_diff();
+            if (changed > 0)
+                ev.bump_term_buf_diff_hit();
+            if (savings > 0)
+                ev.bump_term_buf_diff_savings(savings);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_diff_updates.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_diff_cells_total.fetch_add(
@@ -1088,6 +1107,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::int64_t n = -1;
             std::int32_t rows = 0;
             std::uint64_t skips_before = aura::renderer::render_engine_counters().present_skips;
+            std::uint64_t zc_before = aura::renderer::render_engine_counters().zero_copy_acquires;
+            const auto t0 = std::chrono::steady_clock::now();
             {
                 std::shared_lock<std::shared_mutex> reg(s_term_registry_mtx);
                 if (id < 0 || static_cast<std::size_t>(id) >= s_term_bufs.size() ||
@@ -1099,8 +1120,34 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 aura::renderer::FramebufferSoA fb{b.w, b.h, b.cells.data()};
                 n = aura::renderer::present_batch(fb, b.dirty, fd);
             }
+            const auto ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
             const bool skipped =
                 aura::renderer::render_engine_counters().present_skips > skips_before;
+            // Issue #1674: wire term_render / hotpath / zero-copy / soa bumps (were dead).
+            ev.bump_term_render_present();
+            if (ns > 0)
+                ev.bump_term_render_present_ns(ns);
+            if (skipped) {
+                ev.bump_render_hp_dirty_hit();
+                ev.bump_render_hp_present_delta();
+            } else {
+                ev.bump_render_jit_soa();
+                ev.bump_render_jit_soa_hit();
+                ev.bump_render_hp_jit_coverage();
+                if (n > 0)
+                    ev.bump_render_jit_soa_savings(static_cast<std::uint64_t>(n));
+                if (aura::renderer::render_engine_counters().zero_copy_acquires > zc_before) {
+                    ev.bump_render_ffi_zerocopy_view();
+                    ev.bump_render_ffi_batch_call();
+                    if (ns > 0)
+                        ev.bump_render_ffi_crossing_ns(ns);
+                    // Arena frame path: count one logical frame alloc bucket (#1674).
+                    ev.bump_render_ffi_allocs_frame();
+                }
+            }
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->terminal_present_batch_total.fetch_add(1, std::memory_order_relaxed);
                 if (n > 0)
@@ -1164,7 +1211,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Explicit dirty mark without changing cell content (for differential present).
     add_render(
         "terminal-mark-dirty",
-        [](std::span<const EvalValue> a) -> EvalValue {
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]))
                 return make_bool(false);
             auto id = as_int(a[0]);
@@ -1179,6 +1226,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             if (x < 0 || y < 0 || x >= b.w || y >= b.h)
                 return make_bool(false);
             b.dirty.mark_dirty(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y));
+            ev.bump_term_render_dirty_region(); // Issue #1674
+            ev.bump_render_hp_mutation_impact();
             return make_bool(true);
         },
         RENDER_PRIMITIVE_META(3, "Mark cell dirty for differential present (#1562).",
@@ -1187,7 +1236,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #1562: (terminal-mark-all-dirty buf-id) → #t/#f
     add_render(
         "terminal-mark-all-dirty",
-        [](std::span<const EvalValue> a) -> EvalValue {
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_int(a[0]))
                 return make_bool(false);
             auto id = as_int(a[0]);
@@ -1199,6 +1248,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::unique_lock<std::shared_mutex> buf(b.rwlock);
             b.dirty.mark_all_dirty(static_cast<std::uint32_t>(b.w),
                                    static_cast<std::uint32_t>(b.h));
+            ev.bump_term_render_dirty_region(); // Issue #1674
             return make_bool(true);
         },
         RENDER_PRIMITIVE_META(1, "Mark entire terminal buffer dirty (#1562).", "(int) -> bool"));
@@ -1238,8 +1288,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_int(0);
             auto n = aura::renderer::draw_batch(fb, b.dirty,
                                                 std::span<const aura::renderer::DrawOp>(&op, 1));
+            ev.bump_term_render_draw_batch(); // Issue #1674 (also updates metrics counter)
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->term_render_draw_batch_total.fetch_add(1, std::memory_order_relaxed);
                 m->terminal_set_cell_total.fetch_add(static_cast<std::uint64_t>(n > 0 ? n : 0),
                                                      std::memory_order_relaxed);
             }
@@ -1306,19 +1356,22 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // Facade-only via (stats:get "query:render-stats") — no public add() growth.
     ObservabilityPrims::register_stats_impl(
         "query:render-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            // Issue #1674: obs query path + wired bump_* surface for agents.
+            ev.bump_render_obs_v2();
+            ev.bump_render_obs_v2_hit();
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             const auto& eng = aura::renderer::render_engine_counters();
             auto load = [](const std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
                 (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
                                                                    make_string, make_int);
             };
-            insert_kv("schema", 1673);
+            insert_kv("schema", 1674);
             insert_kv("present-calls", static_cast<std::int64_t>(eng.present_calls));
             insert_kv("present-skips", static_cast<std::int64_t>(eng.present_skips));
             insert_kv("present-bytes", static_cast<std::int64_t>(eng.present_bytes));
@@ -1333,10 +1386,27 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("diff-cells", m ? load(m->terminal_diff_cells_total) : 0);
             insert_kv("present-batch-total", m ? load(m->terminal_present_batch_total) : 0);
             insert_kv("set-cell-total", m ? load(m->terminal_set_cell_total) : 0);
+            insert_kv("term-render-present", m ? load(m->term_render_present_total) : 0);
+            insert_kv("term-render-present-ns", m ? load(m->term_render_present_ns_total) : 0);
+            insert_kv("term-render-draw-batch", m ? load(m->term_render_draw_batch_total) : 0);
+            insert_kv("term-render-dirty-region", m ? load(m->term_render_dirty_region_total) : 0);
+            insert_kv("term-render-clear", m ? load(m->term_render_clear_total) : 0);
+            insert_kv("term-buf-diff", m ? load(m->term_buf_diff_total) : 0);
+            insert_kv("term-buf-diff-hits", m ? load(m->term_buf_diff_hits_total) : 0);
+            insert_kv("hp-dirty-hits", m ? load(m->render_hp_dirty_hits_total) : 0);
+            insert_kv("hp-present-delta", m ? load(m->render_hp_present_delta_total) : 0);
+            insert_kv("jit-soa-total", m ? load(m->render_jit_soa_total) : 0);
+            insert_kv("jit-soa-hits", m ? load(m->render_jit_soa_hits_total) : 0);
+            insert_kv("obs-v2-total", m ? load(m->render_obs_v2_total) : 0);
+            insert_kv("obs-v2-hits", m ? load(m->render_obs_v2_hits_total) : 0);
+            insert_kv("zerocopy-views", m ? load(m->render_ffi_zerocopy_views_total) : 0);
             insert_kv("hot-dispatch-hits-render",
                       static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits_render()));
             insert_kv("phase", aura::renderer::kRenderPrimitivesPhase);
-            insert_kv("issue", 1673);
+            insert_kv("issue", 1674);
+            if (m && load(m->term_render_present_total) > 0)
+                ev.bump_render_obs_v2_savings(
+                    static_cast<std::uint64_t>(load(m->term_render_present_total)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -7142,6 +7142,30 @@ public:
                 }
                 s.functions.push_back(std::move(fm));
             }
+            // Issue #1674: surface render hot-path activity as synthetic FnMetrics
+            // so --metrics / agents see non-zero total_calls for present even when
+            // the function is not in the JIT IR cache (EDSL primitive path).
+            {
+                FnMetrics rf;
+                rf.name = "terminal-present-batch";
+                rf.has_shape_map = false;
+                rf.total_calls =
+                    metrics_.terminal_present_batch_total.load(std::memory_order_relaxed);
+                const auto skips =
+                    metrics_.render_hotpath_skip_total.load(std::memory_order_relaxed);
+                if (rf.total_calls > 0) {
+                    rf.miss_count = skips <= rf.total_calls ? skips : rf.total_calls;
+                    rf.hit_count =
+                        rf.total_calls > rf.miss_count ? rf.total_calls - rf.miss_count : 0;
+                    const auto denom = rf.hit_count + rf.miss_count;
+                    rf.hit_rate =
+                        denom > 0 ? static_cast<double>(rf.hit_count) / static_cast<double>(denom)
+                                  : 0.0;
+                    rf.deopt_count =
+                        metrics_.render_jit_deopt_applied.load(std::memory_order_relaxed);
+                    s.functions.push_back(std::move(rf));
+                }
+            }
         }
         return s;
     }
