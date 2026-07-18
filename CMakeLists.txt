@@ -5341,6 +5341,9 @@ aura_issue_test_link_llvm_jit(test_reflect_validate_cycle_guard_1679)
 # Issue #1680: query:module-exports mtime cache.
 aura_add_issue_test(test_module_export_cache_1680)
 aura_issue_test_link_llvm_jit(test_module_export_cache_1680)
+# Issue #1681: stale-ref errors must not pollute string_heap_.
+aura_add_issue_test(test_stale_ref_string_heap_1681)
+aura_issue_test_link_llvm_jit(test_stale_ref_string_heap_1681)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

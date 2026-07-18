@@ -461,10 +461,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == Evaluator::StaleRefPolicy::Strict) {
                     ev.bump_stale_ref_blocked_count();
-                    auto idx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("stale-ref");
-                    return mev(ev.string_heap_[idx].c_str(),
-                               "stable-ref is stale (Strict policy blocked)");
+                    // Issue #1681: pass literal directly — do not intern
+                    // "stale-ref" into string_heap_ on every blocked call.
+                    return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
                 }
                 if (policy == Evaluator::StaleRefPolicy::Warn)
                     ev.bump_stale_ref_warned_count();
@@ -485,10 +484,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == Evaluator::StaleRefPolicy::Strict) {
                     ev.bump_stale_ref_blocked_count();
-                    auto idx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("stale-ref");
-                    return mev(ev.string_heap_[idx].c_str(),
-                               "raw node-id is stale (Strict policy blocked)");
+                    // Issue #1681: literal tag, no string_heap_ push.
+                    return mev("stale-ref", "raw node-id is stale (Strict policy blocked)");
                 }
                 if (policy == Evaluator::StaleRefPolicy::Warn)
                     ev.bump_stale_ref_warned_count();
@@ -1202,12 +1199,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // No-op: don't bump counters, don't block.
             } else if (policy == aura::compiler::Evaluator::StaleRefPolicy::Strict) {
                 ev.bump_stale_ref_blocked_count();
-                // Tagged stale-ref error so the Agent can
-                // distinguish from other mutate errors.
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back("stale-ref");
-                return mev(ev.string_heap_[idx].c_str(),
-                           "stable-ref is stale (Strict policy blocked)");
+                // Issue #1681: tagged error without string_heap_ pollution.
+                return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
             } else {
                 // Warn
                 ev.bump_stale_ref_warned_count();
