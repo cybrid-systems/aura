@@ -3835,27 +3835,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // 3. Replace the body with the original expression
             // 4. Replace the original expression with a call to the new function
 
-            // Get the parent of the target
-            aura::ast::NodeId parent_of_target = aura::ast::NULL_NODE;
-            int child_idx_in_parent = -1;
-            for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-                auto pv = flat.get(pid);
-                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                    if (pv.child(ci) == node) {
-                        parent_of_target = pid;
-                        child_idx_in_parent = static_cast<int>(ci);
-                        break;
-                    }
-                }
-                if (parent_of_target != aura::ast::NULL_NODE)
-                    break;
+            // Get the parent of the target (parent_of, not O(N×C)).
+            // Issue #1701 sibling: re-validate after parse_to_flat like #1700.
+            if (node == aura::ast::NULL_NODE || !flat.is_live_node(node)) {
+                ok = false;
+                return ev.make_merr("out-of-range", "extract target not a live node");
             }
-
-            if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
+            auto parent_of_target = flat.parent_of(node);
+            auto child_idx_opt = parent_child_index_if_attached(flat, node);
+            if (parent_of_target == aura::ast::NULL_NODE || !child_idx_opt) {
                 ok = false;
                 return ev.make_merr("no-parent",
                                     "node " + std::to_string(node) + " has no parent in the AST");
             }
+            int child_idx_in_parent = static_cast<int>(*child_idx_opt);
 
             // Create the new function definition string (local stack only).
             // Issue #1488 / #1691: do NOT push define_str into string_heap_ —
@@ -3864,6 +3857,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::string define_str = "(define (" + new_name + " x) x)";
 
             // Parse the define into workspace
+            const auto size_before_parse = static_cast<std::size_t>(flat.size());
             auto pr = aura::parser::parse_to_flat(define_str, flat, *ev.workspace_pool_);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                 std::string parse_err;
@@ -3882,16 +3876,47 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return ev.make_merr("parse-error", parse_err);
             }
 
+            // Re-validate target + parent edge after parse (#1701 / #1700).
+            if (static_cast<std::size_t>(node) >= size_before_parse || !flat.is_live_node(node)) {
+                ok = false;
+                return ev.make_merr("stale-ref", "refactor/extract: target invalid after parse");
+            }
+            auto parent_slot_ok = [&]() -> bool {
+                if (parent_of_target == aura::ast::NULL_NODE ||
+                    static_cast<std::size_t>(parent_of_target) >= size_before_parse ||
+                    !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+                    return false;
+                auto pv = flat.get(parent_of_target);
+                return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+                       pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+            };
+            if (!parent_slot_ok()) {
+                child_idx_opt = parent_child_index_if_attached(flat, node);
+                if (!child_idx_opt) {
+                    ok = false;
+                    return ev.make_merr("stale-ref",
+                                        "refactor/extract: parent edge lost after parse");
+                }
+                parent_of_target = flat.parent_of(node);
+                child_idx_in_parent = static_cast<int>(*child_idx_opt);
+                if (!parent_slot_ok()) {
+                    ok = false;
+                    return ev.make_merr("stale-ref",
+                                        "refactor/extract: parent invalid after parse");
+                }
+            }
+
             // The define's body (the lambda body "x") should be at pr.root's child 0's child 0
             auto define_v = flat.get(pr.root);
-            if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty())
+            if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty()) {
+                ok = false;
                 return ev.make_merr("internal", "parsed define form has unexpected structure");
+            }
 
             // For simplicity, replace the define body's variable with the extracted node
             auto lambda_id = define_v.child(0);
             auto lambda_v = flat.get(lambda_id);
             if (!lambda_v.children.empty()) {
-                auto dummy_body = lambda_v.child(0);
                 // Replace dummy body (Variable "x") with the extracted expression
                 flat.set_child(lambda_id, 0, node);
                 // Remove the extracted node from its original parent
@@ -3899,7 +3924,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                pr.root); // replace with the define's call: (new-name x)
             }
 
-            auto new_fn_sym = ev.workspace_pool_->intern(new_name);
             flat.add_mutation(pr.root, "extract-function", new_name, summary, summary);
 
             // Return (define-node-id . call-to-restore)
@@ -4223,21 +4247,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
 
         // Find parent of target node using parent_ vector
+        if (node == NULL_NODE || !flat.is_live_node(node))
+            return ev.make_merr("out-of-range", "extract target not a live node");
         auto parent_of_target = flat.parent_of(node);
-        if (parent_of_target == NULL_NODE)
+        auto child_idx_opt = parent_child_index_if_attached(flat, node);
+        if (parent_of_target == NULL_NODE || !child_idx_opt)
             return ev.make_merr("no-parent", "extracted node has no parent");
-
-        // Find child index in parent
-        int child_idx_in_parent = -1;
-        auto pv = flat.get(parent_of_target);
-        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-            if (pv.child(ci) == node) {
-                child_idx_in_parent = static_cast<int>(ci);
-                break;
-            }
-        }
-        if (child_idx_in_parent < 0)
-            return ev.make_merr("inconsistency", "node not found in parent's children list");
+        int child_idx_in_parent = static_cast<int>(*child_idx_opt);
 
         // Collect free variables in the extracted subtree
         // Filter out common built-in symbols
@@ -4262,6 +4278,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
 
+        // Issue #1701: multiple flat.add_* (5+N) can each stress SoA /
+        // free-list topology. Snapshot pre-append size; re-validate
+        // parent_of_target / node / ws_root before set_child / insert.
+        // Use is_live_node not is_valid_in (no gen-tagged restamp until
+        // the explicit restamp_all_node_generations at the end).
+        const auto size_before_appends = static_cast<std::size_t>(flat.size());
+
         // Step 1: Create lambda with free vars as params, body = extracted node
         auto lambda_id = flat.add_lambda(free_vars, node);
 
@@ -4283,19 +4306,42 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto call_id = flat.add_call(var_id, call_args);
         flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
+        // Issue #1701: re-validate target + parent edge after multi-add_*.
+        if (static_cast<std::size_t>(node) >= size_before_appends || !flat.is_live_node(node))
+            return ev.make_merr("stale-ref", "extract-function: target invalid after add_*");
+        auto parent_slot_ok = [&]() -> bool {
+            if (parent_of_target == NULL_NODE ||
+                static_cast<std::size_t>(parent_of_target) >= size_before_appends ||
+                !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+                return false;
+            auto pv = flat.get(parent_of_target);
+            return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+                   pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+        };
+        if (!parent_slot_ok()) {
+            child_idx_opt = parent_child_index_if_attached(flat, node);
+            if (!child_idx_opt)
+                return ev.make_merr("stale-ref", "extract-function: parent edge lost after add_*");
+            parent_of_target = flat.parent_of(node);
+            child_idx_in_parent = static_cast<int>(*child_idx_opt);
+            if (!parent_slot_ok())
+                return ev.make_merr("stale-ref", "extract-function: parent invalid after add_*");
+        }
+
         // Step 5: Replace original node slot with the call
         flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), call_id);
 
         // Step 6: Insert new define as a child of the workspace root
         // Insert at position 0 (before other defs) to avoid forward-reference issues
+        // Re-read root after appends; require live pre-append or still-valid root.
         auto ws_root = flat.root;
-        if (ws_root != NULL_NODE && ws_root < flat.size()) {
-            flat.insert_child(ws_root, 0, define_id);
-        }
+        if (ws_root == NULL_NODE || !flat.is_live_node(ws_root))
+            return ev.make_merr("stale-ref",
+                                "extract-function: workspace root invalid after add_*");
+        flat.insert_child(ws_root, 0, define_id);
 
         ev.workspace_flat_->mark_dirty_upward(define_id);
-        if (ws_root != aura::ast::NULL_NODE)
-            ev.workspace_flat_->mark_dirty_upward(ws_root);
+        ev.workspace_flat_->mark_dirty_upward(ws_root);
 
         flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
         flat.restamp_all_node_generations();

@@ -5398,6 +5398,9 @@ aura_issue_test_link_llvm_jit(test_mutate_splice_stale_parent_1699)
 # Issue #1700: wrap re-validate parent_of_target after parse_to_flat.
 aura_add_issue_test(test_mutate_wrap_stale_parent_1700)
 aura_issue_test_link_llvm_jit(test_mutate_wrap_stale_parent_1700)
+# Issue #1701: extract-function re-validate parent after multi add_*.
+aura_add_issue_test(test_mutate_extract_stale_parent_1701)
+aura_issue_test_link_llvm_jit(test_mutate_extract_stale_parent_1701)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
