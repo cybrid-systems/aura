@@ -1146,8 +1146,11 @@ public:
 
     void set_arena(ast::ASTArena* a) {
         // Issue #1546: drop owner link from previous arena if any.
-        if (arena_ && arena_ != a)
+        // Issue #1662: also clear compact hook (captures `this`).
+        if (arena_ && arena_ != a) {
             arena_->clear_arena_owner();
+            arena_->set_on_compact_hook({});
+        }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
         // compaction re-pins pinned StableNodeRef / COW children in
@@ -1159,6 +1162,7 @@ public:
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
             // every allocation (orphan arenas stay unlimited).
+            // Issue #1662: ~Evaluator MUST clear_arena_owner + clear hook.
             arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
         }
         // Issue #1554: also bind ArenaGroup module arenas to the same quota.
@@ -1168,6 +1172,7 @@ public:
     void set_temp_arena(ast::ASTArena* a) {
         // Issue #1554: wire temp_arena the same way as primary arena so
         // task-context / gc-temp allocations honor ResourceQuota.
+        // Issue #1662: clear previous owner before rebind.
         if (temp_arena_ && temp_arena_ != a)
             temp_arena_->clear_arena_owner();
         temp_arena_ = a;
