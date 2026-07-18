@@ -132,11 +132,12 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
     m->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #681 / #1287 / #1491: pre-call epoch/version enforcement for
-// live closures held across mutate:rebind / invalidate_function.
+// Issue #681 / #1287 / #1491 / #1632: pre-call epoch/version enforcement
+// for live closures held across mutate:rebind / invalidate_function.
 // Dual-path apply_closure (map + bridge) MUST treat bridge_epoch /
-// EnvFrame version mismatch as mandatory safe fallback (no dangling
-// flat*/pool* use after mutation). Parent closed-loop: #1491.
+// EnvFrame version (defuse) mismatch as mandatory safe fallback (no
+// dangling flat*/pool* use after mutation). #1632 mandates this on all
+// hot paths (apply + JIT aura_closure_call + IR apply).
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
@@ -201,9 +202,12 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         // calls); this one is bumped at apply_closure entry AFTER the
         // helper returns true, marking "this entry was stale".
         ev.bump_stale_closure_prevented();
-        // Issue #1485 C1: lifetime count of safe-fallback paths taken
-        // after a bridge_epoch / defuse_version_ mismatch (epoch_stale
-        // excludes linear-only stale so linear fallbacks don't bleed in).
+        // Issue #1632 AC3: live_closure_stale_prevented on apply path
+        // (parity with JIT walk / invalidate active-closure metrics).
+        ev.bump_compiler_live_closure_stale_prevented();
+        // Issue #1485 C1 / #1632: lifetime count of safe-fallback paths
+        // taken after a bridge_epoch / defuse_version_ mismatch
+        // (epoch_stale excludes linear-only so linear fallbacks don't bleed).
         if (epoch_stale)
             ev.bump_closure_epoch_mismatch_fallback();
     }
@@ -485,9 +489,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                             1, std::memory_order_relaxed);
                         record_epoch_stale_steal_caught(metrics);
                     }
-                    // Issue #1485 / #1558: race-window safety net for dual-epoch.
+                    // Issue #1485 / #1558 / #1632: race-window safety net for dual-epoch.
                     bump_stale_closure_prevented();
                     bump_closure_epoch_mismatch_fallback();
+                    bump_compiler_live_closure_stale_prevented();
                     // Issue #1511: dual-check + EnvFrame re-stamp at bridge entry.
                     if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid,
                                                                      args, metrics, &cl_copy))

@@ -5225,6 +5225,9 @@ aura_add_issue_test(test_stale_closure_fallback)
 aura_add_issue_test(test_closure_dual_check_1626)
 aura_issue_test_link_llvm_jit(test_closure_dual_check_1626)
 aura_issue_test_link_llvm_jit(test_stale_closure_fallback)
+# Issue #1632: mandate bridge_epoch + defuse check on apply + JIT + IR
+aura_add_issue_test(test_epoch_apply_mandate_1632)
+aura_issue_test_link_llvm_jit(test_epoch_apply_mandate_1632)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
 aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
 aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)

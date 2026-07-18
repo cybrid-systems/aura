@@ -83,12 +83,13 @@ static void ac1_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1627 || href(cs, "schema") == 1626 || href(cs, "schema") == 1607 ||
-              href(cs, "schema") == 1604 || href(cs, "schema") == 1598,
-          "schema 1627|1626|1607|1604|1598");
-    CHECK(href(cs, "issue") == 1627 || href(cs, "issue") == 1626 || href(cs, "issue") == 1607 ||
-              href(cs, "issue") < 0,
-          "issue 1626");
+    CHECK(href(cs, "schema") == 1632 || href(cs, "schema") == 1627 || href(cs, "schema") == 1626 ||
+              href(cs, "schema") == 1607 || href(cs, "schema") == 1604 ||
+              href(cs, "schema") == 1598,
+          "schema 1632|1627|1626|1607|1604|1598");
+    CHECK(href(cs, "issue") == 1632 || href(cs, "issue") == 1627 || href(cs, "issue") == 1626 ||
+              href(cs, "issue") == 1607 || href(cs, "issue") < 0,
+          "issue 1632|lineage");
     CHECK(href(cs, "dual-check-forced") == 1, "dual-check-forced");
     CHECK(href(cs, "apply-dual-check-wired") == 1, "apply-dual-check-wired");
     CHECK(href(cs, "jit-dual-check-wired") == 1, "jit-dual-check-wired");
