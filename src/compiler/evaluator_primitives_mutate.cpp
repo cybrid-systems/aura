@@ -98,6 +98,33 @@ namespace {
         return parent_child_index_if_attached(flat, match_ref.id).has_value();
     }
 
+    // Issue #1685: re-resolve a Define after parse_to_flat appends into the
+    // same FlatAST. NodeId is a SoA index and remains valid across vector
+    // growth, but parse may free-list-recycle lower slots or append a new
+    // Define with the same sym (e.g. full "(define name ...)" form). Prefer
+    // the pre-parse preferred id when it is still a live matching Define in
+    // the pre-parse range; otherwise scan [0, size_before_parse).
+    [[nodiscard]] aura::ast::NodeId resolve_define_after_parse(const aura::ast::FlatAST& flat,
+                                                               aura::ast::SymId sym,
+                                                               aura::ast::NodeId preferred,
+                                                               std::size_t size_before_parse) {
+        const auto limit = std::min(size_before_parse, static_cast<std::size_t>(flat.size()));
+        if (preferred != aura::ast::NULL_NODE && static_cast<std::size_t>(preferred) < limit &&
+            !flat.is_free_slot(preferred)) {
+            auto v = flat.get(preferred);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym)
+                return preferred;
+        }
+        for (aura::ast::NodeId id = 0; static_cast<std::size_t>(id) < limit; ++id) {
+            if (flat.is_free_slot(id))
+                continue;
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym)
+                return id;
+        }
+        return aura::ast::NULL_NODE;
+    }
+
     // Issue #680: detect Lambda/closure descendants for precise invalidation.
     bool subtree_has_closure(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
         if (root == aura::ast::NULL_NODE || root >= flat.size())
@@ -1525,6 +1552,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         // Parse new code INTO workspace flat (append mode). All new node IDs
         // are valid in the same FlatAST and can be cross-referenced.
+        // Issue #1685: snapshot size so we re-resolve old_define only in the
+        // pre-parse range (ignore a Define form appended by this parse).
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             std::string parse_err;
@@ -1541,6 +1571,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             ok = false;
             return mev("parse-error", parse_err);
+        }
+
+        // Issue #1685: re-resolve target Define after SoA growth / append.
+        old_define = resolve_define_after_parse(flat, sym, old_define, size_before_parse);
+        if (old_define == aura::ast::NULL_NODE) {
+            ok = false;
+            return mev("not-found", "rebind: define not found after parse");
         }
 
         // The parsed root may be a Define (if code includes "(define (name ...) ...)")
@@ -1809,7 +1846,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                std::string("function \"") + name + "\" body is not a Lambda node");
                 }
 
-                // Parse new body INTO workspace flat (all IDs stay valid)
+                // Parse new body INTO workspace flat (all IDs stay valid).
+                // Issue #1685: snapshot size; re-resolve Define/Lambda after
+                // parse_to_flat may grow SoA columns or append nodes.
+                const auto size_before_parse = static_cast<std::size_t>(flat.size());
                 auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
                                                       *ev.workspace_pool_);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -1827,6 +1867,30 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     ok = false;
                     return mev("parse-error", parse_err);
+                }
+
+                // Issue #1685: re-resolve Define + Lambda after parse.
+                id = resolve_define_after_parse(flat, sym, id, size_before_parse);
+                if (id == aura::ast::NULL_NODE) {
+                    ok = false;
+                    return mev("not-found", "set-body: define not found after parse");
+                }
+                {
+                    auto def_v = flat.get(id);
+                    if (def_v.children.size() != 1) {
+                        ok = false;
+                        return mev("arity-error", std::string("function \"") + name +
+                                                      "\" define has " +
+                                                      std::to_string(def_v.children.size()) +
+                                                      " children after parse, expected 1");
+                    }
+                    lambda_id = def_v.child(0);
+                    auto lv = flat.get(lambda_id);
+                    if (lv.tag != aura::ast::NodeTag::Lambda) {
+                        ok = false;
+                        return mev("type-error", std::string("function \"") + name +
+                                                     "\" body is not a Lambda after parse");
+                    }
                 }
 
                 // Record mutation
@@ -1884,7 +1948,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
                         flat.set_child(id, 0, body_to_set);
-                    } else if (lambda_id < flat.size()) {
+                    } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
                         flat.set_child(lambda_id, 0, body_to_set);
                     } else {
                         // No existing lambda; treat as
@@ -2105,6 +2169,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "code string index out of range");
         }
         auto& flat = *ev.workspace_flat_;
+        // Issue #1685: capture pre-parse parent; re-validate after append.
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        if (parent == aura::ast::NULL_NODE ||
+            static_cast<std::size_t>(parent) >= size_before_parse || flat.is_free_slot(parent)) {
+            ok = false;
+            return mev("out-of-range", "insert-child: parent-id out of range");
+        }
 
         // Parse child code INTO workspace (append mode — all IDs stay valid)
         auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
@@ -2123,6 +2194,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             ok = false;
             return mev("parse-error", parse_err);
+        }
+
+        // Issue #1685: parent NodeId must still refer to a live pre-parse node.
+        if (static_cast<std::size_t>(parent) >= flat.size() || flat.is_free_slot(parent) ||
+            static_cast<std::size_t>(parent) >= size_before_parse) {
+            ok = false;
+            return mev("stale-ref", "insert-child: parent invalid after parse");
         }
 
         // Phase 4: route the structural mutation through the
@@ -2808,6 +2886,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
 
         // ── Parse the new code into the workspace ─────────────
+        // Issue #1685: snapshot size; re-validate parent slot after append.
+        const auto size_before_parse = static_cast<std::size_t>(flat.size());
         auto pr = aura::parser::parse_to_flat(new_code, flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == NULL_NODE)
             return mev("parse-error", "new code could not be parsed");
@@ -2815,6 +2895,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // subtree is attached at the original slot via set_child
         // below. Overwriting root would lose the parent linkage
         // and break eval / current-source.
+
+        // Issue #1685: parent/slot captured before parse must still be live.
+        if (parent_id == NULL_NODE || static_cast<std::size_t>(parent_id) >= size_before_parse ||
+            parent_id >= flat.size() || flat.is_free_slot(parent_id)) {
+            ok = false;
+            return mev("stale-ref", "replace-subtree: parent invalid after parse");
+        }
+        {
+            auto pv = flat.get(parent_id);
+            if (child_idx >= pv.children.size() || pv.child(child_idx) != target) {
+                ok = false;
+                return mev("stale-ref", "replace-subtree: child slot invalid after parse");
+            }
+        }
 
         // ── Capture detection (Issue #142 AC) ────────────────
         // Free vars in the new subtree that are bound by an enclosing
