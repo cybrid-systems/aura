@@ -6,10 +6,41 @@ Issue #250 made the batch **strongly atomic** at the generation /
 observability layer: intermediate per-op bumps are suppressed and
 consolidated into one commit-time bump.
 
+## MutationBoundaryGuard::try_acquire (Issue #1547 / #1628)
+
+**Production path** for mutation boundaries is the typed factory — not
+the legacy RAII ctor (deprecated; soft-fails inert on quota reject).
+
+```cpp
+auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+if (!gr) {
+  // gr.error().kind == AuraErrorKind::ResourceQuotaExceeded
+  // gr.error().message contains "mutation quota exceeded"
+  // metrics: resource_quota_rejects_total++, mutation_guard_try_acquire_reject_total++
+  return surface_error(gr.error());
+}
+auto guard = std::move(*gr);
+// ... mutate under guard ...
+```
+
+| Call site | Status |
+|-----------|--------|
+| `CompilerService::typed_mutate` | **try_acquire** (#1547/#1628) |
+| `CompilerService::eval_on_current` | **try_acquire** (#1547/#1628) |
+| `MUTATION_BOUNDARY_PROTECT` macro | **try_acquire** |
+| Legacy `MutationBoundaryGuard(ev, &ok)` | `[[deprecated]]` — inert soft-fail |
+
+**Never** throws `runtime_error` / PanicCheckpoint for mutation quota.
+Agents should retry/backoff on `ResourceQuotaExceeded`.
+
+Metrics: `query:resource-quota-stats` schema **1628** —
+`mutation_guard_try_acquire_total`, `mutation_guard_try_acquire_reject_total`,
+`try_acquire_wired`, `panic_checkpoint_quota_replaced`.
+
 ## Stdlib safety bridge (Issue #1553)
 
 Engine P0 mechanisms (`MutationBoundaryGuard::try_acquire` + quota
-#1547, safe yield #1504, arena quota #1546) are exposed to Agents via
+#1547/#1628, safe yield #1504, arena quota #1546) are exposed to Agents via
 `lib/std/mutate.aura`:
 
 | API | Role |

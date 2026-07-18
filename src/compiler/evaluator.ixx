@@ -10899,10 +10899,16 @@ public:
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
                     bool fine_rollback = false) noexcept {
-            // Issue #1618: typed ResourceQuotaExceeded path — never PanicCheckpoint.
+            // Issue #1547 / #1618 / #1628: typed ResourceQuotaExceeded —
+            // never PanicCheckpoint / runtime_error on quota reject.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
             if (auto err = ev.check_mutation_quota(pending_count)) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                     m->manager_enforce_total.fetch_add(1, std::memory_order_relaxed);
+                    m->mutation_guard_try_acquire_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
                 return std::unexpected(std::move(*err));
             }
             ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);

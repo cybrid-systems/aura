@@ -5942,6 +5942,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> quota_reject_typed_total{0};        // #1618
     std::atomic<std::uint64_t> panic_quota_distinguished_total{0}; // #1618
     std::atomic<std::uint64_t> manager_enforce_total{0};           // #1618
+    // Issue #1628: MutationBoundaryGuard::try_acquire path counters
+    // (typed ResourceQuotaExceeded — not PanicCheckpoint).
+    std::atomic<std::uint64_t> mutation_guard_try_acquire_total{0};
+    std::atomic<std::uint64_t> mutation_guard_try_acquire_reject_total{0};
     std::atomic<std::uint64_t> production_hardening_985_1013_active{1};
 
     // ── Issues #1014–#1046: production stability + bugfix batch ──

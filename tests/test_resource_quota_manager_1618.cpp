@@ -157,8 +157,9 @@ static void ac4_query_schema() {
 
     auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1618 || href(cs, "schema") == 1600 || href(cs, "schema") == 1590,
-          "schema 1618|1600|1590");
+    CHECK(href(cs, "schema") == 1628 || href(cs, "schema") == 1618 || href(cs, "schema") == 1600 ||
+              href(cs, "schema") == 1590,
+          "schema 1628|1618|1600|1590");
     CHECK(href(cs, "issue") == 1618 || href(cs, "issue") == 1600 || href(cs, "issue") < 0,
           "issue 1618|1600");
     CHECK(href(cs, "quota_violation_total") >= 1 || href(cs, "quota-violation-total") >= 1,
