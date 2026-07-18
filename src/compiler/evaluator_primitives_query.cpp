@@ -140,8 +140,16 @@ static ReflectRuntimeValidateResult runtime_reflect_validate_ast_subtree(aura::a
     constexpr auto kExpansion =
         static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
     bool marker_ok = true;
+    // Issue #1679: FlatAST is a DAG that recovery/EDSL self-mutate can cycle.
+    // Dense seen[] prevents unbounded stack growth (infinite loop on cycles)
+    // and avoids double-counting MacroIntroduced on diamond DAGs.
     std::vector<aura::ast::NodeId> stack;
+    std::vector<std::uint8_t> seen(flat.size(), 0);
     stack.push_back(root);
+    seen[static_cast<std::size_t>(root)] = 1;
+    std::size_t visited = 1;
+    // Hard ceiling: never process more nodes than the flat arena holds.
+    const std::size_t kMaxVisit = flat.size();
     while (!stack.empty()) {
         const auto id = stack.back();
         stack.pop_back();
@@ -159,8 +167,25 @@ static ReflectRuntimeValidateResult runtime_reflect_validate_ast_subtree(aura::a
         if (parent != aura::ast::NULL_NODE && parent >= flat.size())
             marker_ok = false;
         for (auto c : v.children) {
-            if (c != aura::ast::NULL_NODE)
-                stack.push_back(c);
+            if (c == aura::ast::NULL_NODE)
+                continue;
+            if (c >= flat.size() || !flat.is_live_node(c)) {
+                marker_ok = false;
+                continue;
+            }
+            const auto ci = static_cast<std::size_t>(c);
+            if (seen[ci])
+                continue; // cycle edge or shared DAG child — do not re-push
+            seen[ci] = 1;
+            ++visited;
+            if (visited > kMaxVisit) {
+                // Defensive: impossible with seen[], but abort if arena lies.
+                out.stale_prevented = true;
+                out.hygiene_held = false;
+                out.ok = false;
+                return out;
+            }
+            stack.push_back(c);
         }
     }
     out.hygiene_held = marker_ok;
