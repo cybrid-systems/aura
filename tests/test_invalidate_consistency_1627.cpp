@@ -176,9 +176,10 @@ static void ac5_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:epoch-apply-hotpath-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1627 || href(cs, "schema") == 1626 || href(cs, "schema") == 1607 ||
-              href(cs, "schema") == 1604 || href(cs, "schema") == 1598,
-          "schema 1627|lineage");
+    CHECK(href(cs, "schema") == 1632 || href(cs, "schema") == 1627 || href(cs, "schema") == 1626 ||
+              href(cs, "schema") == 1607 || href(cs, "schema") == 1604 ||
+              href(cs, "schema") == 1598,
+          "schema 1632|1627|lineage");
     CHECK(href(cs, "issue") == 1627 || href(cs, "issue") == 1626 || href(cs, "issue") < 0,
           "issue 1627");
     CHECK(href(cs, "invalidate_cascade_depth") >= 0, "cascade depth");

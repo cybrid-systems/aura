@@ -346,9 +346,20 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
             Diagnostic{ErrorKind::InvalidClosure, "unknown IR closure in call_closure"});
     }
     auto& closure = it->second;
-    // Issue #681 / #1513: dual-check bridge_epoch + EnvFrame before IR dispatch.
+    // Issue #681 / #1513 / #1632: dual-check bridge_epoch + EnvFrame before
+    // IR dispatch (mandated on all hot paths with apply/JIT).
     if (context_.evaluator &&
         ir_closure_needs_safe_fallback(closure, context_.evaluator, context_.metrics)) {
+        // Issue #1632 AC metrics (parity with apply_closure / aura_closure_call).
+        if (context_.metrics) {
+            context_.metrics->stale_closure_prevented.fetch_add(1, std::memory_order_relaxed);
+            context_.metrics->closure_epoch_mismatch_fallback.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            context_.metrics->compiler_live_closure_stale_prevented_total.fetch_add(
+                1, std::memory_order_relaxed);
+            context_.metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
         if (auto tw = context_.evaluator->apply_closure(static_cast<ClosureId>(closure_id), args))
             return *tw;
         return std::unexpected(

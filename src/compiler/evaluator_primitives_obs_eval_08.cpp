@@ -353,14 +353,15 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1598 / #1604: apply_closure / JIT / post-steal / invalidate
-    // dual-epoch hotpath closed-loop dashboard (refine #1475–#1496 / #1558).
-    // #1604: JIT aura_closure_call deopt also bumps AC-named
-    // stale_closure_prevented + closure_epoch_mismatch_fallback.
+    // Issue #1598 / #1604 / #1626 / #1632: apply_closure / JIT / post-steal /
+    // invalidate dual-epoch hotpath closed-loop dashboard.
+    // #1632 mandate: live_closure_stale_prevented + bridge_epoch_mismatch_fallback
+    // on apply + JIT + IR paths (lineage 1627/1626/1604/1598).
     ObservabilityPrims::register_stats_impl(
         "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(64); // #1626 more AC keys
+            // Capacity must be power-of-two (open-address mask hcap-1).
+            auto* ht = FlatHashTable::create(128); // #1632 AC aliases
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -434,8 +435,19 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("jit-batch-deopt-wired", 1);
             insert_kv("soft-pre-cascade-wired", 1);       // #1627
             insert_kv("invalidate-consistency-wired", 1); // #1627
-            insert_kv("issue", 1627);
-            insert_kv("schema", 1627); // lineage 1626 / 1607 / 1604 / 1598
+            // #1632 AC: mandate aliases + wire flags
+            // live_closure_stale_prevented already inserted above
+            insert_kv("bridge_epoch_mismatch_fallback",
+                      m ? L(&m->closure_epoch_mismatch_fallback) : 0);
+            insert_kv("bridge-epoch-mismatch-fallback",
+                      m ? L(&m->closure_epoch_mismatch_fallback) : 0);
+            insert_kv("apply-epoch-mandate-active", 1);
+            insert_kv("jit-epoch-mandate-active", 1);
+            insert_kv("defuse-version-check-wired", 1);
+            insert_kv("bridge-epoch-check-wired", 1);
+            insert_kv("ir-apply-dual-check-wired", 1);
+            insert_kv("issue", 1632);
+            insert_kv("schema", 1632); // lineage 1627 / 1626 / 1607 / 1604 / 1598
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
