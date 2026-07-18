@@ -4724,7 +4724,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // P0 scope-limited ship: mirrors
     // (mutate:sv-add-coverpoint) — increments counters,
     // adds a mutation record, returns #t / #f.
-    // Issue #1704: same Guard + live-node contract as sv-add-coverpoint.
+    // Issue #1704 / #1705: same Guard + live-node contract as
+    // sv-add-coverpoint (this issue locks the weaken-property sibling).
     add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);

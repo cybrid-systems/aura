@@ -1,9 +1,10 @@
 // @category: unit
-// @reason: Issue #1704 — mutate:sv-add-coverpoint / mutate:sv-weaken-property
-// use MutationBoundaryGuard + live-node check (no naked unlocked mutate).
+// @reason: Issue #1704 / #1705 — mutate:sv-add-coverpoint and
+// mutate:sv-weaken-property use MutationBoundaryGuard + live-node
+// check (no naked unlocked mutate). #1705 is the weaken sibling.
 //
 //   AC1: sv-add-coverpoint on live node succeeds and logs mutation
-//   AC2: sv-weaken-property on live node succeeds and logs mutation
+//   AC2: sv-weaken-property on live node succeeds and logs mutation (#1705)
 //   AC3: out-of-range / dead id fails as #f
 //   AC4: source has Guard + is_live_node + run_or_rollback for both prims
 
@@ -136,6 +137,9 @@ int main() {
         CHECK(!src.empty(), "read mutate.cpp");
         if (!src.empty()) {
             CHECK(src.find("Issue #1704") != std::string::npos, "cites #1704");
+            CHECK(src.find("Issue #1705") != std::string::npos ||
+                      src.find("#1705") != std::string::npos,
+                  "cites #1705 on weaken sibling");
             // Both prims should construct MutationBoundaryGuard nearby.
             auto p1 = src.find("mutate:sv-add-coverpoint");
             auto p2 = src.find("mutate:sv-weaken-property");
@@ -157,6 +161,9 @@ int main() {
                       "sv-weaken-property is_live_node");
                 CHECK(win.find("run_or_rollback") != std::string::npos,
                       "sv-weaken-property run_or_rollback");
+                CHECK(win.find("#1705") != std::string::npos ||
+                          win.find("1705") != std::string::npos,
+                      "weaken path cites #1705");
             }
         }
     }
