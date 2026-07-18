@@ -6580,6 +6580,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> agent_legacy_auto_evolve_hits{0};
     // #1713: auto-evolve-tick/once saw freed detect/fix ClosureId
     std::atomic<std::uint64_t> agent_closure_freed_during_tick{0};
+    // #1719: intend (and other apply_closure call sites) saw freed ClosureId
+    std::atomic<std::uint64_t> agent_closure_freed_during_call{0};
     // #1328 Phase 3: query essentials keep-list
     std::atomic<std::uint64_t> query_essentials_plan_active{1};
     std::atomic<std::uint64_t> query_essentials_keep_count{10};

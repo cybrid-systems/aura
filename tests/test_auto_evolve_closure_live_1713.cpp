@@ -147,8 +147,7 @@ int main() {
             CHECK(pos != std::string::npos, "found tick");
             if (pos != std::string::npos) {
                 auto win = src.substr(pos, 1800);
-                CHECK(win.find("auto_evolve_cid_live") != std::string::npos,
-                      "tick gates on live check");
+                CHECK(win.find("agent_cid_live") != std::string::npos, "tick gates on live check");
             }
         }
     }
