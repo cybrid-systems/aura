@@ -173,8 +173,13 @@ static void ac5_metrics_and_query() {
 
     auto h = cs.eval("(engine:metrics \"query:linear-boundary-consistency-stats\")");
     CHECK(h && is_hash(*h), "stats hash");
-    CHECK(href(cs, "schema") == 1596 || href(cs, "schema") == 1568, "schema 1606|1596|1568");
-    CHECK(href(cs, "issue") == 1596 || href(cs, "issue") == -999999, "issue 1596 if present");
+    // Lineage: #1659 bumps schema; accept 1659|1606|1596|1568.
+    CHECK(href(cs, "schema") == 1659 || href(cs, "schema") == 1606 || href(cs, "schema") == 1596 ||
+              href(cs, "schema") == 1568,
+          "schema 1659|1606|1596|1568");
+    CHECK(href(cs, "issue") == 1659 || href(cs, "issue") == 1606 || href(cs, "issue") == 1596 ||
+              href(cs, "issue") == -999999,
+          "issue 1659|1606|1596 if present");
     CHECK(href(cs, "linear_live_closure_scans_total") >= 0 ||
               href(cs, "linear-live-closure-scans-total") >= 0,
           "live scans in query");

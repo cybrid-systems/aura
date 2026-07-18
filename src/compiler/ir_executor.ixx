@@ -303,6 +303,10 @@ private:
 
     // M4 Linear ownership runtime heap
     // Issue #892: dense vector; live==false means erased/tombstone.
+    // Issue #1659: tombstone + ref_count coordinate with invalidate /
+    // mutation_epoch / Arena reset so post-mutate use-after-move and
+    // double-drop are safe (no UB) — pairs with EnvFrame
+    // bindings_linear_ownership_state_ + force_drop (bridge_epoch=0).
     struct LinearEntry {
         EvalValue value;
         std::size_t ref_count = 0;

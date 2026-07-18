@@ -5265,6 +5265,9 @@ aura_issue_test_link_llvm_jit(test_incremental_relower)
 # Issue #1606: walk_active_closures + linear live scan on invalidate/compact/JIT.
 aura_add_issue_test(test_walk_active_closures_1606)
 aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)
+# Issue #1659: linear ownership + GC/Arena mutation safety mandate.
+aura_add_issue_test(test_linear_ownership_mutation_safety_1659)
+aura_issue_test_link_llvm_jit(test_linear_ownership_mutation_safety_1659)
 # Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
 aura_add_issue_test(test_unified_invalidation_1607)
 aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
