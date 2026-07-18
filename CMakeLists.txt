@@ -5443,6 +5443,9 @@ aura_issue_test_link_llvm_jit(test_synthesize_json_parse_1715)
 # Issue #1716: synthesize:optimize thread_local mt19937 (not std::rand).
 aura_add_issue_test(test_synthesize_optimize_prng_1716)
 aura_issue_test_link_llvm_jit(test_synthesize_optimize_prng_1716)
+# Issue #1717: WorkspaceSwapGuard RAII for optimize child workspace.
+aura_add_issue_test(test_workspace_swap_guard_1717)
+aura_issue_test_link_llvm_jit(test_workspace_swap_guard_1717)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
