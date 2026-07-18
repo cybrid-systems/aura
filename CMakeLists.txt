@@ -1502,6 +1502,19 @@ aura_issue_test_link_llvm_jit_minimal(test_issue_1900)
 aura_add_issue_test(test_eda_self_evolution_stable_ref)
 aura_issue_test_link_llvm_jit_minimal(test_eda_self_evolution_stable_ref)
 
+# Issue #1902 (refine #1818 / #1821): EDA primitive
+# MutationBoundaryGuard exception safety. Validates:
+# (a) eda:run-verification-feedback wraps throwable helpers
+# in try/catch + guard_ok=false on exception; (b)
+# eda:run-commercial-simulator-stub (#1821 sibling) wraps
+# the throwable body in Guard + try/catch; (c) 3 metrics
+# (eda_feedback_exception_total + eda_feedback_rolled_back_total
+# + guard_exception_rollback_success) addressable in stats hash;
+# (d) happy-path call surface intact. Pure CompilerService
+# tests.
+aura_add_issue_test(test_eda_guard_exception_safety)
+aura_issue_test_link_llvm_jit_minimal(test_eda_guard_exception_safety)
+
 # Issue #397: centralize SyntaxMarker::MacroIntroduced
 # checks behind FlatAST::is_macro_introduced helper. 8
 # inline call sites refactored. Pure CompilerService tests

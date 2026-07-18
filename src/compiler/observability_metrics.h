@@ -775,6 +775,20 @@ struct CompilerMetrics {
     // that #1822 / #1901 closed).
     std::atomic<std::uint64_t> stable_ref_auto_refresh_in_eda_total{0};
     std::atomic<std::uint64_t> eda_self_evolution_stale_ref_prevented{0};
+    // Issue #1902 (refine #1818 / #1821): EDA Guard exception
+    // telemetry. eda_feedback_exception_total counts every
+    // catch in eda:run-verification-feedback +
+    // eda:run-commercial-simulator-stub (plus future EDA
+    // primitives following the same try/catch + guard_ok=false
+    // contract). eda_feedback_rolled_back_total counts how many
+    // of those exceptions flipped guard_ok to trigger the
+    // Guard dtor restore_panic_checkpoint path.
+    // guard_exception_rollback_success counts the restore path
+    // itself firing (sanity check: rollback_success should
+    // track exception_total modulo dtor silent no-op cases).
+    std::atomic<std::uint64_t> eda_guard_exception_handled_total{0};
+    std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
+    std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
     std::atomic<std::uint64_t> eda_sv_corruption_detected_total{0};
     // Issue #697: Declarative primitives extension kit observability.
