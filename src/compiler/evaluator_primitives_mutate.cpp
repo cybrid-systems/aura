@@ -4658,29 +4658,60 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //     records into the workspace AST so the
     //     primitive can mutate the actual record.
     //   - Returns #t on success, #f on bad args.
+    // Issue #1704: MutationBoundaryGuard + live-node check (was raw
+    // unlocked workspace_flat access, no Guard — sibling of #1683).
     add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (ev.workspace_read_only_) {
+            ok = false;
             return make_bool(false);
+        }
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) {
+            ok = false;
+            return make_bool(false);
+        }
+        // Guard holds unique workspace lock — re-read under Guard.
         auto* ws = ev.workspace_flat();
-        if (!ws)
+        if (!ws) {
+            ok = false;
             return make_bool(false);
+        }
         auto cg_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (cg_id >= ws->size())
+        // Live target (not is_valid_in mid-path — restamp not expected;
+        // free-list still requires is_live_node). Provenance capture for audit.
+        if (cg_id == aura::ast::NULL_NODE || cg_id >= ws->size() || !ws->is_live_node(cg_id)) {
+            ok = false;
             return make_bool(false);
-        ws->bump_sv_mutate_attempt();
-        // Add a mutation record (so the change is visible
-        // in the workspace log + trigger mark_dirty_upward).
-        ws->add_mutation(cg_id, "sv-add-coverpoint", "covergroup", "covergroup+coverpoint",
-                         "added coverpoint via #469 closed-loop");
-        ws->apply_verification_dirty_bits(cg_id, aura::ast::FlatAST::kCoverageFeedbackDirty);
-        ws->apply_verify_dirty_bits(cg_id, aura::ast::FlatAST::kSvaDirty);
-        ws->mark_ppa_dirty(cg_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
-        ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
-                              aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
-        maybe_sv_hardware_closedloop(ev, cg_id);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
-        ws->bump_sv_mutate_success();
+        }
+        StableNodeRef cref = ws->make_ref(cg_id);
+        cg_id = cref.id;
+
+        std::string threw;
+        if (!guard.run_or_rollback(
+                [&] {
+                    ws->bump_sv_mutate_attempt();
+                    // Add a mutation record (so the change is visible
+                    // in the workspace log + trigger mark_dirty_upward).
+                    ws->add_mutation(cg_id, "sv-add-coverpoint", "covergroup",
+                                     "covergroup+coverpoint",
+                                     "added coverpoint via #469 closed-loop");
+                    ws->apply_verification_dirty_bits(cg_id,
+                                                      aura::ast::FlatAST::kCoverageFeedbackDirty);
+                    ws->apply_verify_dirty_bits(cg_id, aura::ast::FlatAST::kSvaDirty);
+                    ws->mark_ppa_dirty(cg_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+                    ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
+                                          aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+                    maybe_sv_hardware_closedloop(ev, cg_id);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->sv_verification_structure_mutate_hits_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    ws->bump_sv_mutate_success();
+                },
+                &threw)) {
+            ok = false;
+            return make_bool(false);
+        }
         return make_bool(true);
     });
 
@@ -4693,27 +4724,52 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // P0 scope-limited ship: mirrors
     // (mutate:sv-add-coverpoint) — increments counters,
     // adds a mutation record, returns #t / #f.
+    // Issue #1704: same Guard + live-node contract as sv-add-coverpoint.
     add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+        if (ev.workspace_read_only_) {
+            ok = false;
             return make_bool(false);
+        }
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) {
+            ok = false;
+            return make_bool(false);
+        }
         auto* ws = ev.workspace_flat();
-        if (!ws)
+        if (!ws) {
+            ok = false;
             return make_bool(false);
+        }
         auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (pid >= ws->size())
+        if (pid == aura::ast::NULL_NODE || pid >= ws->size() || !ws->is_live_node(pid)) {
+            ok = false;
             return make_bool(false);
-        ws->bump_sv_mutate_attempt();
-        ws->add_mutation(pid, "sv-weaken-property", "property", "property+disable-iff",
-                         "weakened property via #469 closed-loop");
-        ws->apply_verification_dirty_bits(pid, aura::ast::FlatAST::kAssertFailureDirty);
-        ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
-        ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
-        ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
-                              aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
-        maybe_sv_hardware_closedloop(ev, pid);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-            m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
-        ws->bump_sv_mutate_success();
+        }
+        StableNodeRef pref = ws->make_ref(pid);
+        pid = pref.id;
+
+        std::string threw;
+        if (!guard.run_or_rollback(
+                [&] {
+                    ws->bump_sv_mutate_attempt();
+                    ws->add_mutation(pid, "sv-weaken-property", "property", "property+disable-iff",
+                                     "weakened property via #469 closed-loop");
+                    ws->apply_verification_dirty_bits(pid, aura::ast::FlatAST::kAssertFailureDirty);
+                    ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
+                    ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+                    ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
+                                          aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+                    maybe_sv_hardware_closedloop(ev, pid);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->sv_verification_structure_mutate_hits_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    ws->bump_sv_mutate_success();
+                },
+                &threw)) {
+            ok = false;
+            return make_bool(false);
+        }
         return make_bool(true);
     });
 

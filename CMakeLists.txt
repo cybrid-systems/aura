@@ -5407,6 +5407,9 @@ aura_issue_test_link_llvm_jit(test_mutate_inline_stale_parent_1702)
 # Issue #1703: refactor/extract re-validate parent after parse_to_flat.
 aura_add_issue_test(test_mutate_refactor_extract_stale_parent_1703)
 aura_issue_test_link_llvm_jit(test_mutate_refactor_extract_stale_parent_1703)
+# Issue #1704: sv-add-coverpoint / sv-weaken-property MutationBoundaryGuard.
+aura_add_issue_test(test_mutate_sv_guard_1704)
+aura_issue_test_link_llvm_jit(test_mutate_sv_guard_1704)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
