@@ -4285,6 +4285,17 @@ public:
             const auto slot = primitives_.slot_for_name(name);
             if (slot < primitives_.slot_count()) {
                 const auto& meta = primitives_.meta_for_slot(slot);
+                // Issue #1676: render-critical / rendering+hot fast path —
+                // trusted tier skips capability gate + deprecation tax.
+                // Security is enforced at sandbox boundary; present/draw
+                // must not re-pay slot security checks every frame.
+                if (is_render_critical_meta(meta)) {
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->render_hotpath_dispatch_fast_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    }
+                    return call();
+                }
                 // Issue #1448: PrimMeta.deprecated → dispatch-site warning.
                 // Still executes (compat), but bumps a counter so agents
                 // and (engine:metrics) can see remaining debt. Prefer
@@ -4318,10 +4329,77 @@ public:
                         "capability denied: sandboxed primitive requires kCapSandbox",
                         primitive_error_counter_ptr());
                 }
+                // Cold / non-render-critical while a frame is in flight.
+                if (aura::core::arena_policy::in_render_hotpath()) {
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->render_hotpath_dispatch_full_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    }
+                }
             }
         }
 
         return call();
+    }
+
+    // Issue #1676: dual-epoch + linear fence at TUI/render primitive entry
+    // (parity with Apply prologue, without O(frames) full sweep).
+    // Enforces linear_post_mutate on the newest live EnvFrame and refreshes
+    // stale frames. Returns false only when linear Moved is observed
+    // (present still proceeds; callers use return for audit).
+    [[nodiscard]] bool fence_render_hot_entry() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->render_hotpath_linear_fence_total.fetch_add(1, std::memory_order_relaxed);
+            m->render_hotpath_epoch_fence_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Epoch half: sample bridge epoch so agents can correlate fence vs bump.
+        (void)current_bridge_epoch();
+
+        EnvId hint = NULL_ENV_ID;
+        {
+            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            if (!env_frames_.empty()) {
+                for (std::size_t i = env_frames_.size(); i > 0; --i) {
+                    const EnvId id = static_cast<EnvId>(i - 1);
+                    if (env_frames_[id].version_ != INVALID_VERSION) {
+                        hint = id;
+                        break;
+                    }
+                }
+            }
+        }
+        if (hint == NULL_ENV_ID)
+            return true;
+
+        bool ok = true;
+        if (is_env_frame_invalid(hint) || is_env_frame_stale(hint)) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->render_hotpath_epoch_stale_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Recover: re-stamp so subsequent materialize does not walk pre-mutate frame.
+            if (is_valid_env_id(hint) && !is_env_frame_invalid(hint))
+                refresh_stale_frame_in_walk(hint, "render_hot_entry");
+        }
+        if (!linear_post_mutate_enforce(hint)) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->render_hotpath_linear_block_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            ok = false;
+        }
+        return ok;
+    }
+
+    void bump_render_hotpath_dispatch_fast(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hotpath_dispatch_fast_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_render_hotpath_dispatch_full(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->render_hotpath_dispatch_full_total.fetch_add(n, std::memory_order_relaxed);
+        }
     }
 
     // Issue #1357: mark frame boundary for histogram (called from arena-render-frame-reset).
@@ -5563,6 +5641,21 @@ public:
     [[nodiscard]] bool in_render_hotpath() const noexcept {
         return aura::core::arena_policy::in_render_hotpath();
     }
+    // Issue #1676: RAII enter + fence for TUI/render prim bodies.
+    struct RenderHotEntryGuard {
+        const Evaluator* ev;
+        explicit RenderHotEntryGuard(const Evaluator& e) noexcept
+            : ev(&e) {
+            e.enter_render_hotpath();
+            (void)e.fence_render_hot_entry();
+        }
+        ~RenderHotEntryGuard() noexcept {
+            if (ev)
+                ev->exit_render_hotpath();
+        }
+        RenderHotEntryGuard(const RenderHotEntryGuard&) = delete;
+        RenderHotEntryGuard& operator=(const RenderHotEntryGuard&) = delete;
+    };
     void bump_jit_fallback_to_interpreter() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

@@ -60,8 +60,9 @@ static void ac1_schema() {
     ::close(nfd);
     auto r = cs.eval("(stats:get \"query:render-stats\")");
     CHECK(r && is_hash(*r), "render-stats hash");
-    CHECK(href(cs, "schema") == 1674, "schema 1674");
-    CHECK(href(cs, "issue") == 1674, "issue 1674");
+    // Schema advanced by #1676 (dispatch fences); accept 1674+ lineage.
+    CHECK(href(cs, "schema") >= 1674, "schema >= 1674");
+    CHECK(href(cs, "issue") >= 1674, "issue >= 1674");
 }
 
 static void ac2_present_wired() {

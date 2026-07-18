@@ -5326,6 +5326,9 @@ aura_issue_test_link_llvm_jit(test_render_hotpath_observability_1674)
 # Issue #1675: render memory predictability (frame arena, GC hotpath defer).
 aura_add_issue_test(test_render_memory_predictability_1675)
 aura_issue_test_link_llvm_jit(test_render_memory_predictability_1675)
+# Issue #1676: render-tier fast dispatch + linear/epoch TUI/render fences.
+aura_add_issue_test(test_render_dispatch_linear_epoch_1676)
+aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

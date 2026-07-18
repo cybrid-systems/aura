@@ -1149,6 +1149,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // ops[0]=prim_id, ops[1]=arg_base, ops[2]=arg_count, ops[3]=result_slot
                     // Issue #891: no std::string temp; stack args for small arity;
                     // lookup_cstr avoids unordered_map key construction.
+                    // Issue #1676: route through invoke_prim_with_telemetry so
+                    // render-critical IR prims get the trusted fast path (and
+                    // metrics) — tree-walker and IR share the same dispatch tax.
                     auto prim_id = static_cast<PrimId>(ops[0]);
                     auto arg_base = ops[1];
                     auto arg_count = ops[2];
@@ -1169,9 +1172,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     EvalResult presult = make_int(0);
                     auto idx = static_cast<std::size_t>(prim_id);
                     if (idx < std::size(kPrimNames)) {
-                        auto pfn = context_.primitives.lookup_cstr(kPrimNames[idx]);
-                        if (pfn)
-                            presult = (*pfn)(pargs);
+                        const auto pname = kPrimNames[idx];
+                        auto pfn = context_.primitives.lookup_cstr(pname);
+                        if (pfn) {
+                            if (context_.evaluator) {
+                                presult = context_.evaluator->invoke_prim_with_telemetry(
+                                    pname, [&]() { return (*pfn)(pargs); });
+                            } else {
+                                presult = (*pfn)(pargs);
+                            }
+                        }
                     }
                     if (presult)
                         locals[result_slot] = *presult;
@@ -1247,13 +1257,19 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
                         return PendingCall{&callee_func, std::move(all_args), ops[3]};
                     } else if (is_primitive(callee_val)) {
-                        // Primitive function call — look up and invoke
+                        // Primitive function call — look up and invoke.
+                        // Issue #1676: share invoke_prim_with_telemetry with the
+                        // tree-walker so render-critical get trusted fast path.
                         auto slot = as_primitive_slot(callee_val);
                         auto prim_name = context_.primitives.name_for_slot(slot);
                         auto pfn = context_.primitives.lookup(prim_name);
                         if (pfn) {
-                            auto result = (*pfn)(call_args);
-                            locals[ops[3]] = result;
+                            if (context_.evaluator) {
+                                locals[ops[3]] = context_.evaluator->invoke_prim_with_telemetry(
+                                    prim_name, [&]() { return (*pfn)(call_args); });
+                            } else {
+                                locals[ops[3]] = (*pfn)(call_args);
+                            }
                         } else {
                             locals[ops[3]] = callee_val;
                         }

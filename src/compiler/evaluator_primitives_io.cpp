@@ -1110,6 +1110,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         "terminal-present-batch",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             // Issue #1314/#1316/#1349/#1559: (terminal-present-batch buf-id [fd]) → bytes-written
+            // Issue #1676: linear/epoch entry fence + render hotpath depth.
+            Evaluator::RenderHotEntryGuard hot_entry(ev);
             if (a.empty() || !is_int(a[0]))
                 return make_int(-1);
             auto id = as_int(a[0]);
@@ -1281,6 +1283,8 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     add_render(
         "render-draw-batch",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #1676: linear/epoch entry fence on draw hot path.
+            Evaluator::RenderHotEntryGuard hot_entry(ev);
             if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
                 return make_int(-1);
             auto id = as_int(a[0]);
@@ -1394,7 +1398,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 (void)primitives_detail::flat_hash_insert_cstr_i64(ht, ev.string_heap_, k_str, v,
                                                                    make_string, make_int);
             };
-            insert_kv("schema", 1674);
+            insert_kv("schema", 1676);
             insert_kv("present-calls", static_cast<std::int64_t>(eng.present_calls));
             insert_kv("present-skips", static_cast<std::int64_t>(eng.present_skips));
             insert_kv("present-bytes", static_cast<std::int64_t>(eng.present_bytes));
@@ -1425,8 +1429,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("zerocopy-views", m ? load(m->render_ffi_zerocopy_views_total) : 0);
             insert_kv("hot-dispatch-hits-render",
                       static_cast<std::int64_t>(ev.primitives().hot_dispatch_hits_render()));
+            // Issue #1676: render-tier dispatch + linear/epoch fences.
+            insert_kv("dispatch-fast-total", m ? load(m->render_hotpath_dispatch_fast_total) : 0);
+            insert_kv("dispatch-full-total", m ? load(m->render_hotpath_dispatch_full_total) : 0);
+            insert_kv("linear-fence-total", m ? load(m->render_hotpath_linear_fence_total) : 0);
+            insert_kv("epoch-fence-total", m ? load(m->render_hotpath_epoch_fence_total) : 0);
+            insert_kv("linear-block-total", m ? load(m->render_hotpath_linear_block_total) : 0);
+            insert_kv("epoch-stale-total", m ? load(m->render_hotpath_epoch_stale_total) : 0);
+            insert_kv("linear-enforcements", m ? load(m->linear_post_mutate_enforcements) : 0);
             insert_kv("phase", aura::renderer::kRenderPrimitivesPhase);
-            insert_kv("issue", 1674);
+            insert_kv("issue", 1676);
             if (m && load(m->term_render_present_total) > 0)
                 ev.bump_render_obs_v2_savings(
                     static_cast<std::uint64_t>(load(m->term_render_present_total)));
