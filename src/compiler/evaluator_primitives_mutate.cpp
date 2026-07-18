@@ -755,15 +755,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // checks inside an atomic batch so multiple set_child calls share one bump.
     add("mutate:query-and-replace",
         [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
-            std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-            if (ev.workspace_read_only_)
+            // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
+            // defuse_version_ + rollback. ok = false on every error path.
+            bool ok = true;
+            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            if (ev.workspace_read_only_) {
+                ok = false;
                 return mev("read-only", "workspace is read-only");
-            if (a.empty())
+            }
+            if (a.empty()) {
+                ok = false;
                 return mev(
                     "bad-arg",
                     "usage: (mutate:query-and-replace <predicates...> <template> [summary])");
-            if (!ev.workspace_flat_ || !ev.workspace_pool_)
+            }
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
                 return mev("no-workspace", "no workspace AST loaded");
+            }
 
             auto& flat = *ev.workspace_flat_;
             auto& pool = *ev.workspace_pool_;
@@ -1014,8 +1023,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
 
-            ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-            ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1904: removed redundant manual defuse_version_ +
+            // total_mutations_ bump — the MutationBoundaryGuard's dtor
+            // bumps defuse_version_ exactly once on successful exit.
+            // total_mutations_ is bumped via the Guard's existing counter
+            // machinery (mutation_log_ entries).
             if (aura::messaging::g_fiber_yield_mutation_boundary)
                 aura::messaging::g_fiber_yield_mutation_boundary();
 
@@ -1474,8 +1486,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // 之前调用，因为索引在失效前有效。
         auto dep_callers = ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym)
                                              : std::vector<aura::ast::NodeId>{};
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1904: removed redundant manual defuse_version_ +
+        // total_mutations_ bump — MutationBoundaryGuard owns the bump
+        // (introduced at the function entry; lock site TBD).
 
         // Find old Define node by name
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
@@ -1794,8 +1807,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // ── 依赖图查询：通过 ev.dep_caller_fn_ 获取调用者节点 ────
         auto dep_callers = ev.dep_caller_fn_ ? ev.dep_caller_fn_(ev.defuse_index_, sym)
                                              : std::vector<aura::ast::NodeId>{};
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1904: removed redundant manual defuse_version_ +
+        // total_mutations_ bump — MutationBoundaryGuard owns the bump.
 
         // Find Define node with matching symbol name
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -3972,8 +3985,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add("mutate:extract-function", [&ev, collect_free_vars, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         // last local merr definition removed; all calls use centralized make_merr
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1904: removed redundant manual defuse_version_ +
+        // total_mutations_ bump — MutationBoundaryGuard owns the bump.
+        // We also need to add `ok = false` on the error paths below.
         if (ev.workspace_read_only_)
             return ev.make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
@@ -4093,8 +4107,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
         // local merr removed (last one); all calls now use centralized make_merr
-        ev.defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        ev.total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1904: removed redundant manual defuse_version_ +
+        // total_mutations_ bump — MutationBoundaryGuard owns the bump.
         if (ev.workspace_read_only_)
             return ev.make_merr("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_)

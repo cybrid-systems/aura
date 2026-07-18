@@ -67,22 +67,36 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     add(aura::compiler::prim::kSetCode,
         [&ev, mev, destroy_defuse_index](const auto& a) -> EvalValue {
-            std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
-            if (ev.workspace_read_only_)
+            // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
+            // defuse_version_ + rollback. The Guard's dtor bumps
+            // version exactly once on successful exit and rolls back
+            // any mutations if `ok` is false. Every early-return error
+            // path sets ok = false so the rollback is consistent.
+            bool ok = true;
+            aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &ok);
+            if (ev.workspace_read_only_) {
+                ok = false;
                 return mev("read-only", "workspace is read-only");
+            }
             // Clear any previous set-code error and eval-current cache
             ev.last_set_code_error_kind_.clear();
             ev.last_set_code_error_msg_.clear();
             ev.last_eval_current_result_.reset();
             ev.coverage_counters_[0]++;
             ev.coverage_counters_[5]++;
-            if (a.empty() || !is_string(a[0]))
+            if (a.empty() || !is_string(a[0])) {
+                ok = false;
                 return mev("bad-arg", "usage: (set-code code-string)");
+            }
             auto idx = as_string_idx(a[0]);
-            if (idx >= ev.string_heap_.size())
+            if (idx >= ev.string_heap_.size()) {
+                ok = false;
                 return mev("bad-arg", "code string index out of range");
-            if (!ev.arena_)
+            }
+            if (!ev.arena_) {
+                ok = false;
                 return mev("internal", "no arena allocator available");
+            }
 
             // Issue #230 #3: allocate fresh pool/flat on every set-code
             // (don't reuse the old one). Reason: registered macros
@@ -127,6 +141,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 ev.last_set_code_error_kind_ = "parse";
                 ev.last_set_code_error_msg_ = err;
                 ev.coverage_counters_[5]--;
+                ok = false;
                 return mev("parse", err);
             }
             flat_ptr->root = pr.root;

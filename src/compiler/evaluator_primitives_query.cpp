@@ -8910,6 +8910,35 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(asserted + post_steal + materialize + legacy_fallback));
         });
 
+    // Issue #1904: query:mutation-guard-coverage.
+    // Returns MutationBoundaryGuard coverage as integer basis points
+    // (0..10000) - 10000 means 100% coverage (every observed mutate:*
+    // call site uses MutationBoundaryGuard RAII, zero manual lock+bump
+    // sites remain). The ratio is
+    //   wrapped / (wrapped + legacy) * 10000
+    // so agents can alert on < 10000 (any drop = a regression).
+    //
+    // Returns -1 sentinel when coverage < 100% (legacy > 0) to make
+    // regressions grep-friendly from --metrics output.
+    // Returns 10000 (vacuously full coverage) when no mutate activity
+    // has been observed yet - a fresh evaluator with no Guard wraps
+    // and no legacy sites is not in violation of the contract.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-guard-coverage", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(10000);
+            const std::uint64_t wrapped = ev->get_mutation_boundary_primitives_wrapped();
+            const std::uint64_t legacy = ev->get_mutation_legacy_manual_lock_total();
+            const std::uint64_t total = wrapped + legacy;
+            if (total == 0)
+                return make_int(10000); // no activity yet - vacuously covered
+            if (legacy > 0)
+                return make_int(-1); // regression sentinel
+            return make_int(static_cast<std::int64_t>((wrapped * 10000) / total));
+        });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
