@@ -146,6 +146,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> invalidate_cascade_depth_max{0};
     std::atomic<std::uint64_t> unified_invalidation_protocol_total{0};
     std::atomic<std::uint64_t> invalidate_cascade_depth_total{0};
+    // Issue #1627: soft+hard shared pre-cascade prepare (live closure
+    // scan + linear enforce + GC root audit) before epoch publish.
+    std::atomic<std::uint64_t> invalidate_pre_cascade_prepare_total{0};
     // Issue #402: needs_tree_walker_fallback counters. The
     // (call) counter is bumped on every invocation (incl.
     // early returns). The (fast_path) counter bumps when
