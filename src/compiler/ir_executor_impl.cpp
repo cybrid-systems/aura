@@ -292,9 +292,20 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
     constexpr auto kNullEnv = std::numeric_limits<std::uint32_t>::max();
     if (cl.env_id != kNullEnv) {
         const auto eid = static_cast<EnvId>(cl.env_id);
-        // Live EnvFrame dual-check (#1475 / #1491).
-        if (ev->is_env_frame_invalid(eid) || ev->is_env_frame_stale(eid))
+        // Live EnvFrame dual-check (#1475 / #1491 / #1626).
+        if (ev->is_env_frame_invalid(eid) || ev->is_env_frame_stale(eid)) {
             stale = true;
+            if (metrics)
+                metrics->compiler_closure_envframe_stale_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        }
+        // #1626: linear third arm (parity with tree-walker apply_closure).
+        if (!ev->linear_post_mutate_enforce(eid)) {
+            stale = true;
+            if (metrics)
+                metrics->linear_ownership_violation_prevented.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
     }
     // Expired views (invalidate cleared flat/pool while epoch still set).
     if (cl.bridge_epoch != 0 && !cl.flat && !cl.pool && cl.body_id == aura::ast::NULL_NODE) {

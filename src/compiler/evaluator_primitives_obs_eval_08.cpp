@@ -336,7 +336,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64); // #1626 more AC keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -378,14 +378,23 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       m ? L(&m->unified_invalidation_protocol_total) : 0);
             insert_kv("compiler_closure_safe_fallbacks",
                       m ? L(&m->compiler_closure_safe_fallbacks) : 0);
-            // #1604: JIT-side dual-check counters (same dashboard).
+            // #1604 / #1626: JIT-side dual-check counters (same dashboard).
             insert_kv("jit_closure_dual_check_total", m ? L(&m->jit_closure_dual_check_total) : 0);
             insert_kv("jit_closure_stale_deopt_total",
                       m ? L(&m->jit_closure_stale_deopt_total) : 0);
             insert_kv("jit_closure_safe_fallbacks", m ? L(&m->jit_closure_safe_fallbacks) : 0);
+            // #1626 AC: EnvFrame-domain + forced dual-check wire flags
+            insert_kv("compiler_closure_envframe_stale_total",
+                      m ? L(&m->compiler_closure_envframe_stale_total) : 0);
+            insert_kv("compiler_closure_epoch_mismatch_hits",
+                      m ? L(&m->compiler_closure_epoch_mismatch_hits) : 0);
             insert_kv("apply-path-wired", 1);
             insert_kv("jit-path-wired", 1);
             insert_kv("jit-deopt-bumps-ac-metrics", 1); // #1604
+            insert_kv("dual-check-forced", 1);          // #1626
+            insert_kv("apply-dual-check-wired", 1);     // #1626 map+bridge
+            insert_kv("jit-dual-check-wired", 1);       // #1626 aura_closure_call
+            insert_kv("linear-dual-check-wired", 1);    // #1626 third arm
             insert_kv("post-steal-path-wired", 1);
             insert_kv("compact-refresh-wired", 1);
             // #1607 AC5: unified soft/hard invalidation aliases (no new
@@ -395,8 +404,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("soft-hard-same-protocol", 1);
             insert_kv("atomic-bump-release-fence-wired", 1);
             insert_kv("jit-batch-deopt-wired", 1);
-            insert_kv("issue", 1607);
-            insert_kv("schema", 1607); // lineage 1604 / 1598
+            insert_kv("issue", 1626);
+            insert_kv("schema", 1626); // lineage 1607 / 1604 / 1598 / 1508
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
