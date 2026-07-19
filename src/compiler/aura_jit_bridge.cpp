@@ -222,6 +222,9 @@ struct AotState {
     std::atomic<std::uint64_t> module_version{0};
     // 0 = fall back to process g_aot_defuse_version for reload stale checks
     std::atomic<std::uint64_t> defuse_version{0};
+    // Issue #1640: host env_frame_version for AOT captured-env drift.
+    // 0 = no stamp / skip drift detection on reload.
+    std::atomic<std::uint64_t> env_frame_version{0};
 };
 
 static std::mutex g_aot_state_mtx;
@@ -243,6 +246,9 @@ static AotState& aot_state_for(void* eval_ptr) {
 
 // Issue #708: emit-time region mask (process-wide; AOT emit is not multi-tenant).
 static std::uint64_t g_aot_emit_region_mask = 0;
+// Issue #1640: emit-time env_frame_version stamp (process-wide; AOT emit).
+// 0 = no stamp (skip drift detection). Host can raise via setter when wired.
+static std::uint64_t g_aot_emit_env_frame_version = 0;
 
 // Backward-compat aliases for emit / log sites that still read "module version"
 // of the default state.

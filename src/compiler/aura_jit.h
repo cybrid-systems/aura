@@ -80,6 +80,10 @@ struct FlatFunction {
     // NON_ESCAPING result slots use arena (bump) allocation.
     const uint8_t* escape_map;
     uint8_t region; // 0=Default, 1=Performance, 2=Evolution
+    // Issue #1640: function-level linear ownership stamp for AOT mangle
+    // (0 = Untracked / no linear captures). Paired with env_frame_version
+    // in mangle_aot_name for captured-env drift detection.
+    uint8_t linear_ownership_state = 0;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);

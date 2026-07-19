@@ -5564,6 +5564,9 @@ aura_issue_test_link_llvm_jit(test_depth_slot_instance_id_1746)
 # Issue #1747: MutationBoundaryGuard dtor batches hold metrics atomics.
 aura_add_issue_test(test_guard_dtor_batch_metrics_1747)
 aura_issue_test_link_llvm_jit(test_guard_dtor_batch_metrics_1747)
+# Issue #1753: walk_env_frames uses static_assert for F signature.
+aura_add_issue_test(test_walk_env_frames_static_assert_1753)
+aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

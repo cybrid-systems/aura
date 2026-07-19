@@ -24,6 +24,9 @@ extern "C" void aura_scheduler_init_record_err();
 extern "C" void aura_set_long_mutation_scheduler_hook(void (*fn)(std::uint64_t fiber_id,
                                                                  std::uint64_t duration_us));
 
+// Issue #1641: weak C trampoline (strong def in evaluator_fiber_mutation.cpp).
+extern "C" void aura_evaluator_bump_starvation_mitigated_for_boundary() __attribute__((weak));
+
 static void long_mutation_hook_trampoline(std::uint64_t fiber_id,
                                           std::uint64_t duration_us) noexcept {
     if (g_scheduler != nullptr)
@@ -394,8 +397,9 @@ void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t dura
             // the legacy adaptive_steal_stats starvation-related counters
             // so dashboards can filter "starvation caused by mutation
             // boundary" specifically).
-            if (auto* ev = Evaluator::yield_hook_evaluator())
-                ev->bump_starvation_mitigated_for_boundary_count();
+            // Issue #1641: C weak trampoline (serve TU cannot name Evaluator).
+            if (aura_evaluator_bump_starvation_mitigated_for_boundary)
+                aura_evaluator_bump_starvation_mitigated_for_boundary();
             return;
         }
     }
