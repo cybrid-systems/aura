@@ -527,16 +527,43 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     //   EDSL loops that hold many StableRefs across subtree
     //   boundaries — AI agent iteration, RTL/SV verification
     //   flows, large SoC designs with thousands of defines.
+    //
+    // Issue #1847: wrap bump_generation_subtree in
+    // MutationBoundaryGuard + try/catch. Pre-#1847 mutated
+    // subtree_gen_ / generation_ raw — a throw mid ancestor
+    // walk left counters partially consistent with no panic
+    // checkpoint restore. Outermost Guard captures checkpoint;
+    // on exception flip guard_ok=false so dtor restores
+    // (#184/#236). Metrics mirror #1842/#1845 Guard path.
     add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (!ev.workspace_flat_)
             return make_int(0);
-        const auto before = ev.workspace_flat_->subtree_bump_count();
-        ev.workspace_flat_->bump_generation_subtree(id);
-        const auto after = ev.workspace_flat_->subtree_bump_count();
-        return make_int(after > before ? 1 : 0);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            const auto before = ev.workspace_flat_->subtree_bump_count();
+            ev.workspace_flat_->bump_generation_subtree(id);
+            const auto after = ev.workspace_flat_->subtree_bump_count();
+            return make_int(after > before ? 1 : 0);
+        } catch (const std::exception&) {
+            guard_ok = false; // Issue #1847: restore panic checkpoint
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        }
     });
 
     // (compile:subtree-generation subtree-root-id)
