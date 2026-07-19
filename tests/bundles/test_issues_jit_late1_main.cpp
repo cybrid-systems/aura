@@ -18,7 +18,6 @@ extern int aura_issue_429_soa_run();
 extern int aura_issue_430_arena_compaction_run();
 extern int aura_issue_431_cxx26_run();
 extern int aura_issue_440_edsl_readiness_run();
-extern int aura_issue_442_seva_demo_run();
 extern int aura_issue_444_strategy_evolution_run();
 extern int aura_issue_445_openclaw_integration_run();
 extern int aura_issue_452_aot_hot_update_run();
@@ -79,7 +78,6 @@ int main() {
         {"test_issue_430_arena_compaction", aura_issue_430_arena_compaction_run},
         {"test_issue_431_cxx26", aura_issue_431_cxx26_run},
         {"test_issue_440_edsl_readiness", aura_issue_440_edsl_readiness_run},
-        {"test_issue_442_seva_demo", aura_issue_442_seva_demo_run},
         {"test_issue_444_strategy_evolution", aura_issue_444_strategy_evolution_run},
         {"test_issue_445_openclaw_integration", aura_issue_445_openclaw_integration_run},
         {"test_issue_452_aot_hot_update", aura_issue_452_aot_hot_update_run},

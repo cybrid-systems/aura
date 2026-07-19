@@ -30,6 +30,45 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+// Issue #1771: shared "node_id [comment]" line parser for
+// verify:parse-coverage-feedback / parse-assert-failure /
+// parse-formal-cex. Returns count of successfully marked nodes.
+// Callers own attempt/success metrics (they differ slightly).
+namespace {
+    std::uint64_t parse_verify_node_id_lines(const std::string& text, aura::ast::FlatAST& ws,
+                                             Evaluator& ev, std::uint8_t dirty_bit) {
+        std::uint64_t marked = 0;
+        std::size_t i = 0;
+        while (i < text.size()) {
+            std::size_t j = i;
+            while (j < text.size() && text[j] != '\n')
+                ++j;
+            const std::string_view line(text.data() + i, j - i);
+            std::size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
+                ++k;
+            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                std::size_t val = 0;
+                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
+                    val = val * 10 + static_cast<std::size_t>(line[k] - '0');
+                    ++k;
+                }
+                const auto nid = static_cast<aura::ast::NodeId>(val);
+                if (nid < ws.size()) {
+                    ws.apply_verification_dirty_bits(nid, dirty_bit);
+                    ++marked;
+                }
+            } else {
+                // Non-integer line — bump parse-error counter for
+                // query:verify-tool-stats.
+                ev.bump_verify_tool_parse_error();
+            }
+            i = (j < text.size()) ? j + 1 : j;
+        }
+        return marked;
+    }
+} // namespace
+
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
@@ -140,39 +179,9 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
         auto text_idx = as_string_idx(a[0]);
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
-        const std::string& text = ev.string_heap_[text_idx];
-        std::uint64_t marked = 0;
-        std::size_t i = 0;
-        while (i < text.size()) {
-            // Find end of line.
-            std::size_t j = i;
-            while (j < text.size() && text[j] != '\n')
-                ++j;
-            const std::string_view line(text.data() + i, j - i);
-            // Skip leading whitespace.
-            std::size_t k = 0;
-            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
-                ++k;
-            // Parse the first integer (NodeId).
-            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                std::size_t val = 0;
-                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                    val = val * 10 + (line[k] - '0');
-                    ++k;
-                }
-                const auto nid = static_cast<aura::ast::NodeId>(val);
-                if (nid < ws->size()) {
-                    ws->apply_verification_dirty_bits(nid,
-                                                      aura::ast::FlatAST::kCoverageFeedbackDirty);
-                    ++marked;
-                }
-            } else {
-                // Non-integer line — bump the parse-error counter so
-                // query:verify-tool-stats surfaces malformed input.
-                ev.bump_verify_tool_parse_error();
-            }
-            i = (j < text.size()) ? j + 1 : j;
-        }
+        // Issue #1771: shared line parser.
+        const auto marked = parse_verify_node_id_lines(ev.string_heap_[text_idx], *ws, ev,
+                                                       aura::ast::FlatAST::kCoverageFeedbackDirty);
         if (marked > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->verify_auto_trigger_mutate_total.fetch_add(1, std::memory_order_relaxed);
@@ -202,35 +211,9 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
         auto text_idx = as_string_idx(a[0]);
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
-        const std::string& text = ev.string_heap_[text_idx];
-        std::uint64_t marked = 0;
-        std::size_t i = 0;
-        while (i < text.size()) {
-            std::size_t j = i;
-            while (j < text.size() && text[j] != '\n')
-                ++j;
-            const std::string_view line(text.data() + i, j - i);
-            std::size_t k = 0;
-            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
-                ++k;
-            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                std::size_t val = 0;
-                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                    val = val * 10 + (line[k] - '0');
-                    ++k;
-                }
-                const auto nid = static_cast<aura::ast::NodeId>(val);
-                if (nid < ws->size()) {
-                    ws->apply_verification_dirty_bits(nid, aura::ast::FlatAST::kAssertFailureDirty);
-                    ++marked;
-                }
-            } else {
-                // Non-integer line — bump the parse-error counter so
-                // query:verify-tool-stats surfaces malformed input.
-                ev.bump_verify_tool_parse_error();
-            }
-            i = (j < text.size()) ? j + 1 : j;
-        }
+        // Issue #1771: shared line parser.
+        const auto marked = parse_verify_node_id_lines(ev.string_heap_[text_idx], *ws, ev,
+                                                       aura::ast::FlatAST::kAssertFailureDirty);
         if (marked > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->verify_auto_trigger_mutate_total.fetch_add(1, std::memory_order_relaxed);
@@ -251,34 +234,9 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
         auto text_idx = as_string_idx(a[0]);
         if (text_idx >= ev.string_heap_.size())
             return make_int(0);
-        const std::string& text = ev.string_heap_[text_idx];
-        std::uint64_t marked = 0;
-        std::size_t i = 0;
-        while (i < text.size()) {
-            std::size_t j = i;
-            while (j < text.size() && text[j] != '\n')
-                ++j;
-            const std::string_view line(text.data() + i, j - i);
-            std::size_t k = 0;
-            while (k < line.size() && (line[k] == ' ' || line[k] == '\t'))
-                ++k;
-            if (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                std::size_t val = 0;
-                while (k < line.size() && line[k] >= '0' && line[k] <= '9') {
-                    val = val * 10 + (line[k] - '0');
-                    ++k;
-                }
-                const auto nid = static_cast<aura::ast::NodeId>(val);
-                if (nid < ws->size()) {
-                    ws->apply_verification_dirty_bits(
-                        nid, aura::ast::FlatAST::kFormalCounterexampleDirty);
-                    ++marked;
-                }
-            } else {
-                ev.bump_verify_tool_parse_error();
-            }
-            i = (j < text.size()) ? j + 1 : j;
-        }
+        // Issue #1771: shared line parser (no auto-trigger metric — #802 BC).
+        const auto marked = parse_verify_node_id_lines(
+            ev.string_heap_[text_idx], *ws, ev, aura::ast::FlatAST::kFormalCounterexampleDirty);
         if (marked > 0)
             ev.bump_sv_self_evo_feedback_parse();
         return make_int(static_cast<std::int64_t>(marked));
