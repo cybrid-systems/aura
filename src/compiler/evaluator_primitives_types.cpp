@@ -433,6 +433,17 @@ void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
             // failure signal returned to the caller.
             ok = false;
         }
+        // Issue #1637: closed-loop panic checkpoint restore on hot-swap
+        // deopt. Even when the hot-swap itself fails (ok=false), a
+        // pending panic checkpoint may still be left from a prior
+        // mutation, so we unconditionally run the restore — the
+        // underlying method early-returns when no checkpoint is pending
+        // (no-op + negligible cost on the steady-state hot-swap path).
+        // Wired through restore_panic_checkpoint_on_hot_swap_if_needed
+        // in evaluator_workspace_tree.cpp (truncate env_frames +
+        // env_generation bump + invalidate_post_rollback_env_frames +
+        // walk_active_closures bridge refresh + clear_panic_checkpoint).
+        ev.restore_panic_checkpoint_on_hot_swap_if_needed();
         return make_bool(ok);
     });
 }

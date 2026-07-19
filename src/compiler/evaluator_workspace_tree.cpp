@@ -399,6 +399,15 @@ bool Evaluator::restore_panic_checkpoint() {
     return ok;
 }
 
+// Issue #1637: full closed-loop restore on fiber resume. The original
+// (Issue #596) only bumped two counters when restore_panic_checkpoint()
+// returned true. The hardened version additionally runs the truncate
+// + generation + invalidate + walk_active_closures + clear sequence so
+// that after a fiber steal + concurrent mutate the live env_frames_,
+// closures_, and bridge_epoch tracking are coherent with the
+// checkpoint-snapshot, not the post-mutation state. Pairs with
+// restore_panic_checkpoint_on_arena_compact_if_needed() + _on_hot_swap_
+// below via the shared run_post_restore_lifecycle_close() helper.
 void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
     if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
         return;
@@ -406,9 +415,81 @@ void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
         return;
     if (!panic_auto_rollback_)
         return;
-    if (restore_panic_checkpoint()) {
-        bump_guard_panic_reflect_restores_on_resume();
-        bump_macro_hygiene_panic_restamp_from_workspace();
+    bump_post_steal_checkpoint_restore_total();
+    if (!restore_panic_checkpoint())
+        return;
+    run_post_restore_lifecycle_close(/*safe_total_event=*/true);
+}
+
+// Issue #1637: GC compact variant — same body as the resume path but
+// without the outermost-flag check (the arena compact hook fires
+// independent of the Guard dtor state) and with a path-specific
+// counter bumped (post_compact_checkpoint_restore_total). Closed-loop
+// restore guarantees that a pending panic checkpoint survives a GC
+// compact without leaving env_frames_ / closures_ in a state where a
+// later guard dtor commits against the wrong snapshot.
+void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+        return;
+    if (!panic_auto_rollback_)
+        return;
+    bump_post_compact_checkpoint_restore_total();
+    if (!restore_panic_checkpoint())
+        return;
+    run_post_restore_lifecycle_close(/*safe_total_event=*/false);
+}
+
+// Issue #1637: hot-swap deopt variant — invoked from the
+// (hot-swap:fn "name" "new-source") primitive's post-callback path via
+// aura_evaluator_hot_swap_panic_restore() trampoline. Bumps
+// post_hot_swap_checkpoint_restore_total so re-deopt + recover
+// sequences are observable without conflating with steal/compact.
+void Evaluator::restore_panic_checkpoint_on_hot_swap_if_needed() noexcept {
+    if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
+        return;
+    if (!panic_auto_rollback_)
+        return;
+    bump_post_hot_swap_checkpoint_restore_total();
+    if (!restore_panic_checkpoint())
+        return;
+    run_post_restore_lifecycle_close(/*safe_total_event=*/false);
+}
+
+// Issue #1637: shared body of the three restore_<event>_if_needed()
+// variants. truncate_env_frames_to_checkpoint collapses env_frames_
+// back to panic_safe_env_frames_size_ (defensive even though
+// restore_panic_checkpoint() should already have done the equivalent
+// for the underlying heaps). env_generation_ += 1 forces any closure
+// captured under the previous generation to see drift on its next
+// access. invalidate_post_rollback_env_frames marks bumped frames as
+// stale so is_env_frame_stale() returns true (forcing callers to
+// re-resolve via the next post-steal refresh). walk_active_closures
+// refreshes stale bridge_epoch stamps on the live closures (the
+// dual-epoch rebound per #1631). clear_panic_checkpoint releases the
+// process-wide GC defer per #1489 / #1667.
+//
+// On the fiber resume path only, also bumps
+// mutation_boundary_steal_safe_total when a boundary was held at the
+// moment of restore, so the observability surface distinguishes
+// "steal happened" (post_steal_checkpoint_restore_total) from "steal
+// happened safely under a held boundary". Pairs with the existing
+// mutation_boundary_cross_thread_migration_total from #1373.
+void Evaluator::run_post_restore_lifecycle_close(bool safe_total_event) noexcept {
+    (void)truncate_env_frames_to_checkpoint();
+    env_generation_ = env_generation_ + 1;
+    invalidate_post_rollback_env_frames();
+    walk_active_closures([this](ClosureId /*id*/, Closure& cl) {
+        if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch()))
+            cl.bridge_epoch = current_bridge_epoch();
+    });
+    clear_panic_checkpoint();
+    bump_guard_panic_reflect_restores_on_resume();
+    bump_macro_hygiene_panic_restamp_from_workspace();
+
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->cross_fiber_panic_heal_success.fetch_add(1, std::memory_order_relaxed);
+        if (safe_total_event && (mutation_boundary_held() || any_active_mutation_boundary()))
+            m->mutation_boundary_steal_safe_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

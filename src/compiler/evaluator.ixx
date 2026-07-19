@@ -1549,6 +1549,79 @@ public:
             m->aot_stale_deopt_on_steal_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #1637: panic checkpoint lifecycle hardening — bump/getter
+    // pair for the three path-specific restore counters (post-steal /
+    // post-compact / post-hot-swap) plus the two outcome counters
+    // (cross_fiber_panic_heal_success + mutation_boundary_steal_safe_total).
+    // Bumped from restore_panic_checkpoint_on_<event>_if_needed() in
+    // evaluator_workspace_tree.cpp; observable via
+    // (query:mutation-boundary-coverage-stats) and the per-path
+    // C accessors in aura_jit_bridge.cpp (file-scope atomic fallback).
+    void bump_post_steal_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->post_steal_checkpoint_restore_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_post_compact_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->post_compact_checkpoint_restore_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_post_hot_swap_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->post_hot_swap_checkpoint_restore_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_cross_fiber_panic_heal_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_fiber_panic_heal_success.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_steal_safe_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_steal_safe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_post_steal_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->post_steal_checkpoint_restore_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_post_compact_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->post_compact_checkpoint_restore_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_post_hot_swap_checkpoint_restore_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->post_hot_swap_checkpoint_restore_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_cross_fiber_panic_heal_success() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->cross_fiber_panic_heal_success.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mutation_boundary_steal_safe_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->mutation_boundary_steal_safe_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     // Issue #682: compiler GC root flush hook (service.ixx
     // implements flush_compiler_gc_roots). Called from
     // flush_gc_roots at safepoint after runtime heap roots.
@@ -2059,6 +2132,29 @@ public:
     // Issue #596: on fiber resume, restore a pending panic checkpoint when
     // the outermost Guard mutation failed (cross-fiber rollback path).
     void restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept;
+    // Issue #1637: GC compact variant — paired caller is the arena
+    // compact hook (evaluator.ixx set_on_compact_hook → on_arena_compact_hook
+    // in evaluator_fiber_mutation.cpp). Same closed-loop logic as the
+    // resume path (truncate_env_frames_to_checkpoint + env_generation bump
+    // + invalidate_post_rollback_env_frames + walk_active_closures bridge
+    // refresh + clear_panic_checkpoint), but bumps
+    // post_compact_checkpoint_restore_total instead of
+    // post_steal_checkpoint_restore_total so dashboards can distinguish
+    // GC-induced restores from steal-induced ones.
+    void restore_panic_checkpoint_on_arena_compact_if_needed() noexcept;
+    // Issue #1637: hot-swap deopt variant — wired via
+    // aura_evaluator_hot_swap_panic_restore() C bridge trampoline from
+    // evaluator_primitives_types.cpp after the (hot-swap:fn ...) callback
+    // returns. Closed-loop restore with post_hot_swap_checkpoint_restore_total
+    // counter bumped (so re-deopt + recover sequences are observable).
+    void restore_panic_checkpoint_on_hot_swap_if_needed() noexcept;
+    // Issue #1637: shared body of the three restore_<event>_if_needed()
+    // variants. Runs truncate_env_frames_to_checkpoint → env_generation
+    // bump → invalidate_post_rollback_env_frames → walk_active_closures
+    // (refresh stale bridge_epoch) → clear_panic_checkpoint (release GC
+    // defer per #1489) and bumps the cross_fiber_panic_heal_success +
+    // (optionally) mutation_boundary_steal_safe_total outcome counters.
+    void run_post_restore_lifecycle_close(bool safe_total_event) noexcept;
 
     // Get the safe checkpoint source (for introspection).
     const std::string& panic_safe_source() const { return panic_safe_source_; }

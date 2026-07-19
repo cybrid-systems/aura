@@ -6370,6 +6370,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> checkpoint_lost_on_compact{0};      // #1446
     std::atomic<std::uint64_t> panic_checkpoint_steal_hardened{1}; // #1260
 
+    // Issue #1637: panic checkpoint lifecycle hardening (post-steal /
+    // post-compact / post-hot-swap closed-loop). Three path-specific
+    // counters let dashboards distinguish which event triggered the
+    // restore; the two outcome counters aggregate "did the recovery
+    // actually rebuild state" (cross_fiber_panic_heal_success) and
+    // "was the steal made safe while a boundary was still held"
+    // (mutation_boundary_steal_safe_total — pair with the existing
+    // mutation_boundary_cross_thread_migration_total from #1373).
+    std::atomic<std::uint64_t> post_steal_checkpoint_restore_total{0};    // #1637
+    std::atomic<std::uint64_t> post_compact_checkpoint_restore_total{0};  // #1637
+    std::atomic<std::uint64_t> post_hot_swap_checkpoint_restore_total{0}; // #1637
+    std::atomic<std::uint64_t> cross_fiber_panic_heal_success{0};         // #1637
+    std::atomic<std::uint64_t> mutation_boundary_steal_safe_total{0};     // #1637
+
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261

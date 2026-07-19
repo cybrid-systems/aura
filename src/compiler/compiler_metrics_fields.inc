@@ -1490,5 +1490,12 @@ AURA_COMPILER_METRICS_FIELD(aot_closure_bridge_refresh_total)
 AURA_COMPILER_METRICS_FIELD(stable_ref_fiber_mismatch_prevented_total)
 AURA_COMPILER_METRICS_FIELD(boundary_pinned_auto_restamp_total)
 AURA_COMPILER_METRICS_FIELD(cross_cow_provenance_enforced_total)
+// Issue #1637: panic checkpoint lifecycle hardening (post-steal /
+// post-compact / post-hot-swap closed-loop restore counters).
+AURA_COMPILER_METRICS_FIELD(post_steal_checkpoint_restore_total)
+AURA_COMPILER_METRICS_FIELD(post_compact_checkpoint_restore_total)
+AURA_COMPILER_METRICS_FIELD(post_hot_swap_checkpoint_restore_total)
+AURA_COMPILER_METRICS_FIELD(cross_fiber_panic_heal_success)
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_steal_safe_total)
 
 #undef AURA_COMPILER_METRICS_FIELD
