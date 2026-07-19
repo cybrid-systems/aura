@@ -5813,6 +5813,9 @@ aura_issue_test_link_llvm_jit(test_seva_demo_metrics_1841)
 # Issue #1842: evaluator:compact-env-frames MutationBoundaryGuard + try/catch.
 aura_add_issue_test(test_compact_env_frames_guard_1842)
 aura_issue_test_link_llvm_jit(test_compact_env_frames_guard_1842)
+# Issue #1843: compile:aot-stats early nullptr check (no per-field m? ternaries).
+aura_add_issue_test(test_aot_stats_null_metrics_1843)
+aura_issue_test_link_llvm_jit(test_aot_stats_null_metrics_1843)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

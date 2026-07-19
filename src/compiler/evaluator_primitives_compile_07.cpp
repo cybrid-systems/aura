@@ -818,6 +818,11 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     //   - exception-opcode-mask / interpreter-exception-ops
     //   - schema=1516
     ObservabilityPrims::register_stats_impl("compile:aot-stats", [&ev](const auto&) -> EvalValue {
+        // Issue #1843: early nullptr check so kv entries do not
+        // need per-field `m ?` ternaries (easy to forget on new keys).
+        // compiler_metrics_ ownership is non-owning (#1835); null
+        // means bare Evaluator — return zero-filled hash + schema
+        // (pre-#1843 BC, not void).
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(16);
@@ -858,19 +863,33 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         };
-        const auto load = [m](const std::atomic<std::uint64_t>& a) -> std::int64_t {
-            return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+        auto zero_kv = []() -> std::vector<std::pair<std::string, EvalValue>> {
+            return {
+                {"per-function-ir-emits", make_int(0)},
+                {"per-function-object-emits", make_int(0)},
+                {"per-function-misses", make_int(0)},
+                {"last-module-object-emits", make_int(0)},
+                {"exception-opcode-lowered", make_int(0)},
+                {"exception-opcodes-covered", make_int(0)},
+                {"exception-opcode-mask", make_int(0)},
+                {"interpreter-exception-ops", make_int(0)},
+                {"schema", make_int(1516)},
+            };
+        };
+        if (!m)
+            return build_hash(zero_kv());
+        const auto load = [](const std::atomic<std::uint64_t>& a) -> std::int64_t {
+            return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
         };
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"per-function-ir-emits", make_int(m ? load(m->aot_per_function_ir_total) : 0)},
-            {"per-function-object-emits", make_int(m ? load(m->aot_per_function_object_total) : 0)},
-            {"per-function-misses", make_int(m ? load(m->aot_per_function_miss_total) : 0)},
-            {"last-module-object-emits", make_int(m ? load(m->aot_last_module_object_total) : 0)},
-            {"exception-opcode-lowered", make_int(m ? load(m->jit_exception_opcode_lowered) : 0)},
-            {"exception-opcodes-covered", make_int(m ? load(m->jit_exception_opcodes_covered) : 0)},
-            {"exception-opcode-mask", make_int(m ? load(m->jit_exception_opcode_mask) : 0)},
-            {"interpreter-exception-ops",
-             make_int(m ? load(m->interpreter_exception_ops_total) : 0)},
+            {"per-function-ir-emits", make_int(load(m->aot_per_function_ir_total))},
+            {"per-function-object-emits", make_int(load(m->aot_per_function_object_total))},
+            {"per-function-misses", make_int(load(m->aot_per_function_miss_total))},
+            {"last-module-object-emits", make_int(load(m->aot_last_module_object_total))},
+            {"exception-opcode-lowered", make_int(load(m->jit_exception_opcode_lowered))},
+            {"exception-opcodes-covered", make_int(load(m->jit_exception_opcodes_covered))},
+            {"exception-opcode-mask", make_int(load(m->jit_exception_opcode_mask))},
+            {"interpreter-exception-ops", make_int(load(m->interpreter_exception_ops_total))},
             {"schema", make_int(1516)},
         };
         return build_hash(kv);
