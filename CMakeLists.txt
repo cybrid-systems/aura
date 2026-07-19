@@ -2269,6 +2269,14 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 # 422.cpp) by adding the per-CompilerMetrics IR-hygiene observability hooks.
 aura_add_issue_test(test_issue_1644_ir_hygiene)
 aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
+# Issue #1645: dead bump_* observability (scope-limited progressive).
+# Phase 1 ships 2 wire-ups + scripts/check_dead_bump_rate.py (the AC2
+# CI gate) + scripts/audit_dead_bumps.py (audit infra) + design doc.
+# Phase 2+ (~22 follow-up issues per the categorized queue in
+# docs/design/1645-dead-bump-progressive-ship.md) will wire up the
+# remaining ~400 dead bumps to reach the body-quoted < 10% dead rate.
+aura_add_issue_test(test_issue_1645)
+aura_issue_test_link_llvm_jit(test_issue_1645)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
