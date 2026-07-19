@@ -2794,17 +2794,17 @@ public:
     std::size_t run_inlined() const { return run_inlined_; }
     std::size_t run_inlined_branch_aware() const { return run_inlined_branch_aware_; }
 
-    // Issue #246: macro-hygiene toggle. When true (the default),
-    // the inliner refuses to inline callees whose IRFunction.marker
-    // is SyntaxMarker::MacroIntroduced. This is the conservative
-    // policy: macro-introduced code can do anything (gensym'd
-    // locals, captured caller-side variables, EDSL-side effects),
-    // and inlining it into user code could break hygiene invariants.
-    // Setter:
-    //   InlinePass::set_respect_macro_hygiene(false)
+    // Issue #246 / #1780: macro-hygiene toggle (per-InlinePass instance).
+    // When true (the default), the inliner refuses to inline callees
+    // whose IRFunction.marker is SyntaxMarker::MacroIntroduced.
+    // Issue #1780: was process-wide static — raced concurrent Evaluators /
+    // fibers via (*allow-macro-inline*). Policy now lives on Evaluator
+    // (inline_respect_macro_hygiene_); host copies it onto each InlinePass
+    // before run(). Instance set/get here is for tests and host wiring.
+    //   pass.set_respect_macro_hygiene(false)
     //   → opt in to inlining macro-introduced code.
-    static void set_respect_macro_hygiene(bool v) { respect_macro_hygiene_ = v; }
-    static bool get_respect_macro_hygiene() { return respect_macro_hygiene_; }
+    void set_respect_macro_hygiene(bool v) { respect_macro_hygiene_ = v; }
+    bool get_respect_macro_hygiene() const { return respect_macro_hygiene_; }
 
 private:
     // True if the function is a "constant-returning single-block
@@ -2812,7 +2812,7 @@ private:
     //   - Has exactly one block
     //   - The block has 2 instructions: a ConstXxx + a Return
     //   - The Return's source is the ConstXxx's result slot
-    static bool is_trivial_inlinable(const aura::ir::IRFunction& func) {
+    bool is_trivial_inlinable(const aura::ir::IRFunction& func) const {
         // Issue #246: macro-hygiene guard. When respect_macro_hygiene_
         // is on (the default) and the callee's SyntaxMarker is
         // MacroIntroduced (1), skip inlining. This is the most
@@ -2855,14 +2855,16 @@ private:
     }
 
 public:
-    // Public wrapper for tests.
+    // Public wrapper for tests (default respect_macro_hygiene_=true).
     static bool is_trivial_inlinable_for_test(const aura::ir::IRFunction& func) {
-        return is_trivial_inlinable(func);
+        InlinePass p;
+        return p.is_trivial_inlinable(func);
     }
     // Issue #197: public test wrapper for the branch-aware
     // predicate.
     static bool is_inlinable_branch_aware_for_test(const aura::ir::IRFunction& func) {
-        return is_inlinable_branch_aware(func);
+        InlinePass p;
+        return p.is_inlinable_branch_aware(func);
     }
     // Issue #197: public test wrapper for the branch-aware
     // inliner transformation. Returns true on success.
@@ -2987,7 +2989,7 @@ private:
     // The predicate is intentionally conservative — the
     // goal is correctness over coverage. Aggressive cases
     // (loops, calls inside callee, etc.) are follow-ups.
-    static bool is_inlinable_branch_aware(const aura::ir::IRFunction& func) {
+    bool is_inlinable_branch_aware(const aura::ir::IRFunction& func) const {
         // Issue #246: macro-hygiene guard. See the rationale in
         // is_trivial_inlinable. Default behavior: skip macro-
         // introduced callees. Set respect_macro_hygiene_ = false
@@ -3522,10 +3524,10 @@ private:
     static inline std::size_t total_inlined_branch_aware_ = 0;
     // Issue #388: macro-hygiene cross-marker skipped total.
     static inline std::size_t macro_hygiene_skipped_ = 0;
-    // Issue #246: macro-hygiene policy toggle. Default true
-    // (skip inlining macro-introduced callees). See
-    // set_respect_macro_hygiene() for the opt-in.
-    static inline bool respect_macro_hygiene_ = true;
+    // Issue #246 / #1780: macro-hygiene policy toggle (instance).
+    // Default true (skip inlining macro-introduced callees).
+    // Not process-wide — see Evaluator::inline_respect_macro_hygiene_.
+    bool respect_macro_hygiene_ = true;
     // Issue #171: func_id → IRFunction* index for O(1) lookup.
     std::vector<const aura::ir::IRFunction*> func_index_;
     // Issue #203: SCC membership per func_id. Rebuilt on

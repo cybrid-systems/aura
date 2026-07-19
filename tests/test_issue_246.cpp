@@ -111,7 +111,7 @@ static ir::IRFunction make_caller_with_call(std::uint32_t callee_fid) {
 // ═══════════════════════════════════════════════════════════════
 bool test_default_skips_macro_introduced() {
     std::println("\n--- AC1: default policy skips MacroIntroduced callees ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true); // default
+    // Issue #1780: per-instance policy (no process-wide static).
 
     // Build module with a macro-introduced trivial callee
     ir::IRModule module;
@@ -121,6 +121,7 @@ bool test_default_skips_macro_introduced() {
     module.add_function(std::move(caller));
 
     aura::compiler::InlinePass pass;
+    pass.set_respect_macro_hygiene(true); // default
     pass.run(module);
 
     std::size_t inlined = pass.inlined_count();
@@ -134,8 +135,6 @@ bool test_default_skips_macro_introduced() {
 // ═══════════════════════════════════════════════════════════════
 bool test_optin_reenables_inlining() {
     std::println("\n--- AC2: opt-in re-enables inlining of macro-introduced ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(false);
-
     ir::IRModule module;
     auto callee = make_trivial_func("macro-const-optin", /*marker=*/1);
     auto callee_fid = module.add_function(std::move(callee));
@@ -143,14 +142,12 @@ bool test_optin_reenables_inlining() {
     module.add_function(std::move(caller));
 
     aura::compiler::InlinePass pass;
+    pass.set_respect_macro_hygiene(false); // Issue #1780: instance
     pass.run(module);
 
     std::size_t inlined = pass.inlined_count();
     std::println("    [info] inlined_count = {} (expected 1: opt-in)", inlined);
     CHECK(inlined == 1, "AC2: opt-in re-enables inlining of macro-introduced callees");
-
-    // Reset to default for subsequent tests
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);
     return true;
 }
 
@@ -159,8 +156,6 @@ bool test_optin_reenables_inlining() {
 // ═══════════════════════════════════════════════════════════════
 bool test_user_callee_inlined() {
     std::println("\n--- AC3: User-marked callees are inlined (sanity) ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-
     ir::IRModule module;
     auto callee = make_trivial_func("user-const", /*marker=*/0);
     auto callee_fid = module.add_function(std::move(callee));
@@ -168,6 +163,7 @@ bool test_user_callee_inlined() {
     module.add_function(std::move(caller));
 
     aura::compiler::InlinePass pass;
+    pass.set_respect_macro_hygiene(true);
     pass.run(module);
 
     std::size_t inlined = pass.inlined_count();
@@ -182,8 +178,6 @@ bool test_user_callee_inlined() {
 // ═══════════════════════════════════════════════════════════════
 bool test_bool_literal_callee_inlined() {
     std::println("\n--- AC4: BoolLiteral-marked callees are inlined ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-
     ir::IRModule module;
     // SyntaxMarker::BoolLiteral = 2
     auto callee = make_trivial_func("bool-const", /*marker=*/2);
@@ -192,6 +186,7 @@ bool test_bool_literal_callee_inlined() {
     module.add_function(std::move(caller));
 
     aura::compiler::InlinePass pass;
+    pass.set_respect_macro_hygiene(true);
     pass.run(module);
 
     std::size_t inlined = pass.inlined_count();
@@ -216,14 +211,17 @@ bool test_default_marker_is_user() {
 // ═══════════════════════════════════════════════════════════════
 bool test_setter_round_trip() {
     std::println("\n--- AC6: respect_macro_hygiene_ setter round-trip ---");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true, "set true → get true");
-    aura::compiler::InlinePass::set_respect_macro_hygiene(false);
-    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == false,
-          "set false → get false");
-    // Reset to default for the rest of the suite
-    aura::compiler::InlinePass::set_respect_macro_hygiene(true);
-    CHECK(aura::compiler::InlinePass::get_respect_macro_hygiene() == true, "reset to true");
+    // Issue #1780: instance API (process-wide static removed).
+    aura::compiler::InlinePass pass;
+    pass.set_respect_macro_hygiene(true);
+    CHECK(pass.get_respect_macro_hygiene() == true, "set true → get true");
+    pass.set_respect_macro_hygiene(false);
+    CHECK(pass.get_respect_macro_hygiene() == false, "set false → get false");
+    pass.set_respect_macro_hygiene(true);
+    CHECK(pass.get_respect_macro_hygiene() == true, "reset to true");
+    // Independent instances do not share state.
+    aura::compiler::InlinePass other;
+    CHECK(other.get_respect_macro_hygiene() == true, "default instance still true");
     return true;
 }
 
