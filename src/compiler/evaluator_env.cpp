@@ -1364,6 +1364,13 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
     bump_envframe_truncate(dropped);
+    // Issue #1739: bump bridge_epoch so cross-COW / cross-evaluator
+    // closure freshness checks (is_bridge_stale / aura_closure_call)
+    // observe that post-checkpoint EnvIds are no longer valid.
+    // Same hook used by compact_env_frames (#1510) and
+    // commit_panic_checkpoint (#1728). No-op when service not bound.
+    if (bridge_epoch_bump_fn_ && compiler_service_)
+        bridge_epoch_bump_fn_(compiler_service_);
     return dropped;
 }
 
