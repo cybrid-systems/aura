@@ -12279,7 +12279,7 @@ public:
                     // ── publish common path: ≤6 atomic writes (#1747) ──
                     // 1–4: dual hold counters (legacy #1253 + agent #1373)
                     // 5: histogram bucket
-                    // 6: max (store) when raised; over_1ms is rare path extra
+                    // 6: max (CAS loop when raised; Issue #1765 — no load+store)
                     m->mutation_hold_duration_us_total.fetch_add(b.hold_us,
                                                                  std::memory_order_relaxed);
                     m->mutation_hold_samples.fetch_add(b.holds, std::memory_order_relaxed);
@@ -12289,10 +12289,14 @@ public:
                     m->mutation_boundary_hold_histogram[b.hist_bucket].fetch_add(
                         1, std::memory_order_relaxed);
                     if (b.update_max) {
-                        // Single store is enough when uus is a new max under relaxed
-                        // telemetry (races only lose intermediate max samples).
-                        m->mutation_hold_duration_us_max.store(b.hold_us,
-                                                               std::memory_order_relaxed);
+                        // Issue #1765: CAS loop so a concurrent higher sample
+                        // cannot be overwritten by a lower load+store race.
+                        auto prev_max =
+                            m->mutation_hold_duration_us_max.load(std::memory_order_relaxed);
+                        while (b.hold_us > prev_max &&
+                               !m->mutation_hold_duration_us_max.compare_exchange_weak(
+                                   prev_max, b.hold_us, std::memory_order_relaxed)) {
+                        }
                     }
                     // Optional / rare path atomics (not on every dtor).
                     if (b.holds_over_1ms)
