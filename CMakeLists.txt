@@ -369,7 +369,13 @@ target_sources(test_ir PRIVATE
     # (query:security-stats) primitive). Without this
     # the test_ir link fails with "undefined reference
     # to aura::serve::http::port_from_env".
-    src/serve/http_health.cpp)
+    src/serve/http_health.cpp
+    # Issue #1559 + #1674: present_batch / draw_batch engine (header-based,
+    # non-module). aura::renderer::draw_batch is referenced by the
+    # (term-render-draw-batch) primitive in evaluator_primitives_io.cpp:1318.
+    # Without this the test_ir link fails with
+    # "undefined reference to aura::renderer::draw_batch".
+    src/renderer/render_primitives.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
