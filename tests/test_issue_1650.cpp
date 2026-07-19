@@ -50,7 +50,8 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -61,7 +62,8 @@ bool check_constructor_signature_ac1() {
     bool member_init = contains(qm, ", only_macro_introduced_(only_macro_introduced)");
     if (!param || !member_init) {
         std::println("FAIL: constructor parameter / member init missing "
-                     "(param={} member_init={})", param, member_init);
+                     "(param={} member_init={})",
+                     param, member_init);
         return false;
     }
     std::println("OK: only_macro_introduced constructor parameter + member init wired");
@@ -72,13 +74,15 @@ bool check_inverse_check_block_ac1() {
     std::println("\n--- AC1: inverse filter check in match_subtree ---");
     std::string qm = read_file("src/compiler/query_matcher.cpp");
     // Inverse check: skip User nodes when only_macro_introduced_ is set.
-    bool has_check = contains(qm, "if (only_macro_introduced_ && !ws_flat_->is_macro_introduced(ws_id))");
+    bool has_check =
+        contains(qm, "if (only_macro_introduced_ && !ws_flat_->is_macro_introduced(ws_id))");
     bool bumps_user_skip = contains(qm, "++recursive_user_skipped_") &&
                            contains(qm, "++macro_intro_filtered_inverse_");
     bool has_comment_1650 = contains(qm, "Issue #1650");
     if (!has_check || !bumps_user_skip || !has_comment_1650) {
         std::println("FAIL: inverse filter check / counter bumps / #1650 reference missing "
-                     "(check={} bump={} issue_ref={})", has_check, bumps_user_skip, has_comment_1650);
+                     "(check={} bump={} issue_ref={})",
+                     has_check, bumps_user_skip, has_comment_1650);
         return false;
     }
     std::println("OK: inverse filter check + paired counter bumps + #1650 comment landed");
@@ -97,7 +101,8 @@ bool check_struct_fields_ac2() {
                      only_field, counter_user, counter_inv);
         return false;
     }
-    std::println("OK: only_macro_introduced_ flag + recursive_user_skipped_ + macro_intro_filtered_inverse_ in struct");
+    std::println("OK: only_macro_introduced_ flag + recursive_user_skipped_ + "
+                 "macro_intro_filtered_inverse_ in struct");
     return true;
 }
 
@@ -112,16 +117,20 @@ bool check_design_doc_present() {
     return true;
 }
 
-}  // namespace aura_1650_detail
+} // namespace aura_1650_detail
 
 int main() {
     using namespace aura_1650_detail;
 
     int rc = 0;
-    if (!check_constructor_signature_ac1()) rc = 1;
-    if (!check_inverse_check_block_ac1())     rc = 1;
-    if (!check_struct_fields_ac2())          rc = 1;
-    if (!check_design_doc_present())          rc = 1;
+    if (!check_constructor_signature_ac1())
+        rc = 1;
+    if (!check_inverse_check_block_ac1())
+        rc = 1;
+    if (!check_struct_fields_ac2())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         std::println("\n#1650 partial-redundant-ship \u2014 all AC checks green \u2705\n"
