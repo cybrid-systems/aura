@@ -58,4 +58,11 @@ __attribute__((weak, used)) void aura_evaluator_post_resume_refresh() {}
 __attribute__((weak, used)) void aura_evaluator_bump_steal_arena_yield() {}
 __attribute__((weak, used)) void aura_evaluator_bump_steal_outermost_enforced() {}
 
+// aura_evaluator_on_fiber_join (referenced from src/serve/fiber.cpp:606
+// in Fiber::join lambda). Strong definition lives in
+// evaluator_fiber_mutation.cpp (module). Weak no-op here so non-module
+// binaries (test_concurrent, test_issue_*) link without dragging the
+// full module into their link unit.
+__attribute__((weak, used)) void aura_evaluator_on_fiber_join(void* /*joined_fiber*/) {}
+
 } // extern "C"
