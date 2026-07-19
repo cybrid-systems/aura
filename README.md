@@ -13,8 +13,4 @@ echo '(+ 1 2)' | ./build/aura   # → 3
 ./build.py bench --strict  # compiler benchmark SLO gate (#1569)
 ```
 
-CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-Onboard: [`docs/architecture.md`](docs/architecture.md) · [`docs/contributing.md`](docs/contributing.md) · `docs/agent-*.md`.
-Code + tests = source of truth (aura philosophy).
-
 License: Apache 2.0
