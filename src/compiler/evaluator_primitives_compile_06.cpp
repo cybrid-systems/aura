@@ -489,13 +489,17 @@ void CompilePrims::register_compile_p51(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
+            // Issue #1856: try_snapshot for records-total.
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
             std::uint64_t trace_size = 0;
             if (auto* ws = ev.workspace_flat()) {
                 trace_size = static_cast<std::uint64_t>(ws->invalidation_trace_size());
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"records-total", make_int(static_cast<std::int64_t>(
-                                      svc->snapshot().invalidation_trace_records_total))},
+                {"records-total",
+                 make_int(static_cast<std::int64_t>(snap_opt->invalidation_trace_records_total))},
                 {"trace-size", make_int(static_cast<std::int64_t>(trace_size))},
             };
             return build_hash(kv);

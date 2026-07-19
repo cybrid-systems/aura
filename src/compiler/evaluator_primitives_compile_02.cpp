@@ -99,7 +99,11 @@ void CompilePrims::register_compile_p16(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"lookups-total", make_int(static_cast<std::int64_t>(snap.type_dep_graph_lookups))},
                 {"hits-total", make_int(static_cast<std::int64_t>(snap.type_dep_graph_hits))},
@@ -222,7 +226,11 @@ void CompilePrims::register_compile_p17(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"narrowed-total",
                  make_int(static_cast<std::int64_t>(snap.match_subject_narrowed_total))},
@@ -295,7 +303,11 @@ void CompilePrims::register_compile_p18(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"provenance-total",
                  make_int(static_cast<std::int64_t>(snap.narrowing_provenance_total))},
@@ -376,7 +388,11 @@ void CompilePrims::register_compile_p19(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"current-generation",
                  make_int(static_cast<std::int64_t>(snap.current_generation))},
@@ -504,7 +520,11 @@ void CompilePrims::register_compile_p20(PrimRegistrar add, Evaluator& ev) {
         if (!ev.compiler_service_)
             return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-        auto snap = svc->snapshot();
+        // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+        auto snap_opt = svc->try_snapshot();
+        if (!snap_opt)
+            return make_void();
+        const auto& snap = *snap_opt;
         // node-count is the workspace's total node count, not a
         // snapshot field — read it directly from the FlatAST when
         // available so the primitive is still useful even if the
