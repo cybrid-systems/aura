@@ -5470,6 +5470,9 @@ aura_issue_test_link_llvm_jit(test_evolve_analytics_parse_1724)
 # Issue #1725: top-errors stoi parse metric (#1724 sibling).
 aura_add_issue_test(test_top_errors_stoi_1725)
 aura_issue_test_link_llvm_jit(test_top_errors_stoi_1725)
+# Issue #1726: evolve-strategy name-collision loop must be capped.
+aura_add_issue_test(test_evolve_name_collision_1726)
+aura_issue_test_link_llvm_jit(test_evolve_name_collision_1726)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
