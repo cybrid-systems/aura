@@ -6902,6 +6902,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> verify_parse_coverage_total{0};
     std::atomic<std::uint64_t> verify_parse_assert_total{0};
     std::atomic<std::uint64_t> verify_auto_trigger_mutate_total{0};
+    // Issue #1772: mutate:from-verification-feedback rejected OOB/neg node_id
+    // before eda:* delegation.
+    std::atomic<std::uint64_t> mutate_from_feedback_invalid_node_total{0};
     // #1348 AST long-run compaction
     std::atomic<std::uint64_t> ast_auto_compact_active{1};
     std::atomic<std::uint64_t> ast_auto_compact_on_commit_total{0};

@@ -294,15 +294,11 @@ aura_add_issue_test(test_render_telemetry)
 aura_issue_test_link_llvm_jit(test_render_telemetry)
 add_dependencies(all_test_issue_targets test_render_telemetry)
 
-# Issue #1358: cyber_cat end-to-end TUI demo smoke
-aura_add_issue_test(test_cyber_cat_smoke)
-aura_issue_test_link_llvm_jit(test_cyber_cat_smoke)
-add_dependencies(all_test_issue_targets test_cyber_cat_smoke)
+# Issue #1358: cyber_cat end-to-end TUI demo smoke — removed with demos/
+# (Anqi 2026-07-19 directive). Source tests/test_cyber_cat_smoke.cpp deleted.
 
-# Issue #1454: aura-pets multi-demo headless TUI regression (also in issues_fast)
-aura_add_issue_test(test_aura_pets_smoke)
-aura_issue_test_link_llvm_jit(test_aura_pets_smoke)
-add_dependencies(all_test_issue_targets test_aura_pets_smoke)
+# Issue #1454: aura-pets multi-demo headless TUI regression — removed with demos/
+# (Anqi 2026-07-19 directive). Source tests/test_aura_pets_smoke.cpp deleted.
 
 # Issue #1359: TLarena 1MB default capacity + graceful OOM
 aura_add_issue_test(test_tl_arena_capacity)

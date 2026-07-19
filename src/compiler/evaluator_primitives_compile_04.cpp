@@ -261,6 +261,22 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         auto payload_idx = as_string_idx(a[2]);
         if (payload_idx >= ev.string_heap_.size())
             return make_bool(false);
+        // Issue #1772: validate NodeId before eda:* delegation so invalid
+        // agent targets are observable (mutate_from_feedback_invalid_node_total)
+        // and never rely solely on each delegate's optional OOB check.
+        if (auto* ws = ev.workspace_flat()) {
+            if (node_id < 0 || static_cast<std::uint64_t>(node_id) >= ws->size()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->mutate_from_feedback_invalid_node_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                return make_bool(false);
+            }
+        } else {
+            // No workspace: cannot resolve NodeId — treat as invalid target.
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->mutate_from_feedback_invalid_node_total.fetch_add(1, std::memory_order_relaxed);
+            return make_bool(false);
+        }
         auto delegate = [&](const char* name) -> bool {
             auto fn = ev.primitives_.lookup(name);
             if (!fn)
