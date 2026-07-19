@@ -9197,6 +9197,43 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
+        // Issue #1908: query:macro-provenance-stats.
+        // Returns observability for the MutationBoundaryGuard + macro clone
+        // provenance hardening surface (refine #1014 / #1047). Two counters
+        // surfaced (per-eval view via Evaluator getters):
+        //   - macro_provenance_repin_on_steal_total: every forced repin of
+        //     MacroIntroduced marker + provenance that fires on fiber steal /
+        //     resume / outermost Guard exit / PanicCheckpoint transfer. Bumped
+        //     from clone_macro_body (MacroIntroduced branch) +
+        //     complete_post_resume_steal_refresh (after probe_and_repin_macro_provenance)
+        //     + transfer_and_revalidate_panic_checkpoint (post panic restamp).
+        //   - hygiene_violation_prevented_on_boundary_total: every time the
+        //     boundary interaction (outermost flush dirty/epoch bump + post-steal
+        //     probe + PanicCheckpoint transfer coupling) prevented a hygiene
+        //     violation from manifesting. Bumped from flush_mutation_boundary
+        //     outermost exit + complete_post_resume_steal_refresh (post probe) +
+        //     transfer_and_revalidate_panic_checkpoint (post panic restamp).
+        //
+        // Returns -1 sentinel when macro_provenance_repin_on_steal_total > 0
+        // AND hygiene_violation_prevented_on_boundary_total == 0 (regression
+        // marker: boundary did NOT prevent violation despite MacroIntroduced
+        // repin firing — grep-friendly). Otherwise returns the sum of the
+        // 2 counters (sum-path, like #1903/#1904/#1905/#1906 P0/P1 shape).
+        ObservabilityPrims::register_stats_impl(
+            "query:macro-provenance-stats", [](std::span<const EvalValue> a) -> EvalValue {
+                (void)a;
+                auto* ev = Evaluator::get_query_evaluator();
+                if (!ev)
+                    return make_int(0);
+                const std::uint64_t repin = ev->get_macro_provenance_repin_on_steal_total();
+                const std::uint64_t prevented =
+                    ev->get_hygiene_violation_prevented_on_boundary_total();
+                // Regression sentinel: repin fired but boundary did NOT prevent
+                // violation (inconsistent boundary interaction).
+                if (repin > 0 && prevented == 0)
+                    return make_int(-1);
+                return make_int(static_cast<std::int64_t>(repin + prevented));
+            });
         if (idx >= string_heap.size())
             return make_bool(false);
         std::string name = string_heap[idx];

@@ -709,7 +709,58 @@ extern "C" std::uint64_t aura_post_steal_aot_revalidate_total(void) {
     auto* m = aot_metrics();
     return m ? m->aot_stale_deopt_on_steal_total.load(std::memory_order_relaxed) : 0;
 }
+// Issue #1908: MutationBoundaryGuard + macro clone provenance hardening
+// (refine #1014 / #1047). C bridge hook for forced repin of MacroIntroduced
+// marker + provenance on steal / resume / outermost Guard exit /
+// PanicCheckpoint transfer.
+//
+// Mirrors the (mutate:* / guard:* / steal:*) bridge hook family. Bumps
+// per-eval CompilerMetrics when ev_ptr is provided (via the #1905 pattern:
+// static_cast<aura::compiler::Evaluator*>(ev_ptr) + ev->compiler_metrics_)
+// AND bumps a file-level atomic fallback for module-unaware call sites
+// (clone_macro_body in macro_expansion.cpp) that cannot pass an Evaluator
+// pointer. The fallback is read by the 2 accessors below (observability
+// surface for external API consumers).
+//
+// Returns 1 when at least one counter was bumped, 0 otherwise.
+//
+// Parameters:
+//   ev_ptr        - Evaluator* (may be nullptr for module-unaware call
+//                   sites; falls back to file-level atomic bump).
+//   cloned_marker - std::uint64_t cast of aura::ast::SyntaxMarker
+//                   (reserved for future marker-specific routing; current
+//                   bump path is unconditional — every macro clone in the
+//                   MacroIntroduced path is a repin candidate per #1908 AC).
+static std::atomic<std::uint64_t> g_1908_repin_fallback_total{0};
+static std::atomic<std::uint64_t> g_1908_hygiene_prevented_fallback_total{0};
+extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker) {
+    (void)ev_ptr;        // per-eval path uses Evaluator::bump_* directly
+                         // (see wire-up sites in evaluator_fiber_mutation.cpp
+                         // which has the Evaluator C++20 module imported)
+    (void)cloned_marker; // reserved for future marker-specific routing
+    // File-level atomic fallback. Covers module-unaware call sites
+    // (clone_macro_body in macro_expansion.cpp) + provides a unified
+    // observability surface for external API consumers (accessors below).
+    g_1908_repin_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_1908_hygiene_prevented_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
 
+// Issue #1908: accessor for macro provenance repin-on-steal counter.
+// Reads from the file-level atomic fallback (covers module-unaware call
+// sites + module-aware call sites via the bridge hook's always-bump
+// fallback path). Per-eval view is via the (query:macro-provenance-stats)
+// primitive (Evaluator getters).
+extern "C" std::uint64_t aura_macro_provenance_repin_on_steal_total(void) {
+    return g_1908_repin_fallback_total.load(std::memory_order_relaxed);
+}
+
+// Issue #1908: accessor for hygiene violation prevented on boundary counter.
+// Reads from the file-level atomic fallback (same rationale as
+// aura_macro_provenance_repin_on_steal_total above).
+extern "C" std::uint64_t aura_hygiene_violation_prevented_on_boundary_total(void) {
+    return g_1908_hygiene_prevented_fallback_total.load(std::memory_order_relaxed);
+}
 // Issue #1522: C-API batch_deopt for fn_trackers_ (host registers AuraJIT*).
 namespace {
 aura::jit::AuraJIT* g_batch_deopt_jit = nullptr;

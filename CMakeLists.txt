@@ -2200,6 +2200,8 @@ aura_add_issue_test(test_issue_1905)
 aura_issue_test_link_llvm_jit(test_issue_1905)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
+aura_add_issue_test(test_issue_1908)
+aura_issue_test_link_llvm_jit(test_issue_1908)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

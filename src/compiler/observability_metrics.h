@@ -2234,6 +2234,27 @@ struct CompilerMetrics {
     // resume / steal / GC compact (query:post-steal-closed-loop-stats schema 1612+).
     std::atomic<std::uint64_t> macro_stale_ref_prevented_total{0};
     std::atomic<std::uint64_t> macro_provenance_repin_total{0};
+
+    // Issue #1908: MutationBoundaryGuard + macro clone provenance hardening
+    // (refine #1014 / #1047). Tracks the two boundary-interaction signals
+    // mandated by the #1908 AC:
+    //   - macro_provenance_repin_on_steal_total: every forced repin of
+    //     MacroIntroduced marker + provenance that fires on fiber steal /
+    //     resume / outermost Guard exit / PanicCheckpoint transfer. Bumped
+    //     from clone_macro_body (MacroIntroduced branch) +
+    //     complete_post_resume_steal_refresh (after probe_and_repin_macro_provenance)
+    //     + transfer_and_revalidate_panic_checkpoint (post panic restamp).
+    //   - hygiene_violation_prevented_on_boundary_total: every time
+    //     the boundary interaction (outermost flush dirty/epoch bump + post-steal
+    //     probe + PanicCheckpoint transfer coupling) prevented a hygiene
+    //     violation from manifesting. Bumped from flush_mutation_boundary
+    //     outermost exit + complete_post_resume_steal_refresh (post probe) +
+    //     transfer_and_revalidate_panic_checkpoint (post panic restamp).
+    // Together these give self-evolution Agents a direct signal that long-running
+    // mutation/steal/GC cycles are not silently dropping provenance or letting
+    // hygiene violations slip through.
+    std::atomic<std::uint64_t> macro_provenance_repin_on_steal_total{0};         // #1908
+    std::atomic<std::uint64_t> hygiene_violation_prevented_on_boundary_total{0}; // #1908
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 
