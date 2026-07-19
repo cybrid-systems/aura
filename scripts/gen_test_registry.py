@@ -27,8 +27,16 @@ ISSUE_RE = re.compile(r"test_issue_(\d+)")
 
 def scan() -> dict:
     entries: list[dict] = []
+    # Phase 1 of the tests/ consolidation (Anqi 05:43 directive):
+    # scan both tests/ root and tests/issues/ subdirectory so per-issue
+    # tests moved into tests/issues/ are still picked up.
     tests_dir = ROOT / "tests"
-    for path in sorted(tests_dir.glob("test_*.cpp")):
+    issue_subdir = tests_dir / "issues"
+    candidates: list[Path] = []
+    candidates.extend(sorted(tests_dir.glob("test_*.cpp")))
+    if issue_subdir.is_dir():
+        candidates.extend(sorted(issue_subdir.glob("test_*.cpp")))
+    for path in sorted(set(candidates)):
         try:
             head = path.read_text(encoding="utf-8", errors="replace")[:4000]
         except OSError:
@@ -36,9 +44,11 @@ def scan() -> dict:
         cat_m = CAT_RE.search(head)
         reason_m = REASON_RE.search(head)
         issue_m = ISSUE_RE.search(path.name)
+        # emit path relative to repo root (tests/... or tests/issues/...)
+        rel = path.relative_to(ROOT).as_posix()
         entries.append(
             {
-                "file": f"tests/{path.name}",
+                "file": rel,
                 "category": cat_m.group(1) if cat_m else "unknown",
                 "reason": reason_m.group(1).strip() if reason_m else "",
                 "issue": int(issue_m.group(1)) if issue_m else None,

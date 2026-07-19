@@ -1159,7 +1159,7 @@ aura_add_issue_test_reflect_standalone(test_issue_217)
 
 # Issue #268: production aura::ast::NodeView roundtrip (split TU:
 # module side uses real NodeView; reflect side uses nodeview_wire.hh).
-add_executable(test_issue_178 tests/test_issue_178.cpp tests/test_issue_178_reflect.cpp)
+add_executable(test_issue_178 tests/issues/test_issue_178.cpp tests/issues/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
 aura_test_compile_options_reflect_minimal(test_issue_178)
@@ -1222,7 +1222,7 @@ aura_add_issue_test_standalone(test_issue_223)
 # in ClosureBridgeData and IRClosure. The shared_ptr
 # keeps the FlatAST alive as long as the bridge exists
 # — even after the lowering arena is reset.
-add_executable(test_issue_237 tests/test_issue_237.cpp)
+add_executable(test_issue_237 tests/issues/test_issue_237.cpp)
 target_include_directories(test_issue_237 PRIVATE tests)
 target_link_libraries(test_issue_237 PRIVATE aura_test_objects)
 add_test(NAME issue_237_verification COMMAND ./test_issue_237)
@@ -1544,7 +1544,7 @@ aura_add_issue_test(test_issue_399)
 # Issue #326: Hygienic macros + EDSL integration coverage.
 # 8 scenarios extending test_issue_120/121 to integration
 # (CompilerService path, not parser-only). See
-# tests/test_issue_326.cpp for per-scenario docs.
+# tests/issues/test_issue_326.cpp for per-scenario docs.
 aura_add_issue_test(test_issue_326)
 aura_issue_test_link_llvm_jit(test_issue_326)
 # Issue #331: targeted dirty bitmask + query:pattern
@@ -2974,7 +2974,7 @@ aura_issue_test_link_llvm_jit(test_issue_320)
 #   - docs/sanitizers.md (usage doc — REMOVED per Anqi
 #     2026-07-19 directive; the script still ships + the
 #     test now short-circuits AC4 to pass)
-#   - tests/test_issue_325.cpp (smoke test that the
+#   - tests/issues/test_issue_325.cpp (smoke test that the
 #     script + doc exist + are valid — doc check now
 #     short-circuits)
 # 4 ACs: 3-sanitizer matrix + coverage toolchain +
@@ -3111,7 +3111,7 @@ aura_issue_test_link_llvm_jit(test_issue_346)
 #   - docs/architecture.md link to the new doc
 #     (in the "Agent 编排" section — docs/design/core/
 #     stable_ref_best_practices.md no longer ships)
-#   - tests/test_issue_347.cpp verifying the doc
+#   - tests/issues/test_issue_347.cpp verifying the doc
 #     exists + has the required sections + cross-
 #     references resolve to real files (test now
 #     short-circuits the doc-content ACs to pass)

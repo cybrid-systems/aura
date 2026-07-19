@@ -39,7 +39,7 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_prod("src/tui/tui_runtime.hh"))
 
     def test_test_paths(self):
-        self.assertTrue(self.m.is_test("tests/test_issue_1453.cpp"))
+        self.assertTrue(self.m.is_test("tests/issues/test_issue_1453.cpp"))
         self.assertTrue(self.m.is_test("tests/edsl_self_test.aura"))
         self.assertTrue(self.m.is_test("lib/std/edsl-test-harness.aura"))
         # scripts/run_pets_regression.py removed per Anqi 2026-07-19 directive wave 11 (broken — referenced deleted demos).
@@ -49,7 +49,7 @@ class TestBindingClassify(unittest.TestCase):
         code, msg = self.m.evaluate_binding(
             [
                 "src/compiler/evaluator_primitives_memory.cpp",
-                "tests/test_issue_300.cpp",
+                "tests/issues/test_issue_300.cpp",
             ]
         )
         self.assertEqual(code, 0, msg)
@@ -88,7 +88,7 @@ class TestRegistryGen(unittest.TestCase):
         self.assertGreater(data["count"], 100)
         self.assertIn("integration", data["by_category"])
         files = {t["file"] for t in data["tests"]}
-        self.assertIn("tests/test_issue_1451.cpp", files)
+        self.assertIn("tests/issues/test_issue_1451.cpp", files)
 
 
 def main() -> int:

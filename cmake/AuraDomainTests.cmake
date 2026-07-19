@@ -2,7 +2,7 @@
 #
 # Sources live under tests/domain/*.cpp with shared case tables in
 # tests/domain/cases/. New observability / fiber / hygiene / typed ACs
-# should extend these targets instead of adding tests/test_issue_N.cpp.
+# should extend these targets instead of adding tests/issues/test_issue_N.cpp.
 #
 # Included from CMakeLists.txt after all_test_issue_targets exists and
 # aura_issue_test_link_llvm_jit is available.

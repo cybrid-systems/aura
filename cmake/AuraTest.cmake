@@ -6,16 +6,19 @@
 # Wired into aura_add_issue_test() and the main test binaries
 # (test_ir, test_concurrent, aura_test_objects, aura).
 
-# Resolve test source: prefer tests/domain/<NAME>.cpp (domain suites),
+# Resolve test source: prefer tests/issues/<NAME>.cpp (per-issue tests, Phase 1
+# of the tests/ consolidation), then tests/domain/<NAME>.cpp (domain suites),
 # then tests/<NAME>.cpp (legacy / unit / issue standalones).
 function(aura_resolve_test_cpp NAME OUT_VAR)
-    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/issues/${NAME}.cpp")
+        set(${OUT_VAR} "tests/issues/${NAME}.cpp" PARENT_SCOPE)
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
         set(${OUT_VAR} "tests/domain/${NAME}.cpp" PARENT_SCOPE)
     elseif(EXISTS "${CMAKE_SOURCE_DIR}/tests/${NAME}.cpp")
         set(${OUT_VAR} "tests/${NAME}.cpp" PARENT_SCOPE)
     else()
         message(FATAL_ERROR
-            "aura_resolve_test_cpp(${NAME}): no tests/domain/${NAME}.cpp or tests/${NAME}.cpp")
+            "aura_resolve_test_cpp(${NAME}): no tests/issues/${NAME}.cpp, tests/domain/${NAME}.cpp, or tests/${NAME}.cpp")
     endif()
 endfunction()
 

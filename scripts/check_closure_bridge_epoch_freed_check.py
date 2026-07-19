@@ -221,7 +221,7 @@ def check_alloc_doesnt_set_freed(runtime_src: str) -> list[str]:
 
 
 def check_test_1485_acs(test_src: str) -> list[str]:
-    """AC9: tests/test_issue_1485.cpp includes AC11 (freed → 0) + AC12 (live → non-zero)."""
+    """AC9: tests/issues/test_issue_1485.cpp includes AC11 (freed → 0) + AC12 (live → non-zero)."""
     failures: list[str] = []
     if "AC11" not in test_src:
         failures.append("AC9: test_issue_1485.cpp missing AC11 marker")
