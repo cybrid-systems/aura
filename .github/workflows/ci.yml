@@ -70,6 +70,21 @@ jobs:
     - name: Static checks (docs + lint + format + fixtures)
       run: python3 build.py gate
 
+    # Aura philosophy guard: no per-issue plan docs in docs/design/
+    # (Anqi 2026-07-19 directive). External mergebot re-adds files on
+    # origin/main; this CI guard catches them so future agents / merges
+    # don't propagate. Mirrors the pre-commit hook guard at
+    # `.githooks/pre-commit`.
+    - name: Aura philosophy guard: no docs/design/
+      run: |
+        if find docs/design -type f -name '*.md' 2>/dev/null | grep -q .; then
+          echo "❌ docs/design/ files exist in working tree — aura philosophy forbids per-issue plan docs" >&2
+          find docs/design -type f -name '*.md' | head -10 >&2
+          echo "Hint: rm -rf docs/design && git add -A && git commit -m 'chore(docs): remove docs/design/ (aura philosophy)'" >&2
+          exit 1
+        fi
+        echo "aura philosophy guard clean (no docs/design/ files)"
+
     # Issue #476: clang-tidy static analysis (subset).
     # The .clang-tidy config (repo root) whitelists the
     # modern-C++ checks that catch real bugs without too
