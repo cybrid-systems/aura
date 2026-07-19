@@ -50,8 +50,11 @@ export struct QueryMatchState {
 // by reassigning `state` (preserving `nested_arity`).
 export class QueryMatcher {
 public:
+    // Issue #1650: only_macro_introduced is inverse of skip_macro_introduced
+    // (default false preserves #1636 callers).
     QueryMatcher(FlatAST* ws_flat, StringPool* ws_pool, FlatAST* pat_flat, StringPool* pat_pool,
-                 SymId wildcard_sym, bool nested_arity, bool skip_macro_introduced = false);
+                 SymId wildcard_sym, bool nested_arity, bool skip_macro_introduced = false,
+                 bool only_macro_introduced = false);
 
     // ─── Pure helpers ─────────────────────────────────────────
     bool is_wildcard(NodeId pid) const;

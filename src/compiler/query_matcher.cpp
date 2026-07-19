@@ -18,7 +18,7 @@ namespace aura::compiler {
 
 QueryMatcher::QueryMatcher(FlatAST* ws_flat, StringPool* ws_pool, FlatAST* pat_flat,
                            StringPool* pat_pool, SymId wildcard_sym, bool nested_arity,
-                           bool skip_macro_introduced, bool only_macro_introduced = false)
+                           bool skip_macro_introduced, bool only_macro_introduced)
     : ws_flat_(ws_flat)
     , ws_pool_(ws_pool)
     , pat_flat_(pat_flat)

@@ -675,6 +675,38 @@ export namespace linear_rt {
     constexpr std::uint8_t Moved = 4;
 } // namespace linear_rt
 
+// Forward declaration — EnvFrame body follows; resolve result types
+// reference EnvFrame* (Issue #1756).
+export struct EnvFrame;
+
+// Issue #1756: detailed EnvFrame resolve status — callers must not
+// treat all nullptrs from resolve_env_frame as the same failure.
+// GENERATION_MISMATCH is reserved for free-list slot reuse (future
+// #1360 follow-up); today terminal post-rollback uses INVALID_VERSION.
+export enum class EnvFrameResolveStatus : std::uint8_t {
+    OK = 0,
+    NULL_ID = 1,             // id == NULL_ENV_ID
+    OOB = 2,                 // id >= env_frames_.size()
+    INVALID_VERSION = 3,     // live slot marked #356 INVALID_VERSION
+    GENERATION_MISMATCH = 4, // reserved: freed slot reused under new gen
+};
+
+export struct EnvFrameResolveResult {
+    const EnvFrame* frame = nullptr;
+    EnvFrameResolveStatus status = EnvFrameResolveStatus::NULL_ID;
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return status == EnvFrameResolveStatus::OK && frame != nullptr;
+    }
+};
+
+export struct EnvFrameResolveResultMut {
+    EnvFrame* frame = nullptr;
+    EnvFrameResolveStatus status = EnvFrameResolveStatus::NULL_ID;
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return status == EnvFrameResolveStatus::OK && frame != nullptr;
+    }
+};
+
 export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
@@ -3053,10 +3085,15 @@ public:
     // for non-rollback reclamation: compact_env_frames is for
     // operator-driven reclamation in long-running processes.
     std::size_t compact_env_frames();
-    // Issue #1360: stable resolve — nullptr if id is NULL, OOB,
-    // or (future) generation-mismatched free slot.
+    // Issue #1360 / #1756: stable resolve — nullptr if id is NULL,
+    // OOB, INVALID_VERSION, or (future) generation-mismatched free
+    // slot. Prefer resolve_env_frame_detailed when the failure mode
+    // matters (materialize / GC / diagnostics).
     [[nodiscard]] const EnvFrame* resolve_env_frame(EnvId id) const noexcept;
     [[nodiscard]] EnvFrame* resolve_env_frame_mut(EnvId id) noexcept;
+    // Issue #1756: distinguish NULL / OOB / INVALID_VERSION / OK.
+    [[nodiscard]] EnvFrameResolveResult resolve_env_frame_detailed(EnvId id) const noexcept;
+    [[nodiscard]] EnvFrameResolveResultMut resolve_env_frame_mut_detailed(EnvId id) noexcept;
     [[nodiscard]] std::uint64_t env_generation() const noexcept { return env_generation_; }
     [[nodiscard]] std::uint64_t get_envframe_truncate_count() const noexcept {
         return envframe_truncate_count_.load(std::memory_order_relaxed);
@@ -3243,13 +3280,13 @@ public:
                       "(true=continue, false=stop)");
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
-            // Issue #1360: skip/stop on stale (truncated) EnvIds
-            const EnvFrame* frp = resolve_env_frame(cur);
-            if (!frp)
+            // Issue #1360 / #1756: skip on NULL/OOB/INVALID_VERSION
+            const auto r = resolve_env_frame_detailed(cur);
+            if (!r)
                 return;
-            if (!std::forward<F>(f)(cur, *frp))
+            if (!std::forward<F>(f)(cur, *r.frame))
                 return;
-            cur = frp->parent_id;
+            cur = r.frame->parent_id;
         }
     }
     // Introspection: number of frames in the parent chain

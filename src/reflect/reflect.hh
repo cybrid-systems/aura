@@ -30,6 +30,7 @@
 #include <string_view>
 #include <optional>
 #include <variant>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -440,26 +441,22 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 }
 
 
-// Issue #1648: process-wide observability counter for the nested-struct
-// throws at the auto_serialize / auto_deserialize_struct sites below. Phase 1
-// preserves the #1124 / #1125 "refuse silent drop" invariant by incrementing
-// the counter immediately before each throw, so monitors can see how often
-// the gap would have fired. Full recursive reflect_members (depth-aware +
-// cycle-detect + auto-forwarding) for the nested MemberKind::Struct case
-// is deferred to #1676 (multi-session template-metaprogramming work).
-namespace aura::reflect {
-    inline std::atomic<std::uint64_t>& reflect_nested_struct_throw_count_ref() noexcept {
-        static std::atomic<std::uint64_t> counter{0};
-        return counter;
-    }
-} // namespace aura::reflect
+// Issue #1648: process-wide observability counter for nested-struct
+// throws (auto_serialize / auto_deserialize_struct). ODR-safe via
+// inline static local. Defined inside the enclosing aura::reflect
+// namespace (this header keeps a single open namespace block).
+inline std::atomic<std::uint64_t>& nested_struct_throw_count_ref() noexcept {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter;
+}
+// C ABI wrappers (still inside aura::reflect for name lookup; C
+// linkage avoids mangling of the entry symbols).
 extern "C" {
 inline std::uint64_t aura_reflect_nested_struct_throw_count_v_read() noexcept {
-    return ::aura::reflect::reflect_nested_struct_throw_count_ref().load(std::memory_order_relaxed);
+    return nested_struct_throw_count_ref().load(std::memory_order_relaxed);
 }
 inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) noexcept {
-    ::aura::reflect::reflect_nested_struct_throw_count_ref().fetch_add(delta,
-                                                                       std::memory_order_relaxed);
+    nested_struct_throw_count_ref().fetch_add(delta, std::memory_order_relaxed);
 }
 } // extern "C"
 
