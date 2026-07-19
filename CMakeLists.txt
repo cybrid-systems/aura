@@ -5868,6 +5868,9 @@ aura_issue_test_link_llvm_jit(test_env_lookup_depth_1858)
 # Issue #1859: Env::lookup SoA parent_id_ walk is iterative (no tmp.lookup).
 aura_add_issue_test(test_env_soa_lookup_iter_1859)
 aura_issue_test_link_llvm_jit(test_env_soa_lookup_iter_1859)
+# Issue #1860: Env::lookup_binding / lookup_by_symid depth guard vs cycles.
+aura_add_issue_test(test_env_lookup_binding_depth_1860)
+aura_issue_test_link_llvm_jit(test_env_lookup_binding_depth_1860)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
