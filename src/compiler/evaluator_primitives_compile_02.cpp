@@ -24,8 +24,8 @@ import aura.compiler.pass_manager;
 import aura.compiler.query;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
-import aura.compiler.hardware_backend;
-import aura.compiler.sv_ir;
+// Issue #1857: removed duplicate hardware_backend / sv_ir imports
+// (copy-paste; C++ modules dedupe but confuse maintenance).
 
 namespace aura::compiler::primitives_detail {
 
