@@ -63,16 +63,33 @@ using types::make_void;
 // not 2N. (The issue body claimed double-counting; that was
 // incorrect — confirmed by tests/test_env_lookup_depth_1858.cpp.)
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
+// Shared by Env::lookup / lookup_binding / lookup_by_symid so a
+// cyclic parent graph cannot stack-overflow any of them (#1858/#1860).
 thread_local std::size_t g_env_lookup_depth = 0;
-std::optional<EvalValue> Env::lookup(std::string_view n) const {
-    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+struct EnvLookupDepthGuard {
+    bool armed = false;
+    explicit EnvLookupDepthGuard(bool ok) noexcept
+        : armed(ok) {}
+    ~EnvLookupDepthGuard() {
+        if (armed)
+            --g_env_lookup_depth;
+    }
+    EnvLookupDepthGuard(const EnvLookupDepthGuard&) = delete;
+    EnvLookupDepthGuard& operator=(const EnvLookupDepthGuard&) = delete;
+};
+// Returns nullopt if depth budget exhausted (caller returns nullopt).
+[[nodiscard]] static bool env_lookup_enter() noexcept {
     if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
         --g_env_lookup_depth;
-        return std::nullopt;
+        return false;
     }
-    struct _ {
-        ~_() { --g_env_lookup_depth; }
-    } dec;
+    return true;
+}
+std::optional<EvalValue> Env::lookup(std::string_view n) const {
+    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
 
     // 1. Check local bindings — Issue #894: O(1) via binding_index_
     if (auto it = binding_index_.find(n); it != binding_index_.end()) {
@@ -212,8 +229,14 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
 }
 
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
+// Issue #1860: pre-#1860 walked parent_ with no depth guard —
+// a cyclic parent_ chain stack-overflowed the C++ call stack.
+// Share g_env_lookup_depth / MAX_ENV_DEPTH with Env::lookup (#1858).
 std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n)
             return it->second;
@@ -300,7 +323,13 @@ bool Env::set_linear_ownership_state_by_name(std::string_view n, std::uint8_t st
 // (which the bind_symid path writes to) with integer compare.
 // Most-recent-binding-wins semantics, matching the string-based
 // lookup's rbegin/rend iteration order.
+//
+// Issue #1860: parent_ recursion uses the same depth budget as
+// lookup / lookup_binding (cycle + deep-chain guard).
 std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
     for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
         if (it->first == s) {
             // P0 step 2: return raw binding (sentinel as-is). No cells_
@@ -312,6 +341,7 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     }
     // Issue #1128: try SoA owner chain first, then fall through to
     // legacy parent_ so mixed SoA/legacy graphs still resolve.
+    // lookup_by_symid_chain is already iterative + hop-bounded.
     if (owner_ && parent_id_ != NULL_ENV_ID) {
         if (auto r = owner_->lookup_by_symid_chain(parent_id_, s))
             return r;
