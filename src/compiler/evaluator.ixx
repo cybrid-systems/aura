@@ -13144,9 +13144,14 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     if (idx == 0 || idx >= nodes_.size())
         return false;
     auto& n = nodes_[idx];
+    // Issue #1770: detach owned pointers BEFORE delete so a throwing
+    // FlatAST/StringPool dtor cannot leave non-null dangling fields
+    // (or skip nulling of parent_/remap after a half-completed delete).
+    ast::FlatAST* owned_flat = nullptr;
+    ast::StringPool* owned_pool = nullptr;
     if (n.has_own_flat) {
-        delete n.flat;
-        delete n.pool;
+        owned_flat = n.flat;
+        owned_pool = n.pool;
     }
     n.flat = nullptr;
     n.pool = nullptr;
@@ -13155,6 +13160,9 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     n.remap = ast::mutation::NodeIdRemapTable{};
     n.cow_epoch = 0;
     n.generation = 0;
+    n.has_own_flat = false;
+    delete owned_flat;
+    delete owned_pool;
     return true;
 }
 
