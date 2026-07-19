@@ -12538,30 +12538,62 @@ public:
         void suppress_generation_bump(bool v) noexcept { suppress_bump_ = v; }
         [[nodiscard]] bool is_suppress_bump_set() const noexcept { return suppress_bump_; }
 
+        // Issue #1767: move transfers full RAII ownership.
+        // Depth slot is NOT double-incremented: source ctor already
+        // ++depth; moved-from source nulls ev_ so its dtor no-ops;
+        // moved-to target --depth once. enter_ts_ / is_outermost_ /
+        // inert_ / atomic-batch flags must transfer or hold metrics
+        // and checkpoint ownership are lost after std::move.
+        // noexcept: if a future maintainer removes noexcept, a throw
+        // after o.ev_=nullptr would leak the depth increment.
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
             : had_panic_checkpoint_(o.had_panic_checkpoint_)
             , fine_rollback_(o.fine_rollback_)
+            , atomic_batch_active_(o.atomic_batch_active_)
+            , suppress_bump_(o.suppress_bump_)
+            , is_outermost_(o.is_outermost_)
+            , inert_(o.inert_)
+            , enter_ts_(std::move(o.enter_ts_))
             , ev_(o.ev_)
             , flag_(o.flag_)
             , lock_(std::move(o.lock_)) {
-            // Move transfers the lock state (the unique_lock
-            // member moves its ownership to the new guard).
-            // The depth counter was already incremented by
-            // the source's ctor — it stays. The source's
-            // dtor will see ev_=nullptr and no-op, so the
-            // depth stays correctly at the same value.
-            // The new guard will decrement it once when it
-            // destructs.
+            o.had_panic_checkpoint_ = false;
+            o.fine_rollback_ = false;
+            o.atomic_batch_active_ = false;
+            o.suppress_bump_ = false;
+            o.is_outermost_ = false;
+            o.inert_ = false;
+            o.enter_ts_.reset();
             o.ev_ = nullptr;
             o.flag_ = nullptr;
         }
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
             if (this != &o) {
-                if (ev_)
-                    ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
+                // Issue #1767: full release of *this via move-to-local
+                // so ~MutationBoundaryGuard runs (depth, lock, metrics,
+                // checkpoint). exit_mutation_boundary alone would miss
+                // the depth-slot decrement.
+                if (ev_) {
+                    MutationBoundaryGuard doomed{std::move(*this)};
+                    (void)doomed;
+                }
+                had_panic_checkpoint_ = o.had_panic_checkpoint_;
+                fine_rollback_ = o.fine_rollback_;
+                atomic_batch_active_ = o.atomic_batch_active_;
+                suppress_bump_ = o.suppress_bump_;
+                is_outermost_ = o.is_outermost_;
+                inert_ = o.inert_;
+                enter_ts_ = std::move(o.enter_ts_);
                 ev_ = o.ev_;
                 flag_ = o.flag_;
                 lock_ = std::move(o.lock_);
+                o.had_panic_checkpoint_ = false;
+                o.fine_rollback_ = false;
+                o.atomic_batch_active_ = false;
+                o.suppress_bump_ = false;
+                o.is_outermost_ = false;
+                o.inert_ = false;
+                o.enter_ts_.reset();
                 o.ev_ = nullptr;
                 o.flag_ = nullptr;
             }
