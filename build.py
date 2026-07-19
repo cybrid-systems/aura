@@ -1524,22 +1524,17 @@ def cmd_test_binding():
         if r0.returncode != 0:
             fail("test_test_binding_gate unit tests failed")
             return 1
-    # Prefer umbrella script when present
-    coverage = ROOT / "scripts" / "check_test_coverage.py"
-    if coverage.exists():
-        r = subprocess.run([sys.executable, str(coverage)], cwd=ROOT)
-        if r.returncode != 0:
-            fail("test coverage/binding failed — prim sources without tests/ or stale registry")
-            return 1
-    else:
-        script = ROOT / "scripts" / "check_test_binding.py"
-        if not script.exists():
-            fail(f"missing {script}")
-            return 1
-        r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
-        if r.returncode != 0:
-            fail("test binding failed — production primitive sources changed without tests/")
-            return 1
+    # check_test_coverage.py umbrella removed per Anqi 2026-07-19 directive
+    # (scripts/ audit wave 9). check_test_binding.py covers the same surface
+    # (production primitive sources must have tests/).
+    script = ROOT / "scripts" / "check_test_binding.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("test binding failed — production primitive sources changed without tests/")
+        return 1
     ok("test binding + coverage OK")
     return 0
 
@@ -1854,9 +1849,11 @@ def cmd_pgo():
 # ═══════════════════════════════════════════════════════════════
 
 REPRO_SOURCE_DATE_EPOCH = "1704067200"  # 2024-01-01T00:00:00Z
-REPRO_SCRIPT = ROOT / "scripts" / "ci_reproducibility.py"
+# ci_reproducibility.py + security_scan.sh removed per Anqi 2026-07-19
+# directive (scripts/ audit wave 9). The reproducible Release build path
+# (SOURCE_DATE_EPOCH + --ffile-prefix-map + ccache_disable) remains shipped;
+# only the verify + security-scan entry points are dropped.
 SBOM_SCRIPT = ROOT / "scripts" / "gen_sbom.py"
-SECURITY_SCRIPT = ROOT / "scripts" / "security_scan.sh"
 
 
 def _repro_cmake_flags() -> tuple[str, str, str]:
@@ -1867,15 +1864,9 @@ def _repro_cmake_flags() -> tuple[str, str, str]:
 
 
 def cmd_repro():
-    """Reproducible Release build or dual-build verification."""
-    verify = "--verify" in sys.argv[2:]
-    if verify:
-        print(f"{B}═══ Reproducible build verify ═══{N}")
-        if not REPRO_SCRIPT.exists():
-            fail(f"missing {REPRO_SCRIPT}")
-            return 1
-        return run([sys.executable, str(REPRO_SCRIPT)], cwd=ROOT)
-
+    """Reproducible Release build (verify path removed per Anqi 2026-07-19
+    directive — scripts/ci_reproducibility.py deleted; the --verify entry
+    point is dropped, but the reproducible build itself remains)."""
     print(f"{B}═══ Reproducible build ═══{N}")
     global BUILD, AURA, TEST_BIN
     BUILD = ROOT / "build_repro"
@@ -1952,17 +1943,10 @@ def cmd_sbom():
 
 
 def cmd_security():
-    """Filesystem / dependency vulnerability scan (Issue #675)."""
-    print(f"{B}═══ Security scan ═══{N}")
-    if not SECURITY_SCRIPT.exists():
-        fail(f"missing {SECURITY_SCRIPT}")
-        return 1
-    r = run(["bash", str(SECURITY_SCRIPT)], cwd=ROOT)
-    if r == 0:
-        ok("security scan OK")
-    else:
-        fail("security scan failed")
-    return r
+    """Filesystem / dependency vulnerability scan (Issue #675) removed per
+    Anqi 2026-07-19 directive (scripts/security_scan.sh deleted). The
+    security-scan entry point is dropped; deeper safety comes from the
+    ASan / UBSan / TSan sanitizer matrix in build.py + CI."""
 
 
 # ═══════════════════════════════════════════════════════════════
