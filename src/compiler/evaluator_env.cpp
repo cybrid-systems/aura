@@ -736,6 +736,18 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // SoA version_ / parent_id_ walks below still refresh or fall back;
     // this documents the unified gate for agents and CI.
     (void)closure_is_epoch_or_env_stale(cl);
+    // Issue #1638: explicit dual-path consistency gate at the frame
+    // level (defense in depth — closure_is_epoch_or_env_stale covers
+    // the closure-level bridge_epoch / defuse_version drift; this
+    // covers the per-frame is_env_frame_stale + OOB / INVALID_VERSION
+    // detection that the closure-level check does not). Bumps
+    // env_frame_version_drift_prevented (always) +
+    // dual_path_stale_fallback_total (on detection) when the frame is
+    // stale; the result is ignored here because the legacy fallback
+    // path below (NULL_ENV_ID / OOB / linear_post_mutate_enforce) is
+    // already the correct recovery shape — the gate is observability,
+    // not control flow.
+    (void)ensure_env_frame_dual_path_consistent(cl.env_id, "materialize_call_env");
     // P0 complete: legacy cl.env path removed. All closures have
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.

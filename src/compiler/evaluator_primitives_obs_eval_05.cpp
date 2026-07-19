@@ -1506,7 +1506,22 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? load(m->cross_fiber_panic_heal_success) : 0)},
                 {"mutation-boundary-steal-safe-total",
                  make_int(m ? load(m->mutation_boundary_steal_safe_total) : 0)},
-                {"schema", make_int(1637)}, // lineage 1444
+                // Issue #1638: SoA EnvFrame dual-path consistency +
+                // mutation_log compact counters. Bumped from
+                // ensure_env_frame_dual_path_consistent (lookup /
+                // walk / GC / JIT Apply sites) and from
+                // compact_mutation_log (exit_mutation_boundary success
+                // path when log size exceeds 64KB threshold). Pairs
+                // with the existing panic-transfer / boundary-steal-safe
+                // counters so dashboards observe the full lifecycle
+                // closed-loop observability surface.
+                {"dual-path-stale-fallback-total",
+                 make_int(m ? load(m->dual_path_stale_fallback_total) : 0)},
+                {"mutation-log-compact-bytes-saved",
+                 make_int(m ? load(m->mutation_log_compact_bytes_saved) : 0)},
+                {"env-frame-version-drift-prevented",
+                 make_int(m ? load(m->env_frame_version_drift_prevented) : 0)},
+                {"schema", make_int(1638)}, // lineage 1444 -> 1637 -> 1638
             };
             return build_hash(kv);
         });

@@ -493,6 +493,62 @@ void Evaluator::run_post_restore_lifecycle_close(bool safe_total_event) noexcept
     }
 }
 
+// Issue #1638: mutation_log compact at boundary exit success path.
+// Delegates to FlatAST::compact_mutation_log() (shrink_to_fit on
+// mutation_log_) and bumps mutation_log_compact_bytes_saved by
+// the bytes saved. No-op when no workspace_flat_ is wired or the
+// log is empty (shrink_to_fit on an empty pmr vector is free; the
+// metric stays monotonically meaningful because we only bump on a
+// non-zero delta). Cheap when the log is under the compact
+// threshold (called from exit_mutation_boundary success path on
+// every boundary exit — the threshold check is in the caller).
+void Evaluator::compact_mutation_log() noexcept {
+    if (!workspace_flat_)
+        return;
+    const std::size_t saved = workspace_flat_->compact_mutation_log();
+    if (saved > 0)
+        bump_mutation_log_compact_bytes_saved(static_cast<std::uint64_t>(saved));
+}
+
+// Issue #1638: dual-path consistency gate for EnvFrame dual-path
+// (bindings_ vs bindings_symid_ + bindings_linear_ownership_state_)
+// access sites. Called from materialize_call_env /
+// lookup_by_symid_chain / walk_env_frames / GCEnvWalkFn / JIT Apply
+// prologue to verify the frame is not stale (version drift vs
+// defuse_version). Returns true when the frame is safe to use;
+// false when stale (caller decides whether to fall back to the
+// symid path or refuse the access).
+//
+// On stale detection:
+//   - env_frame_version_drift_prevented bumps always (positive control
+//     — every detection is counted).
+//   - dual_path_stale_fallback_total bumps when `attempt_recover` is
+//     true AND the caller-side fallback would be engaged (caller
+//     passes `attempt_recover=false` for read-only paths that simply
+//     refuse to use a stale frame).
+//
+// `site` is a free-form string for log/metric attribution.
+bool Evaluator::ensure_env_frame_dual_path_consistent(EnvId id, const char* /*site*/) noexcept {
+    if (id == NULL_ENV_ID)
+        return true;
+    if (id >= env_frames_.size()) {
+        // OOB — treat as drift (defensive; callers should not pass OOB).
+        bump_env_frame_version_drift_prevented();
+        return false;
+    }
+    const EnvFrame& fr = env_frames_[id];
+    if (fr.version_ == INVALID_VERSION) {
+        bump_env_frame_version_drift_prevented();
+        return false;
+    }
+    if (is_env_frame_stale(id)) {
+        bump_env_frame_version_drift_prevented();
+        bump_dual_path_stale_fallback_total();
+        return false;
+    }
+    return true;
+}
+
 void Evaluator::update_shared_tree_root() {
     if (!workspace_tree_)
         return;

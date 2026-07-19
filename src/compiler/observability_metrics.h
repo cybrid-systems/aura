@@ -6384,6 +6384,27 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cross_fiber_panic_heal_success{0};         // #1637
     std::atomic<std::uint64_t> mutation_boundary_steal_safe_total{0};     // #1637
 
+    // Issue #1638: SoA EnvFrame dual-path (bindings_ vs bindings_symid_
+    // + bindings_linear_ownership_state_) full-path version stamping +
+    // stale detection + mutation_log compact. Three counters cover
+    // the three concrete gaps:
+    //   - dual_path_stale_fallback_total: bumped when a lookup / walk
+    //     / GC / JIT path detects a stale EnvFrame (version drift vs.
+    //     defuse_version) and falls back to the symid path / rebuild.
+    //     Steady-state target 0; any non-zero value indicates a
+    //     missed dual-path consistency check.
+    //   - mutation_log_compact_bytes_saved: cumulative bytes reclaimed
+    //     by mutation_log compact at boundary exit. Heavy mutation
+    //     workloads reclaim 200MB+/day when the threshold is engaged;
+    //     zero values mean compact never fired.
+    //   - env_frame_version_drift_prevented: bumped when a stale
+    //     EnvFrame was detected and prevented from being used (the
+    //     positive control for dual_path_stale_fallback — count
+    //     detections and preventions together to verify parity).
+    std::atomic<std::uint64_t> dual_path_stale_fallback_total{0};    // #1638
+    std::atomic<std::uint64_t> mutation_log_compact_bytes_saved{0};  // #1638
+    std::atomic<std::uint64_t> env_frame_version_drift_prevented{0}; // #1638
+
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261

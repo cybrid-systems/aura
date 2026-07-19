@@ -1497,5 +1497,9 @@ AURA_COMPILER_METRICS_FIELD(post_compact_checkpoint_restore_total)
 AURA_COMPILER_METRICS_FIELD(post_hot_swap_checkpoint_restore_total)
 AURA_COMPILER_METRICS_FIELD(cross_fiber_panic_heal_success)
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_steal_safe_total)
+// Issue #1638: SoA EnvFrame dual-path consistency + mutation_log compact.
+AURA_COMPILER_METRICS_FIELD(dual_path_stale_fallback_total)
+AURA_COMPILER_METRICS_FIELD(mutation_log_compact_bytes_saved)
+AURA_COMPILER_METRICS_FIELD(env_frame_version_drift_prevented)
 
 #undef AURA_COMPILER_METRICS_FIELD

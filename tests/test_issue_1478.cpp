@@ -143,11 +143,48 @@ static void ac9_violation_passive_without_moved() {
           "no Moved bindings → violation_prevented unchanged");
 }
 
+// Issue #1638 extension: 3 new ACs (AC10/11/12) for the SoA EnvFrame
+// dual-path consistency + mutation_log compact hooks. Source-driven
+// smoke tests (the actual compact fires on heavy-mutation scenarios
+// impractical to drive in a unit test; these verify the metrics
+// surface + bump helpers are wired correctly + the public methods
+// are callable from outside the Evaluator).
+
+static void ac10_dual_path_metrics_reachable(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    // Newly added metrics start at 0 on a fresh service.
+    const auto dp0 = ev.get_dual_path_stale_fallback_total();
+    const auto ml0 = ev.get_mutation_log_compact_bytes_saved();
+    const auto vd0 = ev.get_env_frame_version_drift_prevented();
+    CHECK(dp0 == 0 && ml0 == 0 && vd0 == 0,
+          "AC10: dual_path / compact-bytes / drift-prevented all start at 0");
+}
+
+static void ac11_ensure_dual_path_consistent_callable(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    // NULL_ENV_ID should be the safe net — returns true without bumping.
+    const auto before = ev.get_env_frame_version_drift_prevented();
+    (void)ev.ensure_env_frame_dual_path_consistent(NULL_ENV_ID, "ac11_null_env_id");
+    const auto after = ev.get_env_frame_version_drift_prevented();
+    CHECK(after == before, "AC11: NULL_ENV_ID does not bump env_frame_version_drift_prevented");
+}
+
+static void ac12_compact_mutation_log_callable(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    // No-op when mutation_log is empty (returns 0 bytes saved, no bump).
+    const auto before = ev.get_mutation_log_compact_bytes_saved();
+    ev.compact_mutation_log();
+    const auto after = ev.get_mutation_log_compact_bytes_saved();
+    CHECK(after == before, "AC12: compact_mutation_log on empty log is a no-op (monotonic metric)");
+}
+
 } // namespace aura_issue_1478_detail
 
 int main() {
     using namespace aura_issue_1478_detail;
     std::println("=== Issue #1478: linear_post_mutate_enforce MVP (verified by #1541) ===");
+    std::println(
+        "=== + Issue #1638: SoA EnvFrame dual-path consistency extension (AC10/11/12) ===");
     ac1_enforce_count_initial();
     ac2_violation_count_initial();
     ac3_null_env_safe();
@@ -157,6 +194,12 @@ int main() {
     ac7_valid_frame_bumps();
     ac8_stress_1000();
     ac9_violation_passive_without_moved();
+    {
+        CompilerService cs;
+        ac10_dual_path_metrics_reachable(cs);
+        ac11_ensure_dual_path_consistent_callable(cs);
+        ac12_compact_mutation_log_callable(cs);
+    }
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
