@@ -18,13 +18,18 @@ namespace aura::compiler {
 
 QueryMatcher::QueryMatcher(FlatAST* ws_flat, StringPool* ws_pool, FlatAST* pat_flat,
                            StringPool* pat_pool, SymId wildcard_sym, bool nested_arity,
-                           bool skip_macro_introduced)
+                           bool skip_macro_introduced, bool only_macro_introduced = false)
     : ws_flat_(ws_flat)
     , ws_pool_(ws_pool)
     , pat_flat_(pat_flat)
     , pat_pool_(pat_pool)
     , wildcard_sym_(wildcard_sym)
-    , skip_macro_introduced_(skip_macro_introduced) {
+    , skip_macro_introduced_(skip_macro_introduced)
+    // Issue #1650: inverse flag for `only_macro_introduced` predicate (Task1 review
+    // 建议 #4 — refine #1636). When set, the matcher skips User-authored nodes
+    // and keeps only MacroIntroduced nodes (paired inverse of skip_macro_introduced_).
+    // Default false preserves backward compatibility with existing #1636 callers.
+    , only_macro_introduced_(only_macro_introduced) {
     state.nested_arity = nested_arity;
     // Issue #292: intern ":guard" so the matcher can detect
     // (:guard <sub-pat> "expr") forms in the pattern.
@@ -80,6 +85,16 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
     if (skip_macro_introduced_ && ws_flat_->is_macro_introduced(ws_id)) {
         ++recursive_macro_skipped_;
         ++macro_intro_filtered_strict_;
+        return false;
+    }
+    // Issue #1650: inverse filter — when only_macro_introduced_ is set, skip
+    // User-authored nodes and keep only MacroIntroduced nodes. Pairs with the
+    // existing skip_macro_introduced_ check above (the 2 flags are mutually
+    // exclusive — caller should set at most one). Always count the inverse
+    // filter for the (query:pattern-hygiene-stats) primitive surface.
+    if (only_macro_introduced_ && !ws_flat_->is_macro_introduced(ws_id)) {
+        ++recursive_user_skipped_;
+        ++macro_intro_filtered_inverse_;
         return false;
     }
 
