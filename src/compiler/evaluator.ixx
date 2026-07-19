@@ -12837,11 +12837,15 @@ public:
     // primitives), so the changes are correctness-only and
     // covered by the runtime test path for the helpers
     // themselves.
+    // Issue #1769: helpers catch exceptions, bump
+    // inline_typecheck_exception_total, return failure — never throw
+    // into fuzzer / MutationBoundaryGuard call sites.
     std::string run_typecheck_no_lock();
     bool run_typecheck_no_lock_bool();
     // Issue #526: selective infer_flat_partial on the latest
     // MutationRecord when the log is non-empty; full infer_flat
     // fallback otherwise. Applies CoercionMap before return.
+    // Issue #1769: exception-safe (see run_typecheck_no_lock).
     bool run_post_mutate_typecheck_no_lock();
 };
 
