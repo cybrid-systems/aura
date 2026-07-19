@@ -5498,6 +5498,9 @@ aura_issue_test_link_llvm_jit(test_compact_sweep_result_1732)
 # Issue #1733: walk_active_closures isolates callback exceptions.
 aura_add_issue_test(test_walk_active_closures_ex_1733)
 aura_issue_test_link_llvm_jit(test_walk_active_closures_ex_1733)
+# Issue #1734: collect_compiler_managed_gc_roots bridge_epoch drift detect.
+aura_add_issue_test(test_gc_roots_bridge_epoch_drift_1734)
+aura_issue_test_link_llvm_jit(test_gc_roots_bridge_epoch_drift_1734)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

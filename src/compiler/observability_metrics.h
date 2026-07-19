@@ -3359,6 +3359,9 @@ struct CompilerMetrics {
     // aura_jit.cpp + new test + SEVA demo + docs).
     std::atomic<std::uint64_t> linear_ownership_gc_root_registrations_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_root_stale_hits_total{0};
+    // Issue #1734: collect_compiler_managed_gc_roots saw snapshot
+    // bridge_epoch != live current_bridge_epoch().
+    std::atomic<std::uint64_t> gc_roots_bridge_epoch_drift_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
     // Issue #1543: GC root registration consistency audit — one bump per

@@ -542,10 +542,21 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
 
 void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                                   std::vector<std::int64_t>& env_roots_out,
-                                                  std::uint64_t current_bridge_epoch) const {
+                                                  std::uint64_t snapshot_bridge_epoch) const {
+    // Issue #1734: caller passes a safepoint snapshot of bridge_epoch.
+    // A concurrent bump (commit_panic_checkpoint / compact_env_frames)
+    // can advance the live epoch before we enumerate. Detect drift and
+    // filter roots against the live epoch (safer for ongoing ops).
+    const auto live_epoch = current_bridge_epoch();
+    if (live_epoch != snapshot_bridge_epoch) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->gc_roots_bridge_epoch_drift_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    const auto eff_epoch = live_epoch;
+
     std::shared_lock<std::shared_mutex> lock(closures_mtx_);
     for (const auto& [id, cl] : closures_) {
-        if (cl.bridge_epoch != 0 && cl.bridge_epoch != current_bridge_epoch) {
+        if (cl.bridge_epoch != 0 && cl.bridge_epoch != eff_epoch) {
             bump_compiler_root_dangling_prevented();
             // Issue #1515: stale bridge_epoch root skipped during GC walk.
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
