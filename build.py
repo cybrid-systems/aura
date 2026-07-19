@@ -395,16 +395,13 @@ def _cmake_configure_args() -> list[str]:
         info("linker: mold (AURA_USE_MOLD, probe ok)")
     elif fast_ld == "lld":
         ldflags_extra.append("-fuse-ld=lld")
-        # Route g++ to scripts/linker-bin/ld.lld — a thin wrapper that
-        # drops the benign libxml2 "no version information available"
-        # noise emitted when /usr/local LLVM lld is used with distro
-        # libxml2 (common on aarch64 / mixed toolchains).
-        linker_bin = ROOT / "scripts" / "linker-bin"
-        if (linker_bin / "ld.lld").is_file():
-            ldflags_extra.append(f"-B{linker_bin}")
-            info("linker: lld via scripts/linker-bin (quiet wrapper)")
-        else:
-            info("linker: lld (mold unavailable/incompatible)")
+        # scripts/linker-bin/ld.lld wrapper REMOVED per Anqi 2026-07-19
+        # directive wave 12 (operational cruft — wrapper only filtered
+        # benign libxml2 "no version information available" stderr noise
+        # from distro libxml2 / mixed toolchains; that's an environment
+        # issue, not a build pipeline concern. We just use system ld.lld
+        # directly and accept the harmless stderr noise).
+        info("linker: lld")
     else:
         info("linker: default (ld.bfd / system)")
 
