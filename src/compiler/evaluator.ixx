@@ -2962,6 +2962,9 @@ public:
     };
     // Null sweep_buffers → zeroed result (no work). Non-null → fill
     // counts; never heap-allocates the result (Issue #1732).
+    // Issue #1865: clears pair_remap_ on the successful sweep path
+    // (not on nullptr / panic-defer early returns) so compact_pairs
+    // remaps cannot outlive GC reclaim.
     CompactSweepResult compact_sweep(void* sweep_buffers);
 
 
