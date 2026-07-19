@@ -5235,6 +5235,9 @@ aura_issue_test_link_llvm_jit(test_compact_sweep_null_marks_1866)
 # Issue #1867: record_linear_gc_probe violation counters use release; readers acquire.
 aura_add_issue_test(test_linear_gc_probe_memory_order_1867)
 aura_issue_test_link_llvm_jit(test_linear_gc_probe_memory_order_1867)
+# Issue #1868: EnvView zero-copy span lifetime (invalidate on Env bind/realloc).
+aura_add_issue_test(test_env_view_lifetime_1868)
+aura_issue_test_link_llvm_jit(test_env_view_lifetime_1868)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
