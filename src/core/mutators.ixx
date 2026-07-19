@@ -228,10 +228,10 @@ static_assert(aura::core::ASTContainer<FlatAST>, "FlatAST must satisfy ASTContai
 // traffic (and which ones always roll back — a signal that
 // the strategy isn't a good fit for the workload).
 //
-// All counters are std::atomic<std::uint64_t> with relaxed
-// ordering — observability never needs ordering against the
-// mutation itself, and relaxed atomic increments are
-// essentially free.
+// Counters are std::atomic with relaxed updates; multi-field
+// snapshots take shared_mtx_ so (compile:mutator-dispatch-stats)
+// does not observe a torn multi-counter view while writers
+// hold the unique side of the same mutex (#1849).
 //
 // Counters:
 //   - apply_mutation_total: direct apply_mutation<> calls.
@@ -240,6 +240,11 @@ static_assert(aura::core::ASTContainer<FlatAST>, "FlatAST must satisfy ASTContai
 //   - failure_total: dispatched calls that returned AuraError.
 //   - per-kind success counts (one per StrategyKind).
 export struct MutatorDispatchStats {
+    // Issue #1849: serializes multi-field snapshot vs bumps.
+    // Writers take unique_lock for short fetch_add windows;
+    // readers take shared_lock for a coherent capture().
+    mutable std::shared_mutex mtx_;
+
     std::atomic<std::uint64_t> apply_mutation_total{0};
     std::atomic<std::uint64_t> apply_by_kind_total{0};
     std::atomic<std::uint64_t> apply_by_name_total{0};
@@ -255,7 +260,65 @@ export struct MutatorDispatchStats {
         std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0}, std::atomic<std::uint64_t>{0},
         std::atomic<std::uint64_t>{0}};
 
+    // Coherent multi-field view for EDSL stats (#1849).
+    struct Snapshot {
+        std::uint64_t apply_mutation_total = 0;
+        std::uint64_t apply_by_kind_total = 0;
+        std::uint64_t apply_by_name_total = 0;
+        std::uint64_t failure_total = 0;
+        std::uint64_t kind_success[4] = {0, 0, 0, 0};
+        std::uint64_t kind_failure[4] = {0, 0, 0, 0};
+
+        [[nodiscard]] std::uint64_t total() const noexcept {
+            return apply_mutation_total + apply_by_kind_total + apply_by_name_total;
+        }
+    };
+
+    [[nodiscard]] Snapshot capture() const noexcept {
+        std::shared_lock<std::shared_mutex> rlock(mtx_);
+        Snapshot out;
+        out.apply_mutation_total = apply_mutation_total.load(std::memory_order_relaxed);
+        out.apply_by_kind_total = apply_by_kind_total.load(std::memory_order_relaxed);
+        out.apply_by_name_total = apply_by_name_total.load(std::memory_order_relaxed);
+        out.failure_total = failure_total.load(std::memory_order_relaxed);
+        for (std::size_t i = 0; i < 4; ++i) {
+            out.kind_success[i] = kind_success[i].load(std::memory_order_relaxed);
+            out.kind_failure[i] = kind_failure[i].load(std::memory_order_relaxed);
+        }
+        return out;
+    }
+
+    void bump_apply_mutation() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        apply_mutation_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_apply_by_kind() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        apply_by_kind_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_apply_by_name() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        apply_by_name_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_failure() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        failure_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_kind_success(std::size_t idx) noexcept {
+        if (idx >= 4)
+            return;
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        kind_success[idx].fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_kind_failure(std::size_t idx) noexcept {
+        if (idx >= 4)
+            return;
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
+        kind_failure[idx].fetch_add(1, std::memory_order_relaxed);
+    }
+
     void reset() noexcept {
+        std::unique_lock<std::shared_mutex> wlock(mtx_);
         apply_mutation_total.store(0, std::memory_order_relaxed);
         apply_by_kind_total.store(0, std::memory_order_relaxed);
         apply_by_name_total.store(0, std::memory_order_relaxed);
@@ -267,9 +330,9 @@ export struct MutatorDispatchStats {
     }
 
     [[nodiscard]] std::uint64_t total() const noexcept {
-        return apply_mutation_total.load(std::memory_order_relaxed) +
-               apply_by_kind_total.load(std::memory_order_relaxed) +
-               apply_by_name_total.load(std::memory_order_relaxed);
+        // Prefer capture().total() for multi-field consistency;
+        // kept for existing C++ call sites.
+        return capture().total();
     }
 };
 
@@ -282,10 +345,11 @@ export [[nodiscard]] MutatorDispatchStats& dispatch_stats() noexcept {
 
 export template <aura::core::Mutator<FlatAST> M>
 [[nodiscard]] AuraResult<NodeId> apply_mutation(FlatAST& flat, NodeId target, M&& mut) {
-    dispatch_stats().apply_mutation_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1849: short unique bumps (never hold lock across apply).
+    dispatch_stats().bump_apply_mutation();
     auto r = std::forward<M>(mut).apply(flat, target);
     if (!r) {
-        dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
+        dispatch_stats().bump_failure();
     }
     return r;
 }
@@ -415,7 +479,8 @@ export struct StrategyParams {
 // compiler warning (or error with -Werror=switch).
 export [[nodiscard]] AuraResult<NodeId>
 apply_by_kind(FlatAST& flat, NodeId target, StrategyKind kind, const StrategyParams& params) {
-    dispatch_stats().apply_by_kind_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1849: unique bump; apply_mutation releases before re-enter.
+    dispatch_stats().bump_apply_by_kind();
     AuraResult<NodeId> result = std::unexpected(
         make_unexpected(AuraErrorKind::InternalInvariantViolation,
                         std::format("apply_by_kind: unhandled StrategyKind value {}",
@@ -444,9 +509,9 @@ apply_by_kind(FlatAST& flat, NodeId target, StrategyKind kind, const StrategyPar
     if (ok) {
         const auto idx = kind_index(kind);
         if (result) {
-            dispatch_stats().kind_success[idx].fetch_add(1, std::memory_order_relaxed);
+            dispatch_stats().bump_kind_success(idx);
         } else {
-            dispatch_stats().kind_failure[idx].fetch_add(1, std::memory_order_relaxed);
+            dispatch_stats().bump_kind_failure(idx);
         }
     }
     return result;
@@ -474,10 +539,11 @@ export [[nodiscard]] std::optional<StrategyKind> kind_from_name(std::string_view
 
 export [[nodiscard]] AuraResult<NodeId>
 apply_by_name(FlatAST& flat, NodeId target, std::string_view name, const StrategyParams& params) {
-    dispatch_stats().apply_by_name_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1849: unique bump; apply_by_kind does not nest the same lock.
+    dispatch_stats().bump_apply_by_name();
     auto kind = kind_from_name(name);
     if (!kind) {
-        dispatch_stats().failure_total.fetch_add(1, std::memory_order_relaxed);
+        dispatch_stats().bump_failure();
         return std::unexpected(
             make_unexpected(AuraErrorKind::MutationInvalidField,
                             std::format("apply_by_name: unknown strategy name '{}'", name)));
