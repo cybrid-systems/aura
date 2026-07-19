@@ -2,283 +2,28 @@
 
 面向修改 `src/compiler/evaluator.ixx` 及 `evaluator_*.cpp` 分区实现的运行时开发者。
 
-模块地图见 [architecture.md](architecture.md)。
+模块地图见 [architecture.md](architecture.md)。架构 / protocol 改动同步 [wire-formats.md](wire-formats.md)。
 
 ## 构建与测试
 
 ```bash
-./scripts/install-githooks.sh   # 一次性：启用 pre-commit（docs + test-registry 自动 regen）
+./scripts/install-githooks.sh   # 一次性：启用 pre-commit hook
 ./build.py build
-./build.py gate              # 静态门栅 = CI job `gate`
-./build.py gate --fix         # #1572：auto-regen docs/registry + lint/format --fix
-./build.py gate --scripts-only  # #1573：跨平台（跳过 clang-format；Windows CI）
-./build.py test-registry --fix  # 仅刷新 docs/generated/test-registry.json
-./build.py check              # gate + build + CI 测试矩阵
-./build.py test unit          # test_ir
-./build.py test integ         # .aura 端到端
-./build.py bench --strict     # #1569：编译器流水线 benchmark SLO 硬门栅
+./build.py gate              # CI gate(静态 + format + fixtures + surface)
+./build.py test unit         # test_ir
+./build.py test integ        # .aura 端到端
+./build.py bench --strict    # #1569：SLO 硬门栅
 ```
 
-多平台 CI（Linux 生产门栅 + macOS core + Windows scripts）见 **[ci-platforms.md](ci-platforms.md)**（#1573）。
-
-### 路径对照（Issue #1570 — 避免 404 / 幽灵模块）
-
-完整表与 new-dev checklist 见 **[test_harness_pattern.md](test_harness_pattern.md)**。
-
-| 错误引用 | 正确位置 |
-|----------|----------|
-| `.github/ci_pipeline.yml` | `.github/workflows/ci.yml` |
-| `src/test/benchmark_gate.ixx` | `tests/benchmark.py` + `./build.py bench` |
-| `src/test/test_issue_pattern.ixx` | `tests/test_harness.hpp` + `tests/templates/test_issue_pattern.cpp` |
-| `src/test/` | `tests/` · `tests/domain/` · `cmake/AuraDomainTests.cmake` |
-| Pass concepts 内联在 `pass_manager` | **`src/core/concept_constraints.ixx`**（#1577；`import aura.core.concept_constraints`） |
-
-### ResourceQuota（Issue #1579）
-
-多维度资源配额（memory / fibers / time_us / mutations）集中在：
-
-```cpp
-#include "core/resource_quota.hh"          // serve / tests
-import aura.core.resource_quota;          // 模块消费者
-// process_resource_quota() — scheduler spawn 前 check_and_consume(Fibers)
-// Evaluator::check_*_quota / allocate_checked — 既有 #1481 热路径
-// (engine:metrics "query:resource-quota-stats")  schema 1579
-```
-
-`set_resource_quota_fibers` 会镜像到 process quota，使 `Scheduler::spawn` 在超额时返回 `nullptr`。
-
-### Pass concepts（Issue #1577）
-
-所有 Pass 流水线 concepts（`Pass` / `AnalysisPass` / `PureAnalysisPass` / `DirtyAwarePass` / `IncrementalPass` / `InstructionDirtyAwarePass` / `JITFriendlyPass` / `SoAViewAwarePass` / `LegacyPass` / `RequiresSoAViewPass` / `ShapeStableAwarePass`）集中在：
-
-```cpp
-import aura.core.concept_constraints;  // 或 import pass_manager（export import 再导出）
-// aura::compiler::Pass / DirtyAwarePass / …
-```
-
-- 实现细节与 `run_pipeline` 仍在 `pass_manager.ixx`
-- 具体 pass 适配器：`optimization_passes.ixx`（#1576）
-- 观测：`(engine:metrics "query:pass-concepts-stats")` schema 1577
-
-写 `test_issue_*`：复制模板 → `aura_add_issue_test` → `cmake --build build --target …`。  
-跑 issue 矩阵：`python3 tests/run_issue_tests.py --tier fast` 或 `./build.py test issues-fast`。
-
-### Benchmark SLO 硬门栅（Issue #1569）
-
-`tests/benchmark.py` 对比 `tests/benchmark_baseline.json`：
-
-| 模式 | 触发 | 回归时 |
-|------|------|--------|
-| 默认 `python3 tests/benchmark.py` | — | 打印 ⚠️，仅功能 FAIL 时 exit 1 |
-| `--check` / `--strict` | 显式 | **exit 1**（SLO VIOLATION） |
-| `AURA_CI_STRICT_BENCH=1` | CI workflow env | 同上 hard fail |
-| `./build.py bench --strict` | 本地/CI 入口 | 同上 |
-
-**判定（抗噪声）**：同时满足 `ratio > 1.2` 且 `Δt > 20ms`，**或** `ratio ≥ 3.0`（灾难性回归，忽略绝对下限）。  
-更新基线（故意接受新性能面）：`python3 tests/benchmark.py --update` 并在 PR 说明原因。  
-门栅单元测试（无需 `aura` 二进制）：`python3 tests/test_benchmark_gate.py`。
-
-**Git hooks**：`.githooks/` 已在仓库内，但 Git **不会自动启用**——须运行 `./scripts/install-githooks.sh`（设置 `core.hooksPath=.githooks`）。
-
-- **pre-commit**：staged C++/Python 自动 `clang-format` / `ruff`；任意 staged C++ 变更后还会做**全树** `clang-format --dry-run`（与 CI 相同，避免只修 staged 文件、其他文件仍漂移）；staged `src/` 变更会 regen `docs/generated/*.md`；staged `tests/*.cpp`（含删除）会 regen + stage `docs/generated/test-registry.json`（#1572）。
-- **pre-push**：推送前跑 `./build.py gate`（docs + lint + format + fixtures + surface + registry + binding），与 CI `gate` job 对齐。
-
-本地可手动：`./build.py format --fix`（修 C++ 格式）、`./build.py gate`（检查）、`./build.py gate --fix`（修格式 + 刷 docs/registry）。
-
-加 primitive 后至少补 `tests/suite/` 或 `tests/regression/` 用例。若未装 hook，须手动 **`./build.py docs`** 并把 `docs/generated/*.md` 一并提交（否则 `docs --check` 挂）。
-
-### 新增 `test_issue_*` 流程（Issue #1572 — 避免 stale registry）
-
-1. 复制 `tests/templates/test_issue_pattern.cpp` → `tests/test_issue_<N>.cpp`（或 `tests/domain/…` + `aura_add_issue_test`）。
-2. 文件头加 `// @category: …` 与 `// @reason: Issue #N — …`（供 `gen_test_registry.py` 扫描）。
-3. **提交时**：装了 hook 则 pre-commit 自动 `gen_test_registry.py` + `git add docs/generated/test-registry.json`。
-4. **未装 hook / 想先本地对齐**：`./build.py test-registry --fix` 或 `./build.py gate --fix`，再 `git add docs/generated/test-registry.json`。
-5. CI / pre-push：`./build.py gate`（check-only）通过 `cmd_test_registry` + `check_test_coverage` 校验 registry 新鲜度；stale 时提示 `./build.py test-registry --fix`。
-
-## Evaluator 是什么
-
-`Evaluator`（`evaluator.ixx` + 多个 `evaluator_*.cpp` TU）持有 workspace FlatAST、原语表 `Primitives`、执行入口 `eval_flat`，以及 workspace 锁、defuse 失效、快照/回滚等自修改不变式。
-
-IR 解释器与 JIT 是下游，语义以 `eval_flat` 为准。
+加 primitive 后：`./build.py docs` 自动 regen `docs/generated/primitives.md`。
 
 ## 三个不变式
 
-1. **Flat 在求值中可增长** — `parse_to_flat`、`add_node` 等会追加节点；遍历时可能正在增长。
-2. **query 与 mutate 可并发** — REPL、`--serve`、多 fiber 共享实例；`workspace_mtx_` 是唯一边界。
+1. **Flat 在求值中可增长** — 遍历时若循环体可能追加节点,先 snapshot `end_id = flat.size()`。
+2. **query 与 mutate 可并发** — `workspace_mtx_` 是唯一边界(`unique_lock` 写 / `shared_lock` 读)。
 3. **节点修改使 def-use 失效** — 必须走 `defuse_touch_fn_` / `defuse_affected_syms_` 协议。
 
-## §1 自修改 Flat 迭代铁律（Issue #111）
-
-最大 footgun：循环条件每次读 `flat.size()`，循环体又可能增长 flat → 无限循环 / OOM。
-
-```cpp
-// 错误
-for (aura::ast::NodeId id = 0; id < flat.size(); ++id) { ... }
-
-// 正确
-const auto end_id = flat.size();
-for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
-```
-
-同时满足才必须 snapshot：(1) 遍历 FlatAST；(2) 条件重读 `.size()`；(3) 循环体可能追加节点。拿不准就 snapshot。
-
-## §2 添加 primitive
-
-**加 primitive 前必须先读** [`docs/design/primitive-governance-policy.md`](design/primitive-governance-policy.md)（#1451 Agent-Proof 规范）并回答 [`primitive-vs-stdlib-decision-framework.md`](design/primitive-vs-stdlib-decision-framework.md) **中的红线问题**：默认应放入 stdlib (`lib/std/`)，只有满足 7 条红线的功能才下沉为 C++ primitive。
-
-运行时先探：
-
-```scheme
-(primitive:validate-new "candidate-name")  ; :ok #f → 禁止 public add；见 :advice
-```
-
-决定后再回到下面的注册流程。
-
-**冻结（P0b / #1432）**：禁止新增匹配下列模式的公共原语名（既有名 grandfather 在 baseline 中）：
-
-- `*-stats` / `*-stats-hash`（计数器 → `CompilerMetrics` + `(engine:metrics)`）
-- `string-*` / `string:*`、`json-*`/`json:*`、`math-*`/`math:*`、`vector-*`/`vector:*`、`path-*`/`path:*`、`time-*`/`time:*`（→ `lib/std` / `std/surface`）
-- `ast:ref-*`（#393 StableRef；禁止新名）
-
-`./build.py gate` 跑：
-
-- `scripts/gen_docs.py --check`（docs 新鲜度）
-- ruff + clang-format（可用 `./build.py gate --fix` 自动修）
-- fixtures / primitive surface (`--strict`)
-- `./build.py test-registry` → `scripts/gen_test_registry.py --check`（#1572）
-- `scripts/check_test_coverage.py`（#1453：primitive 源码变更必须带 `tests/`；registry 二次校验）
-
-相关：`scripts/run_pets_regression.py` / `./build.py test pets`（#1454，不在 gate 内，在 test 矩阵）。
-
-故意扩 baseline：`python3 scripts/check_primitive_surface.py --update-baseline` 并在 PR 说明。  
-例外路径：`tests/test-binding-allowlist.txt`（尽量少用）。
-
-EDSL 自测：`./build/aura < tests/edsl_self_test.aura`（harness：`lib/std/edsl-test-harness.aura`）。  
-测试索引：`./build.py test-registry --fix` 或 `python3 scripts/gen_test_registry.py` → [generated/test-registry.json](generated/test-registry.json)。  
-框架说明：[testing-framework-v1.md](design/testing-framework-v1.md)。
-
-**观测读取（P1 / #1433）**：测试与 Agent 优先 facade：
-
-```scheme
-(engine:metrics)                      ; schema 2 + compile/jit/mutate/… 分组
-(engine:metrics :group "jit")         ; 单组 CompilerMetrics 字段
-(engine:metrics :prefix "query:")     ; 按前缀过滤 stats 名 + 字段
-(engine:metrics "query:foo-stats")    ; 过渡期按名单取
-(require "std/engine-metrics" all:)   ; engine-metrics:get / :group / …
-```
-
-勿再为每个 counter 新增 `query:*-stats` 名（见 P0b 冻结）。
-
-**P5b / #1440**：string/json/vector/math **热路径**仍是 C++ `core`（`string-append`、`json-parse`、`floor`…）；`lib/std/surface` 是产品面。gen_docs 的 convenience 计数已修正（勿再把 hyphen 名默认标 convenience）。细节见 [CHANGELOG-v2.0-prep.md](CHANGELOG-v2.0-prep.md)。
-
-**P1b / #1434 → P5a / #1439（v2.0）**：`query:*-stats` / `compile:*-stats` **已不在 public 原语表**（不再出现在 `(api-reference)`）。内部仍实现 hash builder，只能通过：
-
-```scheme
-(engine:metrics "query:foo-stats")   ; 单名（兼容旧 schema）
-(engine:metrics :group "jit")        ; 推荐：CompilerMetrics 分组
-(engine:metrics :prefix "query:")
-```
-
-迁移说明：[migration-stats-to-metrics.md](migration-stats-to-metrics.md)。分析 / 改写：`scripts/find_top_stats.py`、`scripts/migrate_top_stats_to_facade.py`。**禁止**再 `add("query:…-stats")` 到 public 表（用 `ObservabilityPrims::register_stats_impl` 仅当引擎内部确需兼容名）。
-
-**结构查询（#1435）**：优先 `(query :node|:children|:parent|:find|:def-use|:mutation-log …)`；`:children` / `:parent` 支持 `:stable #t`（#393）。旧 `query:children` 等仍可用但已 deprecated。
-
-**变异（#1436）**：优先 `(mutate :rebind|:replace|:move|:extract|:validate|:atomic …)`。`:replace` 的 kind 为 `pattern|subtree|value|type`。旧 `mutate:rebind` 等仍可用但已 deprecated；`mutate:sv-*` 标为扩展面。
-
-**工作区（#1437）**：优先 `(workspace :create|:switch|:merge|:lock|:unlock …)`。旧 `workspace:create` 等仍可用但已 deprecated。
-
-**运行时分层（P2a/P2b）**：默认 full。s0 跳过 bulk observability stats 与扩展簇（eda / security / verify-tool / stdlib-review），只保留 `engine:metrics` facade：
-
-```bash
-AURA_PRIMITIVES=s0 ./build/aura          # 或 AURA_FULL_PRIMITIVES=0
-AURA_PRIMITIVES=full ./build/aura        # 默认
-./build.py test suite-s0                 # curated surface smoke（CI s0-smoke job）
-```
-
-**Convenience 面（P3）**：Agent / 应用优先 `(require "std/surface" all:)`（string/json/math 组合层）；热路径 C++ 原语仍在，但不作为产品 API 推荐入口。
-
-**P0 已完成**：`init_pair_primitives()` 内无内联 `primitives_.add("...")`；静态原语均在 `evaluator_primitives_*.cpp`（31 个 TU），经 `prim_registrar()` 回调注册。完整列表见 `docs/generated/primitives.md`（`./build.py docs` 生成）。
-
-**Discoverability（#1552）**：Agent / 开发者不必翻 30+ TU 才能找到入口。
-
-| 表面 | 用法 |
-|------|------|
-| Stdlib facade | `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover` |
-| INDEX | `(require "std/INDEX" all:)` → `(stdlib:help "primitives")` |
-| Runtime meta | `(primitive:describe "+")`、`(query:primitive-list-with-meta)`、`(query:primitives-meta-catalog)` |
-| 生成文档 | `docs/generated/primitives.md`（全名）+ `primitives-registry.md`（中央 `register_*` 组序） |
-| 中央编排 | `src/compiler/evaluator_primitives_registry.cpp` → `register_all_primitives()` |
-
-Fiber / mutation 热路径组：`mutation`、`mutate`、`workspace-query`、`control`（多 Agent 循环优先 Guard / safe-yield，见 #1504 / #1547）。新增 primitive：在对应 `evaluator_primitives_*.cpp` 注册并确保中央 registry 调用该 `register_*`，附 `PrimMeta`，加 suite/回归，再 `./build.py docs`。
-
-注册点：`init_pair_primitives()`、`Evaluator()` 构造器（network/type 等），或 `ffi_runtime_` / `adt_runtime_`（外部 runtime 模式）。
-
-| 簇 / 前缀 | 源文件 | 注册函数 | 备注 |
-|-----------|--------|----------|------|
-| 类型谓词 / `not` | `evaluator_primitives_core.cpp` | `register_type_and_char_primitives` | 无状态 |
-| pair / string | `evaluator_primitives_pair.cpp` | `register_pair_and_string_primitives` | `pairs_` / `string_heap_` |
-| list 高阶 | `evaluator_primitives_list.cpp` | `register_list_primitives` | 收 `Evaluator&`；`apply_unary/pred/binary` 在 list TU |
-| JSON | `evaluator_primitives_json.cpp` | `register_json_primitives` | |
-| vector / hash | `evaluator_primitives_vector.cpp` | `register_vector_and_hash_primitives` | + `vector_heap_` |
-| math / regex | `evaluator_primitives_math.cpp` | `register_math_regex_and_arithmetic_primitives` | |
-| reflect / keyword | `evaluator_primitives_reflect.cpp` | `register_reflect_and_type_primitives` | + `keyword_table_` / `type_registry_` |
-| `query:module-*` | `evaluator_primitives_query.cpp` | `register_query_primitives` | + `resolve_module_path` |
-| `query:*` workspace | `evaluator_primitives_query_workspace.cpp` | `register_workspace_query_primitives` | + `mev` |
-| `query:*` def-use | `evaluator_primitives_query_defuse.cpp` | `register_defuse_query_primitives` | + `DefUseQueryCallbacks` |
-| `mutate:*` | `evaluator_primitives_mutate.cpp` | `register_mutate_primitives` | friend + `mev` + `destroy_defuse_index` |
-| `workspace:*` | `evaluator_primitives_workspace.cpp` | `register_workspace_primitives` | `WorkspaceTree` 在 `evaluator.ixx` |
-| `ast:*` | `evaluator_primitives_ast.cpp` | `register_ast_primitives` | + `defuse_summary_stats` |
-| `compile:*` / JIT 观测 | `evaluator_primitives_compile.cpp` / `observability.cpp` | 各 `register_*` | friend |
-| messaging / fiber | `evaluator_primitives_messaging.cpp` | `register_messaging_primitives` | |
-| git / network | `evaluator_primitives_io.cpp` | `register_git/network_primitives` | |
-| agent / synthesize | `evaluator_primitives_agent.cpp` | `register_auto_evolve/synthesize/strategy` | |
-| memory / policy / eval EDSL | `memory.cpp` / `policy.cpp` / `eval.cpp` | 各 `register_*` | |
-| types / diagnostic / module / file / runtime | `types` … `runtime.cpp` 等 | 各 `register_*` | P0 step 22–31 |
-
-```cpp
-primitives_.add("my:primitive", [](std::span<const EvalValue> a) -> EvalValue {
-    if (a.size() < 1 || !types::is_int(a[0]))
-        return make_void();
-    return make_int(types::as_int(a[0]) * 2);
-});
-```
-
-要点：
-- 参数类型固定为 `std::span<const EvalValue>`，先验 `a.size()` 与各 `is_*`
-- 返回 `EvalValue`，用户错误用值通道（`make_merr` / `#f`），不要 throw
-- 构造器：`make_int` / `make_string` / `make_void` 等见 `value.ixx`
-
-### AI Agent Primitive Development Kit（Issue #480）
-
-注册时可附带 `PrimMeta`（`arity` / `pure` / `safety_flags` / `doc`），Agent 通过 `(primitive:describe name)` 与 `(query:primitive-list-with-meta)` 自省元数据。
-
-```cpp
-// 模板：lambda 骨架 + 参数校验 + 带 meta 注册
-primitives_.add(
-    "my:primitive",
-    [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() != 1 || !types::is_int(a[0]))
-            return make_void();
-        return make_int(types::as_int(a[0]) * 2);
-    },
-    PrimMeta{.arity = 1,
-             .pure = true,
-             .safety_flags = 0,
-             .doc = "Double an integer argument."});
-```
-
-`safety_flags`：`0x01` 修改 workspace、`0x02` IO 副作用、`0x04` fiber 敏感。`arity = 255` 表示可变参数。观测：`query:primitive-meta-stats`。
-
-## §3 Mutate 锁协议
-
-`workspace_mtx_` 是 `std::shared_mutex`：
-
-| 种类 | 锁 |
-|------|-----|
-| 写 workspace AST 的 `mutate:*` | `std::unique_lock` |
-| 只读 `query:*` | `std::shared_lock` |
-
-### 标准 mutate 骨架
+## Mutate 骨架
 
 ```cpp
 primitives_.add("mutate:foo", [this](std::span<const EvalValue> a) -> EvalValue {
@@ -289,7 +34,7 @@ primitives_.add("mutate:foo", [this](std::span<const EvalValue> a) -> EvalValue 
         aura::messaging::g_fiber_yield_mutation_boundary();
     if (!workspace_flat_) return make_merr("no-workspace", "...");
     auto& flat = *workspace_flat_;
-    // ... validate, mutate (§1 snapshot if iterating) ...
+    // ... validate, mutate (snapshot §1 if iterating) ...
     flat.add_mutation_with_rollback(...);
     workspace_flat_->mark_dirty_upward(node);
     if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
@@ -298,587 +43,59 @@ primitives_.add("mutate:foo", [this](std::span<const EvalValue> a) -> EvalValue 
 });
 ```
 
-错误返回统一用成员 `make_merr(kind, msg)`，不要新建局部 `merr` lambda。
+持 `unique_lock` 时**不要**调 `ensure_defuse` / `apply_closure` / `typecheck-current`(会再抢锁,死锁)。
 
-**死锁**：持 `unique_lock` 时勿调用 `ensure_defuse`、`apply_closure`、`typecheck-current`（它们会再抢锁）。先释放锁或拆成两阶段。
-
-## §4 DefUseIndex touch
-
-修改节点后必须：
+## 注册 primitive
 
 ```cpp
-defuse_affected_syms_.insert(name);
-if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
+primitives_.add("my:primitive", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (a.size() != 1 || !types::is_int(a[0])) return make_void();
+    return make_int(types::as_int(a[0]) * 2);
+}, PrimMeta{.arity = 1, .pure = true, .safety_flags = 0,
+             .doc = "Double an integer argument."});
 ```
 
-`defuse_touch_fn_` 为 null 时仍安全；下次 `ensure_defuse` 会全量重建。
+要点：
+- 先验 `a.size()` 与各 `is_*`
+- 用户错误走值通道(`make_void` / `make_merr`),不 throw
+- 修 primitive 后 `./build.py docs`(自动 regen `docs/generated/primitives.md`)
+- `add_mutate` 自动套 `MutationBoundaryGuard`(优先于 `add`)
+
+## Discoverability (Issue #1552)
+
+| 表面 | 用法 |
+|------|------|
+| Stdlib facade | `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover` |
+| Runtime meta | `(primitive:describe name)` / `(query:primitives-meta-catalog)` |
+| 生成文档 | `docs/generated/primitives.md` |
 
 ## 合并前检查清单
 
 - [ ] §1：可增长 flat 的遍历已 snapshot `end_id`
-- [ ] §3：mutate 用 `unique_lock`，query 用 `shared_lock`，无重入锁
-- [ ] §4：defuse touch 双路径
+- [ ] mutate 用 `unique_lock`,query 用 `shared_lock`,无重入锁
+- [ ] defuse touch 双路径(`defuse_affected_syms_.insert` + `defuse_touch_fn_`)
 - [ ] 参数校验在 `as_*` / 索引访问之前
-- [ ] `workspace_read_only_` 快速路径
-- [ ] mutation boundary yield
-- [ ] multi-step Agent loops: yield only via `query:mutation-boundary-safe-yield` /
-- [ ] fairness probe: `query:mutation-boundary-fairness-stats` (#1591) /
-      `ast:yield-at-boundary` when depth is 0 (Issue #1504; never yield under Guard)
+- [ ] mutation boundary yield(if Fiber-aware)
 - [ ] `add_mutation_with_rollback` + `mark_dirty_upward`
-- [ ] fuzz：`fuzz_defuse.py --quick`、`fuzz_workspace.py --quick`、`fuzz_snapshot.py --quick`
-- [ ] ASAN：`ASAN_OPTIONS=detect_leaks=1 ./build/test_ir`
+- [ ] 至少补 `tests/` 用例(unit 或 suite)
+- [ ] `./build.py gate` 全绿(包括 docs regen)
 
 ## 文件地图
 
-`aura.compiler.evaluator` 由 `evaluator.ixx`（模块接口）+ 44 个 `.cpp` 分区 TU 组成；原语簇与 `register_*` 对应关系见 §2 表。
-
-### 接口 + 13 核心 `.cpp`
+`aura.compiler.evaluator` 由 `evaluator.ixx` 接口 + 44 个 `.cpp` 分区 TU 组成:
 
 | 文件 | 职责 |
 |------|------|
-| `evaluator.ixx` | 模块接口；`primitives_detail::register_*` 前向声明 hub |
-| `evaluator_ctor.cpp` | `Evaluator` 构造/析构；构造器内原语（memory/messaging/policy/types） |
-| `evaluator_eval_flat.cpp` | `apply_closure`、`eval_flat`、宏展开、`post_mutation_macro_reexpand`、require/functor |
-| `evaluator_env.cpp` | `Env` / `EnvFrame` / `EnvView`、SoA arena、`bind_symid` |
-| `evaluator_module_loader.cpp` | `resolve_module_path`、`load_module_file`、`gc_module` |
-| `evaluator_workspace_tree.cpp` | workspace tree、panic checkpoint、`copy_env` |
-| `evaluator_defuse_index.cpp` | `DefUseIndex`、`defuse_index_destroy`、`install_defuse_subsystem` |
-| `evaluator_gc.cpp` | `flush_gc_roots`、sweep、`compact_pairs` |
-| `evaluator_typecheck.cpp` | `run_typecheck_no_lock*` |
-| `evaluator_adt.cpp` | 动态 ADT ctor 注册、`make_merr` |
-| `evaluator_fiber_mutation.cpp` | per-fiber mutation stack、`yield_mutation_boundary` |
-| `evaluator_query_index.cpp` | `build_tag_arity_index`（`query:pattern` 加速） |
-| `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排（`init_pair_primitives`） |
-| `evaluator_primitives_builtins.cpp` | `Primitives` 内置算术/布尔（`+` `-` `*` `/` 等） |
-
-### 原语分区（31 TU，经 registry 或 ctor 注册）
-
-| 文件 | 簇 / 前缀 |
-|------|-----------|
-| `evaluator_primitives_core.cpp` | 类型谓词、`not` |
-| `evaluator_primitives_pair.cpp` | pair / string heap |
-| `evaluator_primitives_list.cpp` | list 高阶、`drop` |
-| `evaluator_primitives_json.cpp` | JSON encode/parse |
-| `evaluator_primitives_vector.cpp` | vector / hash |
-| `evaluator_primitives_math.cpp` | m4-linear、regex、math |
-| `evaluator_primitives_reflect.cpp` | reflect / type / keyword |
-| `evaluator_primitives_query.cpp` | `query:module-*` |
-| `evaluator_primitives_query_workspace.cpp` | workspace AST `query:*` |
-| `evaluator_primitives_query_defuse.cpp` | def-use `query:*` |
-| `evaluator_primitives_mutate.cpp` | `mutate:*` |
-| `evaluator_primitives_workspace.cpp` | `workspace:*` |
-| `evaluator_primitives_ast.cpp` | `ast:*` |
-| `evaluator_primitives_compile.cpp` | `compile:*`、concurrency、syntax-marker |
-| `evaluator_primitives_observability.cpp` | panic / stats / jit / gc-arena |
-| `evaluator_primitives_messaging.cpp` | messaging / fiber / channel（ctor） |
-| `evaluator_primitives_io.cpp` | git:*、network |
-| `evaluator_primitives_agent.cpp` | auto-evolve / synthesize / strategy |
-| `evaluator_primitives_memory.cpp` | coverage / gc / arena / dirty（ctor） |
-| `evaluator_primitives_policy.cpp` | memory-policy / capability（ctor） |
-| `evaluator_primitives_eval.cpp` | `set-code` / `eval-current` / `api-reference` |
-| `evaluator_primitives_types.cpp` | declare-type / hot-swap（ctor） |
-| `evaluator_primitives_diagnostic.cpp` | diagnose / apply-fix |
-| `evaluator_primitives_module.cpp` | module? / use / load-module |
-| `evaluator_primitives_file.cpp` | read / write-file / shell |
-| `evaluator_primitives_runtime.cpp` | equal? / display / format / `io_print_val` |
-| `evaluator_primitives_test.cpp` | `run-tests` |
-| `evaluator_primitives_misc.cpp` | current-time / arena-offset |
-| `evaluator_primitives_control.cpp` | `while` |
-| `evaluator_primitives_char.cpp` | char? / string->list / read-line |
-| `evaluator_primitives_mutation.cpp` | mutation-count / rollback |
-
-### 相邻模块
-
-| 文件 | 职责 |
-|------|------|
-| `evaluator_pure.ixx` | 无 `Evaluator` 状态的纯函数（`coerce_value_pure` 等） |
-| `query.ixx` / `query_impl.cpp` | QueryEngine、ASTIndex |
-| `adt_runtime.*` | ADT 构造器表（Issue #108 bypass） |
-| `ffi_primitives.*` | C FFI 状态 |
-| `service.ixx` | CompilerService、增量 cache |
-| `ir_executor.*` | IR 解释器 |
-| `aura_jit.*` | LLVM JIT |
-| `src/serve/*` | fiber、scheduler、serve-async、mailbox、parallel_orch |
-| `src/orch/*` | unified agent orchestration facade (#1588): `agent_spawn`、`orch.h`；Aura `orch:spawn-agent` / `orch:parallel-intend` |
-| `main.cpp` | CLI、`--serve` JSON 分发 |
-
-## §Orch 新原语 / 编排扩展指南（#1603）
-
-并行编排栈分层见 [architecture.md §Agent 编排](architecture.md#agent-编排)。扩展时优先 **组合** 现有 serve 原语，而不是复制 fiber 调度逻辑。
-
-### 放哪里？
-
-| 变更类型 | 目标 | 不要 |
-|----------|------|------|
-| Fiber / join / steal | `src/serve/fiber.*` · `scheduler.*` | 在 evaluator 里手写 ucontext |
-| Mailbox / 背压 | `src/serve/multi_fiber_mailbox.*` | 无界全局队列 |
-| 批并行 policy | `src/serve/parallel_orch.*` | 绕过 concurrency gate |
-| Agent 组合 API | **`src/orch/agent_spawn.h`** | 在多个 TU 各写一份 spawn |
-| Aura 表面 | `evaluator_primitives_agent.cpp` | 为每个 counter 新增 public `*-stats` 原语 |
-| 纯 Aura 角色图 | `lib/std/orchestrator.aura` | 把 M:N 调度塞进 stdlib |
-
-### 添加 checklist
-
-1. **读治理**：§2 冻结规则 + [primitive-vs-stdlib-decision-framework.md](design/primitive-vs-stdlib-decision-framework.md)。观测走 `(engine:metrics "…")`，禁止新 public `query:*-stats` 名（用 `register_stats_impl`）。
-2. **C++ API**：优先 header-only 组合（`orch.h` / `parallel_orch.h` 风格）；`AgentHandle` / `BatchResult` 错误字符串包含可机读前缀（如 `ResourceQuotaExceeded:`）。
-3. **Aura 表面**：keyword 参数 `:max-concurrency` / `:timeout-ms` / `:fail-fast`；返回 **hash**（`status` + counts + `schema`），见 [wire-formats.md §10](wire-formats.md#10-parallel-orchestration-contracts-1584--1600)。
-4. **线程安全**：跨 fiber 不共享裸 `NodeId`；eval 热路径用 mutex 或明确文档“仅 host 线程”。mutation 必须 `MutationBoundaryGuard`。
-5. **配额**：spawn / parallel batch 走 `process_resource_quota` Fibers 维（#1600）；拒绝时 typed error + metrics bump。
-6. **测试**（至少一类）：
-   - unit：`tests/test_parallel_orch.cpp` / `tests/test_orch_agent_spawn.cpp` 模式
-   - Aura：`tests/test_parallel_intend_primitive.cpp` 或 suite
-   - stress：`tests/suite/parallel_orchestration_stress.aura` 或 C++ stress
-7. **文档**：更新 `src/orch/README.md` 或 `docs/design/parallel-orch.md`；Agent 教程 [orchestration-tutorial.md](orchestration-tutorial.md)；协议字段改动必须同步 wire-formats §10。
-8. **门禁**：`./build.py docs` · `./build.py gate` · 相关 ctest 绿。
-
-### 参考实现
-
-| Issue | 产物 |
-|-------|------|
-| #1584 | `Fiber::join` / `join(span)` |
-| #1585 | MultiFiberMailbox |
-| #1586 | `parallel_intend` + `query:parallel-orch-stats` |
-| #1587 | `(parallel-intend)` Aura |
-| #1588 | `src/orch/` + `orch:*` |
-| #1600 | ResourceQuota on orch paths |
-| #1602 | stress suite |
-
-## 维护规则（3 条）
-
-1. **加/改 primitive** → 测试用例 + `./build.py docs`（`check` 会校验未过期）。
-2. **改 serve / orch 协议** → [wire-formats.md](wire-formats.md)（含 §10 并行编排）+ 相关 suite / stress 测试。
-3. **改不变式** → 更新本文 §1–§4 或 [architecture.md](architecture.md)。
-
-历史设计：`git tag docs-archive-pre-2026-06`。
-## Sanitizers（Issue #299）
-
-`build.py` 支持 AddressSanitizer / UndefinedBehaviorSanitizer / ThreadSanitizer 三种插桩构建。三者路由到不同 build 目录，互不污染普通 `build/`。
-
-```bash
-# 本地 ASAN — 内存安全（UAF、double-free、OOB、leaks）
-./build.py --sanitizer=asan build
-ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 \
-  ./build_asan/aura < tests/multi_session_leak_test.aura
-./build.py --sanitizer=asan test unit     # test_ir 在 ASAN 下跑
-
-# 本地 UBSAN — UB 检测（有符号溢出、shift OOB、null deref、type confusion）
-./build.py --sanitizer=ubsan build
-./build.py --sanitizer=ubsan test unit
-
-# 本地 TSAN — 数据竞争（fiber + 并发 mutate/query）
-./build.py --sanitizer=tsan build
-./build.py --sanitizer=tsan test concurrent
-```
-
-或者直接走 CMakePresets（与 build.py --sanitizer 行为完全一致）：
-
-```bash
-cmake --preset asan   && cmake --build --preset asan
-cmake --preset ubsan  && cmake --build --preset ubsan
-cmake --preset tsan   && cmake --build --preset tsan
-```
-
-### 限制
-
-- **TSan 与 ASan 不兼容**。同时需要两者得跑两次（先 asan 后 tsan），不能合并。
-- **TSan 强制 `CMAKE_BUILD_TYPE=Debug`**。`-O2/-O3` 下 TSan 大量误报，由 build.py 自动覆盖。
-- **ASan 内存增长 ~2x、速度 ~2x slow**。CI 上默认只跑 `asan-build` + `asan-verify` 两个 job，PR 不跑。
-- **ASan 与 LLVM JIT** 一起开可能 false positive 报告 `use-after-scope` 在 ORC 内部分配器。`--sanitizer=asan` 默认不启用 `AURA_HAVE_LLVM=1`，需要完整覆盖时手动 `cmake -DAURA_HAVE_LLVM=1 -B build_asan`。
-- 跑 TSan 必须设置 `TSAN_OPTIONS=halt_on_error=1`，否则报错只 warn 不退出。
-
-## 生产构建 / 可复现发布（Issue #675）
-
-CI 在 PR 上强制 **UBSAN smoke** + **security-scan**；`main` 额外跑 **reproducible-build** 双构建校验。Nightly workflow 跑扩展 fuzz + TSAN。
-
-```bash
-# 可复现 Release 构建（SOURCE_DATE_EPOCH + prefix map + 固定 random seed）
-SOURCE_DATE_EPOCH=1704067200 ./build.py repro build
-
-# 双构建字节级校验（strip 后 SHA-256 必须一致）
-./build.py repro --verify
-
-# CycloneDX SBOM
-./build.py sbom --version=1.0.0
-
-# 漏洞扫描（优先 Trivy，回退 pip-audit）
-./build.py security
-
-# 完整发布包（tarball + SBOM）
-SOURCE_DATE_EPOCH=1704067200 ./scripts/release.sh 1.0.0
-```
-
-**观测**：`(query:ci-reproducibility-stats)` 返回 5 字段 hash（`source-date-epoch`、`build-type`、`sanitizer-mode`、`reproducible-flags-active`、`ccache-disabled`）。
-
-**本地对齐 CI**：`CCACHE_DISABLE=1 ./build.py check`；需要 sanitizer 矩阵时加 `./build.py --sanitizer=ubsan test unit`。
-
-## §X Incremental ConstraintSystem soundness (Issue #432 / #466)
-
-`ConstraintSystem::solve_delta()`（`type_checker_impl.cpp`）是 `infer_flat_partial` 多节点增量推断的快路径：只处理 `add_delta` 标记的 dirty 约束子集。
-
-**跨 delta 冲突检测（#466）**：
-
-1. `unify` / `consistent_unify` 在 delta 求解期间通过 `note_touched_var` 记录被重绑的 Union-Find 根（`touched_roots_`）。
-2. dirty worklist 收敛后，`reverify_clean_constraints_for_touched()` 对引用这些根的 **clean** 约束做有界重放（上限 `kReverifyCleanScanLimit = 256`）。
-3. 重放失败 → `SolveResult::CONFLICT`（无需 fallback 到全量 `solve()`）。
-
-**观测**：
-
-- `(query:constraint-stats)` — `delta_conflict_reverify_total + delta_conflict_detected_total` 之和。
-- `(query:constraint-delta-stats)` — `touched_roots_hits`（`delta_conflict_reverify_total`）+ `cross_delta_conflicts_caught` 之和。
-- `CompilerService::snapshot().delta_conflict_*` — lifetime 计数器。
-
-**回归测试**：`tests/test_incremental_type_soundness.cpp`（16 AC，含注入冲突矩阵 ≥50% 检出率 + 多轮 mutate smoke）。
-
-**修改 solve_delta 时的检查清单**：
-
-- [ ] 保持 touched-root 跟踪在 `unify` / `consistent_unify` 路径上完整。
-- [ ] 新冲突模式需在 `test_incremental_type_soundness.cpp` 加合成用例。
-- [ ] 有界扫描上限变更时更新 `kReverifyCleanScanLimit` 注释与测试预期。
-- [ ] 跑 `./build.py check` 或至少 `test_incremental_type_soundness`。
-
-## §X Coercion elision guidelines (Issue #508)
-
-`DeadCoercionEliminationPass`（`pass_manager.ixx`）在 lowering 之后、IR 解释器/JIT 之前运行。它替换掉多余的 `CastOp`，是 gradual typing + typed mutation 零开销路径的关键。
-
-**三条规则**：
-
-1. **identity cast**（source.type_id == target.type_id）→ 替换为 `Local`。
-2. **nested cast**（`(cast (cast x T1) T2)`）→ 跳过中间 cast，直接 `(cast x T2)`，然后规则 1 继续消除。
-3. **safe Dynamic passthrough**（target.type_tag ≥ 3，源 slot 有 ground type_id）→ 替换为 `Local`。
-   IR 解释器对 `type_tag ≥ 3` 的 default case 就是 `locals[ops[0]] = val`，纯 passthrough。条件是源 slot 必须是 ground-typed（type_id ≠ 0）—— 没 type 信息的 source 不能 elide，因为 lowering 可能为某种语义边界专门插了 CastOp。
-
-**保守原则**：
-
-- **没 type info 不动**：源 slot `type_id == 0` 时，规则 3 不触发。这避免了 elide 掉跨模块边界 / FFI 入口处的 CastOp。
-- **类型不匹配不动**：规则 1 要求 source 和 target type_id 都非零且相等。
-- **配置开关**：`DeadCoercionEliminationPass::set_keep_for_debug(true)` 让 pass 变成 no-op，但 `kept_for_debug_count()` 告诉你"假如没开 debug 会 elide 多少"。用于 blame 模式调试。
-
-**观测**：
-
-- `(compile:dead-coercion-stats)` — lifetime 已消除 CastOp 计数（自程序启动累计）。
-- `(compile:dead-coercion-elapsed)` — lifetime 在 pass 里花掉的微秒数。
-- `(compile:dead-coercion-kept-for-debug)` — lifetime 在 keep_for_debug 模式下"本会消除"的 CastOp 计数。
-- `CompilerService::snapshot().dead_coercion_*` 同样暴露这三个字段。
-
-**添加新规则时的检查清单**：
-
-- [ ] 在 `tests/test_issue_508.cpp` 加一个 AC（identity / nested / Dynamic passthrough / keep_for_debug / 时间 / 端到端 gradual）。
-- [ ] 若规则依赖 type_reg 信息，在 `tests/test_ir.cpp` 对应位置补一个 `(reg2)` 重载测试。
-- [ ] 更新 `docs/contributing.md` 本节，描述新规则的语义边界。
-- [ ] 跑 `./build.py check`（test_ir + test_issue_433 + test_issue_508 全绿）。
-
-## §X C++26 Contracts 使用规范（Issue #1466）
-
-Aura 在热路径上大规模使用 C++26 Contracts (`pre` / `post` / `contract_assert`) 与 `consteval` / `static_assert` 编译期保证。默认 semantic 是 **observe** — release 下零运行时开销，debug 下报错并 abort（由 `src/core/contract_handler.cpp` 的 handler 收口）。
-
-**什么放什么不放**：
-
-| 热路径 | 放什么 | 文件 |
-| --- | --- | --- |
-| shape dispatch (`inline_shape_of`) | `post(r : is_known_inline_shape_id(r))` | `src/compiler/shape.h` |
-| arena bump (`try_allocate` / `compact`) | `pre(size > 0) pre(size <= kMax)` / `post(stats_.compaction_count > 0)` | `src/core/arena.ixx` |
-| dirty cascade (`mark_dirty_upward`) | `pre(id < tag_.size()) post(mark_dirty_upward_call_count_ > 0)` | `src/core/ast.ixx` |
-| value as_* (`as_int` / `as_string_idx`) | `contract_assert(is_X(v))`（debug only） | `src/compiler/value.ixx` |
-| eval/lower 核心循环 | `pre` 边界 + `contract_assert` 不变式 | `evaluator_impl.cpp` / `lowering_impl.cpp` |
-
-**契约语法**：
-
-- **C++26 `pre(...)` / `post(...)`**：release observe 语义下零开销，debug 下通过 `handle_contract_violation` 报错。声明与定义的 post 必须一致，否则编译失败。
-- **`contract_assert(cond)`**：本质是 `[[assert: cond]]` 的 C++26 语法，debug 触发即 abort。比 `pre` 更轻量，适合 inline helper。
-- **`consteval` / `static_assert`**：编译期不变式，永远 0 开销。放在 `src/core/cxx26_invariants.ixx` 集中管理。
-
-**集中管理的位置**：
-
-- `src/core/cpp26_contract_stats.h` — 原子计数器（`hotpath_invariant_hits_total`、`consteval_invariants_total`、各 flag）。所有计数器都通过 `aura::core::cpp26::` namespace 访问。
-- `src/core/cxx26_invariants.ixx` — `consteval` / `static_assert` 不变式集中点。导出 `aura::core::kCpp26ConstevalChecksShipped` 给 runtime 用。
-- 改任一文件时**两边同步**：新增 consteval 不变式时同时 `record_consteval_invariant_added()` / `consteval_invariants_total++` / `kCpp26ConstevalChecksShipped++` / `kConstevalChecksTotal++`。
-
-**观测**：
-
-- `(query:cpp26-contracts-stats)` — `consteval_checks`、`hotpath_contracts_expanded_active`、`contract_violations_caught_total`、`hotpath_invariant_hits_total` 字段。
-- `(compile:cpp26-contracts-stats)` — 引擎层透传同上。
-
-**加新热路径契约时的检查清单**：
-
-- [ ] 在 `src/core/cpp26_contract_stats.h` 加 `<feature>_contracts_active{1}` 标志原子。
-- [ ] `tests/test_issue_1466.cpp` 加一个 AC 验证 flag 默认 1 + 函数仍正常返回。
-- [ ] 若新增 `consteval` 不变式，在 `src/core/cxx26_invariants.ixx` 加 + 同时 bump `kCpp26ConstevalChecksShipped` 与 `cpp26_contract_stats.h` 的 `kConstevalChecksTotal`。
-- [ ] 跑 `./build.py gate`（docs regen 自动同步 pre-commit hook）。
-
-**反模式**：
-
-- ❌ 在 impl 和 decl 两边写不同 post（编译失败）。
-- ❌ 用 `contract_assert` 替代 `pre` 做参数验证（应让 caller 在编译期被阻止）。
-- ❌ 把 runtime 计算放进 `post`（observe semantic 不保证执行 — 必须 cheap）。
-- ❌ 在高频 helper 里堆叠多层 post（每层都做 atomic load 成本）。
-
-## §X Runtime.c 查找策略（Issue #237 v4 / #360 / #374）
-
-AOT 路径需要一个能运行的 `lib/runtime.c` 源文件。`find_runtime_c()`（`src/compiler/aura_jit_bridge.cpp`）按以下顺序试候选路径，返回第一个能 `fopen` 成功的：
-
-1. **`$AURA_RUNTIME_DIR/runtime.c`** — 环境变量显式覆盖，最高优先级。
-2. **从 aura binary 所在目录向上 walk 8 层**，每层试 `lib/runtime.c`。覆盖：
-   - dev-machine layout：`build/aura` + 相对源码 `lib/runtime.c`
-   - CI build tree：`build/aura` + 多个 `..` 后的 `lib/runtime.c`
-   - 典型 install layout：`/usr/local/bin/aura` + `../lib/runtime.c`（走 walk-up 也行）
-3. **CWD 相对 fallback**：`lib/runtime.c`、`../lib/runtime.c`。保留是为了 pre-#237 启动脚本。
-4. **Install path fallback（Issue #360）**：`/usr/local/share/aura/runtime.c`、`/usr/share/aura/runtime.c`、`/opt/aura/share/runtime.c`。FHS-compliant，`make install` 后开箱即用，无需设 `AURA_RUNTIME_DIR`。
-
-**CI 用法**：在 `.github/workflows/ci.yml` 的 `build-test` job 里，如果 `runtime.c` 在某条路径找不到（容器 `/proc` 受限、build tree 路径不在 walk-up 8 层内），可显式设 `AURA_RUNTIME_DIR=$GITHUB_WORKSPACE` 强制指向仓库根（运行时通过相对路径在 `$AURA_RUNTIME_DIR/lib/runtime.c` 找到）。Pre-#237 时代是 `1 passed + 4 failed`，post-#237 v4 是 `11/11`，post-#360 加 install-path fallback 让本地 `make install` 也跑得通。
-
-**调试验证**：如果 `aura --emit-binary` 报 `AOT: cannot find runtime.c`，按以下顺序排查：
-
-- `echo $AURA_RUNTIME_DIR` — 是否设了，路径里有没有 `runtime.c`。
-- `ls -l $(which aura)` 所在目录 → 上 8 层，每层试 `ls lib/runtime.c`。
-- 走 install path 时 `ls /usr/local/share/aura/runtime.c` / `ls /usr/share/aura/runtime.c` / `ls /opt/aura/share/runtime.c`。
-- 找到路径后 `head -3 <path>` 确认是 C 源码不是空文件或 binary。
-- 仍找不到就在 aura stderr 提示的位置加 `export AURA_RUNTIME_DIR=...` 显式覆盖。
-
-## §X IR encoding baseline（Issue #375）
-
-`IRInstruction`（`src/compiler/ir.ixx:141`）是 AoS layout：1 字节 opcode + 16 字节 fixed `array<uint32_t, 4>` operands + 9 个 metadata/字段。总计 **40 字节**（编译器验证：3 字节 padding 在 `linear_ownership_state`（1B）和 `adt_variant_id`（4B）之间）。大多数 instruction 用 1–3 个 operand,固定 4-slot 数组平均浪费 ~7.7 字节（按 2.08 operand/instr,sum-to baseline）。
-
-**当前 baseline（sum-to 10, 2026-07-01）**：
-
-| Field | Value |
-|-------|-------|
-| total-instructions | 46 |
-| avg-operands-used | 2.08 |
-| AoS bytes | 1840 |
-| padding bytes | 138 (3 × 46) |
-| unused-operand bytes | 232 |
-| **compact projection (variable-length)** | **568 字节** |
-| **compact ratio (vs AoS)** | **30.86%** → **69% reduction** ✅ |
-
-**Compact 编码**（2 字节 header + 4 字节 per used operand,4 字节对齐）：opcode 8 位 + operand_count 4 位 + reserved 4 位。Metadata（type_id, shape_id, adt_variant_id, narrow_evidence, source_marker, linear_state）不进 hot-path encoding,作为 sidecar 留给 pass。
-
-**观测接口**：
-- C++：`aura::ir::compute_ir_stats(const IRModule&)` + `CompilerService::last_ir_stats()` （`service.ixx` snapshot,`last_ir_mod_` 赋值时同步算）。
-- Aura：`(compile:ir-stats)` primitive 返回 hash。**限制**：primitive 自己 lower 会 clobber `last_ir_mod_`,所以从 `.aura` 调时看到的是 primitive 自己的 IR;从 C++ test API 调（`cs.last_ir_stats()`）看到的是上一个 workload。
-
-**Pair with**：SoA skeleton `src/compiler/ir_soa.ixx`（#167 Phase 1,无 consumer）+ 测试 `tests/test_issue_375.cpp`（5 ACs / 23 tests）。
-
-**§375 完整拆解**（scope-limited close ship Step A,defer Step B/C/D + 新 Step E）：
-- **A** ✅ shipped：本节描述的 baseline + observability。
-- **B** deferred：dual representation — `IRFunctionSoA` 加 `instructions_compact_` column（16-byte 紧凑 layout）+ `view_at_compact()` accessor。AoS 路径不变（pass 继续吃 AoS）,compact view 只读。需 1 session。
-- **C** deferred：interpreter switch `ir_executor_impl.cpp:331` 改读 compact view。需先 B,1 session。
-- **D** deferred：JIT lowering `aura_jit.cpp` / `aura_jit_bridge.cpp` 读 compact view 而非 AoS decode。1 session。
-- **E** deferred：computed-goto dispatch,依赖 C 的 compact view。
-
-**加新 baseline 任务时的检查清单**：
-- [ ] 在 `tests/test_issue_375.cpp` 加一个 workload（fact / fib / hanoi-8 / map-fold 之一）+ 一个 AC（baseline 比 sum-to 大多少 / ratio 是否 ≥ AC）。
-- [ ] 更新本节 baseline 表。
-- [ ] 跑 `./build.py test issue` 全绿。
-
-## §X Closure dispatch paths (Issue #252 + #376)
-
-`Evaluator::apply_closure(ClosureId cid, args)`（`src/compiler/evaluator_eval_flat.cpp:65`）是 higher-order primitives（`map`/`filter`/`foldl`/`apply`）的中心分发。按 `cid` 类型分 4 条路径：
-
-| Path | When | Cost | Counter |
-|------|------|------|---------|
-| **FFI** | `cid < ffi_runtime_.func_count()` | 直接调 native 函数指针,无 env 构造 | `closure_ffi_calls` |
-| **Tree-walker** | `closures_` map hit（`cid → Closure`） | `materialize_call_env()` + `eval_flat()` | `closure_tw_calls` |
-| **IR bridge** | `closure_bridge_` callback set（service.ixx L1930 设） | callback 透传 + 重建 Env | `closure_bridge_calls` |
-| **IR direct** | IR interpreter 内部 `runtime_closures_` hit | 无 callback,直接 IR execute | `closure_ir_calls`（在 ir_executor_impl.cpp bump） |
-
-**Epoch / stale 检查**：tree-walker path 入口调 `is_bridge_stale(bridge_epoch, current_bridge_epoch())`（`evaluator_eval_flat.cpp:194`），如果闭包的 bridge 过期则 `closure_stale_returns` 计数 +1，return `nullopt`。这是唯一一个 stale 检查点；IR direct path 不需要（runtime_closures_ 是 per-evaluator，所有者同生命周期）。
-
-**当前 baseline**（`tests/test_issue_376.cpp` AC2/AC4 实测，2026-07-01）：
-
-| Workload | calls-total | bridge-calls | bridge-pct | 路径分布 |
-|----------|-------------|--------------|------------|---------|
-| map 50-elem | 153 | 50 | **32%** | tw 主导,1/3 走 bridge |
-| filter 50-elem | 153 | 50 | **32%** | tw 主导,1/3 走 bridge |
-| foldl 50-elem | 103 | 0 | **0%** | 已在 fast path（binary closure 直接 inlined） |
-
-**未来 fast path 目标**：把 map/filter 的 32% bridge-pct 降到 ~0%（bypass callback 走 IR direct path）。这需要：
-1. closure 的 captured flat/pool 跟 IR 端 bridge 共享
-2. bridge_epoch 检查保留为 fast path 入口的 lightweight check
-3. AC：map/filter 的 bridge-pct 降 30+% + 1000-cycle mutation stress 无 stale-returns regression
-
-**§376 完整拆解**（scope-limited close ship Slice A,defer Slice B）：
-- **A** ✅ shipped：本节描述的 baseline + observability test。
-- **B** deferred：fast path 重构（bypass `closure_bridge_` callback,对纯 IR 闭包直接调 `IRInterpreter::apply_closure`）。Hot-path 改动 + epoch 验证逻辑不能掉,需独立 session。先看本节 baseline 数据再 design。Pair with #375 Step C。
-
-**观测接口**：
-- C++：`cs.snapshot().closure_calls_total / closure_ffi_calls / closure_tw_calls / closure_ir_calls / closure_bridge_calls / closure_stale_returns`（来自 #252 ship 的 6 个 atomic counter）。
-- Aura：`(closure:stats)` primitive 返回 hash，7 个字段：`calls-total / ffi-calls / tw-calls / ir-calls / bridge-calls / stale-returns / bridge-fraction-pct`。Aura primitive 自身 eval 路径会 bump 1-2 次 calls-total，所以与 C++ snapshot 之间有 drift（一般 ≤ 5），见 `test_issue_376.cpp` AC6。
-
-**加新 closure 路径时**：
-- [ ] 在 `apply_closure` 入口 bump `closure_calls_total`
-- [ ] 在新路径 entry bump 对应的 path-specific counter
-- [ ] 加 epoch/stale 检查（如果新路径会跨 bridge）
-- [ ] 在 `tests/test_issue_376.cpp` 加 AC + 更新本节 baseline 表
-
-## AI 扩展指南（Issue #711）
-
-新 primitive 不必手写完整注册代码 — Aura 已经提供了 introspection + generator 的 Agent-friendly surface，让 Agent 从描述生成符合风格的 skeleton：
-
-### 1. 查询 metadata
-
-```scheme
-;; #669 — enriched per-name meta (8 fields)
-(hash-ref (query:primitives-meta "<primitive-name>")
-  'name 'has-fn 'arity 'pure 'safety 'doc 'category 'schema)
-
-;; #617 — registry-level catalog (7 fields)
-(query:primitives-meta-catalog)
-;; Includes by-category-eda / by-category-sva / by-category-verification
-;; / by-category-general counts so the Agent can filter by domain.
-```
-
-### 2. 生成 skeleton
-
-```scheme
-;; #697 — AI-friendly primitive extension bundle
-(primitive:generate-skeleton "coverpoint with bins")
-;; → hash with 5 fields:
-;;   category      "sva" | "verification" | "eda" | "general"
-;;                 (heuristic dispatch from description keywords)
-;;   spec          "(<args>) -> <ret>"  Aura signature snippet
-;;   cpp-lambda    full add()/add_mutate() lambda with
-;;                 MutationBoundaryGuard template
-;;   test-snippet  example Aura invocation
-;;   registration  DEFINE_PRIMITIVE_META(...) macro call
-```
-
-### 3. 注册风格
-
-参考 [primitives-style.md](design/primitives-style.md)（Issue #671）：
-
-- 优先 `add_mutate` over `add` for state changes（自动套 `MutationBoundaryGuard`）
-- mutating 路径必须 `bump_*` 1 个 atomic counter（observability_metrics.h）
-- 错误路径走 `PRIM_ERROR(...)` helper，不要直接 stderr
-- `PrimMeta` 必须填：`arity / pure / safety_flags / doc / category`（`DEFINE_PRIMITIVE_META` macro）
-- EDA/SVA/verification 方向 primitive 选 `kPrimSafetyMutates` + `category = "eda"|"sva"|"verification"`
-
-### 4. 验证
-
-注册之后：
-
-```scheme
-(query:primitives-extension-stats)  ;; #697 runtime counters
-(query:primitives-meta-catalog)     ;; #617 should reflect new entry
-(hash-ref (query:primitives-meta "<name>") 'has-fn)  ;; should be 1
-```
-
-详见 [`tests/test_issue_711.cpp`](../tests/test_issue_711.cpp) — closed-loop Agent sim 把 1-4 串起来 end-to-end。
-
-## Exception / AuraResult policy (Issues #807 / #808)
-
-Hot paths (**eval**, mutate, fiber resume) must not use exceptions for
-ordinary failures. Prefer:
-
-- `EvalResult` (today) or `aura::core::AuraResult<T>` (migration)
-- `CompilerService::eval_as_aura_result` for new Agent control-loop code
-
-See [`docs/design/error-handling-policy.md`](design/error-handling-policy.md)
-(authoritative) and [`docs/design/core/exception_policy.md`](design/core/exception_policy.md)
-for the full audit table and migration phases.
-
-
-## 测试策略：领域套件优先 (Domain suites)
-
-> Issue 号是 **标签**，不是 **进程**。不要为每个 Close #N 默认新建 `test_issue_N.cpp`。
-
-### 默认路径
-
-1. **Observability / `query:*` schema** → 给 [`tests/domain/cases/obs_schema_cases.hpp`](../tests/domain/cases/obs_schema_cases.hpp) 加一行，跑 `test_obs_schema_matrix`
-2. **Exception / AuraResult** → 扩展 `test_aura_result_error_policy`
-3. **Fiber / steal / Guard / JIT exception** → 扩展 `tests/domain/test_domain_fiber_orchestration.cpp`
-4. **Macro/pattern hygiene / dirty-epoch / terminal render** → 扩展 `test_domain_hygiene_dirty`
-5. **Typed mutate / type-system / shape-SoA** → 扩展 `test_domain_typed_mutate`
-6. 无法归类时 → `tests/domain/test_domain_<topic>.cpp`（**不要**再叫 `test_issue_N`）
-
-说明见 [`tests/domain/README.md`](../tests/domain/README.md)、[`tests/README.md`](../tests/README.md)。
-
-CMake 注册：[`cmake/AuraDomainTests.cmake`](../cmake/AuraDomainTests.cmake)（勿在根 `CMakeLists.txt` 堆 AC 散文）。
-
-### 构建
-
-```bash
-# 领域套件（推荐日常 / PR fast 默认）
-ninja -C build test_obs_schema_matrix test_domain_fiber_orchestration \
-  test_domain_hygiene_dirty test_domain_typed_mutate
-./build/test_obs_schema_matrix
-./build/test_domain_fiber_orchestration
-
-# Full issue tier：profile bundles + domain suites（非 200+ 独立二进制）
-AURA_ISSUES_TIER=full ./build.py build
-```
-
-## 减法原则 (Subtraction Principle) — Issue #871
-
-> 当新增东西的成本 (新文件/新 target/新 coupling) > 重构现有结构
-> 减少的 cost 时,先做减法。
-
-Issue #871 close 把架构简化定为 1-class permanent goal。下面是
-当前已经在做的减法:
-
-### 1. Test bundle consolidation (6 bundles + CTest LABELS)
-Issue 测试已经聚成 6 个 parameterized bundle:
-
-| Bundle | 角色 | N 个 issues |
-|--------|------|-------------|
-| `test_issues_light` | 不需要 LLVM JIT 的纯 observational 测试 | 几百 |
-| `test_issues_jit_minimal` | 只需要 minimal AOT path | 几十 |
-| `test_issues_jit_tests` | 完整 LLVM JIT 重编译测试 | 几十 |
-| `test_issues_jit_contract` | Contracts/Concepts + JIT hot-path | 几十 |
-| `test_issues_fiber` | Fiber + Mutation + GC 并发 | 几十 |
-| `test_issues_jit` | 全 JIT smoke | 几十 |
-
-每个 `test_issue_*` binary 通过 `aura_add_issue_test()` CMake
-helper 自动获得 `issue` CTest LABEL,这样 `ctest -L issue`
-可以一次跑完所有 issue verification。
-
-### 2. Diff-aware PR CI (`--changed`)
-不再为每个 PR 跑全 fast subset。Issue #871 close 新增
-`build.py` 的 `--changed` 模式,只跑 git working tree 中
-触摸到的 issue test source:
-
-```bash
-python3 build.py test_issues --changed        # 等价 AURA_ISSUES_TIER=fast
-python3 tests/run_issue_tests.py --changed    # 直接调用 runner
-```
-
-Fallback:nothing touched → fast subset,这样本地 cherry-pick
-PR 也总有 signal。
-
-### 3. Module BMI cleanup (`tools/clean_modules_bmi.py`)
-C++26 modules BMI cache (`build/module_cache/<producer>.dir/`)
-会保留 stale BMIs 在 `.ixx` 删除/重命名/旧 producer target
-移除之后。新增 `tools/clean_modules_bmi.py`:
-
-```bash
-python3 tools/clean_modules_bmi.py                # dry-run (default 30 day)
-python3 tools/clean_modules_bmi.py --older-than 7 # dry-run >7 day
-python3 tools/clean_modules_bmi.py --apply --older-than 30  # 实际清理
-```
-
-建议每月跑一次 `--apply --older-than 30` 回收累积磁盘占用
-(实测 ~1.1 GB / 156 BMIs in 本地 `build/`).
-
-### 4. CI 加速 Phase 1 (Issues #873 / #874)
-详见 **[docs/ci-performance.md](ci-performance.md)**（目标 PR `build-test` &lt; 8min）。
-
-Phase 1 已落地：
-- **mold / lld** — `AURA_USE_MOLD=1`（PATH 上有 mold 时默认启用）
-- **Link job pool** — `AURA_LINK_JOBS=4`（限制并行 LLVM 链接）
-- **Build phase timings** — `build.py build` 打印 `⏱` 分段耗时
-- **ccache** — 本地 PATH 有 ccache 且未设 `CCACHE_DISABLE` 时自动启用；CI 仍 `CCACHE_DISABLE=1`
-- **Bundle-only issue smoke** — `AURA_ISSUE_BUILD=bundles`
-
-### 5. Phase 2+ deferred (per #871 / #873 / #874)
-- ccache 与 `cmake/aura_module_launcher.sh` 的 producer-keyed 安全策略
-- `bindings_` vs `symid_` legacy dual-path 移除 + grep gate
-- Split workflows: `gate.yml` vs `build-test.yml` vs `heavy.yml`
-- `aura_test_objects` 组件化拆库
-
-### 6. 当你想新增文件时,先问
-1. 这个文件能 merge 进一个已存在的 `.cpp` (test bundle/observability
-   primitive registry)?
-2. 它的 `.gitignore` impact 是?会不会让 build dir cache 失效?
-3. 它的 pre-commit hook 触发 cost?clang-format + docs regen +
-   docs --check 加起来多少秒?
-
-如果三个问题的答案都 "no reduction possible",再考虑新文件。
+| `evaluator.ixx` | 模块接口 / `primitives_detail::register_*` 前向声明 hub |
+| `evaluator_ctor.cpp` | `Evaluator` 构造 / 析构 / 构造器内原语 |
+| `evaluator_eval_flat.cpp` | `apply_closure` / `eval_flat` / 宏 / require / functor |
+| `evaluator_env.cpp` | `Env` / `EnvFrame` / SoA arena / `bind_symid` |
+| `evaluator_workspace_tree.cpp` | workspace tree / panic checkpoint |
+| `evaluator_defuse_index.cpp` | `DefUseIndex` / `install_defuse_subsystem` |
+| `evaluator_gc.cpp` | GC roots / sweep |
+| `evaluator_fiber_mutation.cpp` | per-fiber mutation stack / `yield_mutation_boundary` |
+| `evaluator_primitives_registry.cpp` | `register_all_primitives` 编排 |
+| `evaluator_primitives_builtins.cpp` | 算术 / 布尔内置 |
+| `evaluator_primitives_*.cpp` | 31 个原语 TU(每簇一个,经 registry 注册) |
+
+相邻模块:`evaluator_pure.ixx` / `query.ixx` / `service.ixx` / `ir_executor.*` / `aura_jit.*` / `src/serve/*` / `src/orch/*` / `main.cpp`。
