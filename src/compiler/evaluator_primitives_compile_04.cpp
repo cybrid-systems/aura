@@ -714,12 +714,51 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
     // filtered coverage-hole scans and
     // (mutate:query-and-replace ...) for automated refine.
     add("verify:coverage-holes", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        auto* ws = ev.workspace_flat();
-        if (!ws)
-            return make_void();
         // Optional first arg: parse the report first (so
         // downstream calls see freshly-marked dirty nodes).
-        if (!a.empty() && is_string(a[0])) {
+        // Issue #1816: hold workspace_mtx_ for the whole
+        // verification_dirty_ critical section so concurrent
+        // apply_verification_dirty_bits (other fibers) cannot
+        // tear bits or race a side-table realloc. Unique when
+        // marking from report text; shared for scan-only.
+        const bool have_report = !a.empty() && is_string(a[0]);
+        auto collect = [&ev](aura::ast::FlatAST& ws) -> EvalValue {
+            // Collect coverage-dirty NodeIds into a pair-list
+            // (newest-first; reverse-iterates the flat so the
+            // last-marked node is at car, matching the
+            // (query:templates) ordering convention).
+            EvalValue list = make_void();
+            const auto n = ws.size();
+            // Issue #319 follow-up: read from
+            // `verification_dirty_` (#469), NOT `verify_dirty_`
+            // (#437). The two columns hold different bit sets:
+            //   - verify_dirty_ (legacy #437): verify_assertion /
+            //     verify_coverage / verify_sva / verify_formal_cex
+            //   - verification_dirty_ (new #469):
+            //     kCoverageFeedbackDirty / kAssertFailureDirty
+            //     (full byte per #313)
+            // `apply_verification_dirty_bits` (from #469) writes
+            // to `verification_dirty_`, so the coverage-holes
+            // read must use that column too. The legacy
+            // `verify_dirty(id)` would always return 0 for
+            // kCoverageFeedbackDirty (a different namespace).
+            for (std::size_t id = n; id-- > 0;) {
+                const auto bits = ws.verification_dirty(static_cast<aura::ast::NodeId>(id));
+                if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
+                    auto idx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(std::to_string(id));
+                    auto pid = ev.pairs_.size();
+                    ev.pairs_.push_back({make_string(idx), list});
+                    list = make_pair(pid);
+                }
+            }
+            return list;
+        };
+        if (have_report) {
+            std::unique_lock<std::shared_mutex> wlock(ev.workspace_mtx_);
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_void();
             auto text_idx = as_string_idx(a[0]);
             if (text_idx < ev.string_heap_.size()) {
                 const std::string& text = ev.string_heap_[text_idx];
@@ -747,37 +786,13 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
                     i = (j < text.size()) ? j + 1 : j;
                 }
             }
+            return collect(*ws);
         }
-        // Collect coverage-dirty NodeIds into a pair-list
-        // (newest-first; reverse-iterates the flat so the
-        // last-marked node is at car, matching the
-        // (query:templates) ordering convention).
-        EvalValue list = make_void();
-        const auto n = ws->size();
-        // Issue #319 follow-up: read from
-        // `verification_dirty_` (#469), NOT `verify_dirty_`
-        // (#437). The two columns hold different bit sets:
-        //   - verify_dirty_ (legacy #437): verify_assertion /
-        //     verify_coverage / verify_sva / verify_formal_cex
-        //   - verification_dirty_ (new #469):
-        //     kCoverageFeedbackDirty / kAssertFailureDirty
-        //     (full byte per #313)
-        // `apply_verification_dirty_bits` (from #469) writes
-        // to `verification_dirty_`, so the coverage-holes
-        // read must use that column too. The legacy
-        // `verify_dirty(id)` would always return 0 for
-        // kCoverageFeedbackDirty (a different namespace).
-        for (std::size_t id = n; id-- > 0;) {
-            const auto bits = ws->verification_dirty(static_cast<aura::ast::NodeId>(id));
-            if (bits & aura::ast::FlatAST::kCoverageFeedbackDirty) {
-                auto idx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::to_string(id));
-                auto pid = ev.pairs_.size();
-                ev.pairs_.push_back({make_string(idx), list});
-                list = make_pair(pid);
-            }
-        }
-        return list;
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_void();
+        return collect(*ws);
     });
 }
 
@@ -810,6 +825,9 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     // before a refine loop and rollback on failure.
     add("verify:suggest-constraint-refine", [&ev](const auto& a) -> EvalValue {
         (void)a;
+        // Issue #1816: shared_lock over verification_dirty_ scan
+        // (same race class as verify:coverage-holes).
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_void();
