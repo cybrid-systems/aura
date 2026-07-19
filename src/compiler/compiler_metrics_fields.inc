@@ -1528,4 +1528,9 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_observability_queries_total)
 AURA_COMPILER_METRICS_FIELD(ir_macro_introduced_inlined_skipped_total)
 AURA_COMPILER_METRICS_FIELD(lowering_marker_propagated_total)
 
+// Issue #1649: composite mutate atomic batch + SyntaxMarker propagation
+// observability (refine #1900 / #1502 / #1472 / #790 / #761 / #737 / #1908).
+AURA_COMPILER_METRICS_FIELD(atomic_batch_hygiene_violation_prevented_total)
+AURA_COMPILER_METRICS_FIELD(mutate_template_marker_propagated_total)
+
 #undef AURA_COMPILER_METRICS_FIELD

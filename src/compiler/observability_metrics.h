@@ -2255,6 +2255,17 @@ struct CompilerMetrics {
     // hygiene violations slip through.
     std::atomic<std::uint64_t> macro_provenance_repin_on_steal_total{0};         // #1908
     std::atomic<std::uint64_t> hygiene_violation_prevented_on_boundary_total{0}; // #1908
+    // Issue #1649: composite mutate atomic batch + SyntaxMarker::MacroIntroduced
+    // propagation observability (refine #1900 / #1502 / #1472 / #790 / #761 / #737).
+    // Predecessor #1908 wired hygiene_violation_prevented_on_boundary_total at the
+    // MutationBoundaryGuard boundary; these 2 new counters extend into the atomic
+    // batch (begin/end atomic_batch_pinning) path + the mutate template marker
+    // propagation path. Distinct from the legacy namespace-scope
+    // bump_atomic_batch_hygiene_violation (per-Fiber pin-time count) and
+    // existing #1908 hygiene counters — these are the body-named
+    // "prevented" / "propagated" series for the atomic-batch closed-loop.
+    std::atomic<std::uint64_t> atomic_batch_hygiene_violation_prevented_total{0};
+    std::atomic<std::uint64_t> mutate_template_marker_propagated_total{0};
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 

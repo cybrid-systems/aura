@@ -7187,6 +7187,36 @@ public:
             m->cross_boundary_auto_refresh_success_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #1649: composite mutate atomic batch + SyntaxMarker propagation
+    // observability wiring (refine #1900 / #1502 / #1908). Bumped at the
+    // atomic_batch_pinning commit site (Guard exit + template-respect site)
+    // when a MacroIntroduced hygiene violation is prevented (distinct from
+    // the legacy per-Fiber bump_atomic_batch_hygiene_violation pin-time counter).
+    void bump_atomic_batch_hygiene_violation_prevented_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->atomic_batch_hygiene_violation_prevented_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+    }
+    void bump_mutate_template_marker_propagated_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutate_template_marker_propagated_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    std::uint64_t atomic_batch_hygiene_violation_prevented_total() const noexcept {
+        return compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                       ->atomic_batch_hygiene_violation_prevented_total.load(
+                                           std::memory_order_relaxed)
+                                 : 0;
+    }
+    std::uint64_t mutate_template_marker_propagated_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->mutate_template_marker_propagated_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
     // Getter paired with the Issue #1637 / #1641 / #1644 / #1646
     // observability hook pattern — used by the (query:stable-ref-stats)
     // composition layer (no new primitive per #1632 "Aura 原语最小化").

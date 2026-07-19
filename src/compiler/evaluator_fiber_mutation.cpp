@@ -418,6 +418,14 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
             ev_mb->bump_mutation_boundary_macro_dirty_propagated_total();
             ev_mb->bump_mutation_boundary_epoch_bump_for_macro_total();
         }
+        // Issue #1649: paired legacy + per-CompilerMetrics bumps at the
+        // atomic_batch_pinning + template-respect site (paired #1646 +
+        // adds the 2 #1649 distinct counter pair). All honor
+        // Evaluator::yield_hook_evaluator() null fallback per #1908.
+        if (auto* ev_1649 = aura::compiler::Evaluator::yield_hook_evaluator()) {
+            ev_1649->bump_mutate_template_marker_propagated_total();
+            ev_1649->bump_atomic_batch_hygiene_violation_prevented_total();
+        }
     }
     if (boundary_refreshed > 0)
         bump_boundary_pinned_refresh(boundary_refreshed);

@@ -2313,6 +2313,20 @@ aura_issue_test_link_llvm_jit(test_issue_1647)
 # observable dimension through the C-linkage accessor surface.
 aura_add_issue_test(test_reflect_nested)
 aura_issue_test_link_llvm_jit(test_reflect_nested)
+# Issue #1649: composite mutate atomic batch + SyntaxMarker propagation
+# observability (partial-redundant Phase 1, refine #1900 / #1502 / #1472
+# / #790 / #761 / #737 / #1908). Phase 1 ships the 2 body-named atomic
+# counters (atomic_batch_hygiene_violation_prevented_total +
+# mutate_template_marker_propagated_total) + X-macro fields + Evaluator
+# bumper/getter pairs + 1 paired legacy/new wire-up at the
+# atomic_batch_pinning + template-respect site. AC1 (atomic batch full
+# snapshot coverage for marker/dirty) + AC4 (IR/JIT marker check + deopt)
+# + AC5 (TSan stress test) deferred to follow-ups #1680 / #1681 / #1682.
+# Predecessor-covered: AC3 query:pattern hygiene filter
+# (:exclude-macro-introduced predicate) was shipped via
+# #547 / #1501 / #1609 / #1636.
+aura_add_issue_test(test_issue_1649)
+aura_issue_test_link_llvm_jit(test_issue_1649)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
