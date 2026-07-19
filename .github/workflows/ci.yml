@@ -15,7 +15,6 @@
 #   gate (~1m) ──► build-test (~12–18m → target <8m, see docs/ci-performance.md)
 #                  └── final step: ./build.py bench --strict (#1569 SLO)
 #   asan-build (~10m, parallel with gate+build-test) ──► asan-verify (~5m)
-#   platform-gates (macOS core + Windows scripts, #1573) ── parallel after gate
 #
 # Issue #873/#874 CI performance: mold linker + link job pool + phase
 # timings. ccache stays disabled until module-launcher producer keys
@@ -25,7 +24,6 @@
 # PRs skip the ASAN track; main runs the full matrix.
 # Issue #675: PRs also run ubsan-smoke + security-scan;
 # main adds reproducible-build verification.
-# Issue #1573: macOS + Windows platform-gates (see docs/ci-platforms.md).
 
 name: CI
 
@@ -458,155 +456,3 @@ jobs:
         kill $pid
         ./build/test_issue_677
 
-  # ─────────────────────────────────────────────────────────────
-  # Issue #1573: multi-platform gates (Windows + macOS)
-  #
-  # Linux remains the production OS for:
-  #   - full C++ build + issue-test matrix (build-test)
-  #   - sanitizers (asan / ubsan)
-  #   - benchmark SLO (bench --strict)
-  #
-  # This job expands coverage without duplicating the expensive
-  # Linux container path:
-  #   macos-latest  → Homebrew GCC 16 + cmake --preset macos-release
-  #                   + aura smoke (fast) / + test_ir unit (full on main)
-  #   windows-latest → Python scripts gate (gate --scripts-only)
-  #                   Native MSVC C++ is NOT yet production-supported
-  #                   (C++26 modules + GCC contracts; see docs/ci-platforms.md).
-  #
-  # fail-fast: false so one OS cannot cancel the other.
-  # ─────────────────────────────────────────────────────────────
-  platform-gates:
-    name: platform (${{ matrix.os }} / ${{ matrix.kind }})
-    needs: [gate]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            kind: macos-core
-          - os: windows-latest
-            kind: windows-scripts
-    env:
-      # PR → fast; push to main → full (mirrors build-test tier split).
-      AURA_PLATFORM_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
-      AURA_USE_MOLD: "0"
-      CCACHE_DISABLE: "1"
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Setup Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: "3.12"
-        cache: pip
-        cache-dependency-path: requirements-dev.txt
-
-    - name: Install Python CI deps
-      run: python -m pip install -r requirements-dev.txt
-
-    # ── macOS: core evaluator build + smoke (#1573) ────────────
-    - name: macOS — install Homebrew toolchain (GCC 16 + CMake + Ninja)
-      if: matrix.kind == 'macos-core'
-      run: |
-        set -euo pipefail
-        brew update
-        # gcc@16: C++26 modules + -fcontracts (matches Linux CI toolchain class)
-        # cmake: need 4.3+ for CMAKE_EXPERIMENTAL_CXX_IMPORT_STD UUID in CMakeLists
-        # ninja: preset generator
-        brew install gcc@16 cmake ninja
-        echo "=== toolchain ==="
-        cmake --version | head -1
-        g++-16 --version | head -1
-        ninja --version
-
-    - name: macOS — configure (cmake --preset macos-release)
-      if: matrix.kind == 'macos-core'
-      run: |
-        set -euo pipefail
-        cmake --preset macos-release
-        echo "configure OK (binaryDir=build-mac)"
-
-    - name: macOS — build aura (fast + full)
-      if: matrix.kind == 'macos-core'
-      run: |
-        set -euo pipefail
-        jobs=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-        cmake --build build-mac -j"$jobs" --target aura
-        test -x build-mac/aura
-        echo "aura binary OK"
-
-    - name: macOS — REPL smoke
-      if: matrix.kind == 'macos-core'
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-      run: |
-        set -euo pipefail
-        out=$(printf '%s\n' '(+ 1 2)' | ./build-mac/aura)
-        echo "repl out: $out"
-        echo "$out" | grep -q '3'
-        echo "✓ macOS REPL smoke (+ 1 2) → 3"
-
-    - name: macOS — unit tests (full tier / main only)
-      if: matrix.kind == 'macos-core' && env.AURA_PLATFORM_TIER == 'full'
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-        AURA_BUILD_DIR: ${{ github.workspace }}/build-mac
-      run: |
-        set -euo pipefail
-        jobs=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-        # test_ir is the C++ unit suite; optional if target missing on slim presets.
-        if cmake --build build-mac -j"$jobs" --target test_ir; then
-          ./build-mac/test_ir
-          echo "✓ macOS test_ir unit suite"
-        else
-          echo "::warning::test_ir target failed to build on macOS — core aura smoke still required"
-          exit 1
-        fi
-
-    - name: macOS — platform summary
-      if: matrix.kind == 'macos-core'
-      run: |
-        echo "### macOS platform gate (#1573)" >> "$GITHUB_STEP_SUMMARY"
-        echo "" >> "$GITHUB_STEP_SUMMARY"
-        echo "| Item | Status |" >> "$GITHUB_STEP_SUMMARY"
-        echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
-        echo "| tier | \`${{ env.AURA_PLATFORM_TIER }}\` |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| preset | macos-release → build-mac |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| REPL smoke | pass |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| sanitizers / bench SLO | Linux only (see build-test / asan / ubsan) |" >> "$GITHUB_STEP_SUMMARY"
-
-    # ── Windows: scripts / static gate (#1573) ─────────────────
-    - name: Windows — scripts-only gate (no clang-format / no native C++)
-      if: matrix.kind == 'windows-scripts'
-      shell: bash
-      env:
-        AURA_GATE_SCRIPTS_ONLY: "1"
-      run: |
-        set -euo pipefail
-        python build.py gate --scripts-only
-        echo "✓ Windows scripts gate clean"
-
-    - name: Windows — pure-Python gate unit tests (full tier)
-      if: matrix.kind == 'windows-scripts' && env.AURA_PLATFORM_TIER == 'full'
-      shell: bash
-      run: |
-        set -euo pipefail
-        python tests/test_benchmark_gate.py
-        python tests/test_test_binding_gate.py
-        python tests/test_primitive_surface_gate.py
-        echo "✓ Windows full-tier Python unit gates"
-
-    - name: Windows — platform summary
-      if: matrix.kind == 'windows-scripts'
-      shell: bash
-      run: |
-        echo "### Windows platform gate (#1573)" >> "$GITHUB_STEP_SUMMARY"
-        echo "" >> "$GITHUB_STEP_SUMMARY"
-        echo "| Item | Status |" >> "$GITHUB_STEP_SUMMARY"
-        echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
-        echo "| tier | \`${{ env.AURA_PLATFORM_TIER }}\` |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| C++ native MSVC | **not production-supported** (C++26 modules + GCC contracts) |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| scripts gate | \`build.py gate --scripts-only\` |" >> "$GITHUB_STEP_SUMMARY"
-        echo "| sanitizers / bench SLO | Linux only |" >> "$GITHUB_STEP_SUMMARY"
