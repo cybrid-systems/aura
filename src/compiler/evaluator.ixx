@@ -2045,6 +2045,9 @@ public:
                 build_tag_arity_index(
                     static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
         } catch (...) {
+            // [SILENCE-PRIM-#615] Issue #1729: rethrow after rollback — not a
+            // silent swallow. catch(...) restores workspace_flat_ + index so a
+            // throwing rebuild never leaves half-committed state, then rethrows.
             workspace_flat_ = saved;
             invalidate_tag_arity_index();
             throw;
