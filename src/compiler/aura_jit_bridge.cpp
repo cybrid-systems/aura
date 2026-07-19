@@ -1339,6 +1339,39 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             return false;
         }
     }
+    // Issue #1640: env_frame_version drift detection — refuse reload
+    // if the binary's stamped env_frame_version lags behind the host's
+    // current value (captured-env drift would otherwise activate a
+    // stale AOT closure bridge). Paired with the new
+    // aot_env_frame_version_drift_prevented counter (positive control
+    // — every detection is counted) and the
+    // aot_incremental_reemit_triggered counter (bumps on the graceful
+    // fallback hook fire). Hook is intentionally conservative: detect
+    // drift, bump counters, return false (caller falls back to JIT
+    // path). A future session can extend the hook to actually call
+    // aura_jit_batch_deopt_for / trigger_incremental_reemit once
+    // those helpers' signatures stabilize across the multi-agent
+    // isolation surface.
+    {
+        auto* binary_env_ver =
+            static_cast<std::uint64_t*>(::dlsym(handle, "aot_env_frame_version"));
+        const std::uint64_t host_env_ver = st.env_frame_version.load(std::memory_order_acquire);
+        if (binary_env_ver && host_env_ver != 0 && *binary_env_ver < host_env_ver) {
+            aot_log("aura_reload_aot_module: stale env_frame_version "
+                    "(binary=%llu, host=%llu) for %s — incremental re-emit "
+                    "triggered, graceful fallback to JIT\n",
+                    static_cast<unsigned long long>(*binary_env_ver),
+                    static_cast<unsigned long long>(host_env_ver), path);
+            if (aot_metrics()) {
+                aot_metrics()->aot_env_frame_version_drift_prevented.fetch_add(
+                    1, std::memory_order_relaxed);
+                aot_metrics()->aot_incremental_reemit_triggered.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            rollback_close();
+            return false;
+        }
+    }
     // The constructor aura_aot_register_fns runs on dlopen and calls
     // aura_register_fn (which forwards to aura_register_fn_tracked).
     commit_func_table_swap();
@@ -1680,8 +1713,25 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     std::vector<std::string> mangled_names(num_functions);
     std::vector<std::string> link_names(num_functions);
     const std::uint64_t emit_version = g_aot_defuse_version;
+    // Issue #1640: env_frame_version at emit time stamps the captured-
+    // env drift detection surface (paired with mangle_aot_name's new
+    // env_frame_version + linear_state params). Stamped as a single
+    // global so the runtime can dlsym it during reload and refuse
+    // the binary if the host's current env_frame_version has drifted
+    // ahead. Defaults to 0 (no stamped env) for backwards compat
+    // with pre-#1640 binaries — the runtime's drift check treats 0
+    // as "no stamp, skip drift detection".
+    const std::uint64_t emit_env_frame_version = g_aot_emit_env_frame_version;
     for (unsigned int i = 0; i < num_functions; ++i) {
-        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i, emit_version);
+        // Issue #1640: thread env_frame_version + linear_state
+        // through the mangle so the resulting symbol carries the
+        // extra versioning context. linear_state is read from the
+        // function's runtime-linear-ownership metadata (0 = Untracked
+        // when the function does not capture linear bindings).
+        const std::uint8_t fn_linear_state =
+            static_cast<std::uint8_t>(functions[i].linear_ownership_state);
+        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i, emit_version,
+                                                           emit_env_frame_version, fn_linear_state);
         link_names[i] = aura::compiler::aot_link_name(functions[i].name, i, emit_version);
     }
     // Issue #136: detect collisions on mangled identity (versioned).
@@ -1733,6 +1783,14 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "\n// Issue #708: AOT region mask (multi-agent isolation)\n");
     fprintf(f, "const unsigned long long aot_region_mask = %llull;\n",
             static_cast<unsigned long long>(g_aot_emit_region_mask));
+
+    // Issue #1640: AOT env_frame_version stamp (for captured-env
+    // drift detection on reload). Defaults to 0 when the emit
+    // did not capture a specific env_frame_version (paired with
+    // the binary's mangle suffix `_e<N>_l<N>`).
+    fprintf(f, "\n// Issue #1640: AOT env_frame_version (captured-env drift)\n");
+    fprintf(f, "const unsigned long long aot_env_frame_version = %llull;\n",
+            static_cast<unsigned long long>(emit_env_frame_version));
 
     // Issue #287: AOT module version (hot-reload / multi-agent).
     // The host sets default-state module_version before

@@ -46,8 +46,18 @@ namespace aura::compiler {
 //   A valid C identifier that's unlikely to collide with other
 //   names. The version suffix ensures names from different
 //   mutation epochs never collide with each other.
+//
+// Issue #1640: mangle now stamps EnvFrame version + linear
+// ownership state so that AOT-bridged closures whose captured
+// env_frames_/linear_state drift after emit cannot accidentally
+// match a stale reload target. Defaults preserve the prior 3-arg
+// signature (env_frame_version=0 + linear_state=0 produce the
+// same suffix as before); callers that have live env frames must
+// thread both values through `generate_registration_c`.
 inline std::string mangle_aot_name(const std::string& original, std::uint32_t disambiguator,
-                                   std::uint64_t defuse_version = 0) {
+                                   std::uint64_t defuse_version = 0,
+                                   std::uint64_t env_frame_version = 0,
+                                   std::uint8_t linear_state = 0) {
     // Step 1: replace any non-alphanumeric with `_`
     std::string out;
     out.reserve(original.size() + 16);
@@ -104,6 +114,20 @@ inline std::string mangle_aot_name(const std::string& original, std::uint32_t di
     // Format `_v<N>` prevents collision with names that end in digits.
     result += "_v";
     result += std::to_string(defuse_version);
+    // Issue #1640: append env_frame_version + linear_state so
+    // the mangled name carries enough context for the reload
+    // path to detect captured-env drift. Format `_e<N>_l<N>`
+    // (e = env_frame_version, l = linear_state) keeps the
+    // suffix parseable via aot_parse_version_suffix (which only
+    // cares about the trailing `_v<N>`) while exposing the new
+    // fields to human-readable diff tools + the bump-aot-env-
+    // frame-version-drift-prevented counter on reload.
+    if (env_frame_version != 0 || linear_state != 0) {
+        result += "_e";
+        result += std::to_string(env_frame_version);
+        result += "_l";
+        result += std::to_string(static_cast<unsigned>(linear_state));
+    }
     return result;
 }
 

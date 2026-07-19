@@ -1709,6 +1709,43 @@ public:
         }
         return 0;
     }
+    // Issue #1640: AOT bridge mangle versioning + region filtering +
+    // aot_emit_version stale 检测 + incremental re-emit +
+    // hot-update observability. bump_/getter pair for the 2 new
+    // metrics (aot_env_frame_version_drift_prevented +
+    // aot_incremental_reemit_triggered). Bumped from
+    // aura_jit_bridge.cpp::aura_reload_aot_module_for_eval at the
+    // new env_frame_version drift check site + at the new
+    // incremental re-emit hook call. Observable via existing
+    // aot_metrics accessor (file-scope atomic in aura_jit_bridge.cpp
+    // for module-unaware consumers — same dual-write pattern as
+    // #1908 / #1637).
+    void bump_aot_env_frame_version_drift_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_env_frame_version_drift_prevented.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_aot_incremental_reemit_triggered() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_aot_env_frame_version_drift_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->aot_env_frame_version_drift_prevented.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_aot_incremental_reemit_triggered() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->aot_incremental_reemit_triggered.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_post_steal_checkpoint_restore_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

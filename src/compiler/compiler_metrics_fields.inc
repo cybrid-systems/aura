@@ -1507,5 +1507,8 @@ AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_numerator_total)
 AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_denominator_total)
 AURA_COMPILER_METRICS_FIELD(relower_block_hit_rate_numerator_total)
 AURA_COMPILER_METRICS_FIELD(relower_block_hit_rate_denominator_total)
+// Issue #1640: AOT hot-update observability.
+AURA_COMPILER_METRICS_FIELD(aot_env_frame_version_drift_prevented)
+AURA_COMPILER_METRICS_FIELD(aot_incremental_reemit_triggered)
 
 #undef AURA_COMPILER_METRICS_FIELD

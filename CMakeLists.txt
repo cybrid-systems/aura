@@ -2231,6 +2231,18 @@ aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
 # + running sums for time-weighted averages).
 aura_add_issue_test(test_incremental_relower_perblock)
 aura_issue_test_link_llvm_jit(test_incremental_relower_perblock)
+# Issue #1640: AOT bridge mangle versioning + region filtering +
+# aot_emit_version stale 检测 + incremental re-emit + hot-update
+# observability (refine #136/#243/#708/#1262/#1367/#1369/#1480).
+# 7 ACs source-driven + cross-layer baseline regression (paired
+# with check_aot_hot_update_incremental_coverage.py linter which
+# has 10 ACs). Complements the existing AOT test suite
+# (test_aot_hotupdate_versioning.cpp + test_aot_bridge_checkpoint_
+# version_steal.cpp + test_aot_region_per_eval.cpp + test_aot_
+# metrics_lazy.cpp) by adding the env_frame_version drift check
+# + incremental re-emit observability surface.
+aura_add_issue_test(test_aot_hot_update_incremental)
+aura_issue_test_link_llvm_jit(test_aot_hot_update_incremental)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
