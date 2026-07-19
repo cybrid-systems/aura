@@ -128,7 +128,11 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"applied-total",
                  make_int(static_cast<std::int64_t>(snap.narrowing_applied_total))},
@@ -204,7 +208,11 @@ void CompilePrims::register_compile_p9(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"meet-uses-total",
                  make_int(static_cast<std::int64_t>(snap.and_or_meet_uses_total))},
@@ -279,7 +287,11 @@ void CompilePrims::register_compile_p10(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"dirty-recovery-total",
                  make_int(static_cast<std::int64_t>(snap.narrowing_dirty_recovery_total))},
@@ -357,7 +369,11 @@ void CompilePrims::register_compile_p11(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"lookups-total",
                  make_int(static_cast<std::int64_t>(snap.schema_cache_lookups_total))},
@@ -436,7 +452,11 @@ void CompilePrims::register_compile_p12(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"processed-total",
                  make_int(static_cast<std::int64_t>(snap.delta_constraints_processed_total))},
@@ -519,7 +539,11 @@ void CompilePrims::register_compile_p13(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"unify-total", make_int(static_cast<std::int64_t>(snap.consistent_unify_total))},
                 {"subtype-total",
@@ -544,7 +568,11 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            const auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             return make_int(static_cast<std::int64_t>(snap.delta_conflict_reverify_total +
                                                       snap.delta_conflict_detected_total));
         });
@@ -617,7 +645,11 @@ void CompilePrims::register_compile_p14(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"register-total", make_int(static_cast<std::int64_t>(snap.poly_register_total))},
                 {"dedup-hits-total",
@@ -700,7 +732,11 @@ void CompilePrims::register_compile_p15(PrimRegistrar add, Evaluator& ev) {
             if (!ev.compiler_service_)
                 return make_int(0);
             auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            auto snap = svc->snapshot();
+            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt)
+                return make_void();
+            const auto& snap = *snap_opt;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"should-relower-total",
                  make_int(static_cast<std::int64_t>(snap.should_relower_total))},

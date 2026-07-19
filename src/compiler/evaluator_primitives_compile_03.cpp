@@ -495,38 +495,30 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
             std::int64_t bridge_overhead = 0;
             std::int64_t fallback_freq = 0;
 
-            // Issue #1854: snapshot failure must NOT look like a
-            // clean (0 0 0 0) 4-tuple — agents would skip re-lower.
-            // Typed catch: bump metric + return void (distinguishable).
-            // catch (...) still marked [SILENCE-PRIM-#615] as intentional
-            // return-value (class A: void, not silent zero-tuple).
-            try {
-                auto snap = svc->snapshot();
-                auto total_defines = svc->ir_cache_v2_size();
-                auto dirty_funcs = svc->total_dirty_func_count();
-                if (total_defines > 0) {
-                    ratio_bp = (dirty_funcs * ::aura::compiler::kBasisPointScale) /
-                               static_cast<std::int64_t>(total_defines);
-                }
-                cascade_depth = static_cast<std::int64_t>(snap.mark_dirty_total_nodes);
-                bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);
-                fallback_freq =
-                    static_cast<std::int64_t>(snap.closure_tw_calls + snap.closure_ffi_calls);
-            } catch (const std::exception&) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->incremental_effectiveness_snapshot_failures.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                return make_void();
-            } catch (...) {
-                // [SILENCE-PRIM-#615] #1854: snapshot failure → void
-                // (not false-clean zero-tuple); metric bumped.
+            // Issue #1854 / #1856: try_snapshot → void on fail
+            // (not false-clean 4-tuple of zeros). Also bumps
+            // incremental_effectiveness_snapshot_failures for #1854
+            // call-site visibility (try_snapshot bumps
+            // snapshot_failures_total).
+            auto snap_opt = svc->try_snapshot();
+            if (!snap_opt) {
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->incremental_effectiveness_snapshot_failures.fetch_add(
                         1, std::memory_order_relaxed);
                 }
                 return make_void();
             }
+            const auto& snap = *snap_opt;
+            auto total_defines = svc->ir_cache_v2_size();
+            auto dirty_funcs = svc->total_dirty_func_count();
+            if (total_defines > 0) {
+                ratio_bp = (dirty_funcs * ::aura::compiler::kBasisPointScale) /
+                           static_cast<std::int64_t>(total_defines);
+            }
+            cascade_depth = static_cast<std::int64_t>(snap.mark_dirty_total_nodes);
+            bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);
+            fallback_freq =
+                static_cast<std::int64_t>(snap.closure_tw_calls + snap.closure_ffi_calls);
 
             // Build 4-tuple as nested pairs (right-associated):
             // (ratio . (cascade . (bridge . fallback)))

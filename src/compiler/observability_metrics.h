@@ -4462,6 +4462,9 @@ struct CompilerMetrics {
     // Issue #1854: query:incremental-effectiveness snapshot() threw;
     // primitive returns void (not a false-clean 4-tuple of zeros).
     std::atomic<std::uint64_t> incremental_effectiveness_snapshot_failures{0};
+    // Issue #1856: CompilerService::try_snapshot() / any stats
+    // primitive that used to call snapshot() raw — throw count.
+    std::atomic<std::uint64_t> snapshot_failures_total{0};
 
     // Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership
     // + GC root sync safety counters for

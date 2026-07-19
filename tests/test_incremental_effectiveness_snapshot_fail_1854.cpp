@@ -61,13 +61,9 @@ int main() {
         CHECK(win.find("make_void()") != std::string::npos, "returns void on failure");
         CHECK(win.find("incremental_effectiveness_snapshot_failures") != std::string::npos,
               "bumps snapshot_failures metric");
-        CHECK(win.find("catch (const std::exception") != std::string::npos ||
-                  win.find("catch(const std::exception") != std::string::npos,
-              "typed std::exception catch");
-        CHECK(win.find("catch (...)") != std::string::npos ||
-                  win.find("catch(...)") != std::string::npos,
-              "catch-all remains");
-        CHECK(win.find("SILENCE-PRIM") != std::string::npos, "SILENCE-PRIM marker for #1669");
+        // #1856: centralized try_snapshot (catch lives in CompilerService).
+        CHECK(win.find("try_snapshot") != std::string::npos, "uses try_snapshot (#1856)");
+        CHECK(win.find("svc->snapshot()") == std::string::npos, "no raw snapshot()");
         // Must not only leave zeros and fall through to 4-tuple.
         CHECK(win.find("zeros are already initialized") == std::string::npos,
               "removed silent-zero comment");

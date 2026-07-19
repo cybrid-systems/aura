@@ -5428,10 +5428,10 @@ public:
                 // coarse full-dirty for affected defines. Bumps the
                 // dep_graph_edge_miss_count metric on miss.
                 if (nv.tag == aura::ast::NodeTag::Quote || nv.tag == aura::ast::NodeTag::Lambda ||
-                    nv.tag == aura::ast::NodeTag::Macro) {
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->dep_graph_edge_miss_count.fetch_add(1, std::memory_order_relaxed);
-                    }
+                    nv.tag == aura::ast::NodeTag::MacroDef) {
+                    // Issue #1657: complex nested forms may miss Variable
+                    // edges; count for coarse-fallback observability.
+                    metrics_.dep_graph_edge_miss_count.fetch_add(1, std::memory_order_relaxed);
                 }
                 for (auto c : nv.children)
                     stack.push_back(c);
@@ -6628,6 +6628,23 @@ public:
     // Issue #62 Iter 3: a POD snapshot of the observability state
     // for --evo-explain. Atomics are loaded with relaxed order;
     // counts are advisory, not contractual.
+    //
+    // Issue #1856: prefer try_snapshot() from EDSL stats primitives
+    // so a throw cannot escape as an unhandled AuraError and so
+    // failures are countable (snapshot_failures_total). snapshot()
+    // itself remains for internal / CLI paths that already handle
+    // errors.
+    [[nodiscard]] std::optional<CompilerSnapshot> try_snapshot() const noexcept {
+        try {
+            return snapshot();
+        } catch (...) {
+            // [SILENCE-PRIM-#615] #1856: intentional nullopt + metric
+            // (stats callers return void, not a false-clean zero hash).
+            metrics_.snapshot_failures_total.fetch_add(1, std::memory_order_relaxed);
+            return std::nullopt;
+        }
+    }
+
     CompilerSnapshot snapshot() const {
         CompilerSnapshot s;
         s.deopt_count = metrics_.deopt_count.load(std::memory_order_relaxed);

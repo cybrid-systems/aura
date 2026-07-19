@@ -1694,11 +1694,11 @@ static IRModule lower_to_ir_impl(
             if (aos_fns > 0 && soa_fns > 0 && aos_fns <= soa_fns) {
                 // SoA has extra functions (e.g. helpers emitted
                 // after the matching AoS pass) — dirty the tail only.
+                // Issue #1657: targeted partial dirty (metric bumped
+                // by service/evaluator callers when they observe
+                // consistency_mismatches / partial_dirty totals).
                 for (std::size_t fi = aos_fns; fi < soa_fns; ++fi) {
                     g_last_soa_snapshot.module.functions[fi].mark_all_blocks_dirty();
-                }
-                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                    m->soa_consistency_partial_dirty_total.fetch_add(1, std::memory_order_relaxed);
                 }
             } else {
                 // Counts diverge too widely — safe re-lower fallback.
