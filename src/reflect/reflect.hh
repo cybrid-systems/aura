@@ -448,19 +448,20 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 // cycle-detect + auto-forwarding) for the nested MemberKind::Struct case
 // is deferred to #1676 (multi-session template-metaprogramming work).
 namespace aura::reflect {
-inline std::atomic<std::uint64_t>& reflect_nested_struct_throw_count_ref() noexcept {
-    static std::atomic<std::uint64_t> counter{0};
-    return counter;
-}
-}  // namespace aura::reflect
+    inline std::atomic<std::uint64_t>& reflect_nested_struct_throw_count_ref() noexcept {
+        static std::atomic<std::uint64_t> counter{0};
+        return counter;
+    }
+} // namespace aura::reflect
 extern "C" {
 inline std::uint64_t aura_reflect_nested_struct_throw_count_v_read() noexcept {
     return ::aura::reflect::reflect_nested_struct_throw_count_ref().load(std::memory_order_relaxed);
 }
 inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) noexcept {
-    ::aura::reflect::reflect_nested_struct_throw_count_ref().fetch_add(delta, std::memory_order_relaxed);
+    ::aura::reflect::reflect_nested_struct_throw_count_ref().fetch_add(delta,
+                                                                       std::memory_order_relaxed);
 }
-}  // extern "C"
+} // extern "C"
 
 // ── auto_serialize<T> ── binary serialization (for cache_module) ──
 
@@ -1018,8 +1019,8 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 // Issue #1648 (Phase 1): bump the observability counter immediately
                 // before the throw so monitors can track deserialize gaps too.
                 aura_reflect_nested_struct_throw_count_v_bump(1);
-                throw std::runtime_error(
-                    "auto_deserialize_struct: nested MemberKind::Struct not yet supported (see #1676)");
+                throw std::runtime_error("auto_deserialize_struct: nested MemberKind::Struct not "
+                                         "yet supported (see #1676)");
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
