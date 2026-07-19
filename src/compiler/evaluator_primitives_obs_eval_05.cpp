@@ -815,8 +815,43 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"relower-only-dirty-blocks-wired", make_int(1)},
                 {"relower-define-blocks-wired", make_int(1)},
                 {"lookup-define-v2-prefer-partial", make_int(1)},
-                {"issue", make_int(1623)},
-                {"schema", make_int(1623)}, // lineage 1605 / 1601 / 1506 / 718
+                // Issue #1639: per-block dirty bitmask → partial
+                // re-lower wiring (refine #1474 / #1495 / #1505 /
+                // #1514 / #1555 / #1601 / #1605). 6 new keys
+                // completing the spec's observability surface:
+                //   - full-relower-count (alias for the new atomic
+                //     full_relower_count in observability_metrics.h)
+                //   - dirty-block-ratio-numerator-total +
+                //     denominator-total: running sums so dashboards
+                //     can compute time-weighted averages
+                //     (the instantaneous dirty_block_ratio key
+                //     above uses basis points from current snapshot)
+                //   - relower-block-hit-rate + numerator + denominator:
+                //     computed hit-rate (basis points) + running sums
+                {"full-relower-count", make_int(m ? load(m->full_relower_count) : 0)},
+                {"dirty-block-ratio-numerator-total",
+                 make_int(m ? load(m->dirty_block_ratio_numerator_total) : 0)},
+                {"dirty-block-ratio-denominator-total",
+                 make_int(m ? load(m->dirty_block_ratio_denominator_total) : 0)},
+                {"relower-block-hit-rate-numerator-total",
+                 make_int(m ? load(m->relower_block_hit_rate_numerator_total) : 0)},
+                {"relower-block-hit-rate-denominator-total",
+                 make_int(m ? load(m->relower_block_hit_rate_denominator_total) : 0)},
+                {"relower-block-hit-rate",
+                 make_int(((m ? (m->relower_block_hit_rate_denominator_total.load(
+                                    std::memory_order_relaxed))
+                              : 0)) > 0
+                              ? static_cast<std::int64_t>(
+                                    (m ? m->relower_block_hit_rate_numerator_total.load(
+                                             std::memory_order_relaxed)
+                                       : 0) *
+                                    10000 /
+                                    (m ? m->relower_block_hit_rate_denominator_total.load(
+                                             std::memory_order_relaxed)
+                                       : 1))
+                              : 0)},
+                {"issue", make_int(1639)},
+                {"schema", make_int(1639)}, // lineage 718 → 1605 → 1601 → 1506 → 1623 → 1639
             };
             return build_hash(kv);
         });

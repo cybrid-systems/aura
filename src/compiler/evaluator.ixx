@@ -1635,6 +1635,76 @@ public:
         }
         return 0;
     }
+    // Issue #1639: per-block dirty bitmask → partial re-lower wiring
+    // (refine #1474 / #1495 / #1505 / #1514 / #1555 / #1601 / #1605).
+    // bump_/getter pair for the 5 new metrics completing the spec's
+    // observability surface (full_relower_count +
+    // dirty_block_ratio_{numerator,denominator}_total +
+    // relower_block_hit_rate_{numerator,denominator}_total).
+    // Bumped from service.ixx::relower_define_blocks at the relevant
+    // decision points (per-call dirty_block_ratio + hit_rate sums
+    // so dashboards can compute the rolling averages). Observable
+    // via (query:incremental-relower-stats) primitive (no new
+    // primitive — surface held within 521 budget per #1734 raise).
+    void bump_full_relower_count() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->full_relower_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_dirty_block_ratio(std::uint64_t numerator, std::uint64_t denominator) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dirty_block_ratio_numerator_total.fetch_add(numerator, std::memory_order_relaxed);
+            m->dirty_block_ratio_denominator_total.fetch_add(denominator,
+                                                             std::memory_order_relaxed);
+        }
+    }
+    void bump_relower_block_hit_rate(std::uint64_t numerator,
+                                     std::uint64_t denominator) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->relower_block_hit_rate_numerator_total.fetch_add(numerator,
+                                                                std::memory_order_relaxed);
+            m->relower_block_hit_rate_denominator_total.fetch_add(denominator,
+                                                                  std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_full_relower_count() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->full_relower_count.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dirty_block_ratio_numerator_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dirty_block_ratio_numerator_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dirty_block_ratio_denominator_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dirty_block_ratio_denominator_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_relower_block_hit_rate_numerator_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->relower_block_hit_rate_numerator_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_relower_block_hit_rate_denominator_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->relower_block_hit_rate_denominator_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_post_steal_checkpoint_restore_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

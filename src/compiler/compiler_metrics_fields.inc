@@ -1501,5 +1501,11 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_steal_safe_total)
 AURA_COMPILER_METRICS_FIELD(dual_path_stale_fallback_total)
 AURA_COMPILER_METRICS_FIELD(mutation_log_compact_bytes_saved)
 AURA_COMPILER_METRICS_FIELD(env_frame_version_drift_prevented)
+// Issue #1639: per-block dirty → partial re-lower observability.
+AURA_COMPILER_METRICS_FIELD(full_relower_count)
+AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_numerator_total)
+AURA_COMPILER_METRICS_FIELD(dirty_block_ratio_denominator_total)
+AURA_COMPILER_METRICS_FIELD(relower_block_hit_rate_numerator_total)
+AURA_COMPILER_METRICS_FIELD(relower_block_hit_rate_denominator_total)
 
 #undef AURA_COMPILER_METRICS_FIELD
