@@ -5747,6 +5747,9 @@ aura_issue_test_link_llvm_jit(test_workspace_delete_child_1770)
 # Issue #1771: shared parse_verify_node_id_lines for verify:parse-* family.
 aura_add_issue_test(test_verify_parse_shared_helper_1771)
 aura_issue_test_link_llvm_jit(test_verify_parse_shared_helper_1771)
+# Issue #1772: mutate:from-verification-feedback validates NodeId upfront.
+aura_add_issue_test(test_mutate_from_feedback_node_id_1772)
+aura_issue_test_link_llvm_jit(test_mutate_from_feedback_node_id_1772)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
