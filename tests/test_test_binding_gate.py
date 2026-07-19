@@ -42,7 +42,7 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_test("tests/test_issue_1453.cpp"))
         self.assertTrue(self.m.is_test("tests/edsl_self_test.aura"))
         self.assertTrue(self.m.is_test("lib/std/edsl-test-harness.aura"))
-        self.assertTrue(self.m.is_test("scripts/run_pets_regression.py"))
+        # scripts/run_pets_regression.py removed per Anqi 2026-07-19 directive wave 11 (broken — referenced deleted demos).
         self.assertFalse(self.m.is_test("docs/design/foo.md"))
 
     def test_pairing_ok(self):

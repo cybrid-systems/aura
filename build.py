@@ -1259,35 +1259,6 @@ def test_suite_s0():
     return test_suite_runner(s0=True)
 
 
-def test_pets():
-    """Issue #1454: aura-pets headless TUI demos + terminal smokes."""
-    print(f"{B}═══ aura-pets TUI regression (#1454) ═══{N}")
-    ut = ROOT / "tests" / "test_pets_regression.py"
-    if ut.exists():
-        r0 = subprocess.run([sys.executable, str(ut)], cwd=str(ROOT))
-        if r0.returncode != 0:
-            fail("test_pets_regression unit tests failed")
-            return 1
-    script = ROOT / "scripts" / "run_pets_regression.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    env = os.environ.copy()
-    env.setdefault("AURA_RUNTIME_DIR", str(ROOT))
-    env["AURA_BUILD_DIR"] = str(BUILD)
-    r = subprocess.run(
-        [sys.executable, str(script), "--build-dir", str(BUILD)],
-        cwd=str(ROOT),
-        env=env,
-        timeout=600,
-    )
-    if r.returncode != 0:
-        fail("aura-pets regression failed")
-        return 1
-    ok("aura-pets regression OK")
-    return 0
-
-
 # ═══════════════════════════════════════════════════════════════
 # CI tiering
 # ═══════════════════════════════════════════════════════════════
@@ -1345,7 +1316,6 @@ SUITES = {
     "bash": test_bash,
     "suite": test_suite_runner,
     "suite-s0": test_suite_s0,
-    "pets": test_pets,
     "repl": test_repl,
     "concurrent": test_concurrent,
     "issues": test_issues,
