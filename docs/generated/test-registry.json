@@ -6,8 +6,8 @@
     "integration": 496,
     "issue_specific": 7,
     "regression": 2,
-    "unit": 226,
-    "unknown": 354
+    "unit": 225,
+    "unknown": 355
   },
   "tests": [
     {
@@ -719,6 +719,12 @@
       "issue": null
     },
     {
+      "file": "tests/test_fine_dirty_relower.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/test_followup_smoke.cpp",
       "category": "unknown",
       "reason": "",
@@ -842,12 +848,6 @@
       "file": "tests/test_incremental_aot_closure_deps.cpp",
       "category": "integration",
       "reason": "uses AOT bridge C-linkage API + CompilerMetrics accessors +",
-      "issue": null
-    },
-    {
-      "file": "tests/test_incremental_effectiveness_snapshot_fail_1854.cpp",
-      "category": "unit",
-      "reason": "Issue #1854 — query:incremental-effectiveness must not",
       "issue": null
     },
     {
