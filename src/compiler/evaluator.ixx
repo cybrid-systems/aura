@@ -11500,23 +11500,22 @@ public:
 // Issue #1547: try_acquire-based protect macro. On quota reject the
 // body is skipped (ok stays true for no-op; callers that need the
 // error use try_acquire directly).
+// Issue #1745: no bare `break` — use if/else so expansion inside a
+// switch case cannot be misread / mis-audited as escaping the switch
+// (classic macro footgun). do/while(0) remains for statement-like use.
 #define AURA_MUTATION_BOUNDARY_PROTECT(EV, BODY)                                                   \
     do {                                                                                           \
         bool _aura_mbp_ok = true;                                                                  \
         auto _aura_mbp_gr = ::aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(       \
             (EV), /*pending_count=*/1, &_aura_mbp_ok);                                             \
-        if (!_aura_mbp_gr) {                                                                       \
-            _aura_mbp_ok = false;                                                                  \
-            break;                                                                                 \
-        }                                                                                          \
-        {                                                                                          \
+        if (_aura_mbp_gr) {                                                                        \
             auto& _aura_mbp_guard = **_aura_mbp_gr;                                                \
             (void)_aura_mbp_guard;                                                                 \
             BODY;                                                                                  \
+        } else {                                                                                   \
+            _aura_mbp_ok = false;                                                                  \
         }                                                                                          \
-        if (!_aura_mbp_ok) {                                                                       \
-            (void)0;                                                                               \
-        }                                                                                          \
+        (void)_aura_mbp_ok;                                                                        \
     } while (0)
 
     class MutationBoundaryGuard {
