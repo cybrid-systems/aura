@@ -4046,6 +4046,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> gc_panic_pending_deferral_total{0};
     std::atomic<std::uint64_t> gc_blocked_by_panic_total{0};
     std::atomic<std::uint64_t> gc_panic_conflict_resolved_total{0};
+    // Issue #1866: compact_sweep(nullptr) / null sweep_buffers —
+    // misconfiguration (GC collector omitted marks). Zeroed
+    // CompactSweepResult is still returned (#1732 by-value API),
+    // but the call is no longer silent: this counter surfaces the
+    // skipped reclaim path for diagnostics / Agent dashboards.
+    std::atomic<std::uint64_t> gc_compact_sweep_null_marks_total{0};
     // Issue #589: SoA EnvFrame/EnvId dual-path
     // bindings_ vs bindings_symid_ consistency + version
     // stamping + stale refresh in materialize_call_env &

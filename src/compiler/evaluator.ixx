@@ -2962,6 +2962,8 @@ public:
     };
     // Null sweep_buffers → zeroed result (no work). Non-null → fill
     // counts; never heap-allocates the result (Issue #1732).
+    // Issue #1866: null marks bumps gc_compact_sweep_null_marks_total
+    // (misconfiguration is not silent).
     // Issue #1865: clears pair_remap_ on the successful sweep path
     // (not on nullptr / panic-defer early returns) so compact_pairs
     // remaps cannot outlive GC reclaim.

@@ -5954,6 +5954,9 @@ aura_issue_test_link_llvm_jit(test_gc_root_count_lock_1864)
 # Issue #1865: compact_sweep clears pair_remap_ so remaps cannot outlive GC.
 aura_add_issue_test(test_compact_sweep_pair_remap_1865)
 aura_issue_test_link_llvm_jit(test_compact_sweep_pair_remap_1865)
+# Issue #1866: compact_sweep(nullptr) bumps gc_compact_sweep_null_marks_total.
+aura_add_issue_test(test_compact_sweep_null_marks_1866)
+aura_issue_test_link_llvm_jit(test_compact_sweep_null_marks_1866)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
