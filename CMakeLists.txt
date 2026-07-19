@@ -5834,6 +5834,9 @@ aura_issue_test_link_llvm_jit(test_subtree_counter_shared_lock_1848)
 # Issue #1849: MutatorDispatchStats capture under shared_mutex vs bumps.
 aura_add_issue_test(test_mutator_dispatch_stats_lock_1849)
 aura_issue_test_link_llvm_jit(test_mutator_dispatch_stats_lock_1849)
+# Issue #1850: compile:hw-bitvec-register MutationBoundaryGuard + #1837 ownership.
+aura_add_issue_test(test_hw_bitvec_register_guard_1850)
+aura_issue_test_link_llvm_jit(test_hw_bitvec_register_guard_1850)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
