@@ -759,23 +759,29 @@ aura::compiler::Evaluator::active_mutation_stack_static() {
     return g_main_thread_stack;
 }
 
-// Issue #236 follow-up: per-Evaluator, per-thread depth slot
-// for MutationBoundaryGuard. We use a thread_local
-// std::unordered_map keyed by Evaluator* address. Each fiber
-// has its own slot for each Evaluator it touches. When the
-// last guard for a (thread, evaluator) pair destructs, the
-// map entry stays (cheap) so we don't churn the heap.
+// Issue #236 follow-up / #1746: per-Evaluator, per-thread depth slot
+// for MutationBoundaryGuard. thread_local map keyed by
+// Evaluator::instance_id_ (not raw pointer). Address reuse after
+// free would otherwise alias a destroyed Evaluator's depth and
+// corrupt nesting (UAF / wrong outermost). Each fiber has its own
+// slot per instance_id it touches. Map entries stay after last
+// guard destructs (cheap; avoids heap churn).
 //
 // Returns a pointer to an int initialized to 0 the first
-// time it's accessed for a given (thread, evaluator).
+// time it's accessed for a given (thread, instance_id).
 int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
+    if (!ev) {
+        thread_local int null_slot = 0;
+        return &null_slot;
+    }
     struct Slot {
-        std::unordered_map<Evaluator*, int> depths;
+        std::unordered_map<std::uint64_t, int> depths;
     };
     thread_local Slot* slot = new Slot();
-    auto it = slot->depths.find(ev);
+    const auto id = ev->instance_id();
+    auto it = slot->depths.find(id);
     if (it == slot->depths.end()) {
-        it = slot->depths.emplace(ev, 0).first;
+        it = slot->depths.emplace(id, 0).first;
     }
     return &it->second;
 }
@@ -1467,33 +1473,41 @@ extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std
 
 // Issue #683: linear ownership enforcement on work-steal.
 
-// Issue #1637: per-Evaluator C trampolines for the panic checkpoint
-// lifecycle restore path. Bridge hooks in aura_jit_bridge.cpp
-// (aura_evaluator_post_steal_panic_restore / _post_compact_panic_restore /
-// _hot_swap_panic_restore) bump file-scope atomic fallbacks for
-// module-unaware callers; these module-aware trampolines drive the
-// real restore via yield_hook_evaluator() (g_yield_hook_stack top,
-// RAII-paired with bind/unbind) and additionally bump per-CompilerMetrics
-// counters via Evaluator::bump_*_total so (query:mutation-boundary-
-// coverage-stats) surfaces the same events.
-extern "C" void aura_evaluator_post_steal_panic_restore() {
-    auto* ev = Evaluator::yield_hook_evaluator();
+// Issue #1637: sole public C trampolines for panic checkpoint restore
+// (void* signature). Bump bridge fallback counters then drive the real
+// restore via yield_hook_evaluator() / optional ev_ptr cast. Bridge no
+// longer defines the same C names (duplicate-symbol with #1746 rebuilds).
+extern "C" void aura_1637_note_steal_restore_fallback(void);
+extern "C" void aura_1637_note_compact_restore_fallback(void);
+extern "C" void aura_1637_note_hot_swap_restore_fallback(void);
+
+extern "C" void aura_evaluator_post_steal_panic_restore(void* ev_ptr) {
+    aura_1637_note_steal_restore_fallback();
+    auto* ev = static_cast<Evaluator*>(ev_ptr);
+    if (!ev)
+        ev = Evaluator::yield_hook_evaluator();
     if (!ev)
         return;
     ev->bump_post_steal_checkpoint_restore_total();
     ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
 }
 
-extern "C" void aura_evaluator_post_compact_panic_restore() {
-    auto* ev = Evaluator::yield_hook_evaluator();
+extern "C" void aura_evaluator_post_compact_panic_restore(void* ev_ptr) {
+    aura_1637_note_compact_restore_fallback();
+    auto* ev = static_cast<Evaluator*>(ev_ptr);
+    if (!ev)
+        ev = Evaluator::yield_hook_evaluator();
     if (!ev)
         return;
     ev->bump_post_compact_checkpoint_restore_total();
     ev->restore_panic_checkpoint_on_arena_compact_if_needed();
 }
 
-extern "C" void aura_evaluator_hot_swap_panic_restore() {
-    auto* ev = Evaluator::yield_hook_evaluator();
+extern "C" void aura_evaluator_hot_swap_panic_restore(void* ev_ptr) {
+    aura_1637_note_hot_swap_restore_fallback();
+    auto* ev = static_cast<Evaluator*>(ev_ptr);
+    if (!ev)
+        ev = Evaluator::yield_hook_evaluator();
     if (!ev)
         return;
     ev->bump_post_hot_swap_checkpoint_restore_total();

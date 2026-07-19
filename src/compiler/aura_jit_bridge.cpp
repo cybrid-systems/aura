@@ -900,21 +900,23 @@ static std::atomic<std::uint64_t> g_1637_hot_swap_restore_fallback_total{0};
 static std::atomic<std::uint64_t> g_1637_panic_heal_success_fallback_total{0};
 static std::atomic<std::uint64_t> g_1637_boundary_steal_safe_fallback_total{0};
 
-extern "C" void aura_evaluator_post_steal_panic_restore(void* ev_ptr) {
-    (void)ev_ptr;
+// Issue #1637 / link fix (#1746 chain): public C entry points live in
+// evaluator_fiber_mutation.cpp (module-aware real restore). Bridge only
+// exposes fallback counter bumps under distinct names so linking both
+// archives does not hit duplicate-symbol (same C name + different
+// signatures was a latent #1637 ship bug).
+extern "C" void aura_1637_note_steal_restore_fallback(void) {
     g_1637_steal_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
     g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
     g_1637_boundary_steal_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-extern "C" void aura_evaluator_post_compact_panic_restore(void* ev_ptr) {
-    (void)ev_ptr;
+extern "C" void aura_1637_note_compact_restore_fallback(void) {
     g_1637_compact_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
     g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-extern "C" void aura_evaluator_hot_swap_panic_restore(void* ev_ptr) {
-    (void)ev_ptr;
+extern "C" void aura_1637_note_hot_swap_restore_fallback(void) {
     g_1637_hot_swap_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
     g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
 }
