@@ -230,6 +230,13 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     //   the use-sites without the O(n) walk.
     //
     //   Returns the new size_for_index for the index.
+    //
+    // Issue #1845: wrap tracker mutation in MutationBoundaryGuard
+    // + try/catch. Pre-#1845 called add_caller raw — throw mid
+    // map/vector growth left the tracker partially consistent
+    // with no panic-checkpoint restore. compiler_service_ is
+    // non-owning (#1839 ownership contract); concurrent free
+    // mid-eval is unsupported.
     add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_void();
@@ -244,9 +251,29 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
         const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
-        svc->per_defuse_index_tracker().add_caller(DefUseIndex{idx_name}, Caller{caller_node_id});
-        return make_int(static_cast<std::int64_t>(
-            svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            svc->per_defuse_index_tracker().add_caller(DefUseIndex{idx_name},
+                                                       Caller{caller_node_id});
+            return make_int(static_cast<std::int64_t>(
+                svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
+        } catch (const std::exception&) {
+            guard_ok = false; // Issue #1845: restore panic checkpoint
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        }
     });
 
     // (compile:per-defuse-index-callers <idx-name>)

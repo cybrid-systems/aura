@@ -5819,6 +5819,9 @@ aura_issue_test_link_llvm_jit(test_aot_stats_null_metrics_1843)
 # Issue #1844: compile_07 reuses build_kv_hash (dedup 7× build_hash lambdas).
 aura_add_issue_test(test_build_kv_hash_compile07_1844)
 aura_issue_test_link_llvm_jit(test_build_kv_hash_compile07_1844)
+# Issue #1845: per-defuse-index-add MutationBoundaryGuard + try/catch.
+aura_add_issue_test(test_per_defuse_index_add_guard_1845)
+aura_issue_test_link_llvm_jit(test_per_defuse_index_add_guard_1845)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
