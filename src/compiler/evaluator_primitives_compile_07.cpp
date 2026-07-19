@@ -438,7 +438,7 @@ void CompilePrims::register_compile_p59(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         // Read the current coverage hole count via
         // the existing verify-dirty primitive
-        // (#437 / #469).
+        // (#437 / #469). Issue #1840: acquire-load accessor.
         std::uint64_t current_dirty = 0;
         if (auto* ws = ev.workspace_flat()) {
             current_dirty = ws->verify_coverage_dirty_total();
@@ -518,12 +518,15 @@ void CompilePrims::register_compile_p60(PrimRegistrar add, Evaluator& ev) {
         // hash with the breakdown by reason. The agent
         // reads this and decides which (mutate:set-body
         // / mutate:replace-pattern) call to make next.
+        // Issue #1840: single logical snapshot of the 4 counters
+        // (pre-#1840: 4 independent relaxed loads → mixed epochs).
         std::uint64_t assertion = 0, coverage = 0, sva = 0, cex = 0;
         if (auto* ws = ev.workspace_flat()) {
-            assertion = ws->verify_assertion_dirty_total();
-            coverage = ws->verify_coverage_dirty_total();
-            sva = ws->verify_sva_dirty_total();
-            cex = ws->verify_formal_cex_dirty_total();
+            const auto snap = ws->snapshot_verify_dirty_totals();
+            assertion = snap.assertion;
+            coverage = snap.coverage;
+            sva = snap.sva;
+            cex = snap.formal_cex;
         }
         std::int64_t reset_holes = static_cast<std::int64_t>(assertion);
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
@@ -636,10 +639,11 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
             }
             // Also include verify-dirty + mutation-rollbacks
             // so the audit trail covers the full loop.
+            // Issue #1840: snapshot so assertion+coverage are co-epoch.
             std::uint64_t verify_total = 0;
             if (auto* ws = ev.workspace_flat()) {
-                verify_total =
-                    ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
+                const auto snap = ws->snapshot_verify_dirty_totals();
+                verify_total = snap.assertion + snap.coverage;
             }
             std::uint64_t auto_evolve_cycles = ev.auto_evolve_cycle_count_;
             std::uint64_t auto_evolve_fixed = ev.auto_evolve_total_fixed_;
