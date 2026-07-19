@@ -753,6 +753,16 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
     //     the parser (e.g. (BitVec 8) form), automatic
     //     width-mismatch diagnostic in InferenceEngine's
     //     subtyping path, Clock/Reset domain tracking.
+    //
+    // Issue #1850: wrap register_type / register_hw_bitvec in
+    // MutationBoundaryGuard + try/catch. Pre-#1850 mutated the
+    // TypeRegistry raw — throw mid map/side-table growth left
+    // partial state with no panic-checkpoint restore.
+    // type_registry_ is non-owning when wired from
+    // CompilerService (#1837 ownership / quiescence contract);
+    // concurrent set_type_registry / free mid-eval is unsupported
+    // (same class as #1835 metrics / #1839 service — no shared_ptr
+    // tax on every type lookup).
     add("compile:hw-bitvec-register", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return ev.make_merr("bad-arg",
@@ -764,20 +774,45 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
             name = ev.string_heap_[sidx];
         else
             return ev.make_merr("bad-arg", "type name string index out of range");
-        auto& reg = *static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
-        auto tid = reg.lookup_type(name);
-        // Auto-register the type as INT if it doesn't exist.
-        // The hardware BitVector is an integer-like type
-        // (uint8_t / int16_t / etc.), so INT is a sensible
-        // default tag. Pre-existing types (registered with
-        // other tags via declare-type) are kept.
-        if (!tid.valid()) {
-            tid = reg.register_type(aura::core::TypeTag::INT, name);
-        }
+        // Issue #1837 / #1850: ensure under eval quiescence; raw
+        // pointee lives for service lifetime (or owned until
+        // set_type_registry replaces it under quiescence).
+        auto* reg_ptr = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
+        if (!reg_ptr)
+            return ev.make_merr("no-registry", "type registry unavailable");
+        auto& reg = *reg_ptr;
         const auto width = static_cast<std::uint32_t>(as_int(a[1]));
         const bool is_signed = as_int(a[2]) != 0;
-        reg.register_hw_bitvec(tid, width, is_signed);
-        return make_int(1);
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            auto tid = reg.lookup_type(name);
+            // Auto-register the type as INT if it doesn't exist.
+            // The hardware BitVector is an integer-like type
+            // (uint8_t / int16_t / etc.), so INT is a sensible
+            // default tag. Pre-existing types (registered with
+            // other tags via declare-type) are kept.
+            if (!tid.valid()) {
+                tid = reg.register_type(aura::core::TypeTag::INT, name);
+            }
+            reg.register_hw_bitvec(tid, width, is_signed);
+            return make_int(1);
+        } catch (const std::exception&) {
+            guard_ok = false; // Issue #1850: restore panic checkpoint
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_int(-1);
+        }
     });
 }
 
