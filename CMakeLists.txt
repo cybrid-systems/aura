@@ -2364,6 +2364,19 @@ aura_issue_test_link_llvm_jit(test_issue_1651)
 # "原语最小化" directive (no new primitive).
 aura_add_issue_test(test_issue_1652)
 aura_issue_test_link_llvm_jit(test_issue_1652)
+# Issue #1653: Pattern matching engine centralization + hygiene integration
+# completion (scope-limited-progressive Phase 1, Task1 review #5 + #1047
+# supplementary). Phase 1 ships docs/primitives_style.md (the centralized
+# documentation artifact for AC1) + docs/design/1653-...md (per-issue
+# design doc). All 4 ACs predecessor-covered or documented as Phase 2+
+# follow-ups: AC2 by #1650 + #1649 + #1652; AC3 partial by #455 + #1273 +
+# #1610 + #1644 + #1646 + #1651 (full #1047 deopt hook at #1689); AC4 AI
+# self-evo benchmark harness deferred past #1689. The 2 body-named stats
+# primitives (query:pattern-hygiene-enforcement-stats + query:mutate-
+# template-marker-stats) compose into existing primitives per #1632
+# "原语最小化" directive (no new primitive registration).
+aura_add_issue_test(test_issue_1653)
+aura_issue_test_link_llvm_jit(test_issue_1653)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
