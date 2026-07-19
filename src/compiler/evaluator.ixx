@@ -1359,6 +1359,17 @@ public:
     // Both paths use the same single source of truth.
     // Issue #1368: also auto-wire AOT bridge metrics so bare Evaluator
     // (no CompilerService) does not silently disable hot-update counters.
+    //
+    // Issue #1835: compiler_metrics_ is a non-owning raw pointer, not
+    // shared_ptr. Production ownership: CompilerService::metrics_ lives
+    // as long as the service and is wired once in the ctor
+    // (set_compiler_metrics(&metrics_)). Callers MUST NOT free or
+    // rebind the pointee concurrently with any eval / stats primitive
+    // that may load compiler_metrics_ (null-check + use is TOCTOU-safe
+    // only under that quiescence contract). Concurrent set_compiler_metrics
+    // while another fiber reads metrics is unsupported — same class as
+    // destroying CompilerService mid-eval. Hot paths keep raw loads
+    // (no lock/shared_ptr tax on every bump).
     void set_compiler_metrics(void* m) {
         compiler_metrics_ = m;
         if (m)
