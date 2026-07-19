@@ -2299,6 +2299,20 @@ aura_issue_test_link_llvm_jit(test_issue_1646)
 # the design doc.
 aura_add_issue_test(test_issue_1647)
 aura_issue_test_link_llvm_jit(test_issue_1647)
+# Issue #1648: nested struct reflection observability (scope-limited-
+# progressive Phase 1, refine reflect.hh + ir_reflect_serialize.cpp).
+# Phase 1 ships the process-wide observability counter
+# (aura_reflect_nested_struct_throw_count_v_read + _v_bump) + counter
+# bumps at the auto_serialize + auto_deserialize_struct throw sites
+# (preserves the #1124 / #1125 "refuse silent drop" invariant). Full
+# recursive reflect_members (depth + cycle detect + auto-forwarding)
+# deferred to follow-up #1676; full nested-struct roundtrip tests to
+# #1677; new reflect EDSL primitives to #1678; IR fragment sample to
+# #1679. Per the design doc + the "原语最小化" directive, Phase 1
+# adds no new primitive — the existing primitives gain a new
+# observable dimension through the C-linkage accessor surface.
+aura_add_issue_test(test_reflect_nested)
+aura_issue_test_link_llvm_jit(test_reflect_nested)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
