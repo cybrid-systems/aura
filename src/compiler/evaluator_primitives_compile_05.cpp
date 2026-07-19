@@ -246,6 +246,8 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (id >= ev.workspace_flat_->size())
             return make_int(0);
+        // Issue #1783: shared metadata lock vs concurrent set-marker.
+        auto rlock = ev.workspace_flat_->try_acquire_metadata_reader_lock();
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->marker(id)));
     });
 
@@ -274,9 +276,11 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
             return ev.make_merr("bad-arg",
                                 "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
         }
-        // No MutationBoundaryGuard — this is metadata-only, not a
-        // structural mutation. The version bump is unnecessary
-        // and would invalidate every cached marker query.
+        // No MutationBoundaryGuard — metadata-only (no generation
+        // bump). Issue #1783: exclusive metadata_mtx_ serializes
+        // cross-fiber marker_column writes without invalidating
+        // StableNodeRef / marker-query caches.
+        auto wlock = ev.workspace_flat_->begin_metadata_mutation();
         ev.workspace_flat_->set_marker(id, static_cast<aura::ast::SyntaxMarker>(marker_val));
         return make_bool(true);
     });
@@ -310,8 +314,10 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         if (marker_val < 0 || marker_val > 2)
             return make_int(0);
         auto& flat = *ev.workspace_flat_;
-        // Iterative DFS with visited set — metadata-only, no
-        // mutation guard. Walk via flat.children().
+        // Iterative DFS with visited set — metadata-only.
+        // Issue #1783: hold exclusive metadata_mtx_ for the whole
+        // walk so concurrent set-marker / get-marker cannot tear.
+        auto wlock = flat.begin_metadata_mutation();
         std::int64_t count = 0;
         std::vector<aura::ast::NodeId> stack;
         std::vector<std::uint8_t> seen(flat.size(), 0);
@@ -361,6 +367,8 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (id >= ev.workspace_flat_->size())
             return make_bool(false);
+        // Issue #1783: exclusive metadata_mtx_ for provenance column.
+        auto wlock = ev.workspace_flat_->begin_metadata_mutation();
         ev.workspace_flat_->set_provenance(id, prov);
         return make_bool(true);
     });
@@ -381,6 +389,8 @@ void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (id >= ev.workspace_flat_->size())
             return make_int(0);
+        // Issue #1783: shared metadata lock vs concurrent set-provenance.
+        auto rlock = ev.workspace_flat_->try_acquire_metadata_reader_lock();
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->provenance(id)));
     });
 
@@ -395,6 +405,8 @@ void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
             if (!ev.workspace_flat_)
                 return make_void();
             std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
+            // Issue #1783: shared lock for full-column scan.
+            auto rlock = ev.workspace_flat_->try_acquire_metadata_reader_lock();
             const auto& markers = ev.workspace_flat_->marker_column();
             for (std::size_t i = 0; i < markers.size(); ++i) {
                 ++total;
