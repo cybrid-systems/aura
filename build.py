@@ -1562,8 +1562,7 @@ def cmd_dead_heap_push():
     if r.returncode != 0:
         fail(
             "dead string_heap_ push candidates found — "
-            "run python3 scripts/audit_dead_heap_push.py and remove unused pushes "
-            "(see docs/design/string-heap-pollution.md / dead-heap-push-audit-1668.md)"
+            "run python3 scripts/audit_dead_heap_push.py and remove unused pushes"
         )
         return 1
     ok("dead heap push audit clean")
@@ -1585,10 +1584,7 @@ def cmd_catch_silent_swallow():
             return 1
     r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
     if r.returncode != 0:
-        fail(
-            "unmarked catch(...) found — add [SILENCE-PRIM-#615] (or fix silent swallow) "
-            "(see docs/design/catch-silent-swallow-audit-1669.md)"
-        )
+        fail("unmarked catch(...) found — add [SILENCE-PRIM-#615] (or fix silent swallow)")
         return 1
     ok("catch silent-swallow audit clean")
     return 0

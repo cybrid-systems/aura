@@ -4,7 +4,9 @@
 // test_issue_394.cpp — Issue #394 follow-up to #250:
 //   1. hash-ref regression for (stats:get "atomic-batch:stats")
 //   2. Concurrent fiber/thread safety during atomic batch
-//   3. Documentation shipped in docs/design/core/mutate_api.md
+//   3. Documentation: docs/design/core/mutate_api.md removed per
+//      Anqi 2026-07-19 directive (aura philosophy, no per-issue
+//      plan docs); source-driven ACs above remain authoritative
 
 #include "test_harness.hpp"
 #include "serve/fiber.h"

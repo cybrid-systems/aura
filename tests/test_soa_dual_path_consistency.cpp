@@ -1,6 +1,8 @@
 // tests/test_soa_dual_path_consistency.cpp — Issue #1638
 //
-// AC list (per docs/design/1638-soa-dual-path-consistency.md):
+// AC list (docs/design/1638-...md removed per Anqi 2026-07-19
+// directive — aura philosophy, no per-issue plan docs; source-
+// driven ACs below remain authoritative):
 //   AC1: source cites #1638; materialize_call_env wires
 //        ensure_env_frame_dual_path_consistent (defense in depth
 //        alongside closure_is_epoch_or_env_stale).
