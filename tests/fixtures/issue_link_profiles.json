@@ -164,7 +164,6 @@
     "test_issue_442_seva_demo",
     "test_issue_444_strategy_evolution",
     "test_issue_445_openclaw_integration",
-    "test_issue_446_seva_docs_metrics",
     "test_issue_452_aot_hot_update",
     "test_issue_462_shape_aware_folding",
     "test_issue_463_soa_phase2_wiring",

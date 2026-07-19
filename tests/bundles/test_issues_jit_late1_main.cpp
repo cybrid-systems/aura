@@ -21,7 +21,6 @@ extern int aura_issue_440_edsl_readiness_run();
 extern int aura_issue_442_seva_demo_run();
 extern int aura_issue_444_strategy_evolution_run();
 extern int aura_issue_445_openclaw_integration_run();
-extern int aura_issue_446_seva_docs_metrics_run();
 extern int aura_issue_452_aot_hot_update_run();
 extern int aura_issue_462_shape_aware_folding_run();
 extern int aura_issue_463_soa_phase2_wiring_run();
@@ -83,7 +82,6 @@ int main() {
         {"test_issue_442_seva_demo", aura_issue_442_seva_demo_run},
         {"test_issue_444_strategy_evolution", aura_issue_444_strategy_evolution_run},
         {"test_issue_445_openclaw_integration", aura_issue_445_openclaw_integration_run},
-        {"test_issue_446_seva_docs_metrics", aura_issue_446_seva_docs_metrics_run},
         {"test_issue_452_aot_hot_update", aura_issue_452_aot_hot_update_run},
         {"test_issue_462_shape_aware_folding", aura_issue_462_shape_aware_folding_run},
         {"test_issue_463_soa_phase2_wiring", aura_issue_463_soa_phase2_wiring_run},

@@ -5748,6 +5748,9 @@ aura_issue_test_link_llvm_jit(test_guard_move_ownership_1767)
 # Issue #1768: try_lock_workspace_* updates lock_order TLS (with fail rollback).
 aura_add_issue_test(test_try_lock_workspace_lock_order_1768)
 aura_issue_test_link_llvm_jit(test_try_lock_workspace_lock_order_1768)
+# Issue #1769: inline typecheck helpers catch exceptions + metric.
+aura_add_issue_test(test_inline_typecheck_exception_1769)
+aura_issue_test_link_llvm_jit(test_inline_typecheck_exception_1769)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
