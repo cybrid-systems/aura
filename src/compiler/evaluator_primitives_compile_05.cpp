@@ -66,6 +66,51 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #1787: shared FNV-1a + open-addressing stats hash builder.
+// Replaces 6× inlined build_hash lambdas in this file. Capacity
+// scales with kv count (load factor ≤ 0.5, minimum 16 slots).
+[[nodiscard]] EvalValue build_kv_hash(Evaluator& ev,
+                                      std::span<const std::pair<std::string, EvalValue>> kv) {
+    std::size_t ncap = 16;
+    while (ncap < kv.size() * 2)
+        ncap *= 2;
+    auto* ht = FlatHashTable::create(ncap);
+    if (!ht)
+        return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    for (auto& [k, v] : kv) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (char c : k)
+            h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        const auto kidx = static_cast<std::uint64_t>(ev.push_string_heap(k));
+        bool inserted = false;
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = make_string(kidx).val;
+                vals[idx] = v.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    return make_hash(hidx);
+}
+
 // Issue #909 compile part 40 (orig 3280-3340)
 void CompilePrims::register_compile_p40(PrimRegistrar add, Evaluator& ev) {
 
@@ -92,53 +137,13 @@ void CompilePrims::register_compile_p40(PrimRegistrar add, Evaluator& ev) {
                 macro_skipped = static_cast<std::int64_t>(ev.get_macro_hygiene_skipped_fn_());
             }
             std::int64_t total = inlined + branch_aware;
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"inlined", make_int(inlined)},
                 {"branch-aware", make_int(branch_aware)},
                 {"macro-hygiene-skipped", make_int(macro_skipped)},
                 {"total", make_int(total)},
             };
-            return build_hash(kv);
+            return build_kv_hash(ev, kv);
         });
 }
 
@@ -163,45 +168,6 @@ void CompilePrims::register_compile_p41(PrimRegistrar add, Evaluator& ev) {
     //   - count how many mutations a workload has applied
     //   - debug concurrent fiber contention via boundary-depth
     ObservabilityPrims::register_stats_impl("concurrency:stats", [&ev](const auto&) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"defuse-version", make_int(static_cast<std::int64_t>(ev.defuse_version_snapshot()))},
             {"total-mutations", make_int(static_cast<std::int64_t>(ev.total_mutations()))},
@@ -214,7 +180,7 @@ void CompilePrims::register_compile_p41(PrimRegistrar add, Evaluator& ev) {
             {"cross-fiber-rollback-count",
              make_int(static_cast<std::int64_t>(ev.cross_fiber_rollback_count()))},
         };
-        return build_hash(kv);
+        return build_kv_hash(ev, kv);
     });
 }
 
@@ -427,53 +393,13 @@ void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
                 else if (m == 2)
                     ++bool_lit;
             }
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"user", make_int(static_cast<std::int64_t>(user))},
                 {"macro-introduced", make_int(static_cast<std::int64_t>(macro))},
                 {"bool-literal", make_int(static_cast<std::int64_t>(bool_lit))},
                 {"total-nodes", make_int(static_cast<std::int64_t>(total))},
             };
-            return build_hash(kv);
+            return build_kv_hash(ev, kv);
         });
 }
 
@@ -507,48 +433,7 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
     // Multi-arg (sym name required) — must stay public add();
     // stats:get/engine:metrics cannot pass the symbol argument.
     add("compile:per-symbol-dirty-stats", [&ev](const auto& a) -> EvalValue {
-        // build_hash inlined (same FNV-1a fingerprint + linear
-        // probing pattern as the other compile:* primitives in
-        // this file; Issue #258 HASH_EMPTY collision avoided).
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE; // avoid HASH_EMPTY collision
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
-        };
+        // Issue #1787: build_kv_hash shared helper.
         // Resolve sym name → SymId. Use the workspace pool +
         // string heap (same pattern as query:def-use).
         if (a.empty() || !is_string(a[0]))
@@ -661,7 +546,7 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
             {"reduction-ratio-bp", make_int(ratio_bp)},
             {"lookup-count", make_int(static_cast<std::int64_t>(lookup_count))},
         };
-        return build_hash(kv);
+        return build_kv_hash(ev, kv);
     });
 }
 
@@ -683,51 +568,10 @@ void CompilePrims::register_compile_p46(PrimRegistrar add, Evaluator& ev) {
     //     Phase 2/2) will reduce this metric.
     //
     // Mirrors the 2 lifetime counters on CompilerMetrics plus
-    // the derived metric on CompilerSnapshot. Same FNV-1a
-    // build_hash pattern as the surrounding compile:*
-    // primitives (Issue #258 HASH_EMPTY collision avoided).
+    // the derived metric on CompilerSnapshot (Issue #1787:
+    // build_kv_hash shared helper).
     ObservabilityPrims::register_stats_impl(
         "compile:incremental-typecheck-stats", [&ev](const auto&) -> EvalValue {
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
             std::uint64_t auto_invocations = 0;
             std::uint64_t re_inferred = 0;
             if (ev.compiler_metrics_) {
@@ -744,7 +588,7 @@ void CompilePrims::register_compile_p46(PrimRegistrar add, Evaluator& ev) {
                 {"re-inferred-total", make_int(static_cast<std::int64_t>(re_inferred))},
                 {"avg-re-inferred-bp", make_int(static_cast<std::int64_t>(avg_bp))},
             };
-            return build_hash(kv);
+            return build_kv_hash(ev, kv);
         });
 }
 
@@ -771,46 +615,6 @@ void CompilePrims::register_compile_p47(PrimRegistrar add, Evaluator& ev) {
     //     rejections eliminated.
     ObservabilityPrims::register_stats_impl(
         "compile:type-cache-stats", [&ev](const auto&) -> EvalValue {
-            auto build_hash =
-                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
-                if (!ht)
-                    return make_void();
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (auto& [k, v] : kv) {
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : k)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                    if (fp == 0xFF)
-                        fp = 0xFE; // avoid HASH_EMPTY collision
-                    auto kidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(k);
-                    EvalValue key_ev = make_string(kidx);
-                    bool inserted = false;
-                    for (std::size_t at = 0; at < hcap; ++at) {
-                        auto idx = ((h >> 1) + at) & (hcap - 1);
-                        if (meta[idx] == 0xFF) {
-                            meta[idx] = fp;
-                            keys[idx] = key_ev.val;
-                            vals[idx] = v.val;
-                            ht->size++;
-                            inserted = true;
-                            break;
-                        }
-                    }
-                    if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
-                    }
-                }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
-            };
             std::uint64_t hits = 0, misses = 0, stale = 0, gen_saved = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
@@ -828,7 +632,7 @@ void CompilePrims::register_compile_p47(PrimRegistrar add, Evaluator& ev) {
                 {"gen-saved-total", make_int(static_cast<std::int64_t>(gen_saved))},
                 {"gen-saved-ratio-bp", make_int(static_cast<std::int64_t>(ratio_bp))},
             };
-            return build_hash(kv);
+            return build_kv_hash(ev, kv);
         });
 }
 

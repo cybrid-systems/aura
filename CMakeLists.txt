@@ -5777,6 +5777,9 @@ aura_issue_test_link_llvm_jit(test_per_symbol_dirty_pool_lock_1785)
 # Issue #1786: per-symbol-dirty-stats ancestor walk visited-set (cycle guard).
 aura_add_issue_test(test_per_symbol_dirty_cycle_guard_1786)
 aura_issue_test_link_llvm_jit(test_per_symbol_dirty_cycle_guard_1786)
+# Issue #1787: extract shared build_kv_hash in compile_05 (dedup 6×).
+aura_add_issue_test(test_build_kv_hash_dedup_1787)
+aura_issue_test_link_llvm_jit(test_build_kv_hash_dedup_1787)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
