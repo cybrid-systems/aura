@@ -5296,6 +5296,10 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // Issue #390: aggregate schema cache.
     stats_.schema_cache_lookups += r.schema_cache_lookups;
     stats_.schema_cache_hits += r.schema_cache_hits;
+    // Issue #281 / #340 / #1781: predicate_memo_ stats.
+    stats_.predicate_memo_hits += r.predicate_memo_hits;
+    stats_.predicate_memo_misses += r.predicate_memo_misses;
+    stats_.predicate_memo_evictions += r.predicate_memo_evictions;
     last_coercions_ = std::move(r.coercions);
     // Issue #1407 R1: cache the outcome for next call. Only
     // cache when we have a stable epoch (cache_epoch_ > 0);
@@ -5911,6 +5915,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // Issue #390: aggregate schema cache.
     stats_.schema_cache_lookups += es.schema_cache_lookups;
     stats_.schema_cache_hits += es.schema_cache_hits;
+    // Issue #281 / #340 / #1781: predicate_memo_ stats from
+    // the short-lived engine for this partial infer.
+    stats_.predicate_memo_hits += engine.predicate_memo_hits();
+    stats_.predicate_memo_misses += engine.predicate_memo_misses();
+    stats_.predicate_memo_evictions += engine.predicate_memo_evictions();
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call

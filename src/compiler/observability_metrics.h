@@ -618,6 +618,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> narrowing_applied_total{0};
     std::atomic<std::uint64_t> narrowing_skipped_total{0};
     std::atomic<std::uint64_t> narrowing_reanalyzed_total{0};
+    // Issue #340 / #1781: predicate_memo_ lifetime totals
+    // (analyze_predicate_flat hit/miss/eviction). Surfaced by
+    // (engine:metrics "compile:occ-cache-stats").
+    std::atomic<std::uint64_t> predicate_memo_hits_total{0};
+    std::atomic<std::uint64_t> predicate_memo_misses_total{0};
+    std::atomic<std::uint64_t> predicate_memo_evictions_total{0};
     // Issue #338: and/or precision observability.
     // 2 lifetime counters that measure how often the
     // new TypeRegistry::meet / TypeRegistry::join

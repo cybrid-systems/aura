@@ -1183,6 +1183,11 @@ export struct TypeChecker {
         // Issue #390: aggregated schema cache.
         std::uint64_t schema_cache_lookups = 0;
         std::uint64_t schema_cache_hits = 0;
+        // Issue #281 / #340 / #1781: predicate_memo_ stats
+        // (analyze_predicate_flat hit/miss/eviction).
+        std::uint64_t predicate_memo_hits = 0;
+        std::uint64_t predicate_memo_misses = 0;
+        std::uint64_t predicate_memo_evictions = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.

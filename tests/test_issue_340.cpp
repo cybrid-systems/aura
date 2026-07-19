@@ -109,9 +109,8 @@ bool test_memo_infrastructure_exists() {
     // hits/misses/evictions counters) was already
     // shipped in #281. This test verifies the
     // primitive works after building a workspace
-    // (the counter is bumped on a memo lookup; the
-    // Aura primitive's 0/0/0 placeholder values
-    // are wired via a follow-up).
+    // (the counter is bumped on a memo lookup;
+    // #1781 wires real totals into the Aura primitive).
     using namespace aura;
     compiler::CompilerService cs;
     if (!build_workspace(cs)) {
@@ -138,8 +137,8 @@ bool test_end_to_end_primitive_callable() {
     using namespace aura;
     compiler::CompilerService cs;
     // No workspace — primitive should still
-    // return a value (with 0/0/0 — there's no
-    // memo to observe).
+    // return a value (zeros when no typecheck has
+    // run yet — real empty totals, not a stub).
     auto r1 = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
     CHECK(r1.has_value(), "no-workspace: primitive returns a value");
     // With a workspace.

@@ -3459,6 +3459,13 @@ public:
                                                    std::memory_order_relaxed);
         metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
                                                       std::memory_order_relaxed);
+        // Issue #340 / #1781: predicate_memo_ lifetime totals.
+        metrics_.predicate_memo_hits_total.fetch_add(tc.stats().predicate_memo_hits,
+                                                     std::memory_order_relaxed);
+        metrics_.predicate_memo_misses_total.fetch_add(tc.stats().predicate_memo_misses,
+                                                       std::memory_order_relaxed);
+        metrics_.predicate_memo_evictions_total.fetch_add(tc.stats().predicate_memo_evictions,
+                                                          std::memory_order_relaxed);
         // Issue #338: and/or precision.
         metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
                                                   std::memory_order_relaxed);
@@ -3622,6 +3629,13 @@ public:
                                                    std::memory_order_relaxed);
         metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
                                                       std::memory_order_relaxed);
+        // Issue #340 / #1781: predicate_memo_ lifetime totals.
+        metrics_.predicate_memo_hits_total.fetch_add(tc.stats().predicate_memo_hits,
+                                                     std::memory_order_relaxed);
+        metrics_.predicate_memo_misses_total.fetch_add(tc.stats().predicate_memo_misses,
+                                                       std::memory_order_relaxed);
+        metrics_.predicate_memo_evictions_total.fetch_add(tc.stats().predicate_memo_evictions,
+                                                          std::memory_order_relaxed);
         // Issue #338: and/or precision.
         metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
                                                   std::memory_order_relaxed);
@@ -7483,6 +7497,13 @@ public:
                                                    std::memory_order_relaxed);
         metrics_.narrowing_reanalyzed_total.fetch_add(tc.stats().narrowing_reanalyzed,
                                                       std::memory_order_relaxed);
+        // Issue #340 / #1781: predicate_memo_ lifetime totals.
+        metrics_.predicate_memo_hits_total.fetch_add(tc.stats().predicate_memo_hits,
+                                                     std::memory_order_relaxed);
+        metrics_.predicate_memo_misses_total.fetch_add(tc.stats().predicate_memo_misses,
+                                                       std::memory_order_relaxed);
+        metrics_.predicate_memo_evictions_total.fetch_add(tc.stats().predicate_memo_evictions,
+                                                          std::memory_order_relaxed);
         // Issue #338: and/or precision.
         metrics_.and_or_meet_uses_total.fetch_add(tc.stats().and_or_meet_uses,
                                                   std::memory_order_relaxed);
