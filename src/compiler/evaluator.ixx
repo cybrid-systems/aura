@@ -2293,6 +2293,10 @@ public:
     [[nodiscard]] std::size_t gc_root_count() const;
     // Issue #682: export tree-walker Closure / EnvId roots for
     // compiler GC coordination (bridge epoch gate).
+    // `current_bridge_epoch` is the caller's safepoint snapshot;
+    // Issue #1734 compares it to live current_bridge_epoch() and
+    // bumps gc_roots_bridge_epoch_drift_total on mismatch, filtering
+    // with the live epoch.
     void collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                            std::vector<std::int64_t>& env_roots_out,
                                            std::uint64_t current_bridge_epoch) const;
