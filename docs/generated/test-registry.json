@@ -6,7 +6,7 @@
     "integration": 497,
     "issue_specific": 7,
     "regression": 2,
-    "unit": 173,
+    "unit": 174,
     "unknown": 341
   },
   "tests": [
@@ -6104,6 +6104,12 @@
       "file": "tests/test_walk_active_closures_1606.cpp",
       "category": "integration",
       "reason": "Issue #1606 — walk_active_closures + linear live scan wired to",
+      "issue": null
+    },
+    {
+      "file": "tests/test_walk_active_closures_ex_1733.cpp",
+      "category": "unit",
+      "reason": "Issue #1733 — walk_active_closures must isolate callback",
       "issue": null
     },
     {

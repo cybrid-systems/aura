@@ -3374,6 +3374,8 @@ struct CompilerMetrics {
     // Issue #1545: live-closure linear capture scans (invalidate / compact /
     // JIT ResourceTracker pre-evict). One bump per
     // scan_live_closures_for_linear_captures invocation.
+    // Issue #1733: walk_active_closures callback threw; walk continued.
+    std::atomic<std::uint64_t> walk_active_closures_callback_exceptions{0};
     std::atomic<std::uint64_t> linear_live_closure_scans_total{0};
     // Closures marked invalid (bridge_epoch=0) because they captured
     // linear-tracked bindings during a scan with mark_invalid=true.
