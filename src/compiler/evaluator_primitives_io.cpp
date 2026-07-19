@@ -1107,8 +1107,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1559: terminal-present-batch routes through render_primitives::present_batch
     // (dirty short-circuit + hotpath + zero-copy + ANSI).
-    // Issue #1677: production exemplar of docs/render-primitive-template.md
-    //   RENDER_PRIMITIVE_META + AURA_RENDER_HOT_ENTRY + dirty/zero-copy body.
+    // Issue #1677: RENDER_PRIMITIVE_META + AURA_RENDER_HOT_ENTRY + dirty/zero-copy body.
     add_render(
         "terminal-present-batch",
         [&ev](std::span<const EvalValue> a) -> EvalValue {

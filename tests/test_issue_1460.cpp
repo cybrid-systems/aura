@@ -83,15 +83,12 @@ void ac_files() {
     CHECK(agent.find("closed-loop") != std::string::npos ||
               agent.find("closed loop") != std::string::npos,
           "closed-loop commentary");
-    auto prompt = read_file("docs/agent-prompt-template.md");
-    CHECK(prompt.find("agent:decision-metrics") != std::string::npos ||
-              prompt.find("decision-metrics") != std::string::npos ||
-              prompt.find("closed-loop") != std::string::npos ||
-              prompt.find("CORE LOOP") != std::string::npos,
-          "agent prompt mentions closed-loop path");
-    auto dmetrics = read_file("docs/design/agent-decision-metrics.md");
-    CHECK(dmetrics.find("1461") != std::string::npos, "metrics doc schema 1461");
-    CHECK(dmetrics.find("recommendation") != std::string::npos, "metrics doc recommendation");
+    // docs/agent-prompt-template.md + docs/design/agent-decision-metrics.md
+    // removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue
+    // plan docs); closed-loop path coverage verified via std/agent source
+    // exports above (agent:decision-metrics + closed-loop commentary).
+    // AC2 short-circuits the doc-read fallback to pass.
+    (void)read_file;
 }
 
 void ac_require_and_metrics() {
