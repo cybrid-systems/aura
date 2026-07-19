@@ -46,7 +46,8 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -55,7 +56,8 @@ bool check_file_level_atomics_ac1() {
     std::string me = read_file("src/compiler/macro_expansion.cpp");
     bool a1 = contains(me, "std::atomic<std::uint64_t> g_macro_expansion_total{0}");
     bool a2 = contains(me, "std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total{0}");
-    bool a3 = contains(me, "std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0}");
+    bool a3 =
+        contains(me, "std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0}");
     bool c1 = contains(me, "aura_macro_expansion_total_v_read()");
     bool c2 = contains(me, "aura_macro_introduced_nodes_created_total_v_read()");
     bool c3 = contains(me, "aura_hygiene_violation_in_macro_expand_total_v_read()");
@@ -73,12 +75,14 @@ bool check_paired_hygiene_violation_bumps_ac1() {
     std::println("\n--- AC1: 2 paired hygiene-violation bumps in clone_macro_body ---");
     std::string me = read_file("src/compiler/macro_expansion.cpp");
     // Site A: depth-exceeded (paired next to g_macro_origin_provenance_errors.fetch_add(1, ...)).
-    bool depth_bump = contains(me,
-                              "g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);");
+    bool depth_bump = contains(
+        me, "g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);");
     int n_bumps = 0;
     std::size_t pos = 0;
-    while ((pos = me.find("g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);",
-                         pos)) != std::string::npos) {
+    while (
+        (pos = me.find(
+             "g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);",
+             pos)) != std::string::npos) {
         ++n_bumps;
         ++pos;
     }
@@ -90,23 +94,25 @@ bool check_paired_hygiene_violation_bumps_ac1() {
                      depth_bump, n_bumps, has_1652_ref);
         return false;
     }
-    std::println("OK: 2 paired hygiene-violation bumps landed (depth-exceeded + body_id-NULL/invalid)");
+    std::println(
+        "OK: 2 paired hygiene-violation bumps landed (depth-exceeded + body_id-NULL/invalid)");
     return true;
 }
 
 bool check_per_call_success_path_bump_ac1() {
     std::println("\n--- AC1: per-call success-path bump at clone_macro_body entry ---");
     std::string me = read_file("src/compiler/macro_expansion.cpp");
-    bool per_call_bump = contains(me,
-                                  "g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);");
+    bool per_call_bump =
+        contains(me, "g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);");
     int n_per_call = 0;
     std::size_t pos = 0;
-    while ((pos = me.find("g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);", pos)) != std::string::npos) {
+    while ((pos = me.find("g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);",
+                          pos)) != std::string::npos) {
         ++n_per_call;
         ++pos;
     }
-    bool has_1652_success_path_comment = contains(me,
-                                                "Issue #1652: per-call success-path observability bump");
+    bool has_1652_success_path_comment =
+        contains(me, "Issue #1652: per-call success-path observability bump");
     if (!per_call_bump || !has_1652_success_path_comment || n_per_call < 1) {
         std::println("FAIL: per-call bump missing "
                      "(per_call_bump={} n_per_call={} has_comment={})",
@@ -120,12 +126,12 @@ bool check_per_call_success_path_bump_ac1() {
 bool check_predecessor_coverage_ac3() {
     std::println("\n--- AC3: predecessor hygiene tracer counters still present ---");
     std::string me = read_file("src/compiler/macro_expansion.cpp");
-    bool has_origin_provenance = contains(me,
-                                          "std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0}");
-    bool has_tracer_expansions = contains(me,
-                                          "std::atomic<std::uint64_t> g_hygiene_tracer_expansions{0}");
-    bool has_tracer_depth_max = contains(me,
-                                        "std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0}");
+    bool has_origin_provenance =
+        contains(me, "std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0}");
+    bool has_tracer_expansions =
+        contains(me, "std::atomic<std::uint64_t> g_hygiene_tracer_expansions{0}");
+    bool has_tracer_depth_max =
+        contains(me, "std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0}");
     if (!has_origin_provenance || !has_tracer_expansions || !has_tracer_depth_max) {
         std::println("FAIL: predecessor #1247/#1248 counters missing "
                      "(origin_provenance={} tracer_expansions={} tracer_depth_max={})",
@@ -147,17 +153,22 @@ bool check_design_doc_present() {
     return true;
 }
 
-}  // namespace aura_1652_detail
+} // namespace aura_1652_detail
 
 int main() {
     using namespace aura_1652_detail;
 
     int rc = 0;
-    if (!check_file_level_atomics_ac1())                 rc = 1;
-    if (!check_paired_hygiene_violation_bumps_ac1())     rc = 1;
-    if (!check_per_call_success_path_bump_ac1())         rc = 1;
-    if (!check_predecessor_coverage_ac3())              rc = 1;
-    if (!check_design_doc_present())                    rc = 1;
+    if (!check_file_level_atomics_ac1())
+        rc = 1;
+    if (!check_paired_hygiene_violation_bumps_ac1())
+        rc = 1;
+    if (!check_per_call_success_path_bump_ac1())
+        rc = 1;
+    if (!check_predecessor_coverage_ac3())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         std::println("\n#1652 scope-limited-progressive-ship Phase 1 — all AC checks green \u2705\n"
