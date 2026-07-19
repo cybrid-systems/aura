@@ -176,6 +176,30 @@ std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
 std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0};
 std::atomic<std::uint64_t> g_hygiene_tracer_expansions{0};
 std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0};
+// Issue #1652: clone_macro_body expand observability counters (paired with
+// #1611 MacroIntroduced hygiene gate). Bumped at the success path +
+// early-return hygiene-violation paths inside clone_macro_body. Exposed via
+// the C-linkage accessor + composed into existing (query:pattern-hygiene-stats)
+// primitive surface (no new primitive per #1632 “原语最小化” directive).
+std::atomic<std::uint64_t> g_macro_expansion_total{0};
+std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total{0};
+std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
+
+// Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
+// primitive can read these file-level atomics from another TU without the
+// Evaluator module import (paired pattern with #1648 reflect.hh +
+// #1651 macro_expansion.cpp).
+extern "C" {
+inline std::uint64_t aura_macro_expansion_total_v_read() noexcept {
+    return ::g_macro_expansion_total.load(std::memory_order_relaxed);
+}
+inline std::uint64_t aura_macro_introduced_nodes_created_total_v_read() noexcept {
+    return ::g_macro_introduced_nodes_created_total.load(std::memory_order_relaxed);
+}
+inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexcept {
+    return ::g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
+}
+}  // extern "C"
 
 aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                                    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
@@ -184,6 +208,12 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
                                    std::unordered_map<std::string, std::string>* name_map,
                                    aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
+    // Issue #1652: per-call success-path observability bump (fired once per
+    // clone_macro_body invocation that survives the early-return hygiene
+    // checks). The per-node count (clone_macro_introduced_nodes_created) is
+    // deferred to #1688 along with the clone_macro_body recursive-walk
+    // refactor that threads the cumulative count through the AST walk.
+    g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #365: depth guard. The public API starts at
     // depth=0 (s_hygiene_depth is bumped on recursion inside
     // the function body below). When the depth exceeds
@@ -210,6 +240,9 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
             // Issue #1247: include macro-origin provenance in the diagnostic
             // so Agents can locate which MacroIntroduced path blew the depth.
             g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1652: paired bump — depth exceeded is a hygiene violation
+            // against the macro expand contract. Bump the new g_* counter.
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
             const char* origin = (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced)
                                      ? "MacroIntroduced"
                                      : "User";
@@ -230,8 +263,12 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
                                  prev, cur, std::memory_order_relaxed)) {
         }
     }
-    if (body_id == NULL_NODE || body_id >= source.size())
+    if (body_id == NULL_NODE || body_id >= source.size()) {
+        // Issue #1652: paired bump — invalid body_id is a hygiene violation
+        // (caller passed an out-of-range NodeId for the macro body).
+        g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
         return NULL_NODE;
+    }
     auto v = source.get(body_id);
 
     // Variable substitution: if this variable is a macro param, return the arg clone.

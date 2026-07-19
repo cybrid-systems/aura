@@ -2352,6 +2352,18 @@ aura_issue_test_link_llvm_jit(test_issue_1650)
 # deferred to #1687. Composes into existing primitives per "原语最小化".
 aura_add_issue_test(test_issue_1651)
 aura_issue_test_link_llvm_jit(test_issue_1651)
+# Issue #1652: clone_macro_body / SyntaxMarker observability hooks + stats
+# integration (scope-limited-progressive Phase 1, refine #120 / #1611 /
+# #1247 / #1248 / #365). Phase 1 ships 3 file-level atomics
+# (g_macro_expansion_total + g_macro_introduced_nodes_created_total +
+# g_hygiene_violation_in_macro_expand_total) + 3 C-linkage accessors +
+# paired hygiene-violation bumps (depth-exceeded + body_id-NULL/invalid)
+# + per-call success-path bump at clone_macro_body entry. Per-recursive-step
+# bump_macro_introduced_nodes_created(cumulative) + full primitive body
+# composition deferred to #1688. Composes into existing primitives per
+# "原语最小化" directive (no new primitive).
+aura_add_issue_test(test_issue_1652)
+aura_issue_test_link_llvm_jit(test_issue_1652)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
