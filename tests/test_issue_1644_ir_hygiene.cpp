@@ -5,7 +5,8 @@
 // coverage at the production-code + observability layer:
 //   AC1 — lowering copies source_marker from AST -> IR  (predecessor #1610 / #1273 / #1616)
 //   AC2 — InlinePass respects_macro_hygiene_ defaults true  (predecessor #246 / #388)
-//   AC3 — (query:ir-marker-stats) iterates IRModule.instructions via CompilerService::last_ir_module
+//   AC3 — (query:ir-marker-stats) iterates IRModule.instructions via
+//   CompilerService::last_ir_module
 //          (FRESH WORK — #1644)
 //   AC4 — 2 new CompilerMetrics counters + 2 X-macro fields + 2 bump_/getter pairs
 //          (FRESH WORK — #1644). Counters:
@@ -58,13 +59,13 @@ bool check_lowering_marker_propagation_ac1() {
     std::println("\n--- AC1: lowering.ixx propagates source_marker (predecessor #1610) ---");
     std::string low = read_file("src/compiler/lowering.ixx");
     // AoS path: blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
-    bool aos = contains(low, "blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk)");
+    bool aos =
+        contains(low, "blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk)");
     // SoA mirror: module_v2.functions[cur_func_v2_idx].marker = 1;
-    bool soa = contains(low,
-                        "module_v2.functions[cur_func_v2_idx].marker = 1");
+    bool soa = contains(low, "module_v2.functions[cur_func_v2_idx].marker = 1");
     if (!aos || !soa) {
-        std::println("FAIL: lowering source_marker propagation incomplete (aos={} soa={})",
-                     aos, soa);
+        std::println("FAIL: lowering source_marker propagation incomplete (aos={} soa={})", aos,
+                     soa);
         return false;
     }
     std::println("OK: lowering.ixx wires source_marker AoS + SoA mirror");
@@ -75,10 +76,9 @@ bool check_inline_pass_respect_macro_hygiene_default_ac2() {
     std::println("\n--- AC2: InlinePass::respect_macro_hygiene_ defaults true (#246) ---");
     std::string pm = read_file("src/compiler/pass_manager.ixx");
     bool def = contains(pm, "static inline bool respect_macro_hygiene_ = true");
-    bool usage_outer = contains(pm,
-                                "respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/");
-    bool usage_inner = contains(pm,
-                                "respect_macro_hygiene_) {") &&
+    bool usage_outer =
+        contains(pm, "respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/");
+    bool usage_inner = contains(pm, "respect_macro_hygiene_) {") &&
                        contains(pm, "callee.marker == 1 && call_instr.source_marker != 1");
     if (!def || !usage_outer || !usage_inner) {
         std::println("FAIL: InlinePass hygiene defaults / usage missing");
@@ -96,8 +96,7 @@ bool check_query_ir_marker_stats_iterates_ir_ac3() {
     // Walks IRModule via CompilerService::last_ir_module.
     bool last_ir_mod = contains(pq, "svc->last_ir_module()");
     // Iterates functions[*].blocks[*].instructions[*].
-    bool iter = contains(pq, "mod->functions") &&
-                contains(pq, "fn.blocks") &&
+    bool iter = contains(pq, "mod->functions") && contains(pq, "fn.blocks") &&
                 contains(pq, "blk.instructions");
     // Per-call counter still bumped for back-compat (ir_marker_stats_queries_total).
     bool compat = contains(pq, "ir_marker_stats_queries_total.fetch_add(1");
@@ -114,10 +113,9 @@ bool check_query_ir_marker_stats_iterates_ir_ac3() {
 bool check_metric_slots_ac4a() {
     std::println("\n--- AC4a: 2 new atomic counter slots in observability_metrics.h ---");
     std::string om = read_file("src/compiler/observability_metrics.h");
-    bool a = contains(om,
-                     "std::atomic<std::uint64_t> ir_macro_introduced_inlined_skipped_total{0}");
-    bool b = contains(om,
-                     "std::atomic<std::uint64_t> lowering_marker_propagated_total{0}");
+    bool a =
+        contains(om, "std::atomic<std::uint64_t> ir_macro_introduced_inlined_skipped_total{0}");
+    bool b = contains(om, "std::atomic<std::uint64_t> lowering_marker_propagated_total{0}");
     if (!a || !b) {
         std::println("FAIL: 2 new atomic counters missing in observability_metrics.h");
         return false;
@@ -129,10 +127,9 @@ bool check_metric_slots_ac4a() {
 bool check_metric_xmacros_ac4b() {
     std::println("\n--- AC4b: 2 X-macro fields in compiler_metrics_fields.inc ---");
     std::string fields = read_file("src/compiler/compiler_metrics_fields.inc");
-    bool a = contains(fields,
-                     "AURA_COMPILER_METRICS_FIELD(ir_macro_introduced_inlined_skipped_total)");
-    bool b = contains(fields,
-                     "AURA_COMPILER_METRICS_FIELD(lowering_marker_propagated_total)");
+    bool a =
+        contains(fields, "AURA_COMPILER_METRICS_FIELD(ir_macro_introduced_inlined_skipped_total)");
+    bool b = contains(fields, "AURA_COMPILER_METRICS_FIELD(lowering_marker_propagated_total)");
     if (!a || !b) {
         std::println("FAIL: 2 X-macro fields missing");
         return false;
@@ -146,13 +143,12 @@ bool check_metric_bumpers_getters_ac4c() {
     std::string ixx = read_file("src/compiler/evaluator.ixx");
     bool ba = contains(ixx, "void bump_ir_macro_introduced_inlined_skipped_total()");
     bool bb = contains(ixx, "void bump_lowering_marker_propagated_total()");
-    bool ga = contains(ixx,
-                      "std::uint64_t ir_macro_introduced_inlined_skipped_total() const noexcept");
-    bool gb = contains(ixx,
-                      "std::uint64_t lowering_marker_propagated_total() const noexcept");
+    bool ga =
+        contains(ixx, "std::uint64_t ir_macro_introduced_inlined_skipped_total() const noexcept");
+    bool gb = contains(ixx, "std::uint64_t lowering_marker_propagated_total() const noexcept");
     if (!ba || !bb || !ga || !gb) {
-        std::println("FAIL: bump_/getter pairs missing (bump_a={} bump_b={} get_a={} get_b={})",
-                     ba, bb, ga, gb);
+        std::println("FAIL: bump_/getter pairs missing (bump_a={} bump_b={} get_a={} get_b={})", ba,
+                     bb, ga, gb);
         return false;
     }
     std::println("OK: 2 bump_/getter pairs declared in evaluator.ixx");
@@ -189,14 +185,14 @@ bool check_lowering_wire_up_ac4e() {
     std::string low = read_file("src/compiler/lowering.ixx");
     std::size_t count = 0;
     std::size_t pos = 0;
-    while ((pos = low.find("bump_lowering_marker_propagated_total()", pos)) !=
-           std::string::npos) {
+    while ((pos = low.find("bump_lowering_marker_propagated_total()", pos)) != std::string::npos) {
         ++count;
         ++pos;
     }
     if (count < 2) {
-        std::println("FAIL: lowering.ixx bump_lowering_marker_propagated_total count={} (expect >= 2)",
-                     count);
+        std::println(
+            "FAIL: lowering.ixx bump_lowering_marker_propagated_total count={} (expect >= 2)",
+            count);
         return false;
     }
     std::println("OK: lowering.ixx wires 2 paired bumps (AoS + SoA dual-emit)");
@@ -236,7 +232,7 @@ bool check_baseline_ac6(CompilerService& cs) {
     return true;
 }
 
-}  // namespace aura_1644_detail
+} // namespace aura_1644_detail
 
 int main() {
     using namespace aura_1644_detail;
@@ -245,20 +241,30 @@ int main() {
 
     // AC1 + AC2 are predecessor-covered; AC3 + AC4 are fresh work;
     // AC5 is predecessor-covered; AC6 is the integration smoke.
-    if (!check_lowering_marker_propagation_ac1())        rc = 1;
-    if (!check_inline_pass_respect_macro_hygiene_default_ac2()) rc = 1;
-    if (!check_query_ir_marker_stats_iterates_ir_ac3())  rc = 1;
-    if (!check_metric_slots_ac4a())                       rc = 1;
-    if (!check_metric_xmacros_ac4b())                     rc = 1;
-    if (!check_metric_bumpers_getters_ac4c())             rc = 1;
-    if (!check_pass_manager_wire_up_ac4d())               rc = 1;
-    if (!check_lowering_wire_up_ac4e())                   rc = 1;
-    if (!check_predecessor_test_files_ac5())              rc = 1;
+    if (!check_lowering_marker_propagation_ac1())
+        rc = 1;
+    if (!check_inline_pass_respect_macro_hygiene_default_ac2())
+        rc = 1;
+    if (!check_query_ir_marker_stats_iterates_ir_ac3())
+        rc = 1;
+    if (!check_metric_slots_ac4a())
+        rc = 1;
+    if (!check_metric_xmacros_ac4b())
+        rc = 1;
+    if (!check_metric_bumpers_getters_ac4c())
+        rc = 1;
+    if (!check_pass_manager_wire_up_ac4d())
+        rc = 1;
+    if (!check_lowering_wire_up_ac4e())
+        rc = 1;
+    if (!check_predecessor_test_files_ac5())
+        rc = 1;
 
     // AC6 needs a live CompilerService for set-code/eval-current round-trip.
     if (rc == 0) {
         CompilerService cs;
-        if (!check_baseline_ac6(cs)) rc = 1;
+        if (!check_baseline_ac6(cs))
+            rc = 1;
     }
 
     if (rc == 0) {

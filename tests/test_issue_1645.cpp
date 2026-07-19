@@ -45,7 +45,8 @@ using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -57,13 +58,11 @@ bool check_phase1_wire_ups_ac1() {
     std::println("\n--- AC1 (Phase 1 wire-ups in evaluator_fiber_mutation.cpp) ---");
     std::string efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     // cross_cow_provenance_enforced refresh site paired legacy/new bump.
-    bool wired_cross_cow =
-        contains(efm, "bump_cross_cow_invalidations") &&
-        contains(efm, "evaluator_fiber_mutation.cpp") == false;  // sanity
+    bool wired_cross_cow = contains(efm, "bump_cross_cow_invalidations") &&
+                           contains(efm, "evaluator_fiber_mutation.cpp") == false; // sanity
     // StableNodeRef validate_or_refresh paired bump.
-    bool wired_stable_ref =
-        contains(efm, "bump_stable_ref_cross_layer_mismatch") &&
-        contains(efm, "Evaluator::yield_hook_evaluator()");
+    bool wired_stable_ref = contains(efm, "bump_stable_ref_cross_layer_mismatch") &&
+                            contains(efm, "Evaluator::yield_hook_evaluator()");
     if (!wired_cross_cow || !wired_stable_ref) {
         std::println("FAIL: Phase 1 wire-ups missing "
                      "(cross_cow={} stable_ref={})",
@@ -144,26 +143,33 @@ bool check_baseline_ac6(CompilerService& cs) {
     return true;
 }
 
-}  // namespace aura_1645_detail
+} // namespace aura_1645_detail
 
 int main() {
     using namespace aura_1645_detail;
 
     int rc = 0;
 
-    if (!check_phase1_wire_ups_ac1())            rc = 1;
-    if (!check_dead_bump_rate_linter_ac2())      rc = 1;
-    if (!check_audit_script_present_ac2())       rc = 1;
-    if (!check_existing_stability_stats_queries_return_real_counters_ac3()) rc = 1;
-    if (!check_design_doc_present())             rc = 1;
+    if (!check_phase1_wire_ups_ac1())
+        rc = 1;
+    if (!check_dead_bump_rate_linter_ac2())
+        rc = 1;
+    if (!check_audit_script_present_ac2())
+        rc = 1;
+    if (!check_existing_stability_stats_queries_return_real_counters_ac3())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         CompilerService cs;
-        if (!check_baseline_ac6(cs)) rc = 1;
+        if (!check_baseline_ac6(cs))
+            rc = 1;
     }
 
     if (rc == 0) {
-        std::println("\n#1645 Phase 1 — all ACs green ✅ (Phase 2+: queue ~50+ wire-ups to bring rate < 10%)");
+        std::println("\n#1645 Phase 1 — all ACs green ✅ (Phase 2+: queue ~50+ wire-ups to bring "
+                     "rate < 10%)");
     } else {
         std::println("\n#1645 Phase 1 — some ACs FAILED ❌");
     }
