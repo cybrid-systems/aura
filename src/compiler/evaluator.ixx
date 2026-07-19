@@ -2028,8 +2028,12 @@ public:
         workspace_flat_ = f;
         // Issue #1419: re-stamp agent fingerprint onto the new
         // workspace so subsequent mutations inherit the author.
-        if (f && current_agent_fingerprint_ != 0)
-            f->set_mutation_author_fingerprint(current_agent_fingerprint_);
+        if (f) {
+            const auto fp =
+                current_agent_fingerprint_.load(std::memory_order_acquire); // Issue #1730
+            if (fp != 0)
+                f->set_mutation_author_fingerprint(fp);
+        }
         // Issue #211: invalidate the (tag, arity) index
         // when the workspace changes. The index is keyed
         // by node positions in the OLD workspace, which
@@ -2061,13 +2065,15 @@ public:
     // 0 = system (default). Non-zero = hash(agent_id). Propagated to the
     // workspace FlatAST provenance context so every add_mutation stamps
     // the author. Used by TypedTransactionGuard + (mutate:set-agent-fingerprint).
+    // Issue #1730: atomic release/acquire — concurrent fibers race on
+    // plain uint64 read/write of author identity.
     void set_current_agent_fingerprint(std::uint64_t fp) noexcept {
-        current_agent_fingerprint_ = fp;
+        current_agent_fingerprint_.store(fp, std::memory_order_release);
         if (workspace_flat_)
             workspace_flat_->set_mutation_author_fingerprint(fp);
     }
     [[nodiscard]] std::uint64_t current_agent_fingerprint() const noexcept {
-        return current_agent_fingerprint_;
+        return current_agent_fingerprint_.load(std::memory_order_acquire);
     }
 
     // Set the AST/pool that source-reading primitives (current-source) read
@@ -2935,8 +2941,9 @@ private:
         nullptr; // for mutate:* primitives (set via set_flat_pool or eval_flat)
     ast::StringPool* mutate_target_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr; // EDSL persistent workspace (set via (set-code ...))
-    // Issue #1419: current AI agent fingerprint (0 = system).
-    std::uint64_t current_agent_fingerprint_ = 0;
+    // Issue #1419 / #1730: current AI agent fingerprint (0 = system).
+    // atomic: concurrent set/get across fibers (mutate:set-agent-fingerprint).
+    std::atomic<std::uint64_t> current_agent_fingerprint_{0};
     ast::StringPool* workspace_pool_ = nullptr;
     ast::FlatAST* current_flat_ =
         nullptr; // per-eval source-being-evaluated (set by CompilerService eval paths)
