@@ -1606,6 +1606,13 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
     // Issue #1345: stop-at Define/Interface/Module boundary prune hits.
     mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0};
+    // Issue #1651: calls to children_stable_span_view (zero-copy span-return alternative
+    // to children_stable's std::vector allocation). Bumped in the new method below;
+    // exposes the AI Agent hot-path `copy-avoided` count via (query:dirty-stats)
+    // composition (no new primitive per #1632 "原语最小化"). Pairs with the existing
+    // mark_dirty_early_exit_count_ (#1251) which covers the parallel dirty-side
+    // zero-allocation optimization surface.
+    mutable std::atomic<std::uint64_t> children_stable_span_calls_total_{0};
     // Issue #1348: auto soft-compact on atomic batch commit.
     mutable std::atomic<std::uint64_t> auto_compact_on_commit_count_{0};
     // Issue #1465: AST-level dirty short-circuit API surface.
@@ -7691,6 +7698,37 @@ public:
             out.push_back(make_ref(cid));
         }
         return out;
+    }
+
+    // Issue #1651: zero-copy span-return variant of children_stable (Task1 review 建议 #4).
+    // Returns std::span<const StableNodeRef> over a thread-local pinned buffer of StableNodeRef
+    // instead of std::vector<StableNodeRef>. Bumps children_stable_span_calls_total_ on every
+    // call (observability surface for Agent's `copy-avoided` count; pairs with the dirty-side
+    // mark_dirty_early_exit_count_ from #1251).
+    //
+    // The thread_local buffer is sized lazily at first call (PersistentChildVector pattern),
+    // cleared, then populated by make_ref over a narrowed index range. The returned span is
+    // valid until the next call to this method on the SAME thread.
+    //
+    // Prefer children_stable_span_view over children_stable in AI hot paths (focused subtree
+    // mutate + query loops, EDSL navigation); reserve children_stable for boundary crossings
+    // where the vector must outlive the caller's frame. NULL_NODE children are filtered out
+    // (same as children_stable). Out-of-range ids return an empty span (no buffer mutation).
+    [[nodiscard]] std::span<const StableNodeRef> children_stable_span_view(NodeId id) const {
+        children_stable_span_calls_total_.fetch_add(1, std::memory_order_relaxed);
+        if (id >= children_.size())
+            return {};
+        const auto& pcv = children_[id];
+        thread_local std::vector<StableNodeRef> buf;
+        buf.clear();
+        buf.reserve(pcv.size());
+        for (std::size_t i = 0; i < pcv.size(); ++i) {
+            auto cid = pcv[i];
+            if (cid == NULL_NODE)
+                continue;
+            buf.push_back(make_ref(cid));
+        }
+        return {buf.data(), buf.size()};
     }
 
     // Issue #398: zero-allocation iteration over stable
