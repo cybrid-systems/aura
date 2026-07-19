@@ -3257,7 +3257,9 @@ public:
     // If live_mask is empty (no entries), the compact is
     // a no-op and pair_remap_ is rebuilt as identity
     // (all pairs treated as live).
-    [[nodiscard]] std::int64_t compact_pairs(const std::vector<bool>& live_mask);
+    // Issue #1757: return std::size_t (count semantic) matching
+    // compact_env_frames — not signed int64_t.
+    [[nodiscard]] std::size_t compact_pairs(const std::vector<bool>& live_mask);
     void clear_pair_remap() noexcept { pair_remap_.clear(); }
     // Walk the parent chain starting from `start`, calling
     // `f(EnvId, const EnvFrame&)` for each frame including

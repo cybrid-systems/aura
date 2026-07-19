@@ -54,7 +54,7 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// Issue #206: Evaluator::compact_pairs. Compacts the
+// Issue #206 / #1757: Evaluator::compact_pairs. Compacts the
 // pairs_ arena, building a remap table for stable id
 // resolution.
 //
@@ -63,7 +63,9 @@ using types::make_void;
 // in `live_mask`) are skipped and their old index gets
 // remap to -1.
 //
-// Returns the number of pairs after compact.
+// Returns the number of pairs after compact as std::size_t
+// (Issue #1757 — matches compact_env_frames count semantic;
+// was signed int64_t).
 //
 // The remap table is sized to the OLD pairs_ size, even
 // after compact (which shrinks pairs_). This is by
@@ -71,7 +73,7 @@ using types::make_void;
 // MutationRecord) might still be in [0, old_size). The
 // remap tells us if that id is live (and what its new
 // index is) or freed (-1).
-std::int64_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
+std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
     const std::size_t n_old = pairs_.size();
     pair_remap_.clear();
     pair_remap_.reserve(n_old);
@@ -79,7 +81,7 @@ std::int64_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
     // move-semantics to avoid copies where possible.
     std::pmr::vector<Pair> new_pairs{&runtime_resource_};
     new_pairs.reserve(n_old); // upper bound
-    std::int64_t new_idx = 0;
+    std::int64_t new_idx = 0; // remap entries are signed (-1 = dead)
     for (std::size_t i = 0; i < n_old; ++i) {
         // If live_mask is empty, treat all as live.
         // If live_mask is sized to n_old, use the bit.
@@ -96,7 +98,7 @@ std::int64_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
         }
     }
     pairs_ = std::move(new_pairs);
-    return static_cast<std::int64_t>(pairs_.size());
+    return pairs_.size();
 }
 // ── GC root registration (Issue #113) ──────────────────────────
 //
