@@ -161,7 +161,6 @@
     "test_issue_430_arena_compaction",
     "test_issue_431_cxx26",
     "test_issue_440_edsl_readiness",
-    "test_issue_442_seva_demo",
     "test_issue_444_strategy_evolution",
     "test_issue_445_openclaw_integration",
     "test_issue_452_aot_hot_update",
