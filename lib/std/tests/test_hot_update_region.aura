@@ -1,7 +1,7 @@
 ; lib/std/tests/test_hot_update_region.aura — Issue #1370
 
 (require "std/hot-update" all:)
-(require "std/hot-update/region" all:)
+(require "std/hot-update-region" all:)
 
 (define (test-hot-update-region)
   (begin

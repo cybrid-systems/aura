@@ -1,7 +1,7 @@
 ; lib/std/tests/test_hot_update_monitor.aura — Issue #1370
 
 (require "std/hot-update" all:)
-(require "std/hot-update/monitor" all:)
+(require "std/hot-update-monitor" all:)
 
 (define (test-hot-update-monitor)
   (let* ((hits 0)

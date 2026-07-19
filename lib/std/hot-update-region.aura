@@ -1,7 +1,11 @@
-; lib/std/hot-update/region.aura — Issue #1370
+; lib/std/hot-update-region.aura — Issue #1370
 ; Multi-agent region isolation helpers.
 ;
-; (require "std/hot-update/region" all:)
+; (require "std/hot-update-region" all:)
+;
+; Flattened from lib/std/hot-update/region.aura per Anqi 2026-07-20
+; directive wave 15 (aura philosophy: flat directory structure, no
+; multi-file subdirs).
 
 (export region:own-mask
         region:isolate!
