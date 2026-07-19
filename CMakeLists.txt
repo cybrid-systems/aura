@@ -3350,7 +3350,6 @@ set(_AURA_BUNDLE_MEMBER_STANDALONES
   test_issue_430_arena_compaction
   test_issue_431_cxx26
   test_issue_440_edsl_readiness
-  test_issue_442_seva_demo
   test_issue_444_strategy_evolution
   test_issue_445_openclaw_integration
   test_issue_452_aot_hot_update
@@ -3667,16 +3666,12 @@ aura_issue_test_link_llvm_jit(test_issue_431_cxx26)
 aura_add_issue_test(test_issue_440_edsl_readiness)
 aura_issue_test_link_llvm_jit(test_issue_440_edsl_readiness)
 
-# Issue #442: SEVA Demo end-to-end scaffolding. The full
-# scope is multi-day (real SystemVerilog FIFO + iverilog
-# integration + testbench generation + autonomous bug-fix
-# + docs + screenshots); scope-limited close ships the
-# AURA-DEMO foundation: fifo_dut.aura + seva_demo.aura +
-# tests/test_issue_442_seva_demo.cpp + demos/seva/README.md.
-# No new primitives required — uses existing verify:* (#437,
-# #469), mutate:*, query:* primitives + the #440 aggregator.
-aura_add_issue_test(test_issue_442_seva_demo)
-aura_issue_test_link_llvm_jit(test_issue_442_seva_demo)
+# Issue #442: SEVA Demo end-to-end scaffolding removed per
+# Anqi 2026-07-19 directive (aura philosophy, no demos). The
+# SEVA verification primitives (seva:achieve-coverage,
+# seva:fix-reset-bugs, seva:generate-regression,
+# seva:approve-mutation + query:seva-audit-log) remain
+# shipped per Issue #445 (#444 strategy evolution controller).
 
 # Issue #444: SEVA Demo coverage-driven mutation strategy
 # evolution controller. Full scope is multi-week (pheromone
@@ -3703,23 +3698,14 @@ aura_issue_test_link_llvm_jit(test_issue_444_strategy_evolution)
 #     seva:fix-reset-bugs, seva:generate-regression,
 #     seva:approve-mutation)
 #   - (query:seva-audit-log) audit trail primitive
-#   - demos/seva/openclaw-skill/seva_skill.py — example
-#     OpenClaw skill showing the integration shape
 #   - (stats:count) 44 → 45
 aura_add_issue_test(test_issue_445_openclaw_integration)
 aura_issue_test_link_llvm_jit(test_issue_445_openclaw_integration)
 
-# Issue #446: SEVA docs + tutorial + metrics. Full scope:
-# docs/demos/seva.md + tutorial + metrics collection +
-# README update. Scope-limited close ships the DOCS +
-# METRICS layer:
-#   - docs/demos/seva.md (architecture + how-to + primitives)
-#   - demos/seva/TUTORIAL.md (step-by-step walkthrough)
-#   - README.md (Demos section pointing to SEVA — docs/demos/seva.md
-#     removed per Anqi 2026-07-19 directive; the README Demos
-#     section may also be cleaned in a future wave)
-#   - (seva:run-demo-with-metrics) 6-field hash primitive
-#   - (stats:count) 45 → 46
+# Issue #446: SEVA docs + tutorial + metrics removed per Anqi
+# 2026-07-19 directive (aura philosophy, no docs + no demos).
+# The (seva:run-demo-with-metrics) primitive + (stats:count)
+# surface remain shipped via other tests.
 # test_issue_446_seva_docs_metrics was deleted as part of the docs/
 # removal wave (Anqi 2026-07-19 directive); source-driven ACs for
 # SEVA hash primitive + stats:count remain authoritative via the
