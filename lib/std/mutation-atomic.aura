@@ -1,9 +1,13 @@
-; lib/std/mutation/atomic.aura — Issue #1442 convenience over (typed-mutate-atomic)
+; lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic)
 ;
-; (require "std/mutation/atomic" all:)
+; (require "std/mutation-atomic" all:)
 ;
 ; Wraps the engine primitive for Agent / app code. Prefer this module
 ; when composing lists of mutation sexprs in Aura.
+;
+; Renamed from lib/std/mutation/atomic.aura per Anqi 2026-07-20 directive
+; wave 14 (aura philosophy: flat directory structure, no single-file
+; subdirs — the mutation/ directory contained only this one file).
 
 (export typed-mutate-atomic-all)
 
