@@ -834,10 +834,10 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     }
     // Issue #418: dual-path consistency probe on materialize.
     ensure_envframe_dual_path_consistency(fr);
-    // Issue #1269: enforce dual-path + version stamp on every
-    // materialize path — refresh stale frames before binding walk
-    // so legacy bindings_ cannot bypass SymId version checks.
-    if (is_env_frame_stale(cl.env_id)) {
+    // Issue #1269 / #1754: enforce dual-path + version stamp on every
+    // materialize path — refresh only when the frame exists and is
+    // version-stale (not NULL/OOB — those have no bindings to refresh).
+    if (!is_env_frame_invalid_id(cl.env_id) && is_env_frame_stale(cl.env_id)) {
         refresh_stale_frame_in_walk(cl.env_id, "materialize_call_env");
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->envframe_dualpath_materialize_refresh.fetch_add(1, std::memory_order_relaxed);
@@ -1092,14 +1092,19 @@ std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
     return it->second;
 }
 
-// Issue #242: is_env_frame_stale — true if the frame's
-// stamped version is older than the current defuse_version_
-// (i.e. captured before a mutation that may have invalidated
-// the captured scope). Returns true for invalid ids as a
-// safety net so callers can treat invalid frames as stale.
+// Issue #242 / #1754: is_env_frame_stale — true if the frame
+// exists AND its stamped version is older than the current
+// defuse_version_ (captured before a mutation that may have
+// invalidated the captured scope).
+//
+// Issue #1754: NULL / OOB ids return false (no frame exists —
+// not "stale"). Callers that need the old defensive combined
+// check should use is_env_frame_invalid_id(id) ||
+// is_env_frame_invalid(id) || is_env_frame_stale(id), or the
+// existing dual patterns already used on apply_closure paths.
 bool Evaluator::is_env_frame_stale(EnvId id) const {
-    if (id == NULL_ENV_ID || id >= env_frames_.size())
-        return true;
+    if (is_env_frame_invalid_id(id))
+        return false;
     // env_frames_ is a deque guarded by env_frames_mtx_; a
     // shared_lock keeps the frame alive across the load.
     std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);

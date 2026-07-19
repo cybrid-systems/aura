@@ -2937,12 +2937,19 @@ public:
     // < defuse_version_ may have inconsistent bindings — the
     // captured scope was mutated after the closure was constructed.
     //
-    // Returns true if the frame is stale (or id is invalid — the
-    // caller's safety net), false if the frame is fresh. Callers
-    // can then choose to log a warning + bump the frame's version_
-    // (so subsequent reads see it as fresh) or re-capture the
-    // closure against a fresh env.
+    // Issue #1754: returns true ONLY when the frame exists AND
+    // version_ < defuse_version_. NULL / OOB ids return false —
+    // use is_env_frame_invalid_id() for that case (no frame, not
+    // "stale"). Terminal INVALID_VERSION is is_env_frame_invalid().
+    // Call sites that need any of the three: check invalid_id /
+    // invalid first, then stale.
     bool is_env_frame_stale(EnvId id) const;
+    // Issue #1754: true if id is NULL_ENV_ID or OOB (frame does not
+    // exist). Distinct from is_env_frame_invalid (INVALID_VERSION
+    // sentinel on a live slot) and is_env_frame_stale (version drift).
+    [[nodiscard]] bool is_env_frame_invalid_id(EnvId id) const noexcept {
+        return id == NULL_ENV_ID || id >= env_frames_.size();
+    }
     // Issue #1478 / #1539 / #1542: linear post-mutate enforcement
     // (real per-cell scan via bindings_linear_ownership_state_).
     // Parallel to is_env_frame_stale. Per-frame check that captured
@@ -2990,8 +2997,10 @@ public:
     // doomed transaction that was rolled back via panic
     // checkpoint restore — their bindings may reference AST
     // nodes / pool strings that no longer exist. Returning
-    // false for invalid ids is the same safety net as
-    // is_env_frame_stale (treat invalid as the worst case).
+    // false for invalid ids is a safety net (NULL/OOB treated as
+    // unusable). Issue #1754: prefer is_env_frame_invalid_id for the
+    // NULL/OOB case when distinguishing "no frame" from "terminal
+    // INVALID_VERSION on a live slot".
     [[nodiscard]] bool is_env_frame_invalid(EnvId id) const;
     // Issue #356: invalidate_post_rollback_env_frames — mark
     // doomed frames INVALID_VERSION without shrinking the deque

@@ -111,8 +111,11 @@ bool test_stale_detection() {
     ev.bump_defuse_version_for_test();
     CHECK(ev.is_env_frame_stale(id), "frame is stale after defuse_version_ bump");
     // Invalid id: treated as stale (defensive).
-    CHECK(ev.is_env_frame_stale(NULL_ENV_ID), "NULL_ENV_ID is stale (defensive)");
-    CHECK(ev.is_env_frame_stale(999999), "out-of-range id is stale (defensive)");
+    // Issue #1754: NULL/OOB → invalid_id, not version-stale.
+    CHECK(ev.is_env_frame_invalid_id(NULL_ENV_ID), "NULL_ENV_ID is invalid_id");
+    CHECK(ev.is_env_frame_invalid_id(999999), "out-of-range is invalid_id");
+    CHECK(!ev.is_env_frame_stale(NULL_ENV_ID), "NULL_ENV_ID is not version-stale");
+    CHECK(!ev.is_env_frame_stale(999999), "out-of-range is not version-stale");
     return true;
 }
 
