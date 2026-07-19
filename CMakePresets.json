@@ -20,32 +20,8 @@
             }
         },
         {
-            "name": "macos",
-            "displayName": "macOS Debug (Ninja, Homebrew GCC 16)",
-            "description": "Builds the core evaluator + REPL on macOS. serve-async (fiber scheduler) is disabled because macOS lacks eventfd/epoll. Requires: brew install gcc@16 cmake ninja",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build-mac",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_COMPILER": "gcc-16",
-                "CMAKE_CXX_COMPILER": "g++-16"
-            }
-        },
-        {
-            "name": "macos-release",
-            "displayName": "macOS Release (Ninja, Homebrew GCC 16)",
-            "description": "Builds the core evaluator + REPL on macOS. serve-async (fiber scheduler) is disabled because macOS lacks eventfd/epoll. Requires: brew install gcc@16 cmake ninja",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/build-mac",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_COMPILER": "gcc-16",
-                "CMAKE_CXX_COMPILER": "g++-16"
-            }
-        },
-        {
             "name": "asan",
-            "displayName": "AddressSanitizer (Debug, Ninja, GCC 16) — Issue #299",
+            "displayName": "AddressSanitizer (Debug, Ninja, GCC 16) \u2014 Issue #299",
             "description": "AddressSanitizer-instrumented build. Use for memory safety: UAF, double-free, OOB, leaks. Pairs with: cmake --build --preset asan",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build_asan",
@@ -59,7 +35,7 @@
         },
         {
             "name": "ubsan",
-            "displayName": "UndefinedBehaviorSanitizer (Debug, Ninja, GCC 16) — Issue #299",
+            "displayName": "UndefinedBehaviorSanitizer (Debug, Ninja, GCC 16) \u2014 Issue #299",
             "description": "UBSan-instrumented build. Use for UB detection: signed overflow, shift OOB, null deref, type confusion, vptr. Pairs with: cmake --build --preset ubsan",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build_ubsan",
@@ -73,7 +49,7 @@
         },
         {
             "name": "repro",
-            "displayName": "Reproducible Release (Ninja, GCC 16) — Issue #675",
+            "displayName": "Reproducible Release (Ninja, GCC 16) \u2014 Issue #675",
             "description": "Hermetic Release build with SOURCE_DATE_EPOCH, prefix maps, fixed random seed, and --build-id=none. Pairs with: ./build.py repro",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build_repro",
@@ -91,7 +67,7 @@
         },
         {
             "name": "tsan",
-            "displayName": "ThreadSanitizer (Debug, Ninja, GCC 16) — Issue #299",
+            "displayName": "ThreadSanitizer (Debug, Ninja, GCC 16) \u2014 Issue #299",
             "description": "ThreadSanitizer-instrumented build. Use for data race detection in fibers and concurrent mutate/query. -O0 forced (TSan produces false positives at -O2/-O3). Incompatible with ASan. Pairs with: cmake --build --preset tsan",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build_tsan",
@@ -114,14 +90,6 @@
             "configurePreset": "release"
         },
         {
-            "name": "macos",
-            "configurePreset": "macos"
-        },
-        {
-            "name": "macos-release",
-            "configurePreset": "macos-release"
-        },
-        {
             "name": "asan",
             "configurePreset": "asan"
         },
@@ -142,10 +110,6 @@
         {
             "name": "default",
             "configurePreset": "default"
-        },
-        {
-            "name": "macos",
-            "configurePreset": "macos"
         }
     ]
 }
