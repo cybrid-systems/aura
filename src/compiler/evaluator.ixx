@@ -12672,7 +12672,26 @@ public:
     // avoided") under pthread robust-mutex semantics. Returns
     // true on acquire, false on contention — callers may
     // safely skip the read.
-    bool try_lock_workspace_shared() { return workspace_mtx_.try_lock_shared(); }
+    //
+    // Issue #1768: pair try_lock with lock_order TLS like the
+    // blocking lock_workspace_shared path. On failure, roll back
+    // on_acquire so depth does not under-report / leak.
+    bool try_lock_workspace_shared() {
+        aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+        if (workspace_mtx_.try_lock_shared())
+            return true;
+        aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+        return false;
+    }
+    // Issue #1768: non-blocking unique sibling for symmetry with
+    // lock_workspace_unique / try_lock_workspace_shared.
+    bool try_lock_workspace_unique() {
+        aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
+        if (workspace_mtx_.try_lock())
+            return true;
+        aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+        return false;
+    }
 
     // Issue #157 Phase 1: defuse_version_ accessor for the JIT
     // version check (aura_get_defuse_version in aura_jit_runtime.cpp).
