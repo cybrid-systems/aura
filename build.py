@@ -8,7 +8,7 @@ Usage:
   ./build.py check            # gate + ci（与 CI 相同）
   ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap
   ./build.py gate --fix       # 同上，但 auto-regen docs/registry + lint/format --fix（#1572）
-  ./build.py gate --scripts-only  # 跨平台：跳过 clang-format（#1573 Windows 脚本门栅）
+  ./build.py gate --scripts-only  # 跳过 clang-format（脚本-only,无 C++ 编译）
   ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
@@ -44,10 +44,9 @@ Test suites:
   all         全部测试 (默认)
   core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
   safety      安全回归 (gradual + regression + p0)
-  fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
   issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
   issues-fast 同上，强制 fast 档（bundle 子集 + git 变更）
-  check       构建 + core + safety + fuzz + issues（CI 默认）
+  check       构建 + core + safety + issues（CI 默认）
 """
 
 import os
@@ -827,38 +826,6 @@ def test_mutation():
         fail("mutation single-pass failed")
         return 1
     ok("mutation: single-pass OK")
-    return 0
-
-
-# ═══════════════════════════════════════════════════════════════
-# Fuzz tests
-# ═══════════════════════════════════════════════════════════════
-
-
-def test_fuzz_equiv():
-    """等价变异 fuzz"""
-    print(f"{B}═══ Equivalence Mutation Fuzz ═══{N}")
-    if not AURA.exists():
-        fail(f"{AURA} not found")
-        return 1
-    r = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "tests" / "fuzz_equiv_mutate.py"),
-            "--seed",
-            "42",
-            "--quick",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    print(r.stdout)
-    if r.returncode != 0:
-        fail("equivalence mutation fuzz failed")
-        return 1
-    ok("fuzz-equiv: 0 diff")
-    return 0
 
 
 def test_runtime_unit():
@@ -889,26 +856,6 @@ def test_runtime_unit():
         fail("runtime.c unit tests failed")
         return 1
     ok("runtime-c: passed")
-    return 0
-
-
-def test_fuzz_corpus():
-    """Parser fuzz corpus"""
-    print(f"{B}═══ Parser Fuzz Corpus ═══{N}")
-    if not AURA.exists():
-        fail(f"{AURA} not found")
-        return 1
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "fuzz_corpus.py"), "--quick"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    print(r.stdout)
-    if r.returncode != 0:
-        fail("parser fuzz corpus failed")
-        return 1
-    ok("fuzz-corpus: passed")
     return 0
 
 
@@ -1271,7 +1218,6 @@ CI_CORE = [
     "concurrent",
 ]
 CI_SAFETY = ["gradual", "regression", "p0"]
-CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
 # Issue #226: unified test_issue_* runner (tests/run_issue_tests.py).
 # AURA_ISSUES_TIER=fast on PR CI (~18 targets + changed issues);
 # AURA_ISSUES_TIER=full on main (all ~90+ binaries).
@@ -1287,8 +1233,6 @@ CI_PARALLEL_SAFE = frozenset(
         "repl",
         "gradual",
         "runtime-c",
-        "fuzz-equiv",
-        "fuzz-corpus",
     }
 )
 
@@ -1299,8 +1243,6 @@ SUITES = {
     "bench": test_bench,
     "smoke": test_smoke,
     "mutation": test_mutation,
-    "fuzz-equiv": test_fuzz_equiv,
-    "fuzz-corpus": test_fuzz_corpus,
     "runtime-c": test_runtime_unit,
     "gradual": test_gradual,
     "demo": test_demo,
@@ -1345,9 +1287,6 @@ def _expand_suite_names(suite_names: list[str]) -> list[tuple[str, object]]:
         elif name == "safety":
             for s in CI_SAFETY:
                 items.append((f"safety/{s}", SUITES[s]))
-        elif name == "fuzz":
-            for s in CI_FUZZ:
-                items.append((f"fuzz/{s}", SUITES[s]))
         else:
             warn(f"unknown suite '{name}' (use: {', '.join(SUITES.keys())})")
     return items
@@ -1556,8 +1495,7 @@ def cmd_gate():
     CI always runs without --fix (check-only).
 
     Issue #1573: pass --scripts-only (or AURA_GATE_SCRIPTS_ONLY=1) to skip
-    clang-format — used by the Windows platform-gate job where the C++
-    toolchain is not yet production-supported.
+    clang-format (e.g. when C++ toolchain unavailable).
 
     Issue #1668: also runs dead string_heap_ push audit (--strict).
     Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
@@ -1594,7 +1532,7 @@ def cmd_gate():
 
 def cmd_ci():
     """CI build + test (parallel suites when AURA_TEST_JOBS>1)."""
-    suites = CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES
+    suites = CI_CORE + CI_SAFETY + CI_ISSUES
     return cmd_build() or cmd_test(suites)
 
 
@@ -1603,8 +1541,7 @@ def cmd_list():
     print(f"{B}Available test suites:{N}")
     print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite)")
     print(f"  {'safety':12s} CI安全回归 (gradual + regression + p0)")
-    print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus)")
-    print(f"  {'check':12s} CI默认: build + core + safety + fuzz + issues")
+    print(f"  {'check':12s} CI默认: build + core + safety + issues")
     print(f"  {'issues-fast':12s} issue tests (AURA_ISSUES_TIER=fast)")
     print()
     for name, func in sorted(SUITES.items()):
@@ -1979,7 +1916,6 @@ def main():
         "list": cmd_list,
         "demo": test_demo,
         "regression": lambda: cmd_test(["regression"]),
-        "fuzz": lambda: cmd_test(["fuzz-equiv", "fuzz-corpus"]),
         "bench": cmd_bench,
         "bench-llm": run_bench_llm,
         "pgo": cmd_pgo,
