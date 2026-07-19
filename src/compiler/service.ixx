@@ -990,11 +990,14 @@ public:
         // If the InlinePass hasn't been run yet, both
         // counters are 0.
         evaluator_.set_get_inline_stats_fn([]() -> std::uint64_t {
-            std::uint64_t inlined =
-                static_cast<std::uint64_t>(aura::compiler::InlinePass::total_inlined());
-            std::uint64_t branch_aware = static_cast<std::uint64_t>(
-                aura::compiler::InlinePass::total_inlined_branch_aware());
-            return (branch_aware << 32) | (inlined & 0xFFFFFFFF);
+            // Issue #1784: pack as two uint32 halves (low=inlined,
+            // high=branch_aware). Consumers unpack via uint32_t.
+            const std::uint32_t inlined_u32 = static_cast<std::uint32_t>(
+                aura::compiler::InlinePass::total_inlined() & 0xFFFFFFFFu);
+            const std::uint32_t branch_aware_u32 = static_cast<std::uint32_t>(
+                aura::compiler::InlinePass::total_inlined_branch_aware() & 0xFFFFFFFFu);
+            return (static_cast<std::uint64_t>(branch_aware_u32) << 32) |
+                   static_cast<std::uint64_t>(inlined_u32);
         });
         // Issue #388: macro-hygiene skipped total (separate
         // getter so the packed uint64 layout stays unchanged).

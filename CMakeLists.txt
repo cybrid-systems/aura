@@ -5768,6 +5768,9 @@ aura_issue_test_link_llvm_jit(test_propagate_marker_cycle_guard_1782)
 # Issue #1783: marker/provenance metadata_mtx_ cross-fiber lock.
 aura_add_issue_test(test_marker_metadata_lock_1783)
 aura_issue_test_link_llvm_jit(test_marker_metadata_lock_1783)
+# Issue #1784: compile:inline-pass-stats unpack via uint32_t halves.
+aura_add_issue_test(test_inline_pass_stats_unpack_1784)
+aura_issue_test_link_llvm_jit(test_inline_pass_stats_unpack_1784)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

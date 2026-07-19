@@ -74,9 +74,18 @@ void CompilePrims::register_compile_p40(PrimRegistrar add, Evaluator& ev) {
             std::int64_t inlined = 0;
             std::int64_t branch_aware = 0;
             if (ev.get_inline_stats_fn_) {
-                std::uint64_t packed = ev.get_inline_stats_fn_();
-                inlined = static_cast<std::int64_t>(packed & 0xFFFFFFFF);
-                branch_aware = static_cast<std::int64_t>(packed >> 32);
+                // Issue #1784: unpack via uint32_t so each half is
+                // always non-negative when widened to int64_t.
+                // Direct static_cast<int64_t>(packed & 0xFFFFFFFF)
+                // is well-defined for uint64_t, but going through
+                // uint32_t makes the "no sign bit" contract explicit
+                // for agents / future refactors that might cast
+                // through int32_t by mistake.
+                const std::uint64_t packed = ev.get_inline_stats_fn_();
+                const std::uint32_t inlined_u32 = static_cast<std::uint32_t>(packed & 0xFFFFFFFFu);
+                const std::uint32_t branch_aware_u32 = static_cast<std::uint32_t>(packed >> 32);
+                inlined = static_cast<std::int64_t>(inlined_u32);
+                branch_aware = static_cast<std::int64_t>(branch_aware_u32);
             }
             std::int64_t macro_skipped = 0;
             if (ev.get_macro_hygiene_skipped_fn_) {
