@@ -1,3 +1,0 @@
-(define (list->set lst)
-  (let ((s (hash)))
-    (for-each (lambda (x) (hash-set! s x #t)) lst) s))

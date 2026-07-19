@@ -1,6 +1,0 @@
-(define (prime? n)
-  (if (< n 2) #f
-    (let loop ((i 2))
-      (if (> (* i i) n) #t
-        (if (= (modulo n i) 0) #f
-          (loop (+ i 1)))))))

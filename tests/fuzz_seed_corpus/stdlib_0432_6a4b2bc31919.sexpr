@@ -1,2 +1,0 @@
-(if (null? cs) -1
-;; hint:         (if (= (hash-ref counts (car cs)) 1) (car cs) (loop (cdr cs))))

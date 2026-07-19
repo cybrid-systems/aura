@@ -1,3 +1,0 @@
-(if (or (null? a) (null? b)) ()
-;; hint:     (cons (list (car a) (car b))
-;; hint:           (zip (cdr a) (cdr b))))

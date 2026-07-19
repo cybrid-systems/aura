@@ -1,6 +1,0 @@
-(define (string-downcase s)
-  (define (down c)
-    (if (and (>= c 65) (<= c 90))
-      (+ c 32)
-      c))
-  (list->string (map down (string->list s))))

@@ -1,1 +1,0 @@
-(display (try (car ()) (catch (e) "caught")))

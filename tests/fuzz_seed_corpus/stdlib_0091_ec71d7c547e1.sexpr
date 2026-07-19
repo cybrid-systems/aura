@@ -1,6 +1,0 @@
-(define (factors n)
-  (let loop ((i 2) (m (abs n)) (acc (list)))
-    (if (> i m) (reverse acc)
-      (if (= (modulo m i) 0)
-        (loop i (/ m i) (cons i acc))
-        (loop (+ i 1) m acc)))))

@@ -1,1 +1,0 @@
-(define (c2s c) (list->string (list c)))

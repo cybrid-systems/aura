@@ -1,8 +1,0 @@
-(define (vec:map f v)
-  (let* ((n (vector-length v))
-         (r (make-vector n 0)))
-    (let loop ((i 0))
-      (if (< i n)
-        (begin (vector-set! r i (f (vector-ref v i)))
-               (loop (+ i 1)))
-        r))))

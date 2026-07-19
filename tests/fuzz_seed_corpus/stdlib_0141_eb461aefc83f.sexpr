@@ -1,3 +1,0 @@
-(define (list-ref lst i)
-  (if (= i 0) (car lst)
-    (list-ref (cdr lst) (- i 1))))

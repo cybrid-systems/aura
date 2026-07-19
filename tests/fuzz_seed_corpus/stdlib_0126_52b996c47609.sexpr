@@ -1,4 +1,0 @@
-(define (iota n)
-  (let iter ((i 0) (acc (list)))
-    (if (>= i n) (reverse acc)
-      (iter (+ i 1) (cons i acc)))))

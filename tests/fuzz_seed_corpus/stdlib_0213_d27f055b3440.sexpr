@@ -1,2 +1,0 @@
-(define (stack->list s)
-  s)

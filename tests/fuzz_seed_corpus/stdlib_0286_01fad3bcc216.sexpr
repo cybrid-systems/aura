@@ -1,5 +1,0 @@
-(define (zip3 a b c)
-  (if (or (null? a) (null? b) (null? c))
-    (list)
-    (cons (list (car a) (car b) (car c))
-          (zip3 (cdr a) (cdr b) (cdr c)))))

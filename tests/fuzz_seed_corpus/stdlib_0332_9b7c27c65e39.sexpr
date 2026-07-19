@@ -1,1 +1,0 @@
-(display ((lambda ((: x Int)) (+ x 1)) 41))

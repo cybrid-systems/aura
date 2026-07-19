@@ -1,1 +1,0 @@
-(let ((x (cons 1 2))) (if (pair? x) (car x) 0))

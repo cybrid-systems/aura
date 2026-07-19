@@ -1,8 +1,0 @@
-(define (trie-keys trie)
-  (let collect ((node trie) (prefix "") (results (list)))
-    (hash-for-each node
-      (lambda (k v)
-        (if (equal? k '*)
-          (set! results (cons prefix results))
-          (collect v (string-append prefix (list->string (list k))) results))))
-    results))

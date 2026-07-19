@@ -1,4 +1,0 @@
-(define (find pred lst)
-  (if (null? lst) ()
-    (if (pred (car lst)) (car lst)
-      (find pred (cdr lst)))))

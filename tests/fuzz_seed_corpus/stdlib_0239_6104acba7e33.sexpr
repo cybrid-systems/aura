@@ -1,4 +1,0 @@
-(define (take-while pred lst)
-  (if (or (null? lst) (not (pred (car lst))))
-    (list)
-    (cons (car lst) (take-while pred (cdr lst)))))

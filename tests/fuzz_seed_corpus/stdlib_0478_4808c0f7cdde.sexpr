@@ -1,2 +1,0 @@
-(list (filter pred lst)
-;; hint:         (filter (lambda (x) (not (pred x))) lst))

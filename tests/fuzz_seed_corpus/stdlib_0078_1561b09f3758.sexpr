@@ -1,7 +1,0 @@
-(define (days-in-month y m)
-  (if (= m 2)
-    (if (leap-year? y) 29 28)
-    (if (= m 4) 30
-      (if (= m 6) 30
-        (if (= m 9) 30
-          (if (= m 11) 30 31))))))

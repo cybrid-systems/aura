@@ -1,1 +1,0 @@
-(display (+ (: x Int 1) 2))

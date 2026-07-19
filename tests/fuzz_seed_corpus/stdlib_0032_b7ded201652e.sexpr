@@ -1,1 +1,0 @@
-(and (null? a) (null? b))

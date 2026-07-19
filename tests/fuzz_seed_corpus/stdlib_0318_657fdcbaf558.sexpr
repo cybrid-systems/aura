@@ -1,3 +1,0 @@
-(define string-contains?
-  (lambda (text substr)
-    (not (= (string-index text substr 0) -1))))

@@ -1,1 +1,0 @@
-(define (vec:sub a b) (vec:zip - a b))

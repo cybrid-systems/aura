@@ -1,2 +1,0 @@
-(define (stack-push s elem)
-  (cons elem s))

@@ -1,2 +1,0 @@
-(define (string-take s n)
-  (substring s 0 (min n (string-length s))))

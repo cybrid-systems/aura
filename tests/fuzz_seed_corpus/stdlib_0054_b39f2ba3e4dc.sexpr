@@ -1,7 +1,0 @@
-(define (alist->hash alist)
-  (if (null? alist)
-      (hash)
-      (let ((h (hash)))
-        (for-each (lambda (kv)
-          (hash-set h (car kv) (car (cdr kv)))) alist)
-        h)))

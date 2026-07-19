@@ -1,6 +1,0 @@
-(define (sorted? lst)
-  (if (< (length lst) 2) #t
-    (let loop ((prev (car lst)) (rest (cdr lst)))
-      (if (null? rest) #t
-        (if (< (car rest) prev) #f
-          (loop (car rest) (cdr rest)))))))

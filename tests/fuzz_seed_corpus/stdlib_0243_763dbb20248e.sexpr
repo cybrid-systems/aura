@@ -1,2 +1,0 @@
-(define (tcp-recv socket maxlen)
-  (tcp-recv socket maxlen))

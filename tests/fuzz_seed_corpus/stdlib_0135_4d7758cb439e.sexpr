@@ -1,3 +1,0 @@
-(define (lcm a b)
-  (if (or (= a 0) (= b 0)) 0
-    (abs (* a (/ b (gcd a b))))))

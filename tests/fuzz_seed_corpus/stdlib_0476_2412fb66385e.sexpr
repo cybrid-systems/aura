@@ -1,8 +1,0 @@
-(let loop ((i 0))
-      (if (< i r)
-        (let row-loop ((j 0))
-          (if (< j c)
-            (begin (vector-set! (vector-ref t j) i (mat:ref m i j))
-                   (row-loop (+ j 1)))
-            (loop (+ i 1))))
-        t))

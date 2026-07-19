@@ -1,4 +1,0 @@
-(define (any? pred lst)
-  (if (null? lst) #f
-    (if (pred (car lst)) #t
-      (any? pred (cdr lst)))))

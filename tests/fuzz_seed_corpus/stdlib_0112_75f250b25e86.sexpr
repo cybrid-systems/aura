@@ -1,2 +1,0 @@
-(define (hash-get h k)
-  (hash-ref h k))

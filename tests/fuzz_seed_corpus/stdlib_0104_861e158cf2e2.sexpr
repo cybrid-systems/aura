@@ -1,4 +1,0 @@
-(define (foldr f init lst)
-  (if (null? lst)
-    init
-    (f (car lst) (foldr f init (cdr lst)))))

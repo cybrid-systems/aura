@@ -1,4 +1,0 @@
-(define (combinations n k)
-  (if (or (= k 0) (= k n)) 1
-    (+ (combinations (- n 1) (- k 1))
-       (combinations (- n 1) k))))

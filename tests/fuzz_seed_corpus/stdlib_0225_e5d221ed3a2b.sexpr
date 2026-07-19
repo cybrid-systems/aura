@@ -1,4 +1,0 @@
-(define (string-join strs sep)
-  (if (null? strs) ""
-    (if (null? (cdr strs)) (car strs)
-      (string-append (car strs) sep (string-join (cdr strs) sep)))))

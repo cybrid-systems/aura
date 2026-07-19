@@ -1,5 +1,0 @@
-(define (fibonacci n)
-  (if (< n 0) (error "fibonacci: negative")
-    (let loop ((i 0) (a 0) (b 1))
-      (if (= i n) a
-        (loop (+ i 1) b (+ a b))))))

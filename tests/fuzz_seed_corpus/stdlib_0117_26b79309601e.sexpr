@@ -1,5 +1,0 @@
-(define (hash-merge! target src)
-  (hash-keys-filter
-    (lambda (k) (hash-set! target k (hash-ref src k)))
-    src)
-  target)

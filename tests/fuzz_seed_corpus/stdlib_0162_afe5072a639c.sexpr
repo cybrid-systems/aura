@@ -1,3 +1,0 @@
-(define (min-list lst)
-  (if (null? lst) #f
-    (foldl min (car lst) (cdr lst))))

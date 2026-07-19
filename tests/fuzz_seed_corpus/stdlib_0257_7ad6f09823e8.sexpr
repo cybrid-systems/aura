@@ -1,6 +1,0 @@
-(define (trie-prefix? trie prefix)
-  (let loop ((node trie) (i 0))
-    (if (>= i (string-length prefix)) #t
-      (if (hash-has-key? node (string-ref prefix i))
-        (loop (hash-ref node (string-ref prefix i)) (+ i 1))
-        #f))))

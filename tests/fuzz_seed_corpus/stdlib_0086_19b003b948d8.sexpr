@@ -1,2 +1,0 @@
-(define (err path msg errors)
-  (cons (list path msg) errors))

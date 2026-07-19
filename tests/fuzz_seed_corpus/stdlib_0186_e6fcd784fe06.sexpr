@@ -1,2 +1,0 @@
-(define (queue-length q)
-  (length q))

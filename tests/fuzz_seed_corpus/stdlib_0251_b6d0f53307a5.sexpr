@@ -1,4 +1,0 @@
-(define (timestamp->iso-date t)
-  (string-append (number->string (timestamp->year t)) "-"
-    (pad2 (timestamp->month t)) "-"
-    (pad2 (timestamp->day t))))

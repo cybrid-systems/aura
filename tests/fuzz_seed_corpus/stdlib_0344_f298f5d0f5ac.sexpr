@@ -1,1 +1,0 @@
-(display (c-func -1 "strlen" "(String) -> Int" "hello"))

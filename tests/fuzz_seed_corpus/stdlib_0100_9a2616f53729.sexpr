@@ -1,5 +1,0 @@
-(define (find-index pred lst)
-  (let iter ((i 0) (rest lst))
-    (if (null? rest) -1
-      (if (pred (car rest)) i
-        (iter (+ i 1) (cdr rest))))))

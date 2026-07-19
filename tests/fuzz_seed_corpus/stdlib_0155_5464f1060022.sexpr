@@ -1,2 +1,0 @@
-(define (mean lst)
-  (/ (sum lst) (length lst)))

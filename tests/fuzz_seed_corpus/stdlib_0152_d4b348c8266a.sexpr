@@ -1,2 +1,0 @@
-(define (maybe-default d m)
-  (if (null? m) d m))

@@ -1,3 +1,0 @@
-(define (thrush-internal x fns)
-  (if (null? fns) x
-    ((car fns) (thrush-internal x (cdr fns)))))
