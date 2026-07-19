@@ -2198,6 +2198,8 @@ aura_issue_test_link_llvm_jit(test_issue_1904)
 # #1592/#1631 (post-steal refresh), #1626 (apply_closure dual-check).
 aura_add_issue_test(test_issue_1905)
 aura_issue_test_link_llvm_jit(test_issue_1905)
+aura_add_issue_test(test_issue_1907)
+aura_issue_test_link_llvm_jit(test_issue_1907)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 aura_add_issue_test(test_issue_1908)

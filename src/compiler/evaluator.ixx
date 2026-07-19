@@ -1403,6 +1403,80 @@ public:
             return m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #1907: reflect/EDSL bridge accessors backing the
+    // (engine:metrics "query:reflect-schema") + (mutate:validate-reflected)
+    // primitives + the post-mutation auto_validate + hygiene gate hook
+    // (aura_validate_reflected_post_mutation, called from
+    // flush_mutation_boundary outermost exit per Step 1 of the #1907 plan).
+    // Read-only on CompilerMetrics counters; bump sites live in
+    // aura_jit_bridge.cpp (post-mutation bridge hook) and in
+    // evaluator_primitives_query.cpp (primitive impls).
+    [[nodiscard]] std::uint64_t get_reflect_post_mutation_validate_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_post_mutation_validate_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_reflect_post_mutation_validate_fail_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_post_mutation_validate_fail_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_reflect_hygiene_macro_reject_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_hygiene_macro_reject_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_reflect_schema_query_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_schema_query_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_reflect_validate_reflected_query_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_validate_reflected_query_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_reflect_dirty_macro_nodes_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->reflect_dirty_macro_nodes_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    void bump_reflect_post_mutation_validate_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_post_mutation_validate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_reflect_post_mutation_validate_fail_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_post_mutation_validate_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_reflect_hygiene_macro_reject_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_hygiene_macro_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_reflect_schema_query_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_schema_query_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_reflect_validate_reflected_query_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_validate_reflected_query_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_reflect_dirty_macro_nodes_total(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->reflect_dirty_macro_nodes_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
     // Issue #1905: AOT incremental hot-update / invalidation loop
     // closure (#1046). 6 new counters backing the
     // (engine:metrics "query:aot-hot-update-stats") primitive.
