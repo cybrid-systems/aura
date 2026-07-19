@@ -711,6 +711,10 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
     // time"); real wall-time measurement is a follow-up
     // (would need a start/end timestamp pair).
     add("seva:run-demo-with-metrics", [&ev](const auto&) -> EvalValue {
+        // Issue #1841: compiler_metrics_ is non-owning (#1835
+        // ownership contract); active_strategy_ is under
+        // strategies_mtx_ (#1720/#1722). verify totals use
+        // snapshot_verify_dirty_totals (#1840).
         std::uint64_t iterations = ev.auto_evolve_cycle_count_;
         std::uint64_t mutations = 0;
         std::uint64_t mutations_success = 0;
@@ -720,7 +724,8 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
             mutations = m->atomic_batch_commits.load(std::memory_order_relaxed);
         }
         if (auto* ws = ev.workspace_flat()) {
-            verify_total = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total();
+            const auto snap = ws->snapshot_verify_dirty_totals();
+            verify_total = snap.assertion + snap.coverage;
             // mutations_success approximated as the
             // difference: total fixed - auto-evolve-fixed
             // is hard to compute without a per-mutation
