@@ -77,14 +77,23 @@ extern "C" std::uint64_t aura_get_aot_defuse_version(void) {
 // AuraClosure::bridge_epoch at aura_alloc_closure time. Mismatch
 // at aura_closure_call → return 0 (caller falls back via
 // aura_jit.cpp OpApply emit's deopt-to-interpreter path).
-static std::uint64_t g_current_bridge_epoch = 0;
+// Issue #1654: std::atomic<std::uint64_t> replaces the plain uint64_t to close
+// the C++ memory model data race. The previous plain uint64_t write/read pair
+// was UB per the C++ memory model — concurrent writes from
+// service.ixx::bump_bridge_epoch() and reads from lib/runtime.c's
+// aura_closure_call 2-check produced torn reads on weakly-ordered
+// architectures (ARM, POWER). The std::atomic release/acquire protocol
+// mirrors the #1476 dual-epoch primitive (already used elsewhere in
+// service.ixx) and gives the JIT-side 2-check the authoritative safety
+// gate it was supposed to have (#1485 C2-wire fix-up intent).
+static std::atomic<std::uint64_t> g_current_bridge_epoch{0};
 
 extern "C" void aura_set_current_bridge_epoch(std::uint64_t v) {
-    g_current_bridge_epoch = v;
+    g_current_bridge_epoch.store(v, std::memory_order_release);
 }
 
 extern "C" std::uint64_t aura_get_current_bridge_epoch(void) {
-    return g_current_bridge_epoch;
+    return g_current_bridge_epoch.load(std::memory_order_acquire);
 }
 
 // ── Issue #452: AOT hot-update counters (observable) ───────────

@@ -57,14 +57,20 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_defuse_version(void)
 // binaries that don't link aura_jit_bridge.cpp (test_spec_jit,
 // test_jit_*) still compile. Weak so production impl wins when
 // both are linked.
-static std::uint64_t g_current_bridge_epoch_stub = 0;
+// Issue #1654: std::atomic<std::uint64_t> replaces the plain uint64_t —
+// mirrors the production aura_jit_bridge.cpp fix (closes the C++ memory
+// model data race that defeated #1485's C2-wire fix-up intent on
+// weakly-ordered architectures). The stub atomicity is uniform with the
+// production impl so test binaries that don't link the production
+// impl still benefit from the same acq/rel protocol.
+static std::atomic<std::uint64_t> g_current_bridge_epoch_stub{0};
 
 extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_t v) {
-    g_current_bridge_epoch_stub = v;
+    g_current_bridge_epoch_stub.store(v, std::memory_order_release);
 }
 
 extern "C" __attribute__((weak)) std::uint64_t aura_get_current_bridge_epoch(void) {
-    return g_current_bridge_epoch_stub;
+    return g_current_bridge_epoch_stub.load(std::memory_order_acquire);
 }
 
 // Issue #1485 C2: per-closure provenance stubs. Production impl is in

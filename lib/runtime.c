@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 
 // ── Pointer tagging: value representation ──────────────────
@@ -51,12 +52,12 @@ unsigned long long aura_get_module_version(void) {
 // stays 0, the check always passes vacuously. This is correct
 // for standalone AOT — the safety net is only meaningful under
 // the host's concurrent-mutation regime.
-static unsigned long long g_current_bridge_epoch = 0;
+static _Atomic unsigned long long g_current_bridge_epoch = 0;
 void aura_set_current_bridge_epoch(unsigned long long v) {
-    g_current_bridge_epoch = v;
+    atomic_store_explicit(&g_current_bridge_epoch, v, memory_order_release);
 }
 unsigned long long aura_get_current_bridge_epoch(void) {
-    return g_current_bridge_epoch;
+    return atomic_load_explicit(&g_current_bridge_epoch, memory_order_acquire);
 }
 
 // Issue #1485 C2: standalone-AOT stubs for defuse_version (same
