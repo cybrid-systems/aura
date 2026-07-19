@@ -598,7 +598,16 @@ endif()
 # only wires modules + the per-test sources a few callers still need
 # (observability headers; JIT is aura_jit_test_objects).
 function(aura_add_issue_test NAME)
-    # Source: tests/domain/<NAME>.cpp (preferred) or tests/<NAME>.cpp
+    # Source resolution order (Anqi 2026-07-20 directive "ship in order"):
+    #   1. tests/issues/<NAME>.cpp    (legacy per-issue file pattern)
+    #   2. tests/domain/<NAME>.cpp     (preferred for new domain files)
+    #   3. tests/<NAME>.cpp           (fallback)
+    # NEW ISSUES (Anqi 2026-07-20): prefer adding to one of the 5 domain files
+    # at tests/ root (test_fiber / test_ir / test_observability / test_mutation
+    # / test_persist) instead of creating new tests/issues/test_issue_NNN.cpp.
+    # The pre-commit hook nudges this; see tests/templates/test_issue_pattern.cpp
+    # header for the full convention + tests/domain_classification.md for the
+    # migration map.
     aura_resolve_test_cpp(${NAME} _aura_test_src)
     add_executable(${NAME} ${_aura_test_src})
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)

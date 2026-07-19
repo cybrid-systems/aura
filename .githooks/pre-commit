@@ -254,6 +254,43 @@ if [ -n "$test_registry_files" ]; then
     echo "pre-commit: test-registry verify (--check) clean ✓"
 fi
 
+# ── Anqi 2026-07-20 directive: test_issue_*.cpp habit change nudge ──
+# Per aura convention (see tests/templates/test_issue_pattern.cpp header),
+# agents should add NEW issue tests to the 5 domain files in tests/ root
+# (test_fiber / test_ir / test_observability / test_mutation / test_persist)
+# instead of reflexively creating new tests/test_issue_NNN.cpp files.
+#
+# This is a SOFT NUDGE, not a hard block — the legacy per-issue file
+# pattern is still valid for one-off isolated repros and for issues that
+# don't fit any existing domain. The warning is informational; commit
+# proceeds either way. (Future Anqi directive may promote this to a
+# hard gate once the domain files mature.)
+new_test_issue_files=$(git diff --cached --name-only --diff-filter=A \
+    | grep -E '^tests/test_issue_[0-9].*\.cpp$' || true)
+if [ -n "$new_test_issue_files" ]; then
+    echo ""
+    echo "💡  pre-commit: NEW test_issue_*.cpp detected (A):"
+    echo "$new_test_issue_files" | sed 's/^/      /'
+    echo "   ↳ Convention (Anqi 2026-07-20 directive): consider adding to"
+    echo "     tests/test_<domain>.cpp instead. 5 domains: fiber / ir /"
+    echo "     observability / mutation / persist. See tests/domain_classification.md"
+    echo "     for the migration map. New test_issue_*.cpp is OK for"
+    echo "     issues that don't fit any existing domain (justify in commit msg)."
+    echo "     (not a hard gate — just a habit nudge.)"
+    echo ""
+fi
+
+new_test_other_files=$(git diff --cached --name-only --diff-filter=A \
+    | grep -E '^tests/test_[a-z]' | grep -vE '(test_issue_[0-9].*\.cpp|test_(ir|adts?|fiber|mutation|observability|persist|smoke|repl|runtime_unit|harness|primitive|jit|contract|cli|regression|bash|spec|issue|production|optimizer|ast|safepoint|jit_metrics|jit_concurrent|jit_consistency|jit_full|jit_consistent|compiler_closure|compiler_core|compiler_runtime|contract_handler|contract_stub|core_builtins|test_ir|tests|testing|tools|test_))' || true)
+if [ -n "$new_test_other_files" ]; then
+    # Detect test_*.cpp at root level (not test_issue_*, not test_<known_domain>)
+    # These are unusual — usually tests live in tests/issues/ or tests/<domain>.cpp
+    echo "ℹ️  pre-commit: NEW tests/test_*.cpp at root (not in tests/issues/, not a known domain):"
+    echo "$new_test_other_files" | sed 's/^/      /'
+    echo "   (informational — not blocking)"
+    echo ""
+fi
+
 # ── Aura philosophy guard: no docs/design/ in commits ─────────────
 # Per Anqi 2026-07-19 directive — aura philosophy, AI-agent-developed
 # repo, no per-issue plan docs in docs/design/. This guard prevents
