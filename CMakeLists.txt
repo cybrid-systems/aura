@@ -5485,6 +5485,9 @@ aura_issue_test_link_llvm_jit(test_set_workspace_flat_1729)
 # Issue #1730: current_agent_fingerprint_ is atomic under concurrent fibers.
 aura_add_issue_test(test_agent_fingerprint_atomic_1730)
 aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic_1730)
+# Issue #1731: linear_post_mutate_enforce(NULL_ENV_ID) observability.
+aura_add_issue_test(test_linear_null_env_id_1731)
+aura_issue_test_link_llvm_jit(test_linear_null_env_id_1731)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
