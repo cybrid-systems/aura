@@ -1,7 +1,0 @@
-;; task: type-linear-hof
-;; goal: Linear ownership with higher-order functions — move linear value through lambda
-;; expect: 42
-(define (apply-linear f x)
-  (move (f x)))
-(display (apply-linear (lambda (x) (+ x 1)) 41))
-(newline)

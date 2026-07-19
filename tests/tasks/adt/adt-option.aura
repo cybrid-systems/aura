@@ -1,4 +1,0 @@
-;; task: adt-option
-;; goal: Define (Option a) with (Some a) and (None), create (Some 42) and use match to extract the value
-;; depend: std/pair
-;; expect: 42

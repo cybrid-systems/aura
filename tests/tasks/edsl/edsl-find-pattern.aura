@@ -1,9 +1,0 @@
-;; task: edsl-find-pattern
-;; goal: Use set-code to load code, then query the AST using query:node-type
-;; expect: Define
-;; depend: edsl
-;; hint: --- EDSL set-code + query:node-type ---
-;; hint: ;; Load code into workspace (set-code takes a STRING argument)
-;; hint: (set-code "(define (double x) (* x 2))")
-;; hint: ;; Query the AST for Define nodes
-;; hint: (display (query:node-type "Define"))

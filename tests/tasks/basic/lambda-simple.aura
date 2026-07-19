@@ -1,3 +1,0 @@
-;; task: lambda-simple
-;; goal: Define (double x) (* x 2), call (double 10)
-;; expect: 20

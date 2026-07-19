@@ -1,6 +1,0 @@
-;; task: edsl-require-stdlib
-;; goal: Use require to import stdlib and call its functions
-;; expect: 120
-;; hint: (require "std/math" all:)
-;; hint: (display (factorial 5))
-

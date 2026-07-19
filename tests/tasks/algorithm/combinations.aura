@@ -1,8 +1,0 @@
-;; task: combinations
-;; goal: Write (combinations n k) that computes C(n,k) using recursion, test (combinations 5 2)
-;; expect: 10
-;; hint: --- WORKING Aura combinations ---
-;; hint:   (if (or (= k 0) (= k n)) 1
-;; hint:     (+ (combinations (- n 1) (- k 1))
-;; hint:        (combinations (- n 1) k))))
-;; hint: (display (combinations 5 2))

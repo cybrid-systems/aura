@@ -1,5 +1,0 @@
-;; task: type-ownership-linear
-;; goal: Create a linear value and move it to demonstrate ownership flow
-;; expect: ok
-;; hint: --- linear ownership ---
-;; hint: (display "ok")

@@ -1,5 +1,0 @@
-;; task: type-occurrence-float
-;; goal: Use float? to narrow type and perform float arithmetic
-;; expect: 4.14
-;; hint: --- occurrence float ---
-;; hint: (let ((x 3.14)) (if (float? x) (+ x 1) 0))

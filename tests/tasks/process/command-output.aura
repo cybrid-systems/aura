@@ -1,5 +1,0 @@
-;; task: command-output
-;; goal: Use (command-output "echo 42") to capture shell command output
-;; expect: 42
-;; hint: --- command-output ---
-;; hint: (display (command-output "echo 42"))

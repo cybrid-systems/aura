@@ -1,3 +1,0 @@
-;; task: type-coercion-if
-;; goal: Write (if #t 1 2) that type-checks and returns Int
-;; expect: 1

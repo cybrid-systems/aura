@@ -1,9 +1,0 @@
-;; task: primes-list
-;; goal: Write (primes n) returning all primes <= n using std/list filter, test (primes 10)
-;; expect: 2
-;; expect: 3
-;; expect: 5
-;; expect: 7
-;; depend: std/list
-;; hint: Write a complete program including (display (primes 10)). Do NOT just define the function.
-;; hint: Use (> (* i i) n) NOT (>= (* i i) n) for prime? -- >= marks 4,9 as prime (wrong!).

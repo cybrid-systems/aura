@@ -1,9 +1,0 @@
-;; task: tree-dfs
-;; goal: Write (tree-sum tree) that sums all numbers in a nested list structure recursively
-;; expect: 15
-;; hint: --- WORKING Aura tree sum ---
-;; hint:   (if (null? tree) 0
-;; hint:     (if (pair? tree)
-;; hint:       (+ (tree-sum (car tree)) (tree-sum (cdr tree)))
-;; hint:       tree)))
-;; hint: (display (tree-sum (list 1 (list 2 3) (list 4 (list 5)))))

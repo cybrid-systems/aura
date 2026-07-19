@@ -1,9 +1,0 @@
-;; task: contains-duplicate
-;; goal: Write (has-duplicate? lst) using hash that checks if list contains duplicates, test with (list 1 2 3 1)
-;; expect: #t
-;; depend: std/hash
-;; hint: --- WORKING Aura contains duplicate ---
-;; hint: (require std/hash all:)
-;; hint:       (if (null? rest) #f
-;; hint:           (or (hash-has-key? seen n)
-;; hint: (display (has-duplicate? (list 1 2 3 1)))

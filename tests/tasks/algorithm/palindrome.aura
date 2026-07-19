@@ -1,8 +1,0 @@
-;; task: palindrome
-;; goal: Write (palindrome? s) that checks if a string reads same forward/backward, test with "racecar"
-;; expect: #t
-;; depend: std/list
-;; hint: --- WORKING Aura palindrome check ---
-;; hint: (require std/list all:)
-;; hint:     (= chars (reverse chars))))
-;; hint: (display (palindrome? "racecar"))

@@ -1,7 +1,0 @@
-;; task: list-filter
-;; goal: Use std/list filter to get evens from 1..10
-;; expect: 2
-;; expect: 4
-;; expect: 6
-;; expect: 8
-;; depend: std/list

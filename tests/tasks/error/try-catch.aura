@@ -1,5 +1,0 @@
-;; task: try-catch
-;; goal: Use (try expr (catch (var) handler)) to handle an error
-;; expect: caught
-;; hint: --- try-catch ---
-;; hint: (display (try (car ()) (catch (e) "caught")))

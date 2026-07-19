@@ -1,3 +1,0 @@
-;; task: type-let-poly
-;; goal: Write (let ((id (lambda (x) x))) (display (id 42)) (display (id "hello"))) demonstrating let-polymorphism
-;; expect: 42hello

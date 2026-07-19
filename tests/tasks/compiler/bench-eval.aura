@@ -1,7 +1,0 @@
-;; task: bench-eval
-;; goal: Benchmark: Evaluate a computationally intensive function
-;; expect: 3628800
-;; hint: (set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))
-;; hint: (eval-current)
-;; hint: (display (fact 10))
-

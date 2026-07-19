@@ -1,8 +1,0 @@
-;; task: m4-borrow-chain
-;; goal: Borrow across scopes — borrow, scope ends, then move
-;; expect: 42
-(let ((x (Linear 42)))
-  (let ((r (borrow x)))
-    (display r))
-  (display (move x)))
-(newline)

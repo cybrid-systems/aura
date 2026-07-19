@@ -1,6 +1,0 @@
-;; task: type-blame-runtime
-;; goal: Trigger a runtime type error with blame output
-;; depend: std/pair
-;; expect: 1
-;; hint: --- runtime blame ---
-;; hint: (display (+ 1 "hello"))

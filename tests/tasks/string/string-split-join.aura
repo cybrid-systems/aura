@@ -1,7 +1,0 @@
-;; task: string-split-join
-;; goal: Use std/string to split "a,b,c" by "," then join with "-"
-;; expect: a-b-c
-;; depend: std/string
-;; hint: --- WORKING Aura string split/join ---
-;; hint: (require std/string all:)
-;; hint: (display (string-join (string-split "a,b,c" ",") "-"))

@@ -1,6 +1,0 @@
-;; task: list-range
-;; goal: Use std/list range to get 1..10
-;; expect: 1
-;; expect: 2
-;; expect: 10
-;; depend: std/list

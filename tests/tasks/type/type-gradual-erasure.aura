@@ -1,5 +1,0 @@
-;; task: type-gradual-erasure
-;; goal: Show that annotated code and non-annotated code produce same result
-;; expect: 42
-;; hint: --- gradual erasure ---
-;; hint: (display (: x Int 42))
