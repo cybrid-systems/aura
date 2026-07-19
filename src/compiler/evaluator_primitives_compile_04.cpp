@@ -996,7 +996,14 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->ppa_savings_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            // Issue #1795: 7 keys need capacity ≥ 2× keys (load ≤ 0.5).
+            // Pre-#1795 used create(8) → ~87% load / probe storms / silent
+            // drop when an 8th field is added.
+            constexpr std::size_t kClosedloopKeys = 7;
+            std::size_t cap = 16;
+            while (cap < kClosedloopKeys * 2)
+                cap *= 2;
+            auto* ht = FlatHashTable::create(cap);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1004,7 +1011,7 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
             auto vals = ht->values();
             auto hcap = ht->capacity;
             auto& string_heap = ev.string_heap_mut();
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            auto insert_kv = [&](const char* k_str, std::int64_t v) -> bool {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
@@ -1020,17 +1027,23 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
-                        return;
+                        return true;
                     }
                 }
+                return false; // table full — should not happen with cap ≥ 2×keys
             };
-            insert_kv("feedback-to-mutate-cycles", static_cast<std::int64_t>(feedback_cycles));
-            insert_kv("stable-ref-captures-in-sv", static_cast<std::int64_t>(stable_ref));
-            insert_kv("verification-dirty-propagations", static_cast<std::int64_t>(dirty_props));
-            insert_kv("reverify-success", static_cast<std::int64_t>(reverify));
-            insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback));
-            insert_kv("ppa-savings-total", static_cast<std::int64_t>(ppa_savings));
-            insert_kv("schema", 630);
+            if (!insert_kv("feedback-to-mutate-cycles",
+                           static_cast<std::int64_t>(feedback_cycles)) ||
+                !insert_kv("stable-ref-captures-in-sv", static_cast<std::int64_t>(stable_ref)) ||
+                !insert_kv("verification-dirty-propagations",
+                           static_cast<std::int64_t>(dirty_props)) ||
+                !insert_kv("reverify-success", static_cast<std::int64_t>(reverify)) ||
+                !insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback)) ||
+                !insert_kv("ppa-savings-total", static_cast<std::int64_t>(ppa_savings)) ||
+                !insert_kv("schema", 630)) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
