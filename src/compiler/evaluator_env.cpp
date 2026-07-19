@@ -751,7 +751,18 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // the workspace walk, which is correct for lambda
     // bodies that don't actually reference the captured
     // scope (the most common case for this failure mode).
-    if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
+    //
+    // Issue #1731: for NULL_ENV_ID, linear_post_mutate_enforce is a
+    // documented no-op (no captures). Still call it so
+    // linear_post_mutate_null_env_id_total is observable before
+    // the empty-Env fallback (TCO / top-level lambda audit).
+    if (cl.env_id == NULL_ENV_ID) {
+        (void)linear_post_mutate_enforce(NULL_ENV_ID);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        return ne;
+    }
+    if (cl.env_id >= env_frames_.size()) {
         // Issue #1510: post-compact cleared env_id or OOB → empty Env
         // fallback (globals still reachable; no dangling frame walk).
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
@@ -1086,9 +1097,17 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
 //   - Write-side: #1476 atomic_bump_epochs_and_stamp_bridge.
 //   - JIT-side: #1477 capture_fn_epoch + is_fn_epoch_stale.
 bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
-    if (env_id == NULL_ENV_ID || env_id >= env_frames_.size())
-        return true; // no captures to validate, or invalid id (safety net)
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    // Issue #1731: NULL_ENV_ID has no captures — enforce is a no-op by
+    // design (#1478). Count separately so materialize_call_env / TCO /
+    // JIT can audit how often linear validation is skipped this way.
+    if (env_id == NULL_ENV_ID) {
+        if (m)
+            m->linear_post_mutate_null_env_id_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    if (env_id >= env_frames_.size())
+        return true; // invalid id (safety net) — no captures to validate
     if (m) {
         m->linear_post_mutate_enforcements.fetch_add(1, std::memory_order_relaxed);
     }

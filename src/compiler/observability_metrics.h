@@ -3374,6 +3374,9 @@ struct CompilerMetrics {
     // counter + helper + wiring so the enforcement point is observable
     // end-to-end.
     std::atomic<std::uint64_t> linear_post_mutate_enforcements{0};
+    // Issue #1731: linear_post_mutate_enforce(NULL_ENV_ID) is a no-op
+    // (no captures); count so materialize/TCO/JIT can audit bypass.
+    std::atomic<std::uint64_t> linear_post_mutate_null_env_id_total{0};
     // Issue #1538: combined post-mutation linear pipeline (invariant + enforce).
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_total{0};
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_unsafe_total{0};
