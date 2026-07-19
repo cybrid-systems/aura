@@ -53,7 +53,15 @@ using types::make_vector;
 using types::make_void;
 
 // Depth guard: protects Env::lookup against cyclic parent chains
-// (thread_local since lookup can be called from multiple fibers)
+// (thread_local since lookup can be called from multiple fibers).
+//
+// Issue #1858: MAX_ENV_DEPTH is the max number of Env frames
+// touched in one walk — NOT half of that. Each call increments
+// once on entry and decrements once via RAII on exit; the
+// recursive `parent_->lookup(n)` is a fresh entry (depth + 1
+// for that frame), so a parent chain of length N peaks at N,
+// not 2N. (The issue body claimed double-counting; that was
+// incorrect — confirmed by tests/test_env_lookup_depth_1858.cpp.)
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 thread_local std::size_t g_env_lookup_depth = 0;
 std::optional<EvalValue> Env::lookup(std::string_view n) const {
