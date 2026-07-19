@@ -9256,7 +9256,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // after bumping validate_reflected_query_total by 1.
     add("mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+        // Public accessor: register_query_primitives is not a friend of
+        // Evaluator (unlike ObservabilityPrims / register_mutate_*).
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->reflect_validate_reflected_query_total.fetch_add(1, std::memory_order_relaxed);
         }
         const std::uint64_t post_validate = ev.get_reflect_post_mutation_validate_total();
