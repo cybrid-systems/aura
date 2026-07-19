@@ -958,12 +958,29 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
 // AuraJIT::walk_active_closures / IRExecutor::walk_runtime_closures.
 // Wired from invalidate_function / compact_env_frames / JIT ResourceTracker
 // via scan_live_closures_for_linear_captures.
+//
+// Issue #1733: isolate per-callback exceptions so a throwing fn does not
+// abort the walk mid-enumeration (GC root registration / invalidate batch
+// would otherwise leave a partial set). Lock still released via RAII.
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-    for (auto& [id, cl] : closures_)
-        fn(id, cl);
+    for (auto& [id, cl] : closures_) {
+        try {
+            fn(id, cl);
+        } catch (const std::exception&) {
+            // [SILENCE-PRIM-#615] Issue #1733: continue walk after callback
+            // throw — partial GC/invalidate completion beats abort. Metric
+            // makes the skip observable; exception is not rethrown.
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->walk_active_closures_callback_exceptions.fetch_add(1, std::memory_order_relaxed);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] non-std exceptions same isolation policy.
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->walk_active_closures_callback_exceptions.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 }
 
 // Issue #1545 / #1486 / #1494: scan live closures for linear captures.

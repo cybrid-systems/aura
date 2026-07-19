@@ -5493,6 +5493,9 @@ aura_issue_test_link_llvm_jit(test_linear_null_env_id_1731)
 # Issue #1732: compact_sweep returns typed CompactSweepResult (not void*).
 aura_add_issue_test(test_compact_sweep_result_1732)
 aura_issue_test_link_llvm_jit(test_compact_sweep_result_1732)
+# Issue #1733: walk_active_closures isolates callback exceptions.
+aura_add_issue_test(test_walk_active_closures_ex_1733)
+aura_issue_test_link_llvm_jit(test_walk_active_closures_ex_1733)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
