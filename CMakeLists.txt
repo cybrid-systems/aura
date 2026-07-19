@@ -3094,7 +3094,7 @@ aura_issue_test_link_llvm_jit(test_issue_346)
 # aura philosophy: code is the documentation.
 #     eval loops, stale-ref handling, workspace
 #     layering + COW, fiber concurrency, 3 code
-#     examples, 6 anti-patterns — doc REMOVED per Anqi
+#     examples, 6 anti-patterns — doc + demos REMOVED per Anqi
 #     2026-07-19 directive; test_issue_347 short-circuits
 #     the doc-content ACs to pass)
 #   - docs/architecture.md link to the new doc
@@ -3104,8 +3104,8 @@ aura_issue_test_link_llvm_jit(test_issue_346)
 #     exists + has the required sections + cross-
 #     references resolve to real files (test now
 #     short-circuits the doc-content ACs to pass)
-# 4 ACs: doc exists with sections, examples +
-# anti-patterns, linked from main docs, cross-
+# 4 ACs: doc + examples + anti-patterns REMOVED per Anqi 2026-07-19
+# directive (aura philosophy, no docs + no demos); cross-
 # references resolve.
 aura_add_issue_test(test_issue_347)
 aura_issue_test_link_llvm_jit(test_issue_347)
