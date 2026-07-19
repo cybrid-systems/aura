@@ -1,1 +1,0 @@
-(display (let ((x "42")) (+ 40 (string->number x))))

@@ -1,1 +1,0 @@
-(define (csv->table text) (csv-parse text))

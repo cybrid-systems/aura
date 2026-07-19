@@ -1,1 +1,0 @@
-(define (vec:div a b) (vec:zip / a b))

@@ -1,2 +1,0 @@
-(if (= b 0) a
-;; hint:       (loop b (modulo a b)))

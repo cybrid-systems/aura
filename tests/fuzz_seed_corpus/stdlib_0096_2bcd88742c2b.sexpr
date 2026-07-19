@@ -1,2 +1,0 @@
-(define (file-read path)
-  (read-file path))

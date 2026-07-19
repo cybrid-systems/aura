@@ -1,3 +1,0 @@
-((r (mat:rows m))
-         (c (mat:cols m))
-         (t (mat:make c r 0)))

@@ -1,4 +1,0 @@
-(define (filter-maybe pred lst)
-  (if (null? lst) '()
-    (let ((x (car lst)) (rest (filter-maybe pred (cdr lst))))
-      (if (pred x) (cons x rest) rest))))

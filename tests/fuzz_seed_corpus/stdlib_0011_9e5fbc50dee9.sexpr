@@ -1,3 +1,0 @@
-((na (vector-length a))
-         (nb (vector-length b))
-         (r (make-vector (+ na nb) 0)))

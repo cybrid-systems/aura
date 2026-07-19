@@ -1,2 +1,0 @@
-(define (chars->string cs)
-  (list->string cs))

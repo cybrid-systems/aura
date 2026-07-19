@@ -1,4 +1,0 @@
-(if (hash-has-key? cache x)
-;; hint:         (hash-ref cache x)
-;; hint:           (hash-set! cache x r)
-;; hint:           r)

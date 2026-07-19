@@ -1,4 +1,0 @@
-(define (sum-list lst)
-  (match lst
-    ((Cons h t) (+ h (sum-list t)))
-    ((Nil) 0)))

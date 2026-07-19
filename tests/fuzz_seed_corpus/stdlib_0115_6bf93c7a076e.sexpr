@@ -1,4 +1,0 @@
-(define (hash-map f h)
-  (let ((result (hash)))
-    (hash-keys-filter (lambda (k) (hash-set! result k (f (hash-ref h k)))) h)
-    result))

@@ -1,3 +1,0 @@
-(append (quicksort (filter (lambda (x) (< x pivot)) rest))
-;; hint:               (list pivot)
-;; hint:               (quicksort (filter (lambda (x) (> x pivot)) rest)))

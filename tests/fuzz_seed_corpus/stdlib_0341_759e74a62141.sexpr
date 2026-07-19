@@ -1,1 +1,0 @@
-(display (apply-linear (lambda (x) (+ x 1)) 41))

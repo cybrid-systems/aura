@@ -1,2 +1,0 @@
-(if (null? fns) (lambda (x) x)
-;; hint:           (rest (apply compose (cdr fns))))

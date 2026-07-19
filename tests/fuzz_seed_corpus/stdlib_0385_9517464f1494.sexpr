@@ -1,3 +1,0 @@
-(export
-  make-queue enqueue dequeue queue-front queue-rest
-  queue-empty? queue-length queue->list list->queue)

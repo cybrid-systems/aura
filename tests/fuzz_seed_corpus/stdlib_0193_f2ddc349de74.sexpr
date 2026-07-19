@@ -1,2 +1,0 @@
-(define (random-seed gen)
-  (car gen))

@@ -1,6 +1,0 @@
-(define (occurrences eq? lst)
-  (let iter ((rest lst) (seen (hash)))
-    (if (null? rest) seen
-      (let ((key (car rest)))
-        (hash-set! seen key (+ 1 (hash-ref seen key 0)))
-        (iter (cdr rest) seen)))))

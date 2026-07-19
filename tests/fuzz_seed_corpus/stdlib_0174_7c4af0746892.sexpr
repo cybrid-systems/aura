@@ -1,2 +1,0 @@
-(define (pheromone:rank mutation-type-list)
-  (sort-descending mutation-type-list))

@@ -1,2 +1,0 @@
-(define (hash-vals h)
-  (hash-values h))

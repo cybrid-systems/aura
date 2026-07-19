@@ -1,2 +1,0 @@
-(define (stddev lst)
-  (sqrt (variance lst)))

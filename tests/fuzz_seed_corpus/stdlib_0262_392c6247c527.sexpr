@@ -1,4 +1,0 @@
-(define (variance lst)
-  (let* ((m (mean lst))
-         (s (sum (map (lambda (x) (square (- x m))) lst))))
-    (/ s (length lst))))

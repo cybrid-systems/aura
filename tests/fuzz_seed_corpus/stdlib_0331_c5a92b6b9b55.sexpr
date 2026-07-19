@@ -1,1 +1,0 @@
-(display ((compose double add1) 5))

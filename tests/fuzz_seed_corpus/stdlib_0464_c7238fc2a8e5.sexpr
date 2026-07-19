@@ -1,4 +1,0 @@
-(lambda (stdlib-list)
-    (let loop ((libs stdlib-list) (result ""))
-      (if (null? libs) (string-append aura-pitfalls result)
-          (loop (cdr libs) (string-append result (api-for-module (car libs)))))))

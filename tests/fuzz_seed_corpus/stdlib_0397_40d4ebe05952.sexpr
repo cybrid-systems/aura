@@ -1,2 +1,0 @@
-(export pheromone:init pheromone:update pheromone:rank pheromone:score pheromone:export
-        colony:search)

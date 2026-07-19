@@ -1,6 +1,0 @@
-(define (normalize lst)
-  (let* ((mn (min-list lst))
-         (mx (max-list lst))
-         (d (- mx mn)))
-    (if (= d 0) (map (lambda (_) 0) lst)
-      (map (lambda (x) (/ (- x mn) d)) lst))))

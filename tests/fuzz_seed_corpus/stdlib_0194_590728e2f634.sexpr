@@ -1,2 +1,0 @@
-(define (range lst)
-  (- (max-list lst) (min-list lst)))

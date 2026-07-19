@@ -1,3 +1,0 @@
-(define (random-range lo hi gen)
-  (let ((result (random-next gen)))
-    (list (+ lo (modulo (car result) (- hi lo))) (cadr result))))

@@ -1,4 +1,0 @@
-(define (file->lines path)
-  (let ((content (file-read path)))
-    (if (equal? content "") (list)
-      (string-split content "\n"))))

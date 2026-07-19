@@ -1,3 +1,0 @@
-(datatype (Tree : T)
-;; hint:   (Leaf T)
-;; hint:   (Node Tree Tree))

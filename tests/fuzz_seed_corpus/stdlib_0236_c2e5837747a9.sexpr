@@ -1,1 +1,0 @@
-(define (sum lst) (foldl + 0 lst))

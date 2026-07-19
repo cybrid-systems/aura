@@ -1,1 +1,0 @@
-(export foldr map for-each member? zip zip3 take drop take-while drop-while partition sort range sum product last flatten intersperse)

@@ -1,1 +1,0 @@
-(define (vec:mul a b) (vec:zip * a b))

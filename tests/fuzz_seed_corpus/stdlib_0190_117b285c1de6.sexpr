@@ -1,3 +1,0 @@
-(define (random-integer gen)
-  (let ((result (random-next gen)))
-    (list (car result) (cadr result))))

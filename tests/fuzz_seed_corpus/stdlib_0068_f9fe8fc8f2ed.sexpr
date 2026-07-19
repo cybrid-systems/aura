@@ -1,3 +1,0 @@
-(define (count pred lst)
-  (if (null? lst) 0
-    (+ (if (pred (car lst)) 1 0) (count pred (cdr lst)))))

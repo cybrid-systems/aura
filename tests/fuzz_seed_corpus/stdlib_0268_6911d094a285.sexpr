@@ -1,5 +1,0 @@
-(define (vec:fold f init v)
-  (let ((n (vector-length v)))
-    (let loop ((i 0) (acc init))
-      (if (>= i n) acc
-        (loop (+ i 1) (f acc (vector-ref v i)))))))

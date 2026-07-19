@@ -1,2 +1,0 @@
-(define (vec:scale v s)
-  (vec:map (lambda (x) (* x s)) v))

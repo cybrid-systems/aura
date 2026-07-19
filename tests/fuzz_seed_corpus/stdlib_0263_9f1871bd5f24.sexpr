@@ -1,5 +1,0 @@
-(define (vec->list v)
-  (let ((n (vector-length v)))
-    (let loop ((i 0) (acc (list)))
-      (if (>= i n) (reverse acc)
-        (loop (+ i 1) (cons (vector-ref v i) acc))))))

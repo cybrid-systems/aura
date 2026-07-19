@@ -1,1 +1,0 @@
-(define (set-remove s x) (hash-remove! s x) s)

@@ -1,2 +1,0 @@
-(define (partial2 f a)
-  (lambda (x) (f a x)))

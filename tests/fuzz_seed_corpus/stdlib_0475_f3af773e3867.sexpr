@@ -1,5 +1,0 @@
-(let loop ((i 0))
-      (if (< i n)
-        (begin (vector-set! (vector-ref m i) i 1)
-               (loop (+ i 1)))
-        m))

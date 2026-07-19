@@ -1,4 +1,0 @@
-(define (leap-year? y)
-  (and (= (modulo y 4) 0)
-       (or (not (= (modulo y 100) 0))
-           (= (modulo y 400) 0))))

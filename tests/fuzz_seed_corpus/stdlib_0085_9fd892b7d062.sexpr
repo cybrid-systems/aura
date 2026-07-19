@@ -1,2 +1,0 @@
-(define (enqueue q elem)
-  (append q (list elem)))

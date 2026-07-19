@@ -1,1 +1,0 @@
-(display (tcp-recv socket))

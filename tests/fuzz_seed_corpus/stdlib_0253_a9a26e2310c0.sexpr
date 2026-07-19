@@ -1,2 +1,0 @@
-(define (timestamp->minute t)
-  (quotient (modulo (modulo t 86400) 3600) 60))

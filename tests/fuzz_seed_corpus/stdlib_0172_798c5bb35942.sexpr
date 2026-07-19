@@ -1,7 +1,0 @@
-(define (permutations lst)
-  (if (null? lst) (list (list))
-    (apply append
-      (map (lambda (x)
-             (map (lambda (p) (cons x p))
-                  (permutations (filter (lambda (y) (not (= y x))) lst))))
-           lst))))

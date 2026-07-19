@@ -1,3 +1,0 @@
-(and (hash-has-key? b (car keys))
-;; hint:                (= (hash-ref a (car keys)) (hash-ref b (car keys)))
-;; hint:                (loop (cdr keys)))

@@ -1,5 +1,0 @@
-(define (compose-internal fns)
-  (if (null? (cdr fns))
-      (car fns)
-      (let ((f (car fns)) (rest (compose-internal (cdr fns))))
-        (lambda (x) (f (rest x))))))

@@ -1,1 +1,0 @@
-(display (file-exists? "/tmp/aura-exists-test.txt"))

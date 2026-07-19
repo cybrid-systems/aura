@@ -1,3 +1,0 @@
-(define (dequeue q)
-  (if (null? q) (list () ())
-    (list (car q) (cdr q))))

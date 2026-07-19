@@ -1,4 +1,0 @@
-(define (hash-keys-filter f h)
-  (let ((keys (hash-keys h)))
-    (if (null? keys) ()
-      (begin (f (car keys)) (hash-keys-filter f (cdr keys))))))

@@ -1,3 +1,0 @@
-(define (vec:mean v)
-  (if (= (vector-length v) 0) 0
-    (/ (vec:sum v) (vector-length v))))

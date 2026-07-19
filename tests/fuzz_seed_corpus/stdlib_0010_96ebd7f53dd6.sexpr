@@ -1,3 +1,0 @@
-((n (min end (vector-length v)))
-         (len (max 0 (- n start)))
-         (r (make-vector len 0)))

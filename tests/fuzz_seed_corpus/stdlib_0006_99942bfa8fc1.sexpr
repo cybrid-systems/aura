@@ -1,4 +1,0 @@
-((ar (mat:rows a))
-         (ac (mat:cols a))
-         (bc (mat:cols b))
-         (r (mat:make ar bc 0)))

@@ -1,3 +1,0 @@
-(define (random-float gen)
-  (let ((result (random-next gen)))
-    (list (/ (car result) 2147483648.0) (cadr result))))

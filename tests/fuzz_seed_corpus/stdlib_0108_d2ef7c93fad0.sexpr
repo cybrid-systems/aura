@@ -1,2 +1,0 @@
-(define (gcd a b)
-  (if (= b 0) (abs a) (gcd b (modulo a b))))

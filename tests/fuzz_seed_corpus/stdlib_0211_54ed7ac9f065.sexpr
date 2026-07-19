@@ -1,5 +1,0 @@
-(define (split-at n lst)
-  (let iter ((i 0) (rest lst) (left (list)))
-    (if (or (>= i n) (null? rest))
-      (list (reverse left) rest)
-      (iter (+ i 1) (cdr rest) (cons (car rest) left)))))

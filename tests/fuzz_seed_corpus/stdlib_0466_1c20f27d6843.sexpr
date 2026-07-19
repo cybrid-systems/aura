@@ -1,6 +1,0 @@
-(let ((x "hello"))
-  (if (string? x)
-    (if (number? (string-length x))
-      (string-length x)
-      0)
-    0))

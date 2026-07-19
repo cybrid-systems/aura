@@ -1,2 +1,0 @@
-(define (map-maybe f m)
-  (if (null? m) m (f m)))

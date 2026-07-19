@@ -1,3 +1,0 @@
-(if (null? rest) best
-;; hint:       (let* ((n (car rest)) (new-cur (max n (+ cur n))))
-;; hint:         (loop (cdr rest) new-cur (max best new-cur))))

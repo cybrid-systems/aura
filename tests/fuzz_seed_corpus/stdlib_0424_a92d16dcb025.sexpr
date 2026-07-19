@@ -1,2 +1,0 @@
-(if (< (length lst) 2) lst
-;; hint:           (rest (cdr lst)))

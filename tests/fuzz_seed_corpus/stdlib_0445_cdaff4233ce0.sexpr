@@ -1,1 +1,0 @@
-(if (void? llm-model) (set! llm-model "deepseek-chat"))

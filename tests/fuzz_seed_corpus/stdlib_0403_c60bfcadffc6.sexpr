@@ -1,8 +1,0 @@
-(export vec:map vec:zip vec:fold vec:sum vec:prod vec:mean vec:dot vec:norm vec:normalize
-        vec:scale vec:add vec:sub vec:mul vec:div
-        vec:slice vec:concat vec:range
-        vec:argmin vec:argmax vec:abs vec:sq
-        mat:make mat:identity mat:zeros mat:ones
-        mat:ref mat:shape mat:rows mat:cols
-        mat:transpose mat:mul mat:map
-        vec->list list->vec)

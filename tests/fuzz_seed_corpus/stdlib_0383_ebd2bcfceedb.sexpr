@@ -1,3 +1,0 @@
-(export
-  compose curry rcurry partial2
-  const identity flip complement thrush)

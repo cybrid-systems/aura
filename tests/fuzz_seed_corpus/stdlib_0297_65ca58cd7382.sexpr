@@ -1,9 +1,0 @@
-(define aura-verify
-  (lambda (code)
-    (if (set-code code)
-      (begin (typecheck-current)
-        (let ((src (current-source))
-              (r (eval-current)))
-          (if (error? r) (string-append "err:" (type-of r))
-              (string-append "#t|||SRC:" src "|||SRC_END|||"))))
-      "bad-code")))

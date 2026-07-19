@@ -1,2 +1,0 @@
-(define (make-random . rest)
-  (cons (if (null? rest) 123456789 (car rest)) 0))

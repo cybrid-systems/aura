@@ -1,4 +1,0 @@
-(define (string-pad-left s width)
-  (let ((len (string-length s)))
-    (if (>= len width) s
-      (string-append (make-spaces (- width len)) s))))
