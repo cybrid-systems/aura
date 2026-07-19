@@ -5865,6 +5865,9 @@ aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports_1857)
 # Issue #1858: Env::lookup depth is one-per-frame (not 2× parent recursion).
 aura_add_issue_test(test_env_lookup_depth_1858)
 aura_issue_test_link_llvm_jit(test_env_lookup_depth_1858)
+# Issue #1859: Env::lookup SoA parent_id_ walk is iterative (no tmp.lookup).
+aura_add_issue_test(test_env_soa_lookup_iter_1859)
+aura_issue_test_link_llvm_jit(test_env_soa_lookup_iter_1859)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
