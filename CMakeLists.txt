@@ -5721,6 +5721,9 @@ aura_issue_test_link_llvm_jit(test_guard_enter_ts_optional_1764)
 # Issue #1765: mutation_hold_duration_us_max uses CAS (no lost-update store).
 aura_add_issue_test(test_guard_hold_max_cas_1765)
 aura_issue_test_link_llvm_jit(test_guard_hold_max_cas_1765)
+# Issue #1766: Guard dtor ensure_* probes are noexcept; depth decremented first.
+aura_add_issue_test(test_guard_dtor_invariant_noexcept_1766)
+aura_issue_test_link_llvm_jit(test_guard_dtor_invariant_noexcept_1766)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
