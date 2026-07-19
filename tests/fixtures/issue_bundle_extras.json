@@ -22,14 +22,14 @@
       "src/compiler/aura_jit_runtime.cpp",
       "src/compiler/aura_jit_bridge_stub.cpp",
       "src/compiler/aura_jit.cpp",
-      "tests/test_issue_178_reflect.cpp"
+      "tests/issues/test_issue_178_reflect.cpp"
     ],
     "source_flags": {
       "src/compiler/aura_jit_runtime.cpp": "-fno-rtti",
       "src/compiler/aura_jit.cpp": "-fno-rtti"
     },
     "per_source_compile_options": {
-      "tests/test_issue_178_reflect.cpp": "-freflection"
+      "tests/issues/test_issue_178_reflect.cpp": "-freflection"
     },
     "comment": "178 multi-TU (main + reflect); no-LLVM AuraJIT + AOT stubs like light."
   },

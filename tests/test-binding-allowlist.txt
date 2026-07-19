@@ -51,7 +51,7 @@ tests/test_env_symid_primary_path.cpp
 # no LLVM JIT. 10 ACs covering initial state, bump idempotency, out-of-range
 # provenance reads (negative + beyond table), and C-side bridge wire
 # roundtrip. If link fails: verification deferred to follow-up #1538 batch.
-tests/test_issue_1485.cpp
+tests/issues/test_issue_1485.cpp
 # Issue #2026-07-17: EDSL SIGSEGV surgical fix in CompilerService. The
 # change in mark_all_defines_dirty (clears ir_define_closure_owner_ on
 # set-code to prevent use-after-free SIGSEGV at dispatch_ir_define_closure+24)
