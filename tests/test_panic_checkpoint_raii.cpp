@@ -21,12 +21,14 @@ using aura::core::panic_cp::reset_panic_checkpoint_raii_stats;
 
 namespace {
 
-// Test double host: counts save/restore calls without full workspace.
+// Test double host: counts save/restore/clear calls without full workspace.
 struct FakeHost {
     int saves = 0;
     int restores = 0;
+    int clears = 0;
     bool save_ok = true;
     bool restore_ok = true;
+    bool clear_ok = true;
 
     static bool save_fn(void* p) noexcept {
         auto* h = static_cast<FakeHost*>(p);
@@ -38,10 +40,17 @@ struct FakeHost {
         ++h->restores;
         return h->restore_ok;
     }
+    static bool clear_fn(void* p) noexcept {
+        auto* h = static_cast<FakeHost*>(p);
+        ++h->clears;
+        return h->clear_ok;
+    }
 
-    // Issue #1393: host is {ctx, expected_evaluator_id, save, restore}.
+    // Issue #1393 / #1727: host is {ctx, expected, save, restore, clear}.
     // For the fake host, discriminator == ctx (same identity).
-    PanicCheckpointHost host() { return PanicCheckpointHost{this, this, &save_fn, &restore_fn}; }
+    PanicCheckpointHost host() {
+        return PanicCheckpointHost{this, this, &save_fn, &restore_fn, &clear_fn};
+    }
 };
 
 } // namespace
