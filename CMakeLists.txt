@@ -2309,7 +2309,7 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 aura_add_issue_test(test_issue_1644_ir_hygiene)
 aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
 # Issue #1645: dead bump_* observability (scope-limited progressive).
-# Phase 1 ships 2 wire-ups + scripts/audit_dead_bumps.py (audit infra).
+# Phase 1 ships 2 wire-ups. scripts/audit_dead_bumps.py REMOVED per Anqi 2026-07-20 wave 13 (aura philosophy, audit infra cruft).
 # scripts/check_dead_bump_rate.py REMOVED per Anqi 2026-07-19 directive
 # wave 10 (ship-time linter obsolete).
 # Phase 2+ (~22 follow-up issues per the categorized queue) will wire

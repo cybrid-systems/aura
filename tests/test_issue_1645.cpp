@@ -92,13 +92,12 @@ bool check_dead_bump_rate_linter_ac2() {
 }
 
 bool check_audit_script_present_ac2() {
+    // scripts/audit_dead_bumps.py REMOVED per Anqi 2026-07-20 directive
+    // wave 13 (aura philosophy: code is source of truth, no audit infra
+    // cruft — script had 0 build.py gate refs, only a CMakeLists.txt
+    // historical comment + this AC2 presence-assertion. Dead weight.).
     std::println("\n--- AC2: scripts/audit_dead_bumps.py audit infra ---");
-    std::ifstream in("scripts/audit_dead_bumps.py");
-    if (!in) {
-        std::println("FAIL: scripts/audit_dead_bumps.py missing");
-        return false;
-    }
-    std::println("OK: scripts/audit_dead_bumps.py present");
+    std::println("[REMOVED per Anqi 2026-07-20 directive wave 13] AC2 trivially satisfied.");
     return true;
 }
 
