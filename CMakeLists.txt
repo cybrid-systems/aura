@@ -2200,6 +2200,18 @@ aura_add_issue_test(test_issue_1905)
 aura_issue_test_link_llvm_jit(test_issue_1905)
 aura_add_issue_test(test_issue_1907)
 aura_issue_test_link_llvm_jit(test_issue_1907)
+# Issue #1654: Bridge epoch std::atomic / C11 _Atomic for C++/C memory model
+# safety. Source-driven ACs AC1..AC8 + runtime baseline roundtrip AC9 +
+# concurrent stress AC10. Closes the C++ memory model data race that #1485's
+# C2-wire fix-up intent was supposed to defend against. 3 source conversions
+# (aura_jit_bridge.cpp + aura_jit_bridge_stub.cpp + lib/runtime.c) with
+# release/acquire protocol on both sides. Complements the existing bridge
+# epoch test suite (test_bridge_epoch_strict.cpp + test_issue_1485.cpp AC10
+# + test_truncate_env_bridge_epoch_1739.cpp + test_epoch_apply_mandate_1632.cpp)
+# by adding the storage-type safety test for the underlying global epoch
+# variable that all those tests interact with.
+aura_add_issue_test(test_issue_1654)
+aura_issue_test_link_llvm_jit(test_issue_1654)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 aura_add_issue_test(test_issue_1908)
