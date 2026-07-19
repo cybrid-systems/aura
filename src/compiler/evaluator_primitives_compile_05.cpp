@@ -66,9 +66,10 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// Issue #1787: shared FNV-1a + open-addressing stats hash builder.
-// Replaces 6× inlined build_hash lambdas in this file. Capacity
-// scales with kv count (load factor ≤ 0.5, minimum 16 slots).
+// Issue #1787 / #1844: shared FNV-1a + open-addressing stats hash
+// builder. Used by compile_05 (#1787) and compile_07 SEVA/aot/ir
+// stats (#1844). Capacity scales with kv count (load factor ≤ 0.5,
+// minimum 16 slots).
 [[nodiscard]] EvalValue build_kv_hash(Evaluator& ev,
                                       std::span<const std::pair<std::string, EvalValue>> kv) {
     std::size_t ncap = 16;

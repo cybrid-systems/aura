@@ -5816,6 +5816,9 @@ aura_issue_test_link_llvm_jit(test_compact_env_frames_guard_1842)
 # Issue #1843: compile:aot-stats early nullptr check (no per-field m? ternaries).
 aura_add_issue_test(test_aot_stats_null_metrics_1843)
 aura_issue_test_link_llvm_jit(test_aot_stats_null_metrics_1843)
+# Issue #1844: compile_07 reuses build_kv_hash (dedup 7× build_hash lambdas).
+aura_add_issue_test(test_build_kv_hash_compile07_1844)
+aura_issue_test_link_llvm_jit(test_build_kv_hash_compile07_1844)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
