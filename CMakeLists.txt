@@ -5736,6 +5736,9 @@ aura_issue_test_link_llvm_jit(test_try_lock_workspace_lock_order_1768)
 # Issue #1769: inline typecheck helpers catch exceptions + metric.
 aura_add_issue_test(test_inline_typecheck_exception_1769)
 aura_issue_test_link_llvm_jit(test_inline_typecheck_exception_1769)
+# Issue #1770: delete_child nulls fields before delete (no dangling on throw).
+aura_add_issue_test(test_workspace_delete_child_1770)
+aura_issue_test_link_llvm_jit(test_workspace_delete_child_1770)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
