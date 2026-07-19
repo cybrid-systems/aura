@@ -5822,6 +5822,9 @@ aura_issue_test_link_llvm_jit(test_build_kv_hash_compile07_1844)
 # Issue #1845: per-defuse-index-add MutationBoundaryGuard + try/catch.
 aura_add_issue_test(test_per_defuse_index_add_guard_1845)
 aura_issue_test_link_llvm_jit(test_per_defuse_index_add_guard_1845)
+# Issue #1846: PerDefUseIndexTracker shared_mutex (add vs get_callers).
+aura_add_issue_test(test_per_defuse_index_tracker_lock_1846)
+aura_issue_test_link_llvm_jit(test_per_defuse_index_tracker_lock_1846)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
