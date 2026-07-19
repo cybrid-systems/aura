@@ -514,6 +514,11 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed)));
         });
 
+    // Issue #1852: shared_lock workspace_mtx_ for the whole
+    // workspace_flat() counter snapshot (pre-#1852 read the
+    // pointer twice unlocked — concurrent set_workspace_flat
+    // #1729 could mix two workspaces or UAF on a freed flat).
+    // Sibling of #1851 compile:invalidations-stats.
     ObservabilityPrims::register_stats_impl(
         "compile:ast-ops-stats", [&ev](const auto&) -> EvalValue {
             // Re-use the build_hash pattern from above primitives.
@@ -558,21 +563,22 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
                 return make_hash(hidx);
             };
             std::uint64_t children_calls = 0, parent_calls = 0, dirty_calls = 0, dirty_nodes = 0;
-            // Counters live on the workspace FlatAST (set up in
-            // ast.ixx). Get the FlatAST via the Evaluator's
-            // ev.workspace_flat() accessor.
-            if (auto* ws_flat = ev.workspace_flat()) {
-                children_calls = ws_flat->children_call_count();
-                parent_calls = ws_flat->parent_of_call_count();
-                dirty_calls = ws_flat->mark_dirty_upward_call_count();
-                dirty_nodes = ws_flat->mark_dirty_total_nodes();
-            }
             // Issue #336: include the mark_dirty_upward_fast
             // fixed-point early-exit counter so callers can
             // benchmark the optimization.
             std::uint64_t fast_hits = 0;
-            if (auto* ws_flat = ev.workspace_flat()) {
-                fast_hits = ws_flat->dirty_upward_fast_fixed_point_count();
+            // Issue #1852: one shared_lock covers pointer load +
+            // all counter reads (vs #1729 set_workspace_flat
+            // unique_lock). Single load of workspace_flat().
+            {
+                std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+                if (auto* ws_flat = ev.workspace_flat()) {
+                    children_calls = ws_flat->children_call_count();
+                    parent_calls = ws_flat->parent_of_call_count();
+                    dirty_calls = ws_flat->mark_dirty_upward_call_count();
+                    dirty_nodes = ws_flat->mark_dirty_total_nodes();
+                    fast_hits = ws_flat->dirty_upward_fast_fixed_point_count();
+                }
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"children-call-count", make_int(static_cast<std::int64_t>(children_calls))},
