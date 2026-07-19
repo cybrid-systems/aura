@@ -33,7 +33,9 @@ class TestBindingClassify(unittest.TestCase):
         # #1454 TUI protected
         self.assertTrue(self.m.is_prod("src/compiler/evaluator_primitives_tui.cpp"))
         self.assertTrue(self.m.is_prod("lib/std/tui/canvas.aura"))
-        self.assertTrue(self.m.is_prod("examples/cyber_cat.aura"))
+        self.assertTrue(
+            self.m.is_prod("examples/cyber_cat.aura")
+        )  # path is a pattern test case (file may not exist after Anqi 2026-07-19 demo cleanup)
         self.assertTrue(self.m.is_prod("src/tui/tui_runtime.hh"))
 
     def test_test_paths(self):

@@ -50,10 +50,12 @@ int main() {
         CHECK(href(cs, Q, "tui-runtime-active") == 1, "runtime (#1332)");
         CHECK(href(cs, Q, "tui-primitives-active") == 1, "primitives (#1333)");
         CHECK(href(cs, Q, "tui-stdlib-active") == 1, "stdlib (#1334-5)");
-        CHECK(href(cs, Q, "tui-cyber-cat-demo-active") == 1, "cyber cat (#1337)");
         CHECK(href(cs, Q, "tui-sync-output-active") == 1, "sync output (#1342)");
         CHECK(href(cs, Q, "tui-mouse-scaffold-active") == 1, "mouse (#1343)");
-        CHECK(href(cs, Q, "tui-games-scaffold-active") == 1, "games demos (#1343)");
+        // examples/ removed per Anqi 2026-07-19 directive (aura philosophy,
+        // no demos). The TUI primitives (tui:init/cell/present/etc.) and
+        // mouse/sync/output scaffolding are still verified below; only the
+        // demo-specific meta checks (cyber cat + games demos) are dropped.
         CHECK(href(cs, Q, "issue-1343") == 1343, "issue-1343");
     }
 
