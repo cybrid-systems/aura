@@ -20,7 +20,6 @@ import aura.compiler.ir;
 import aura.compiler.value;
 import aura.compiler.service;
 import aura.compiler.type_checker;
-import aura.compiler.pass_manager;
 import aura.compiler.query;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
@@ -1086,12 +1085,14 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
     // The counters are static and process-wide, so the
     // primitive surfaces the cumulative inlining work
     // done by all InlinePass runs since process start.
-    // Issue #388: (*allow-macro-inline* #t/#f) — runtime toggle
-    // for the InlinePass::respect_macro_hygiene_ flag. Lets an
-    // Aura workspace opt in to (or out of) inlining macro-
-    // introduced code without recompiling. The static flag is
-    // process-wide; toggling it affects all subsequent inlining
-    // in this process.
+    // Issue #388 / #1780: (*allow-macro-inline* #t/#f) — runtime
+    // toggle for InlinePass macro-hygiene policy. Lets an Aura
+    // workspace opt in to (or out of) inlining macro-introduced
+    // code without recompiling.
+    //
+    // Issue #1780: policy is per-Evaluator (ev.inline_respect_macro_hygiene_),
+    // not InlinePass process-wide static — concurrent CompilerServices /
+    // fibers no longer clobber each other's toggle.
     //
     // Args: 1 (optional bool — defaults to true). Returns the
     // post-toggle flag value (1 if macro-introduced code is
@@ -1101,8 +1102,9 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
         if (a.size() >= 1 && types::is_bool(a[0])) {
             enable = static_cast<bool>(types::as_bool(a[0]));
         }
-        aura::compiler::InlinePass::set_respect_macro_hygiene(!enable);
-        bool now_respects = aura::compiler::InlinePass::get_respect_macro_hygiene();
+        // enable=#t → respect hygiene off (allow inline macros).
+        ev.set_inline_respect_macro_hygiene(!enable);
+        const bool now_respects = ev.get_inline_respect_macro_hygiene();
         return make_int(static_cast<std::int64_t>(now_respects ? 0 : 1));
     });
 }

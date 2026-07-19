@@ -3771,6 +3771,12 @@ private:
     // existing mutate:* behavior (no behavior change for tests
     // that don't pass :allow-macro? or set the flag).
     bool allow_macro_mutate_ = false;
+    // Issue #1780: per-Evaluator InlinePass macro-hygiene policy.
+    // (*allow-macro-inline* #t) stores false here (allow inlining
+    // macro-introduced code); #f stores true (respect hygiene).
+    // Atomic so concurrent fibers on the same Evaluator do not
+    // data-race the bool; process-wide InlinePass static removed.
+    std::atomic<bool> inline_respect_macro_hygiene_{true};
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr; // CompilerService*
     WorkspaceAdtSyncFn workspace_adt_sync_fn_ = nullptr;
@@ -4645,6 +4651,13 @@ public:
     // code can opt in via (hygiene:set-allow-macro-mutate!).
     [[nodiscard]] bool get_allow_macro_mutate() const noexcept { return allow_macro_mutate_; }
     void set_allow_macro_mutate(bool v) noexcept { allow_macro_mutate_ = v; }
+    // Issue #1780: per-Evaluator InlinePass respect-macro-hygiene policy.
+    [[nodiscard]] bool get_inline_respect_macro_hygiene() const noexcept {
+        return inline_respect_macro_hygiene_.load(std::memory_order_acquire);
+    }
+    void set_inline_respect_macro_hygiene(bool v) noexcept {
+        inline_respect_macro_hygiene_.store(v, std::memory_order_release);
+    }
     // Issue #676: sandbox + capability model.
     [[nodiscard]] bool sandbox_mode() const noexcept { return sandbox_mode_; }
     void set_sandbox_mode(bool v) noexcept { sandbox_mode_ = v; }

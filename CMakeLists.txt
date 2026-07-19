@@ -5756,6 +5756,9 @@ aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard_1774)
 # Issue #1779: compile:narrowing-dirty? uses read-only query (no set+restore race).
 aura_add_issue_test(test_narrowing_dirty_query_1779)
 aura_issue_test_link_llvm_jit(test_narrowing_dirty_query_1779)
+# Issue #1780: *allow-macro-inline* per-Evaluator (not InlinePass process static).
+aura_add_issue_test(test_allow_macro_inline_per_eval_1780)
+aura_issue_test_link_llvm_jit(test_allow_macro_inline_per_eval_1780)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

@@ -3082,7 +3082,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t filter_violations = ev->get_pattern_macro_filter_violations();
             const std::uint64_t markers = workspace_marker_macro_introduced(ev);
             const std::uint64_t inline_skipped = ir_inline_hygiene_skipped(ev);
-            const bool respects = InlinePass::get_respect_macro_hygiene();
+            // Issue #1780: per-Evaluator policy (not InlinePass static).
+            const bool respects = ev->get_inline_respect_macro_hygiene();
             const std::uint64_t contract = ev->get_macro_hygiene_contract_violations();
             const std::uint64_t macro_dirty = ws ? ws->macro_expansion_dirty_total() : 0;
             const std::uint64_t filter_checks = root_skips + recursive_skips;
@@ -6015,7 +6016,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t macro_ignored =
             load_m(&CompilerMetrics::macro_introduced_ignored_in_ir_total);
         const std::uint64_t total = inline_skipped + markers + stamped + ir_prov;
-        const bool respects = InlinePass::get_respect_macro_hygiene();
+        // Issue #1780: per-Evaluator policy (not InlinePass static).
+        const bool respects = ev->get_inline_respect_macro_hygiene();
         std::int64_t recommendation = 0;
         if (inline_skipped > 0 && !respects)
             recommendation = 3;

@@ -73,9 +73,11 @@ bool check_lowering_marker_propagation_ac1() {
 }
 
 bool check_inline_pass_respect_macro_hygiene_default_ac2() {
-    std::println("\n--- AC2: InlinePass::respect_macro_hygiene_ defaults true (#246) ---");
+    std::println("\n--- AC2: InlinePass::respect_macro_hygiene_ defaults true (#246/#1780) ---");
     std::string pm = read_file("src/compiler/pass_manager.ixx");
-    bool def = contains(pm, "static inline bool respect_macro_hygiene_ = true");
+    // Issue #1780: instance member (not process-wide static).
+    bool def = contains(pm, "bool respect_macro_hygiene_ = true") &&
+               !contains(pm, "static inline bool respect_macro_hygiene_ = true");
     bool usage_outer =
         contains(pm, "respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/");
     bool usage_inner = contains(pm, "respect_macro_hygiene_) {") &&
