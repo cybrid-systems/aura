@@ -578,12 +578,20 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     //   FlatAST::bump_generation_subtree(). is_valid_subtree()
     //   (C++) compares the captured subtree_gen_at_capture
     //   against this counter.
+    //
+    // Issue #1848: shared_lock workspace_mtx_ while reading
+    // subtree_gen_ / walking top_define_of. Concurrent
+    // compile:subtree-bump (#1847 Guard unique_lock) may
+    // resize subtree_gen_ or tear the uint16_t counter —
+    // without a reader lock this is a data race / UAF.
     ObservabilityPrims::register_stats_impl(
         "compile:subtree-generation", [&ev](const auto& a) -> EvalValue {
             if (a.empty() || !is_int(a[0]))
                 return ev.make_merr("bad-arg",
                                     "usage: (compile:subtree-generation subtree-root-id)");
             const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            // Issue #1848: shared vs #1847 Guard unique_lock.
+            std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
             if (!ev.workspace_flat_)
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_generation(id)));
@@ -601,8 +609,15 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
     //   FlatAST::bump_generation_subtree() actually bumps a
     //   subtree (excludes the no-op when the id has no
     //   enclosing Define).
+    //
+    // Issue #1848: shared_lock so the atomic load pairs with
+    // #1847 writer's exclusive Guard (acquire/release vs
+    // concurrent bump_generation_subtree). Same race class as
+    // compile:subtree-generation above.
     ObservabilityPrims::register_stats_impl(
         "compile:subtree-bump-count", [&ev](const auto&) -> EvalValue {
+            // Issue #1848: shared vs #1847 Guard unique_lock.
+            std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
             if (!ev.workspace_flat_)
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(ev.workspace_flat_->subtree_bump_count()));

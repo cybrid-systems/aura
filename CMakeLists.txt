@@ -5828,6 +5828,9 @@ aura_issue_test_link_llvm_jit(test_per_defuse_index_tracker_lock_1846)
 # Issue #1847: compile:subtree-bump MutationBoundaryGuard + try/catch.
 aura_add_issue_test(test_subtree_bump_guard_1847)
 aura_issue_test_link_llvm_jit(test_subtree_bump_guard_1847)
+# Issue #1848: subtree-generation / subtree-bump-count shared_lock vs bump.
+aura_add_issue_test(test_subtree_counter_shared_lock_1848)
+aura_issue_test_link_llvm_jit(test_subtree_counter_shared_lock_1848)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
