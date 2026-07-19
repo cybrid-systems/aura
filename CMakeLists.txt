@@ -5804,6 +5804,9 @@ aura_issue_test_link_llvm_jit(test_hygiene_protected_metadata_lock_1838)
 # Issue #1839: document compiler_service_ non-owning back-pointer contract.
 aura_add_issue_test(test_compiler_service_ownership_1839)
 aura_issue_test_link_llvm_jit(test_compiler_service_ownership_1839)
+# Issue #1840: verify_*_dirty_total acquire + multi-field snapshot for SEVA.
+aura_add_issue_test(test_verify_dirty_totals_snapshot_1840)
+aura_issue_test_link_llvm_jit(test_verify_dirty_totals_snapshot_1840)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

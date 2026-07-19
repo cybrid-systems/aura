@@ -1738,20 +1738,50 @@ public:
     mutable std::atomic<std::uint64_t> macro_self_modify_dirty_total_{0};
 
 public:
-    // Issue #437: per-reason verify-dirty stat accessors.
-    // Public so the (query:verify-dirty-stats) primitive
+    // Issue #437 / #1840: per-reason verify-dirty stat accessors.
+    // Public so the (query:verify-dirty-stats) / SEVA primitives
     // can read them from evaluator_primitives_compile.cpp.
+    // Issue #1840: acquire-load so concurrent apply_verify_dirty_bits
+    // (fetch_add relaxed) is visible to stats readers (pre-#1840
+    // used relaxed → SEVA readers could observe stale totals
+    // indefinitely under weak orderings).
     [[nodiscard]] std::uint64_t verify_assertion_dirty_total() const noexcept {
-        return verify_assertion_dirty_total_.load(std::memory_order_relaxed);
+        return verify_assertion_dirty_total_.load(std::memory_order_acquire);
     }
     [[nodiscard]] std::uint64_t verify_coverage_dirty_total() const noexcept {
-        return verify_coverage_dirty_total_.load(std::memory_order_relaxed);
+        return verify_coverage_dirty_total_.load(std::memory_order_acquire);
     }
     [[nodiscard]] std::uint64_t verify_sva_dirty_total() const noexcept {
-        return verify_sva_dirty_total_.load(std::memory_order_relaxed);
+        return verify_sva_dirty_total_.load(std::memory_order_acquire);
     }
     [[nodiscard]] std::uint64_t verify_formal_cex_dirty_total() const noexcept {
-        return verify_formal_cex_dirty_total_.load(std::memory_order_relaxed);
+        return verify_formal_cex_dirty_total_.load(std::memory_order_acquire);
+    }
+    // Issue #1840: consistent 4-counter view for SEVA multi-field
+    // reads (seva:fix-reset-bugs / query:seva-audit-log). Same
+    // double-check acquire pattern as CompilerMetrics type-cache
+    // snapshot (#1797) — no writer mutex on hot apply_verify_dirty_bits.
+    struct VerifyDirtyTotalsSnapshot {
+        std::uint64_t assertion = 0;
+        std::uint64_t coverage = 0;
+        std::uint64_t sva = 0;
+        std::uint64_t formal_cex = 0;
+    };
+    [[nodiscard]] VerifyDirtyTotalsSnapshot snapshot_verify_dirty_totals() const noexcept {
+        VerifyDirtyTotalsSnapshot s;
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            s.assertion = verify_assertion_dirty_total_.load(std::memory_order_acquire);
+            s.coverage = verify_coverage_dirty_total_.load(std::memory_order_acquire);
+            s.sva = verify_sva_dirty_total_.load(std::memory_order_acquire);
+            s.formal_cex = verify_formal_cex_dirty_total_.load(std::memory_order_acquire);
+            if (verify_assertion_dirty_total_.load(std::memory_order_acquire) == s.assertion &&
+                verify_coverage_dirty_total_.load(std::memory_order_acquire) == s.coverage &&
+                verify_sva_dirty_total_.load(std::memory_order_acquire) == s.sva &&
+                verify_formal_cex_dirty_total_.load(std::memory_order_acquire) == s.formal_cex) {
+                return s;
+            }
+        }
+        return s; // best-effort after retries
     }
     // Issue #469: verification_dirty_ stat accessors.
     [[nodiscard]] std::uint64_t verification_coverage_feedback_total() const noexcept {
