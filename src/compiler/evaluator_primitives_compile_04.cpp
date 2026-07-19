@@ -521,6 +521,13 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
     // Issue #695: (eda:demo-sv-self-evolution example cycles)
     // — run a bounded SV verification closed-loop demo:
     // feedback parse → structured mutate → re-emit → metrics.
+    //
+    // Issue #1774: each cycle may call eda:run-verification-feedback
+    // (and other helpers) that open their own MutationBoundaryGuard.
+    // This is **not** a nested unique_lock deadlock: only the outermost
+    // Guard acquires workspace_mtx_ (Issue #184 / #236); nested Guards
+    // only bump the depth slot. Prefer running standalone for demos;
+    // nested-under-outer-Guard remains supported for agent orchestration.
     add("eda:demo-sv-self-evolution", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
