@@ -2213,6 +2213,14 @@ aura_issue_test_link_llvm_jit(test_issue_1908)
 # check_panic_checkpoint_lifecycle_coverage.py linter (10 ACs).
 aura_add_issue_test(test_issue_1637)
 aura_issue_test_link_llvm_jit(test_issue_1637)
+# Issue #1638: SoA EnvFrame dual-path (bindings_ vs bindings_symid_ +
+# linear_ownership) full-path version stamping + stale detection +
+# mutation_log compact. 9 ACs source-driven + cross-layer baseline
+# regression (paired with check_soa_dual_path_consistency_coverage.py
+# linter which has 10 ACs). Complements the linear_post_mutate_enforce
+# MVP test (#1478) which was deferred-scoped under #1541.
+aura_add_issue_test(test_soa_dual_path_consistency)
+aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

@@ -6041,6 +6041,32 @@ public:
     const std::pmr::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
     std::pmr::vector<MutationRecord>& all_mutations() { return mutation_log_; }
 
+    // Issue #1638: compact mutation_log to reclaim excess capacity.
+    // Called from Evaluator::compact_mutation_log() at
+    // exit_mutation_boundary success path when mutation_log_.size()
+    // exceeds the COMPACT_THRESHOLD (heavy-mutation safety net;
+    // 200MB+/day reclaim in long-running Agent scenarios per the
+    // open mutation-log-growth issue). Returns bytes saved
+    // (capacity reduction) so the caller can bump
+    // mutation_log_compact_bytes_saved metric. No-op when
+    // mutation_log_ is empty (shrink_to_fit on empty pmr vector
+    // is free; we still return 0 to keep the metric monotonically
+    // meaningful).
+    std::size_t compact_mutation_log() noexcept {
+        if (mutation_log_.empty())
+            return 0;
+        const std::size_t before = mutation_log_.capacity();
+        mutation_log_.shrink_to_fit();
+        const std::size_t after = mutation_log_.capacity();
+        return before > after ? before - after : 0;
+    }
+
+    // Issue #1638: mutation_log entry count accessor used by the
+    // boundary-exit compact threshold check (avoids exposing
+    // mutation_log_ directly to Evaluator). Cheap atomic-free
+    // read; size() is O(1) on pmr vector.
+    std::size_t mutation_log_size() const noexcept { return mutation_log_.size(); }
+
     // Issue #282: Occurrence Typing provenance accessors.
     // narrowing_log_ is captured at synthesize_flat_if time
     // (see type_checker_impl.cpp). Same lifecycle as

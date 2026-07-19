@@ -1587,6 +1587,54 @@ public:
             m->mutation_boundary_steal_safe_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #1638: SoA EnvFrame dual-path consistency + mutation_log
+    // compact. bump_/getter pair for the three new metrics covering
+    // the three concrete gaps (lookup/walk GC/JIT dual-path stale
+    // fallback, mutation_log compact bytes saved, env_frame version
+    // drift prevented). Observable via (query:mutation-boundary-
+    // coverage-stats) primitive (no new primitive added — surface
+    // held within 521 budget per #1734 raise) and the file-scope
+    // atomic fallback in aura_jit_bridge.cpp (mirror #1908 dual-write
+    // pattern).
+    void bump_dual_path_stale_fallback_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dual_path_stale_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_log_compact_bytes_saved(std::uint64_t bytes) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_log_compact_bytes_saved.fetch_add(bytes, std::memory_order_relaxed);
+        }
+    }
+    void bump_env_frame_version_drift_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->env_frame_version_drift_prevented.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_dual_path_stale_fallback_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dual_path_stale_fallback_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_mutation_log_compact_bytes_saved() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->mutation_log_compact_bytes_saved.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_env_frame_version_drift_prevented() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->env_frame_version_drift_prevented.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_post_steal_checkpoint_restore_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -2155,6 +2203,24 @@ public:
     // defer per #1489) and bumps the cross_fiber_panic_heal_success +
     // (optionally) mutation_boundary_steal_safe_total outcome counters.
     void run_post_restore_lifecycle_close(bool safe_total_event) noexcept;
+    // Issue #1638: dual-path consistency gate for EnvFrame dual-path
+    // (bindings_ vs bindings_symid_ + bindings_linear_ownership_state_)
+    // access sites. Called from materialize_call_env / lookup_by_symid_chain
+    // / walk_env_frames / GCEnvWalkFn / JIT Apply prologue to verify
+    // the frame is not stale (version drift vs defuse_version). On
+    // stale detection bumps env_frame_version_drift_prevented (always)
+    // and dual_path_stale_fallback_total (when the caller successfully
+    // falls back to the symid path / rebuild). Returns false on stale
+    // (caller decides whether to fall back or refuse the access).
+    // `site` is a free-form string for log/metric attribution
+    // (e.g., "materialize_call_env", "GCEnvWalkFn").
+    bool ensure_env_frame_dual_path_consistent(EnvId id, const char* site) noexcept;
+    // Issue #1638: mutation_log compact at boundary exit success path.
+    // Delegates to FlatAST::compact_mutation_log() (shrink_to_fit on
+    // mutation_log_) and bumps mutation_log_compact_bytes_saved by
+    // the bytes saved. No-op when no workspace_flat_ is wired or
+    // mutation_log_ is empty.
+    void compact_mutation_log() noexcept;
 
     // Get the safe checkpoint source (for introspection).
     const std::string& panic_safe_source() const { return panic_safe_source_; }
@@ -10644,6 +10710,18 @@ public:
         // so closed-loop self-evo can blame dirty nodes on this boundary.
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->provenance_boundary_capture_count.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1638: mutation_log compact at boundary exit (success
+        // path only — failure path already rolls back via
+        // rollback_to_size, so the log is already shrunk). Threshold
+        // gate avoids the shrink_to_fit cost on small log states
+        // (heavy-mutation safety net — 200MB+/day reclaim in long-
+        // running Agent scenarios per the open mutation-log-growth
+        // issue). Cheap when under threshold (single size() read).
+        if (success && workspace_flat_) {
+            static constexpr std::size_t kCompactThreshold = 64 * 1024; // 64KB
+            if (workspace_flat_->mutation_log_size() > kCompactThreshold)
+                compact_mutation_log();
+        }
         // Bump version on both success and failure (legacy
         // invariant: 2 bumps per boundary). The lock is
         // released by the unique_lock going out of scope.

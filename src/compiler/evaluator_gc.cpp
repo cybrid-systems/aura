@@ -277,6 +277,17 @@ void Evaluator::resync_linear_jit_gc_roots_after_invalidate() noexcept {
     std::vector<std::int64_t> closure_roots;
     std::vector<std::int64_t> env_roots;
     collect_compiler_managed_gc_roots(closure_roots, env_roots, current_bridge_epoch());
+    // Issue #1638: dual-path consistency gate at GC root collection
+    // (paired site at line ~346 below is the second collection point).
+    // Walk the collected env_roots through
+    // ensure_env_frame_dual_path_consistent so dashboards observe
+    // drift at GC time (paired with the lookup/walk sites that
+    // observe drift at apply time). Steady-state target 0; non-zero
+    // indicates drift between compaction and the current defuse epoch.
+    for (const auto eid : env_roots) {
+        (void)ensure_env_frame_dual_path_consistent(static_cast<EnvId>(eid),
+                                                    "collect_gc_roots_env");
+    }
     // Issue #1515: every resync is a root re-registration event for the
     // linear-ownership × GC coordination surface (#763 counters).
     if (m) {
@@ -344,6 +355,13 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
     std::vector<std::int64_t> cl_roots;
     std::vector<std::int64_t> env_roots;
     collect_compiler_managed_gc_roots(cl_roots, env_roots, current_bridge_epoch());
+    // Issue #1638: dual-path consistency gate at the second GC root
+    // collection site (paired with the first above). See the long-form
+    // comment there for the rationale.
+    for (const auto eid : env_roots) {
+        (void)ensure_env_frame_dual_path_consistent(static_cast<EnvId>(eid),
+                                                    "collect_gc_roots_env_2");
+    }
     const std::uint64_t live = cl_roots.size() + env_roots.size();
 
     bool ok = true;
