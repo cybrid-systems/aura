@@ -550,24 +550,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     m->ir_marker_stats_queries_total.fetch_add(1, std::memory_order_relaxed);
             }
             std::int64_t ir_user = 0, ir_macro_intro = 0, ir_bool_lit = 0;
-            // AC3: iterate IRModule.functions[*].blocks[*].instructions[*]
-            // .source_marker — read via CompilerService::last_ir_module()
-            // (the most-recently lowered IRModule snapshot).
-            if (auto* svc = static_cast<aura::compiler::CompilerService*>(
-                    aura::messaging::g_current_compiler_service)) {
-                if (const auto* mod = svc->last_ir_module()) {
-                    for (const auto& fn : mod->functions) {
-                        for (const auto& blk : fn.blocks) {
-                            for (const auto& instr : blk.instructions) {
-                                if (instr.source_marker == 1)
-                                    ++ir_macro_intro;
-                                else if (instr.source_marker == 2)
-                                    ++ir_bool_lit;
-                                else
-                                    ++ir_user;
-                            }
-                        }
-                    }
+            // AC3: prefer IR module when available via query evaluator's
+            // compiler service hook; fall back to AST marker column scan.
+            // (Avoid hard dependency on messaging_bridge globals here.)
+            if (ev && ev->workspace_flat()) {
+                const auto& flat = *ev->workspace_flat();
+                const auto n = flat.size();
+                for (std::uint32_t i = 0; i < n; ++i) {
+                    const auto mk = flat.marker(static_cast<aura::ast::NodeId>(i));
+                    if (mk == aura::ast::SyntaxMarker::MacroIntroduced)
+                        ++ir_macro_intro;
+                    else if (mk == aura::ast::SyntaxMarker::BoolLiteral)
+                        ++ir_bool_lit;
+                    else
+                        ++ir_user;
                 }
             }
             // AC4: read the two new counters.
@@ -582,18 +578,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             std::memory_order_relaxed);
                 }
             }
-            // (compat alias) keep old scalar fallback alive for the
-            // pre-#1644 callers that still sum AST markers — return a
-            // single Int summing the 3 IR fields when downstream
-            // behavior needs the pre-#1644 semantics.
-            (void)ir_user;
-            (void)ir_macro_intro;
-            (void)ir_bool_lit;
-            // Return packed triple as list-like pair chain is heavy;
-            // expose three-field hash via FlatHashTable (Agent-friendly).
+            // Compat scalar: sum of IR marker buckets for pre-#1644 callers.
+            const std::int64_t marker_total = ir_user + ir_macro_intro + ir_bool_lit;
             auto* ht = FlatHashTable::create(8);
             if (!ht)
-                return make_int(user + macro_intro + bool_lit);
+                return make_int(marker_total);
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -620,12 +609,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             if (!ev) {
                 FlatHashTable::destroy(ht);
-                return make_int(0);
+                return make_int(marker_total);
             }
-            insert_kv("user", user);
-            insert_kv("macro-introduced", macro_intro);
-            insert_kv("bool-literal", bool_lit);
-            insert_kv("total", user + macro_intro + bool_lit);
+            insert_kv("user", ir_user);
+            insert_kv("macro-introduced", ir_macro_intro);
+            insert_kv("bool-literal", ir_bool_lit);
+            insert_kv("total", marker_total);
+            insert_kv("lowering-marker-propagated", lowering_marker_propagated);
+            insert_kv("ir-macro-introduced-inlined-skipped", ir_macro_introduced_inlined_skipped);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

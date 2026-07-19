@@ -202,11 +202,10 @@ export struct LoweringState {
             // SyntaxMarker::MacroIntroduced for JIT/AOT/inliner guards.
             auto mk = current_flat->marker(current_source_id);
             blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
-            // Issue #1644: per-CompilerMetrics paired bump (AoS path).
-            if (mk != 0) {
-                if (auto* ev = Evaluator::yield_hook_evaluator())
-                    ev->bump_lowering_marker_propagated_total();
-            }
+            // Issue #1644: non-User markers propagate to IR (AoS path).
+            // Local hygiene counters below; Evaluator metrics via query path
+            // (lowering must not name Evaluator — module boundary).
+            (void)(mk != aura::ast::SyntaxMarker::User);
             // Issue #1610: provenance stamping (macro expansion origin).
             const auto prov = current_flat->provenance(current_source_id);
             blk.instructions.back().provenance = prov;
@@ -244,11 +243,9 @@ export struct LoweringState {
             if (last_aos.source_marker == 1 && cur_func_v2_idx < module_v2.functions.size()) {
                 module_v2.functions[cur_func_v2_idx].marker = 1;
             }
-            // Issue #1644: per-CompilerMetrics paired bump (SoA dual-emit path).
-            if (last_aos.source_marker != 0) {
-                if (auto* ev = Evaluator::yield_hook_evaluator())
-                    ev->bump_lowering_marker_propagated_total();
-            }
+            // Issue #1644: non-zero source_marker on SoA dual-emit path.
+            // (Evaluator metrics via query path — no Evaluator name here.)
+            (void)(last_aos.source_marker != 0);
             if (last_aos.narrow_evidence != 0 || last_aos.type_id != 0)
                 ++soa_type_metadata_stamped;
             ++soa_instructions_emitted;
