@@ -3385,6 +3385,9 @@ struct CompilerMetrics {
     // Issue #1734: collect_compiler_managed_gc_roots saw snapshot
     // bridge_epoch != live current_bridge_epoch().
     std::atomic<std::uint64_t> gc_roots_bridge_epoch_drift_total{0};
+    // Issue #1755: validate_linear_ownership_state saw bridge_epoch
+    // (closure stamp) != current_bridge_epoch (caller snapshot / live).
+    std::atomic<std::uint64_t> linear_validate_bridge_epoch_drift_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_violations_prevented_total{0};
     std::atomic<std::uint64_t> linear_ownership_gc_env_version_resync_total{0};
     // Issue #1543: GC root registration consistency audit — one bump per

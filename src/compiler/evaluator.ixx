@@ -2623,12 +2623,20 @@ public:
     void collect_compiler_managed_gc_roots(std::vector<std::int64_t>& closure_roots_out,
                                            std::vector<std::int64_t>& env_roots_out,
                                            std::uint64_t current_bridge_epoch) const;
-    // Issue #683: linear ownership runtime probe at GC safepoint /
-    // fiber steal / post-invalidate re-lower boundaries.
-    [[nodiscard]] static bool
-    validate_linear_ownership_state(std::uint8_t linear_state, std::uint64_t frame_version,
-                                    std::uint64_t current_version, std::uint64_t bridge_epoch,
-                                    std::uint64_t current_bridge_epoch) noexcept;
+    // Issue #683 / #1515 / #1755: linear ownership runtime probe.
+    // Pure dual-epoch check: frame_version vs current_version, and
+    // bridge_epoch vs current_bridge_epoch (bridge_epoch==0 skips the
+    // bridge half — unbridged / untracked capture).
+    // Issue #1755: when bridge epochs mismatch (and bridge_epoch != 0),
+    // returns false (unsafe) and optionally bumps
+    // *bridge_epoch_drift_counter (linear_validate_bridge_epoch_drift_total).
+    // Static-safe: counter is an optional out-parameter so call sites
+    // with CompilerMetrics can observe drift without making this method
+    // non-static.
+    [[nodiscard]] static bool validate_linear_ownership_state(
+        std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
+        std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
+        std::atomic<std::uint64_t>* bridge_epoch_drift_counter = nullptr) noexcept;
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
     // Issue #1490 / #1580: post-steal / post-resume EnvFrame + bridge_epoch

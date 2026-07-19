@@ -183,11 +183,10 @@ std::size_t Evaluator::gc_root_count() const {
     return n;
 }
 
-bool Evaluator::validate_linear_ownership_state(std::uint8_t linear_state,
-                                                std::uint64_t frame_version,
-                                                std::uint64_t current_version,
-                                                std::uint64_t bridge_epoch,
-                                                std::uint64_t current_bridge_epoch) noexcept {
+bool Evaluator::validate_linear_ownership_state(
+    std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
+    std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
+    std::atomic<std::uint64_t>* bridge_epoch_drift_counter) noexcept {
     // Issue #1515: untracked (0) always ok; Moved (4) is a terminal
     // state that fails EnvFrame / bridge coordination checks so GC
     // and runtime never treat moved values as live roots.
@@ -197,8 +196,16 @@ bool Evaluator::validate_linear_ownership_state(std::uint8_t linear_state,
         return false;
     if (frame_version < current_version)
         return false;
-    if (bridge_epoch != 0 && bridge_epoch != current_bridge_epoch)
+    // Issue #1515 / #1755: bridge_epoch drift — caller-supplied
+    // closure stamp vs current_bridge_epoch (safepoint snapshot or
+    // live). bridge_epoch==0 means unbridged → skip. On mismatch
+    // the capture is stale across COW / compact / truncate; optional
+    // counter surfaces the drift for observability (#1755).
+    if (bridge_epoch != 0 && bridge_epoch != current_bridge_epoch) {
+        if (bridge_epoch_drift_counter)
+            bridge_epoch_drift_counter->fetch_add(1, std::memory_order_relaxed);
         return false;
+    }
     return true;
 }
 
@@ -245,6 +252,8 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     // upgrades to unique while the other holds the reverse order.
     std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
+    auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
     for (const auto& [id, cl] : closures_) {
         (void)id;
         if (cl.bridge_epoch == 0)
@@ -252,11 +261,11 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
             continue;
         const auto& fr = env_frames_[cl.env_id];
-        // EnvFrame.version_ × bridge_epoch coordination (Issue #1515).
+        // EnvFrame.version_ × bridge_epoch coordination (Issue #1515 / #1755).
         // (IRClosure.env_version is dual-checked on the IR apply path
         // in #1513; TW Closure map uses frame.version_ here.)
         if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                             current_bridge)) {
+                                             current_bridge, drift_ctr)) {
             violation = true;
             break;
         }

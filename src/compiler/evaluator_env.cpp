@@ -815,9 +815,11 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // tracked closures participate in linear ownership + EnvFrame version_.
     if (cl.bridge_epoch != 0 && compiler_metrics_) {
         const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
-        const auto ok = validate_linear_ownership_state(1, fr.version_, cur_ver, cl.bridge_epoch,
-                                                        current_bridge_epoch());
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+        // Issue #1755: pass drift counter so bridge mismatch is observed.
+        const auto ok = validate_linear_ownership_state(
+            1, fr.version_, cur_ver, cl.bridge_epoch, current_bridge_epoch(),
+            &m->linear_validate_bridge_epoch_drift_total);
         m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
         if (!ok) {
             m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);

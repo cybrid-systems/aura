@@ -395,10 +395,8 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         bump_stable_ref_cross_cow_refresh(refreshed);
         // Issue #1645: paired legacy + per-CompilerMetrics bump at the
         // StableNodeRef::validate_or_refresh path (was: 1 of the 404 dead).
-        if (refreshed && aura::compiler::g_current_compiler_service == nullptr) {
-            if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator())
-                ev->bump_stable_ref_cross_layer_mismatch();
-        }
+        if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator())
+            ev->bump_stable_ref_cross_layer_mismatch();
         aura::core::provenance::record_hot_path_auto_refresh(refreshed);
         aura::core::provenance::record_policy_enforced();
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
