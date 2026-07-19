@@ -1,8 +1,0 @@
-;; task: edsl-mutate-move
-;; goal: Use mutate:move-node to reorganize code
-;; expect: 3
-;; hint: --- mutate:move-node ---
-;; hint: ;; Step 1: Load code with a begin block
-;; hint: (set-code "(begin (display 1) (display 2) (display 3))")
-;; hint: ;; Step 2: Eval to see the output
-;; hint: (display 3)

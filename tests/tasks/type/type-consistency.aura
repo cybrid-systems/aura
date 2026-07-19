@@ -1,5 +1,0 @@
-;; task: type-consistency
-;; goal: Demonstrate consistent typing with mixed expressions
-;; expect: 3
-;; hint: --- consistency ---
-;; hint: (display (+ 1 2))

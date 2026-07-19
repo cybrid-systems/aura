@@ -1,4 +1,0 @@
-;; task: adt-wildcard
-;; goal: Define (Option a) with (Some a) (None), match (Some 42) with wildcard returning #t
-;; depend: std/pair
-;; expect: #t

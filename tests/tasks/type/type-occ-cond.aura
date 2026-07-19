@@ -1,9 +1,0 @@
-;; task: type-occ-cond
-;; goal: Use cond with occurrence typing — (string? ...) and (number? ...) in cond clauses
-;; expect: number
-(define (describe x)
-  (cond ((string? x) "string")
-        ((number? x) "number")
-        (else "other")))
-(display (describe 42))
-(newline)

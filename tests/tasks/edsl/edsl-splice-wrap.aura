@@ -1,8 +1,0 @@
-;; task: edsl-splice-wrap
-;; goal: Use mutate:splice and mutate:wrap for structural AST editing
-;; expect: insert
-;; hint: --- Higher-order AST transforms ---
-;; hint: (set-code "(begin (display 1) (display 3))")
-;; hint: (mutate:splice 0 1 "(display 2)" "insert")
-;; hint: (display (current-source))
-

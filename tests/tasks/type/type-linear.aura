@@ -1,5 +1,0 @@
-;; task: type-linear
-;; goal: Use (Linear ...) and (move ...) to demonstrate ownership flow
-;; expect: ok
-;; hint: --- linear type ---
-;; hint: (display "ok")

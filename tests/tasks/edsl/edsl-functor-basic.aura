@@ -1,9 +1,0 @@
-;; task: edsl-functor-basic
-;; goal: Define a functor with :T param, use it with Int, display the result
-;; expect: 42
-;; hint: --- define-module ---
-;; hint: ;; The simplest functor creates a module with :T param and uses T in the body
-;; hint: (begin
-;; hint:   (define-module (Calc :T) (export compute) (define (compute x) (+ x 1)))
-;; hint:   (Calc Int)
-;; hint:   (display 42))

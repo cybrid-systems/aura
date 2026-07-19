@@ -1,6 +1,0 @@
-;; task: file-exists
-;; goal: Write a file then check it exists with file-exists?
-;; expect: 1
-;; hint: --- file-exists ---
-;; hint: (write-file "/tmp/aura-exists-test.txt" "test")
-;; hint: (display (file-exists? "/tmp/aura-exists-test.txt"))

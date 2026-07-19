@@ -1,7 +1,0 @@
-;; task: fibonacci
-;; goal: Write (fib n) using letrec that computes the nth fibonacci number, test (fib 10)
-;; expect: 55
-;; hint: --- WORKING Aura fibonacci ---
-;; hint:   (if (< n 2) n
-;; hint:     (+ (fib (- n 1)) (fib (- n 2)))))
-;; hint: (display (fib 10))

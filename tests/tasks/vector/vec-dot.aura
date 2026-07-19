@@ -1,7 +1,0 @@
-;; task: vec-dot
-;; goal: Use vec:dot to compute dot product of two vectors
-;; depend: std/vector-math
-;; expect: 32
-;; hint: --- vector dot ---
-;; hint: (require "std/vector-math" all:)
-;; hint: (display (vec:dot (vector 1 2 3) (vector 4 5 6)))

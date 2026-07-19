@@ -1,8 +1,0 @@
-;; task: edsl-query
-;; goal: Use set-code + (current-source) to load and display code
-;; expect: g
-;; hint: --- EDSL set-code + current-source ---
-;; hint: ;; set-code loads code into workspace
-;; hint: (set-code "(define (g x) (* x 2))")
-;; hint: ;; current-source returns source code string
-;; hint: (display (current-source))

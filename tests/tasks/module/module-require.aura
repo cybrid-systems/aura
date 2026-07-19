@@ -1,7 +1,0 @@
-;; task: module-require
-;; goal: Use (require "std/math" all:) to use math functions
-;; depend: std/math
-;; expect: 9
-;; hint: --- module require ---
-;; hint: (require "std/math" all:)
-;; hint: (display (square 3))

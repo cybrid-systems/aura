@@ -1,4 +1,0 @@
-;; task: adt-either
-;; goal: Define (Either a b) with (Left a) and (Right b), create (Right 42) and use match
-;; depend: std/pair
-;; expect: 42

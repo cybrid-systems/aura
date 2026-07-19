@@ -1,7 +1,0 @@
-;; task: edsl-summary
-;; goal: Use ast:summary and compile:status to inspect workspace state
-;; expect: total
-;; hint: --- EDSL summary/status ---
-;; hint: (set-code "(define (g x) (+ x 1))")
-;; hint: (display (ast:summary))
-

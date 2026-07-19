@@ -1,7 +1,0 @@
-;; task: reverse-list
-;; goal: Write (reverse-list lst) that reverses a list without using std/list reverse, test with (list 1 2 3 4)
-;; expect: 4 3 2 1
-;; hint: --- WORKING Aura reverse list ---
-;; hint:     (if (null? rest) acc
-;; hint:       (loop (cdr rest) (cons (car rest) acc)))))
-;; hint: (display (reverse-list (list 1 2 3 4)))

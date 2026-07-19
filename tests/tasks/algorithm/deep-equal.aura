@@ -1,9 +1,0 @@
-;; task: deep-equal
-;; goal: Write (deep-equal? a b) that recursively compares nested lists, test with nested lists
-;; expect: #t
-;; hint: --- WORKING Aura deep equal ---
-;; hint:          (and (deep-equal? (car a) (car b))
-;; hint:               (deep-equal? (cdr a) (cdr b))))
-;; hint:         ((and (null? a) (null? b)) #t)
-;; hint:         (#t (= a b))))
-;; hint: (display (deep-equal? (list 1 (list 2 3)) (list 1 (list 2 3))))

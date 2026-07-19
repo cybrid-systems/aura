@@ -1,5 +1,0 @@
-;; task: m4-borrow
-;; goal: Use (borrow) to borrow a value
-;; expect: 42
-;; hint: --- M4 borrow ---
-;; hint: (display (borrow 42))

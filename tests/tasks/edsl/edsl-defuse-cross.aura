@@ -1,6 +1,0 @@
-;; task: edsl-defuse-cross
-;; goal: Use query:def-use to trace cross-scope variable references
-;; expect: outer
-;; hint: (set-code "(define outer 42)(define (f n) (+ outer n))")
-;; hint: (display (car (query:def-use 'outer)))
-

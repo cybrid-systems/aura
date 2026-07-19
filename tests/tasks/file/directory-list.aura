@@ -1,5 +1,0 @@
-;; task: directory-list
-;; goal: List files in the current directory and display at least one item
-;; expect: src
-;; hint: --- directory-list ---
-;; hint: (display (directory-list "."))

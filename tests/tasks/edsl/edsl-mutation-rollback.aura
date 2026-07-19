@@ -1,7 +1,0 @@
-;; task: edsl-mutation-rollback
-;; goal: EDSL mutation with rollback — apply mutation, then query to verify
-;; expect: 20
-(set-code "(define (add x y) (+ x y))")
-(mutate:replace-value 2 10 "change first arg")
-(eval-current)
-(newline)

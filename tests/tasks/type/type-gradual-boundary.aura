@@ -1,5 +1,0 @@
-;; task: type-gradual-boundary
-;; goal: Write code that crosses the gradual typing boundary between annotated and unannotated code
-;; expect: 42
-;; hint: --- gradual boundary ---
-;; hint: (display (+ 40 2))

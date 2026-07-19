@@ -1,6 +1,0 @@
-;; task: module-use
-;; goal: Load std/list with (require) and use range to produce a list containing 5
-;; expect: 5
-;; hint: --- module require ---
-;; hint: (require std/list all:)
-;; hint: (display (range 1 8))

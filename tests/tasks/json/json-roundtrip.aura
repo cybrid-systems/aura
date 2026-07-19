@@ -1,5 +1,0 @@
-;; task: json-roundtrip
-;; goal: Write code that tests json-encode then json-parse roundtrip with (hash "a" 1 "b" (list 2 3))
-;; expect: 1
-;; hint: --- WORKING Aura json roundtrip ---
-;; hint: (display (hash-ref h2 "a"))

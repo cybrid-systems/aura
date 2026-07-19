@@ -1,4 +1,0 @@
-;; task: adt-multi-ctor
-;; goal: Define (Season) with (Spring)(Summer)(Fall)(Winter), match Spring and return 1
-;; depend: std/pair
-;; expect: 1

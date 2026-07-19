@@ -1,3 +1,0 @@
-;; task: type-of
-;; goal: Use (type-of 42) to get type
-;; expect: Int

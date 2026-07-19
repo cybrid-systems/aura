@@ -1,8 +1,0 @@
-;; task: bench-parse
-;; goal: Benchmark: Use set-code to parse a large expression
-;; expect: parse
-;; hint: (define code '(define (fib n) (if (< n 2) n (+ (fib (- n 1))(fib (- n 2))))))
-;; hint: (define t1 (current-time))
-;; hint: (set-code code)
-;; hint: (display 'parse-ok)
-

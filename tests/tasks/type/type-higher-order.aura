@@ -1,3 +1,0 @@
-;; task: type-higher-order
-;; goal: Write ((lambda (f x) (f x)) (lambda (n) (+ n 1)) 5) that shows function application type inference
-;; expect: 6

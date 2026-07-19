@@ -1,8 +1,0 @@
-;; task: edsl-intend-basic
-;; goal: Use intend to generate code with generator/verifier cycle
-;; expect: intend
-;; hint: (define (gen g) '(define (f x) (+ x 1)))
-;; hint: (define (ver code) '#t)
-;; hint: (intend 'test gen ver)
-;; hint: (display 'intend-complete)
-

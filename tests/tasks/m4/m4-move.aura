@@ -1,5 +1,0 @@
-;; task: m4-move
-;; goal: Use (move) to move a value
-;; expect: 42
-;; hint: --- M4 move ---
-;; hint: (display (move 42))

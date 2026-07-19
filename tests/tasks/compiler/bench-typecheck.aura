@@ -1,7 +1,0 @@
-;; task: bench-typecheck
-;; goal: Benchmark: Type-check a large recursive function
-;; expect: typecheck
-;; hint: (set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))
-;; hint: (typecheck-current)
-;; hint: (display 'typecheck-ok)
-

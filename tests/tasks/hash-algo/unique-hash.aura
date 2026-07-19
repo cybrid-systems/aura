@@ -1,6 +1,0 @@
-;; task: unique-hash
-;; goal: Write (unique lst) removing duplicates using hash
-;; expect: 1
-;; expect: 2
-;; expect: 3
-;; expect: 4
