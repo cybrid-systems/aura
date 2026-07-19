@@ -2928,6 +2928,9 @@ private:
             if (respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/ &&
                 callee->marker != 1) {
                 ++macro_hygiene_skipped_;
+                // Issue #1644: per-CompilerMetrics paired legacy + new bump.
+                if (auto* ev = Evaluator::yield_hook_evaluator())
+                    ev->bump_ir_macro_introduced_inlined_skipped_total();
                 continue;
             }
             // Check trivial-inlinable (pre-#197 fast path:
@@ -3138,9 +3141,17 @@ private:
         // The instruction marker is 0=User, 1=MacroIntroduced.
         if (respect_macro_hygiene_) {
             if (call_instr.source_marker == 1 /*MacroIntroduced*/ && callee.marker != 1) {
+                // Issue #1644: per-CompilerMetrics paired bump (case 1:
+                // macro-introduced caller, user callee → skipped).
+                if (auto* ev = Evaluator::yield_hook_evaluator())
+                    ev->bump_ir_macro_introduced_inlined_skipped_total();
                 return false; // case 1 above
             }
             if (callee.marker == 1 && call_instr.source_marker != 1) {
+                // Issue #1644: per-CompilerMetrics paired bump (case 2:
+                // user caller, macro-introduced callee → skipped).
+                if (auto* ev = Evaluator::yield_hook_evaluator())
+                    ev->bump_ir_macro_introduced_inlined_skipped_total();
                 return false; // case 2 above
             }
         }

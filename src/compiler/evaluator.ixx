@@ -7076,6 +7076,39 @@ public:
                                                                        std::memory_order_relaxed);
         }
     }
+    // Issue #1644: IR hygiene full-pipeline (refine #1047).
+    // Bumped at the InlinePass respect_macro_hygiene_ cross-marker skip
+    // sites (paired with the legacy per-Fiber macro_hygiene_skipped_ at
+    // InlinePass namespace scope) + at the lowering_impl source_marker
+    // propagation sites (where current_flat->marker(current_source_id) is
+    // non-zero and is forwarded to blk.instructions.back().source_marker).
+    void bump_ir_macro_introduced_inlined_skipped_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->ir_macro_introduced_inlined_skipped_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_lowering_marker_propagated_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->lowering_marker_propagated_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Getters — for use by the (query:ir-marker-stats) primitive
+    // composition layer (paired with the Issue #757 / #1637 / #1641
+    // observability hook pattern).
+    std::uint64_t ir_macro_introduced_inlined_skipped_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->ir_macro_introduced_inlined_skipped_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
+    std::uint64_t lowering_marker_propagated_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->lowering_marker_propagated_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
     // Issue #758: runtime auto_validate bridge for user-defined
     // EDSL structs under MutationBoundaryGuard with macro hygiene
     // invariant correlation counters backing the

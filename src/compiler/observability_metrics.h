@@ -2467,6 +2467,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_hygiene_provenance_captured_total{0};
     std::atomic<std::uint64_t> macro_hygiene_inliner_policy_violations_total{0};
 
+    // Issue #1644: IR hygiene full-pipeline tracking (refine #1047).
+    // Bumped when InlinePass skips a cross-marker inlining because of
+    // respect_macro_hygiene_ (ir_macro_introduced_inlined_skipped_total)
+    // or when lowering_impl.cpp propagates a non-zero source_marker from
+    // the source AST node to an IRInstruction (lowering_marker_propagated_total).
+    // This is the per-CompilerMetrics counter surface for both
+    // observability and the (query:ir-marker-stats) primitive composition.
+    // Distinct from the legacy per-Fiber macro_hygiene_skipped_ at
+    // InlinePass namespace scope (process-wide but not per-CompilerMetrics).
+    std::atomic<std::uint64_t> ir_macro_introduced_inlined_skipped_total{0};
+    std::atomic<std::uint64_t> lowering_marker_propagated_total{0};
+
     // Issue #758: runtime auto_validate bridge for user-defined
     // EDSL structs (DEFINE_STRUCT / custom nodes) under
     // MutationBoundaryGuard with macro hygiene invariant
