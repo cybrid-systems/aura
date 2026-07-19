@@ -289,6 +289,9 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     //   test_issue_411_followup_2/3 to verify per-DefUseIndex
     //   isolation + the fu4 test to verify the indexed
     //   lookup returns the right use-sites.
+    //
+    // Issue #1846: get_callers is thread-safe vs concurrent
+    // add_caller (tracker internal spinlock).
     add("compile:per-defuse-index-callers", [&ev](const auto& a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(std::max<std::size_t>(8, kv.size() * 2));

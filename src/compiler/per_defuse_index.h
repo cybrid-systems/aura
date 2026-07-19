@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -77,14 +78,48 @@ struct Caller {
     NodeId node_id;
 };
 
+// Issue #1846: spin mutex for header-only tracker (avoids
+// <shared_mutex> in a header included from C++20 module
+// partitions — redeclare/import conflicts on shared_mutex).
+// Exclusive only; fine for rare Aura stats + typecheck
+// registration (not a hot reader-heavy path).
+class TrackerSpinLock {
+public:
+    void lock() const noexcept {
+        while (flag_.test_and_set(std::memory_order_acquire)) {
+            // spin
+        }
+    }
+    void unlock() const noexcept { flag_.clear(std::memory_order_release); }
+
+private:
+    mutable std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
+};
+
+class TrackerLockGuard {
+public:
+    explicit TrackerLockGuard(const TrackerSpinLock& l) noexcept
+        : lock_(l) {
+        lock_.lock();
+    }
+    ~TrackerLockGuard() { lock_.unlock(); }
+    TrackerLockGuard(const TrackerLockGuard&) = delete;
+    TrackerLockGuard& operator=(const TrackerLockGuard&) = delete;
+
+private:
+    const TrackerSpinLock& lock_;
+};
+
 // PerDefUseIndexTracker — a per-DefUseIndex caller registry.
 // Each DefUseIndex gets its own independent list of
 // callers; adding a caller to one index doesn't affect any
-// other. The tracker is copyable (the underlying map is
-// trivially copyable) and thread-safe for read-only
-// concurrent access (mutations are not synchronized — the
-// caller is expected to own the synchronization, same as
-// the pre-existing dep_caller_fn_).
+// other.
+//
+// Issue #1846: internal spin-lock serializes add_caller vs
+// get_callers / size_for_index / total_size / index_count /
+// clear. Pre-#1846 mutations were unsynchronized —
+// concurrent compile:per-defuse-index-add vs -callers could
+// UAF on vector reallocation.
 //
 // Performance: get_callers is O(K) where K is the number
 // of callers for that specific DefUseIndex (NOT the total
@@ -96,17 +131,51 @@ struct Caller {
 class PerDefUseIndexTracker {
 public:
     PerDefUseIndexTracker() = default;
-    PerDefUseIndexTracker(const PerDefUseIndexTracker&) = default;
-    PerDefUseIndexTracker& operator=(const PerDefUseIndexTracker&) = default;
-    PerDefUseIndexTracker(PerDefUseIndexTracker&&) noexcept = default;
-    PerDefUseIndexTracker& operator=(PerDefUseIndexTracker&&) noexcept = default;
+    PerDefUseIndexTracker(const PerDefUseIndexTracker& o) {
+        TrackerLockGuard lk(o.lock_);
+        per_index_ = o.per_index_;
+    }
+    PerDefUseIndexTracker& operator=(const PerDefUseIndexTracker& o) {
+        if (this == &o)
+            return *this;
+        // Nested locks in fixed address order to avoid deadlock.
+        if (this < &o) {
+            TrackerLockGuard lk1(lock_);
+            TrackerLockGuard lk2(o.lock_);
+            per_index_ = o.per_index_;
+        } else {
+            TrackerLockGuard lk2(o.lock_);
+            TrackerLockGuard lk1(lock_);
+            per_index_ = o.per_index_;
+        }
+        return *this;
+    }
+    PerDefUseIndexTracker(PerDefUseIndexTracker&& o) noexcept {
+        TrackerLockGuard lk(o.lock_);
+        per_index_ = std::move(o.per_index_);
+    }
+    PerDefUseIndexTracker& operator=(PerDefUseIndexTracker&& o) noexcept {
+        if (this == &o)
+            return *this;
+        if (this < &o) {
+            TrackerLockGuard lk1(lock_);
+            TrackerLockGuard lk2(o.lock_);
+            per_index_ = std::move(o.per_index_);
+        } else {
+            TrackerLockGuard lk2(o.lock_);
+            TrackerLockGuard lk1(lock_);
+            per_index_ = std::move(o.per_index_);
+        }
+        return *this;
+    }
 
     // add_caller — register a Caller for a specific
     // DefUseIndex. The Caller is appended to that
     // DefUseIndex's caller list; other DefUseIndexes are
     // unaffected. O(1) amortized (hash map insert +
-    // vector push_back).
+    // vector push_back). Locked (#1846).
     void add_caller(const DefUseIndex& index, const Caller& caller) {
+        TrackerLockGuard lk(lock_);
         per_index_[index.name].push_back(caller);
     }
 
@@ -115,7 +184,9 @@ public:
     // callers have been registered for that index.
     // O(K) where K is the number of callers for that
     // specific index (NOT the total across all indexes).
+    // Locked; copies under the lock (#1846).
     std::vector<Caller> get_callers(const DefUseIndex& index) const {
+        TrackerLockGuard lk(lock_);
         auto it = per_index_.find(index.name);
         if (it == per_index_.end())
             return {};
@@ -127,6 +198,7 @@ public:
     // by the metric that measures per-DefUseIndex load
     // distribution (helps detect hot indexes).
     std::size_t size_for_index(const DefUseIndex& index) const {
+        TrackerLockGuard lk(lock_);
         auto it = per_index_.find(index.name);
         if (it == per_index_.end())
             return 0;
@@ -137,6 +209,7 @@ public:
     // DefUseIndexes. Used by the metric that tracks
     // overall tracker load.
     std::size_t total_size() const {
+        TrackerLockGuard lk(lock_);
         std::size_t sum = 0;
         for (const auto& [_, callers] : per_index_) {
             sum += callers.size();
@@ -147,14 +220,22 @@ public:
     // index_count — number of distinct DefUseIndexes
     // registered. Used by the metric that tracks the
     // number of DefUseIndexes in flight.
-    std::size_t index_count() const noexcept { return per_index_.size(); }
+    std::size_t index_count() const noexcept {
+        TrackerLockGuard lk(lock_);
+        return per_index_.size();
+    }
 
     // clear — remove all callers. Used between
     // typecheck-current invocations to reset state
     // (matches the dep_caller_fn_'s reset semantics).
-    void clear() noexcept { per_index_.clear(); }
+    void clear() noexcept {
+        TrackerLockGuard lk(lock_);
+        per_index_.clear();
+    }
 
 private:
+    // Issue #1846: guards per_index_ map + vectors.
+    TrackerSpinLock lock_;
     std::unordered_map<std::string, std::vector<Caller>> per_index_;
 };
 
