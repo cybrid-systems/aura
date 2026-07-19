@@ -5843,6 +5843,9 @@ aura_issue_test_link_llvm_jit(test_invalidations_stats_workspace_lock_1851)
 # Issue #1852: compile:ast-ops-stats shared_lock (single workspace_flat snapshot).
 aura_add_issue_test(test_ast_ops_stats_workspace_lock_1852)
 aura_issue_test_link_llvm_jit(test_ast_ops_stats_workspace_lock_1852)
+# Issue #1853: compile:clear-instruction-dirty! MutationBoundaryGuard + try/catch.
+aura_add_issue_test(test_clear_instruction_dirty_guard_1853)
+aura_issue_test_link_llvm_jit(test_clear_instruction_dirty_guard_1853)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

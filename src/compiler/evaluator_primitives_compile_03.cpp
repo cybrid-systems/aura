@@ -353,6 +353,14 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #460: (compile:clear-instruction-dirty! name
     // func-idx block-idx instr-idx) — per-instruction clear.
+    //
+    // Issue #1853: wrap clear_instruction_dirty_fn_ in
+    // MutationBoundaryGuard + try/catch. Pre-#1853 capability
+    // gate only controlled *who* may call; a throw mid-clear
+    // left IR dirty bits partially cleared (subtractive —
+    // worse than mark-instruction-dirty!) with no panic
+    // checkpoint restore. Exception → #f + metrics; dtor
+    // restores (#184/#236 outermost-only).
     add("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1395: capability gate — require kCapWildcard.
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
@@ -372,9 +380,30 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.clear_instruction_dirty_fn_)
             return make_bool(false);
-        return make_bool(ev.clear_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
-            static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
+        const auto* name = ev.string_heap_[idx].c_str();
+        const auto func_idx = static_cast<std::size_t>(as_int(a[1]));
+        const auto block_idx = static_cast<std::uint32_t>(as_int(a[2]));
+        const auto instr_idx = static_cast<std::uint32_t>(as_int(a[3]));
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            return make_bool(ev.clear_instruction_dirty_fn_(name, func_idx, block_idx, instr_idx));
+        } catch (const std::exception&) {
+            guard_ok = false; // Issue #1853: restore panic checkpoint
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(false);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return make_bool(false);
+        }
     });
 
     // Issue #460: (query:compiler-incremental-stats) — return
