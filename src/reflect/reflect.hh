@@ -440,7 +440,29 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 }
 
 
-// ── auto_serialize<T> — binary serialization (for cache_module) ──
+// Issue #1648: process-wide observability counter for the nested-struct
+// throws at the auto_serialize / auto_deserialize_struct sites below. Phase 1
+// preserves the #1124 / #1125 "refuse silent drop" invariant by incrementing
+// the counter immediately before each throw, so monitors can see how often
+// the gap would have fired. Full recursive reflect_members (depth-aware +
+// cycle-detect + auto-forwarding) for the nested MemberKind::Struct case
+// is deferred to #1676 (multi-session template-metaprogramming work).
+namespace aura::reflect {
+inline std::atomic<std::uint64_t>& reflect_nested_struct_throw_count_ref() noexcept {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter;
+}
+}  // namespace aura::reflect
+extern "C" {
+inline std::uint64_t aura_reflect_nested_struct_throw_count_v_read() noexcept {
+    return ::aura::reflect::reflect_nested_struct_throw_count_ref().load(std::memory_order_relaxed);
+}
+inline void aura_reflect_nested_struct_throw_count_v_bump(std::uint64_t delta) noexcept {
+    ::aura::reflect::reflect_nested_struct_throw_count_ref().fetch_add(delta, std::memory_order_relaxed);
+}
+}  // extern "C"
+
+// ── auto_serialize<T> ── binary serialization (for cache_module) ──
 
 // Issue #215: Top-level container overloads. These are
 // picked over the generic struct path for std::vector<T>,
@@ -674,8 +696,12 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
             case MemberKind::Struct:
                 // Issue #1124: nested structs need MemberInfo type_info for
                 // recursive serialize. Refuse silent drop — surface the gap.
+                // Issue #1648 (Phase 1): bump the observability counter immediately
+                // before the throw so monitors can track how often the gap fires.
+                // Full recursive support deferred to #1676.
+                aura_reflect_nested_struct_throw_count_v_bump(1);
                 throw std::runtime_error(
-                    "auto_serialize: nested MemberKind::Struct not yet supported");
+                    "auto_serialize: nested MemberKind::Struct not yet supported (see #1676)");
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
@@ -989,8 +1015,11 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
             }
             case MemberKind::Struct:
                 // Issue #1125: symmetric to #1124 — do not silently skip.
+                // Issue #1648 (Phase 1): bump the observability counter immediately
+                // before the throw so monitors can track deserialize gaps too.
+                aura_reflect_nested_struct_throw_count_v_bump(1);
                 throw std::runtime_error(
-                    "auto_deserialize_struct: nested MemberKind::Struct not yet supported");
+                    "auto_deserialize_struct: nested MemberKind::Struct not yet supported (see #1676)");
             case MemberKind::Other:
             case MemberKind::Unknown:
                 break;
