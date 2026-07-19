@@ -637,8 +637,16 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // test). Cast is safe because both the message-bridge caller
     // and the direct test pass a real GCSweepBuffers / PassThru.
     auto* marks = static_cast<aura::serve::GCSweepBuffers*>(sweep_buffers);
-    if (!marks)
+    if (!marks) {
+        // Issue #1866: null marks is a misconfiguration (collector
+        // omitted sweep buffers), not "no dead objects". Still return
+        // a zeroed CompactSweepResult (#1732 by-value; never nullptr)
+        // so callers can treat empty as skip — but bump a metric so
+        // the silent-failure mode is observable.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->gc_compact_sweep_null_marks_total.fetch_add(1, std::memory_order_relaxed);
         return result; // zeroed — no work
+    }
 
     // Issue #1489 / #1581: skip destructive reclaim while a
     // PanicCheckpoint recovery window is open (process-wide gc_hooks
