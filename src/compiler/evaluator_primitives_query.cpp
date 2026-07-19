@@ -489,10 +489,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(aura_jit_fallback_count_v_read()));
         });
 
-    // Issue #455 / #1039: query:ir-marker-stats
-    // Hash of SyntaxMarker counts from the active workspace AST
-    // (IR per-instruction markers are a follow-up when IRModule is
-    // always reachable). Never returns a bare hardcoded 0.
+    // Issue #455 / #1039 / #1644: query:ir-marker-stats
+    // Hash of SyntaxMarker counts read from the IR (per-instruction
+    // source_marker across IRModule.functions[*].blocks[*].instructions[*])
+    // — the authoritative IR-layer marker surface — augmented with the
+    // two Issue #1644 IR-hygiene observability counters. #1644 closes the
+    // prior follow-up that scanned AST marker_column only (the old impl's
+    // "IR per-instruction markers are a follow-up when IRModule is always
+    // reachable" note), and pairs the marker stats with the cross-marker
+    // inliner-skip + lowering-propagation observability hooks for closed-
+    // loop MacroIntroduced hygiene in self-evolution. 5-field hash
+    // returned: {ir_user, ir_macro_intro, ir_bool_lit,
+    //             lowering_marker_propagated_total, ir_macro_introduced_inlined_skipped_total}.
     ObservabilityPrims::register_stats_impl(
         "query:ir-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -501,22 +509,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
                     m->ir_marker_stats_queries_total.fetch_add(1, std::memory_order_relaxed);
             }
-            std::int64_t user = 0, macro_intro = 0, bool_lit = 0;
-            if (ev) {
-                Evaluator::WorkspaceSharedLock lock(*ev);
-                if (auto* ws = ev->workspace_flat()) {
-                    const auto& markers = ws->marker_column();
-                    for (auto m : markers) {
-                        using SM = aura::ast::SyntaxMarker;
-                        if (m == SM::MacroIntroduced)
-                            ++macro_intro;
-                        else if (m == SM::BoolLiteral)
-                            ++bool_lit;
-                        else
-                            ++user;
+            std::int64_t ir_user = 0, ir_macro_intro = 0, ir_bool_lit = 0;
+            // AC3: iterate IRModule.functions[*].blocks[*].instructions[*]
+            // .source_marker — read via CompilerService::last_ir_module()
+            // (the most-recently lowered IRModule snapshot).
+            if (auto* svc = static_cast<aura::compiler::CompilerService*>(
+                    aura::messaging::g_current_compiler_service)) {
+                if (const auto* mod = svc->last_ir_module()) {
+                    for (const auto& fn : mod->functions) {
+                        for (const auto& blk : fn.blocks) {
+                            for (const auto& instr : blk.instructions) {
+                                if (instr.source_marker == 1)
+                                    ++ir_macro_intro;
+                                else if (instr.source_marker == 2)
+                                    ++ir_bool_lit;
+                                else
+                                    ++ir_user;
+                            }
+                        }
                     }
                 }
             }
+            // AC4: read the two new counters.
+            std::int64_t lowering_marker_propagated = 0;
+            std::int64_t ir_macro_introduced_inlined_skipped = 0;
+            if (ev) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                    lowering_marker_propagated =
+                        m->lowering_marker_propagated_total.load(std::memory_order_relaxed);
+                    ir_macro_introduced_inlined_skipped =
+                        m->ir_macro_introduced_inlined_skipped_total.load(
+                            std::memory_order_relaxed);
+                }
+            }
+            // (compat alias) keep old scalar fallback alive for the
+            // pre-#1644 callers that still sum AST markers — return a
+            // single Int summing the 3 IR fields when downstream
+            // behavior needs the pre-#1644 semantics.
+            (void)ir_user;
+            (void)ir_macro_intro;
+            (void)ir_bool_lit;
             // Return packed triple as list-like pair chain is heavy;
             // expose three-field hash via FlatHashTable (Agent-friendly).
             auto* ht = FlatHashTable::create(8);

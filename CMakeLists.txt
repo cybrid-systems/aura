@@ -2255,6 +2255,20 @@ aura_issue_test_link_llvm_jit(test_aot_hot_update_incremental)
 # safe-steal) that pair with the legacy per-Fiber counters.
 aura_add_issue_test(test_orchestration_steal_boundary)
 aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
+# Issue #1644: IR hygiene full-pipeline observability tests
+# (refine #1047). Source-driven ACs AC1..AC6 — AC3 (query:ir-marker-stats
+# walks IRModule.instructions via CompilerService::last_ir_module) + AC4
+# (2 new CompilerMetrics counters ir_macro_introduced_inlined_skipped_total
+# + lowering_marker_propagated_total, X-macro fields, bump_/getter pairs,
+# pass_manager.ixx 3 paired bumps + lowering.ixx 2 paired bumps) are fresh
+# work; AC1/AC2/AC5/AC6 verify predecessor coverage. Complements the
+# existing IR hygiene test suite (test_production_safety_1047_1071.cpp +
+# test_ir_hygiene_propagation_1610.cpp + test_fiber_macro_hygiene_refresh_
+# 1612.cpp + test_macro_hygiene_closedloop_health_1613.cpp + test_macro_
+# hygiene_contract_closed_loop_420.cpp + test_hygiene_violation_closed_loop_
+# 422.cpp) by adding the per-CompilerMetrics IR-hygiene observability hooks.
+aura_add_issue_test(test_issue_1644_ir_hygiene)
+aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
