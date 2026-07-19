@@ -615,21 +615,22 @@ void CompilePrims::register_compile_p47(PrimRegistrar add, Evaluator& ev) {
     //     rejections eliminated.
     ObservabilityPrims::register_stats_impl(
         "compile:type-cache-stats", [&ev](const auto&) -> EvalValue {
-            std::uint64_t hits = 0, misses = 0, stale = 0, gen_saved = 0;
+            // Issue #1797: single logical snapshot of the 4 counters
+            // so gen-saved-ratio-bp is not mixed across concurrent
+            // typechecks (pre-#1797: 4 independent relaxed loads).
+            TypeCacheStatsSnapshot snap;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-                hits = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
-                misses = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
-                stale = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
-                gen_saved = m->typecheck_gen_saved_total.load(std::memory_order_relaxed);
+                snap = m->snapshot_type_cache_stats();
             }
-            const std::uint64_t gen_total = stale + gen_saved;
-            const std::uint64_t ratio_bp = (gen_total > 0) ? (gen_saved * 10000u) / gen_total : 0;
+            const std::uint64_t gen_total = snap.stale + snap.gen_saved;
+            const std::uint64_t ratio_bp =
+                (gen_total > 0) ? (snap.gen_saved * 10000u) / gen_total : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"cache-hits-total", make_int(static_cast<std::int64_t>(hits))},
-                {"cache-misses-total", make_int(static_cast<std::int64_t>(misses))},
-                {"stale-cache-total", make_int(static_cast<std::int64_t>(stale))},
-                {"gen-saved-total", make_int(static_cast<std::int64_t>(gen_saved))},
+                {"cache-hits-total", make_int(static_cast<std::int64_t>(snap.hits))},
+                {"cache-misses-total", make_int(static_cast<std::int64_t>(snap.misses))},
+                {"stale-cache-total", make_int(static_cast<std::int64_t>(snap.stale))},
+                {"gen-saved-total", make_int(static_cast<std::int64_t>(snap.gen_saved))},
                 {"gen-saved-ratio-bp", make_int(static_cast<std::int64_t>(ratio_bp))},
             };
             return build_kv_hash(ev, kv);
