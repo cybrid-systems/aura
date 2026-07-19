@@ -1040,25 +1040,22 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 39 (orig 3216-3279)
 void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #340 follow-up: the predicate_memo_
-    // stats aren't currently wired into the
-    // get_narrowing_refresh_count_fn_ hook (that
-    // hook returns a different counter). For now
-    // we return a 3-tuple with 0/0/0 — the test
-    // verifies the primitive exists + returns the
-    // right shape; a follow-up wires the actual
-    // stats. The narrowing_refresh_count itself
-    // is also returned for context.
+    // Issue #340 / #1781: (compile:occ-cache-stats) returns the
+    // lifetime predicate_memo_ counters as a 3-tuple
+    // (hits . (misses . evictions)). Values come from
+    // CompilerMetrics (mirrored from TypeChecker::stats_ after
+    // each infer_flat / infer_flat_partial). Pre-#1781 this was
+    // a hardcoded 0/0/0 stub — documentation drift for agents.
     ObservabilityPrims::register_stats_impl(
         "compile:occ-cache-stats", [&ev](const auto&) -> EvalValue {
-            // The 3-tuple: (predicate_memo_hits .
-            // predicate_memo_misses .
-            // predicate_memo_evictions). All 0 until
-            // a follow-up wires the stats into the
-            // hook.
-            const std::uint64_t hits = 0;
-            const std::uint64_t misses = 0;
-            const std::uint64_t evictions = 0;
+            std::uint64_t hits = 0;
+            std::uint64_t misses = 0;
+            std::uint64_t evictions = 0;
+            if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())) {
+                hits = m->predicate_memo_hits_total.load(std::memory_order_relaxed);
+                misses = m->predicate_memo_misses_total.load(std::memory_order_relaxed);
+                evictions = m->predicate_memo_evictions_total.load(std::memory_order_relaxed);
+            }
             // Build (hits . (misses . evictions)) — a
             // pair-of-pairs (the simplest 3-tuple in
             // flat-eval).
@@ -1067,9 +1064,6 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
                                  make_int(static_cast<std::int64_t>(evictions))});
             auto outer_idx = ev.pairs_.size();
             ev.pairs_.push_back({make_int(static_cast<std::int64_t>(hits)), make_pair(inner_idx)});
-            (void)hits;
-            (void)misses;
-            (void)evictions;
             return make_pair(outer_idx);
         });
 

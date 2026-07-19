@@ -225,14 +225,35 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                                                      std::memory_order_relaxed);
                 m->narrowing_reanalyzed_total.fetch_add(st.narrowing_reanalyzed,
                                                         std::memory_order_relaxed);
+                // Issue #340 / #1781: predicate_memo_ lifetime totals.
+                m->predicate_memo_hits_total.fetch_add(st.predicate_memo_hits,
+                                                       std::memory_order_relaxed);
+                m->predicate_memo_misses_total.fetch_add(st.predicate_memo_misses,
+                                                         std::memory_order_relaxed);
+                m->predicate_memo_evictions_total.fetch_add(st.predicate_memo_evictions,
+                                                            std::memory_order_relaxed);
                 m->and_or_meet_uses_total.fetch_add(st.and_or_meet_uses, std::memory_order_relaxed);
                 m->and_or_join_uses_total.fetch_add(st.and_or_join_uses, std::memory_order_relaxed);
                 m->narrowing_dirty_recovery_total.fetch_add(st.narrowing_dirty_recovery,
                                                             std::memory_order_relaxed);
             }
         } else {
+            if (compiler_metrics_)
+                tc.set_metrics(compiler_metrics_);
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
             workspace_flat_->clear_all_dirty();
+            // Issue #340 / #1781: mirror full-infer predicate_memo_ into
+            // lifetime CompilerMetrics (selective path does this above).
+            if (compiler_metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+                const auto& st = tc.stats();
+                m->predicate_memo_hits_total.fetch_add(st.predicate_memo_hits,
+                                                       std::memory_order_relaxed);
+                m->predicate_memo_misses_total.fetch_add(st.predicate_memo_misses,
+                                                         std::memory_order_relaxed);
+                m->predicate_memo_evictions_total.fetch_add(st.predicate_memo_evictions,
+                                                            std::memory_order_relaxed);
+            }
         }
 
         {
