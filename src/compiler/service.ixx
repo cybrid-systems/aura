@@ -989,6 +989,8 @@ public:
         // maintained by InlinePass (process-wide totals).
         // If the InlinePass hasn't been run yet, both
         // counters are 0.
+        // Issue #1827: total_* getters are acquire-loads on
+        // atomics (writers use fetch_add relaxed).
         evaluator_.set_get_inline_stats_fn([]() -> std::uint64_t {
             // Issue #1784: pack as two uint32 halves (low=inlined,
             // high=branch_aware). Consumers unpack via uint32_t.
