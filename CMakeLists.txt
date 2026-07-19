@@ -1635,8 +1635,10 @@ aura_issue_test_link_llvm_jit(test_type_propagation_ir_eda)
 # all 3 phase sections + Issue #304 reference + decision
 # doc cross-references + Status table. Future child issues
 # will be filed per Phase 0/1/2 milestone.
-aura_add_issue_test(test_hardware_roadmap_acknowledged)
-aura_issue_test_link_llvm_jit(test_hardware_roadmap_acknowledged)
+# test_hardware_roadmap_acknowledged was deleted as part of the
+# docs/ removal wave (Anqi 2026-07-19 directive — aura philosophy,
+# no per-issue plan docs); the source-driven ACs above remain
+# authoritative via future child issues.
 # Issue #566: First batch of primitives demotion + full
 # validation (P2, capstone of the primitives-demotion epic).
 # 6 scenarios validating: primitive count, stdlib module
@@ -2955,9 +2957,12 @@ aura_issue_test_link_llvm_jit(test_issue_320)
 #   - tests/run_sanitizer_matrix.sh (single entry
 #     point for TSan/ASan/UBSan + coverage on 4
 #     representative test binaries)
-#   - docs/sanitizers.md (usage doc)
+#   - docs/sanitizers.md (usage doc — REMOVED per Anqi
+#     2026-07-19 directive; the script still ships + the
+#     test now short-circuits AC4 to pass)
 #   - tests/test_issue_325.cpp (smoke test that the
-#     script + doc exist + are valid)
+#     script + doc exist + are valid — doc check now
+#     short-circuits)
 # 4 ACs: 3-sanitizer matrix + coverage toolchain +
 # known-failures handling + docs.
 aura_add_issue_test(test_issue_325)
@@ -3087,12 +3092,16 @@ aura_issue_test_link_llvm_jit(test_issue_346)
 # safe patterns for multi-round query-mutate-
 #     eval loops, stale-ref handling, workspace
 #     layering + COW, fiber concurrency, 3 code
-#     examples, 6 anti-patterns)
+#     examples, 6 anti-patterns — doc REMOVED per Anqi
+#     2026-07-19 directive; test_issue_347 short-circuits
+#     the doc-content ACs to pass)
 #   - docs/architecture.md link to the new doc
-#     (in the "Agent 编排" section)
+#     (in the "Agent 编排" section — docs/design/core/
+#     stable_ref_best_practices.md no longer ships)
 #   - tests/test_issue_347.cpp verifying the doc
 #     exists + has the required sections + cross-
-#     references resolve to real files
+#     references resolve to real files (test now
+#     short-circuits the doc-content ACs to pass)
 # 4 ACs: doc exists with sections, examples +
 # anti-patterns, linked from main docs, cross-
 # references resolve.
@@ -3342,7 +3351,6 @@ set(_AURA_BUNDLE_MEMBER_STANDALONES
   test_issue_442_seva_demo
   test_issue_444_strategy_evolution
   test_issue_445_openclaw_integration
-  test_issue_446_seva_docs_metrics
   test_issue_452_aot_hot_update
   test_issue_462_shape_aware_folding
   test_issue_463_soa_phase2_wiring
@@ -3705,11 +3713,15 @@ aura_issue_test_link_llvm_jit(test_issue_445_openclaw_integration)
 # METRICS layer:
 #   - docs/demos/seva.md (architecture + how-to + primitives)
 #   - demos/seva/TUTORIAL.md (step-by-step walkthrough)
-#   - README.md (Demos section pointing to SEVA)
+#   - README.md (Demos section pointing to SEVA — docs/demos/seva.md
+#     removed per Anqi 2026-07-19 directive; the README Demos
+#     section may also be cleaned in a future wave)
 #   - (seva:run-demo-with-metrics) 6-field hash primitive
 #   - (stats:count) 45 → 46
-aura_add_issue_test(test_issue_446_seva_docs_metrics)
-aura_issue_test_link_llvm_jit(test_issue_446_seva_docs_metrics)
+# test_issue_446_seva_docs_metrics was deleted as part of the docs/
+# removal wave (Anqi 2026-07-19 directive); source-driven ACs for
+# SEVA hash primitive + stats:count remain authoritative via the
+# other tests in the #440-#466 batch.
 aura_add_issue_test(test_issue_452_aot_hot_update)
 aura_issue_test_link_llvm_jit(test_issue_452_aot_hot_update)
 aura_add_issue_test(test_issue_462_shape_aware_folding)

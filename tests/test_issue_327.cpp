@@ -25,7 +25,8 @@
 // deferred follow-ups; tests/edsl_benchmark.py already covers
 // full vs incremental comparison at the harness level.
 //
-// AC #5 (docs/incremental_dirty_propagation.md) is shipped
+// AC #5 (docs/incremental_dirty_propagation.md) is shipped [REMOVED
+// per Anqi 2026-07-19 directive]
 // in this commit alongside the test (see end of file).
 
 import std;

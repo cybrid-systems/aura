@@ -185,37 +185,16 @@ bool test_known_failures_handling() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AC4: docs/sanitizers.md exists + covers usage
+// AC4: docs/sanitizers.md [REMOVED per Anqi 2026-07-19 directive]
 // ═══════════════════════════════════════════════════════════════
 
 bool test_docs_sanitizers_md() {
-    std::println("\n--- AC4: docs/sanitizers.md ---");
-    auto find_path = [](const std::string& rel) -> std::string {
-        if (auto* env = std::getenv("AURA_SRC_ROOT"))
-            return std::string(env) + "/" + rel;
-        return std::string("../") + rel;
-    };
-    const std::string docs = find_path("docs/sanitizers.md");
-    const std::string contents = read_file(docs);
-    CHECK(!contents.empty(), "docs/sanitizers.md exists");
-    if (contents.empty())
-        return false;
-    // Usage block at the top.
-    CHECK(contents.find("## Quick start") != std::string::npos, "docs has Quick start section");
-    CHECK(contents.find("tests/run_sanitizer_matrix.sh all") != std::string::npos,
-          "docs shows the all-mode invocation");
-    // The 3 sanitizers are documented.
-    CHECK(contents.find("TSan") != std::string::npos, "docs mention TSan");
-    CHECK(contents.find("ASan") != std::string::npos, "docs mention ASan");
-    CHECK(contents.find("UBSan") != std::string::npos, "docs mention UBSan");
-    // Hot files documented.
-    CHECK(contents.find("evaluator_primitives_compile.cpp") != std::string::npos,
-          "docs name evaluator_primitives_compile.cpp as hot file");
-    CHECK(contents.find("fiber.cpp") != std::string::npos, "docs name fiber.cpp as hot file");
-    CHECK(contents.find("aura_jit_bridge.cpp") != std::string::npos,
-          "docs name aura_jit_bridge.cpp as hot file");
-    // CI integration recipe.
-    CHECK(contents.find("CI integration") != std::string::npos, "docs have CI integration section");
+    // docs/sanitizers.md removed per Anqi 2026-07-19 directive (aura
+    // philosophy, no per-issue plan docs); source-driven AC body
+    // short-circuits to pass. The sanitizer matrix script + coverage
+    // toolchain + known-failures handling ACs (above) remain
+    // authoritative.
+    std::println("\n--- AC4: docs/sanitizers.md [REMOVED per Anqi 2026-07-19 directive] ---");
     return true;
 }
 
