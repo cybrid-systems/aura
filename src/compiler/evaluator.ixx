@@ -1385,6 +1385,15 @@ public:
             aura_set_aot_metrics(static_cast<CompilerMetrics*>(m));
     }
     [[nodiscard]] void* compiler_metrics() const noexcept { return compiler_metrics_; }
+    // Issue #1839: compiler_service_ is a non-owning raw back-pointer
+    // to the owning CompilerService (wired once in the service ctor
+    // via set_compiler_service(this)). The service outlives its
+    // embedded Evaluator; concurrent rebind/free of this pointer
+    // while compile:ir-stats (or other service-backed primitives)
+    // run is unsupported — same quiescence class as #1835
+    // (compiler_metrics_) and #1837 (type_registry_). Hot paths
+    // keep raw loads (no shared_ptr tax on every stats / bridge
+    // epoch / GC-root callback).
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     // Issue #612: optional post-mutate ADT registry sync (wired by CompilerService).
     using WorkspaceAdtSyncFn = void (*)(void* compiler_service);
