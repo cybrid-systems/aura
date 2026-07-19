@@ -5786,6 +5786,9 @@ aura_issue_test_link_llvm_jit(test_closedloop_stats_hash_cap_1795)
 # Issue #1797: compile:type-cache-stats consistent multi-counter snapshot.
 aura_add_issue_test(test_type_cache_stats_snapshot_1797)
 aura_issue_test_link_llvm_jit(test_type_cache_stats_snapshot_1797)
+# Issue #1816: coverage-holes / suggest-constraint-refine lock verification_dirty_.
+aura_add_issue_test(test_coverage_holes_workspace_lock_1816)
+aura_issue_test_link_llvm_jit(test_coverage_holes_workspace_lock_1816)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
