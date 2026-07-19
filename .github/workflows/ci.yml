@@ -170,7 +170,7 @@ jobs:
         # it ever fails (e.g. custom Docker layer with stripped
         # /proc, or a non-standard build tree depth > 8), the
         # env var below forces the lookup to a known location.
-        # See docs/contributing.md §X "Runtime.c 查找策略".
+        # See src/compiler/aura_jit_bridge.cpp find_runtime_c() comments.
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
 

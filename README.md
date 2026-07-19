@@ -51,7 +51,7 @@ Aura 遵循三个原则：
 - 版本化工作区与事务安全
 - 增量编译执行管线
 
-文档索引：[`docs/README.md`](docs/README.md)（**代码 + 测试为真相**；运行 `(api-reference)` 查看全部原语）。
+文档索引：[`docs/generated/`](docs/generated/)（**代码 + 测试为真相**；运行 `(api-reference)` 查看全部原语）。
 
 ```bash
 ./build.py build    # 构建
@@ -68,7 +68,7 @@ Aura 遵循三个原则：
 | Benchmark / SLO gate | [`tests/benchmark.py`](tests/benchmark.py) · `./build.py bench --strict`（**不是** `src/test/benchmark_gate.ixx`） |
 | Issue-test 模式 | [`tests/test_harness.hpp`](tests/test_harness.hpp) · 模板 [`tests/templates/test_issue_pattern.cpp`](tests/templates/test_issue_pattern.cpp) |
 
-贡献运行时：[`docs/contributing.md`](docs/contributing.md)。
+贡献运行时：[`CONTRIBUTING.md`](CONTRIBUTING.md)（如不存在，则代码本身是文档 — 三个不变式见 `src/compiler/evaluator_eval_flat.cpp` 顶部注释）。
 
 ## Platform Notes
 
