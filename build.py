@@ -47,7 +47,6 @@ Test suites:
   fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
   issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
   issues-fast 同上，强制 fast 档（bundle 子集 + git 变更）
-  pets        Issue #1454 — aura-pets headless TUI regression
   check       构建 + core + safety + fuzz + issues（CI 默认）
 """
 
@@ -1267,7 +1266,6 @@ CI_CORE = [
     "smoke",
     "bash",
     "suite",
-    "pets",  # #1454 aura-pets headless TUI
     "repl",
     "runtime-c",
     "concurrent",
@@ -1291,7 +1289,6 @@ CI_PARALLEL_SAFE = frozenset(
         "runtime-c",
         "fuzz-equiv",
         "fuzz-corpus",
-        "pets",
     }
 )
 
@@ -1609,7 +1606,6 @@ def cmd_list():
     print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus)")
     print(f"  {'check':12s} CI默认: build + core + safety + fuzz + issues")
     print(f"  {'issues-fast':12s} issue tests (AURA_ISSUES_TIER=fast)")
-    print(f"  {'pets':12s} aura-pets headless TUI regression (#1454)")
     print()
     for name, func in sorted(SUITES.items()):
         print(f"  {name:12s} {func.__doc__}")
