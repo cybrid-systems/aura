@@ -5789,6 +5789,9 @@ aura_issue_test_link_llvm_jit(test_type_cache_stats_snapshot_1797)
 # Issue #1816: coverage-holes / suggest-constraint-refine lock verification_dirty_.
 aura_add_issue_test(test_coverage_holes_workspace_lock_1816)
 aura_issue_test_link_llvm_jit(test_coverage_holes_workspace_lock_1816)
+# Issue #1827: InlinePass lifetime counters atomic + acquire loads for stats.
+aura_add_issue_test(test_inline_pass_stats_atomic_1827)
+aura_issue_test_link_llvm_jit(test_inline_pass_stats_atomic_1827)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <concepts>
 #include <cstddef>
@@ -2777,7 +2778,9 @@ public:
     std::size_t inlined_count() const { return inlined_count_; }
     // Issue #388: macro-hygiene cross-marker skipped counter
     // (callable from Aura via the stats hash).
-    std::size_t macro_hygiene_skipped_count() const { return macro_hygiene_skipped_; }
+    std::size_t macro_hygiene_skipped_count() const {
+        return macro_hygiene_skipped_.load(std::memory_order_acquire);
+    }
     // Issue #197: branch-aware inliner counter. Tracked
     // separately from inlined_count_ (which counts the
     // pre-#197 constant-substitution path) so callers can
@@ -2787,10 +2790,17 @@ public:
     // (compile:inline-pass-stats) Aura primitive. run_*
     // are reset on each run() call; total_* are lifetime
     // sums (process-wide).
-    static std::size_t total_inlined() { return total_inlined_; }
-    static std::size_t total_inlined_branch_aware() { return total_inlined_branch_aware_; }
+    // Issue #1827: acquire-load so concurrent inliner writes
+    // (fetch_add relaxed) are visible to stats readers without
+    // a plain-size_t data race.
+    static std::size_t total_inlined() { return total_inlined_.load(std::memory_order_acquire); }
+    static std::size_t total_inlined_branch_aware() {
+        return total_inlined_branch_aware_.load(std::memory_order_acquire);
+    }
     // Issue #388: macro-hygiene cross-marker skipped total.
-    static std::size_t total_macro_hygiene_skipped() { return macro_hygiene_skipped_; }
+    static std::size_t total_macro_hygiene_skipped() {
+        return macro_hygiene_skipped_.load(std::memory_order_acquire);
+    }
     std::size_t run_inlined() const { return run_inlined_; }
     std::size_t run_inlined_branch_aware() const { return run_inlined_branch_aware_; }
 
@@ -2929,7 +2939,7 @@ private:
             // user code into a macro-introduced caller context.
             if (respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/ &&
                 callee->marker != 1) {
-                ++macro_hygiene_skipped_;
+                macro_hygiene_skipped_.fetch_add(1, std::memory_order_relaxed);
                 // Issue #1644: local InlinePass counter only (pass_manager
                 // must not name Evaluator — module boundary). Host metrics
                 // are aggregated via query:ir-hygiene-stats / InlinePass
@@ -2948,7 +2958,7 @@ private:
                 instr.operands[2] = const_instr.operands[2];
                 ++inlined_count_;
                 ++run_inlined_;
-                ++total_inlined_;
+                total_inlined_.fetch_add(1, std::memory_order_relaxed);
                 continue;
             }
             // Issue #197: branch-aware inliner path. Handles
@@ -2961,7 +2971,7 @@ private:
                 if (try_inline_branch_aware(caller, block, i, *callee, instr)) {
                     ++inlined_branch_aware_count_;
                     ++run_inlined_branch_aware_;
-                    ++total_inlined_branch_aware_;
+                    total_inlined_branch_aware_.fetch_add(1, std::memory_order_relaxed);
                     // The Call at position i has been replaced
                     // with a Jump; the callee's blocks have
                     // been appended after this block. The
@@ -3516,14 +3526,15 @@ private:
     // Issue #197: per-run totals (reset on each run()).
     std::size_t run_inlined_ = 0;
     std::size_t run_inlined_branch_aware_ = 0;
-    // Issue #197: lifetime totals (process-wide, static).
-    // The (compile:inline-pass-stats) Aura primitive reads
-    // these. They are not reset on run(); only the per-run
-    // counts are reset.
-    static inline std::size_t total_inlined_ = 0;
-    static inline std::size_t total_inlined_branch_aware_ = 0;
+    // Issue #197 / #1827: lifetime totals (process-wide, static
+    // atomics). The (compile:inline-pass-stats) Aura primitive
+    // reads these via acquire-load. They are not reset on run();
+    // only the per-run counts are reset. Pre-#1827 these were
+    // plain size_t → data race under concurrent InlinePass::run.
+    static inline std::atomic<std::size_t> total_inlined_{0};
+    static inline std::atomic<std::size_t> total_inlined_branch_aware_{0};
     // Issue #388: macro-hygiene cross-marker skipped total.
-    static inline std::size_t macro_hygiene_skipped_ = 0;
+    static inline std::atomic<std::size_t> macro_hygiene_skipped_{0};
     // Issue #246 / #1780: macro-hygiene policy toggle (instance).
     // Default true (skip inlining macro-introduced callees).
     // Not process-wide — see Evaluator::inline_respect_macro_hygiene_.
