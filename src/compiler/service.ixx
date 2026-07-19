@@ -951,10 +951,10 @@ public:
         // invariant check scopes its diagnostic to
         // contexts where narrowing is genuinely stale.
         //
-        // The hook returns the PRIOR bit state (true if
-        // it was already set, false otherwise). This lets
-        // the read-only (compile:narrowing-dirty?) primitive
-        // peek the state via a no-op set/restore pair.
+        // The set hook returns the PRIOR bit state (true if
+        // it was already set, false otherwise).
+        // Issue #1779: read-only (compile:narrowing-dirty?) uses
+        // query_occurrence_dirty_fn_ — never set+restore (race).
         evaluator_.set_set_occurrence_dirty_fn([this](std::uint32_t node_id, bool set) -> bool {
             auto* ws = evaluator_.workspace_flat();
             if (!ws || node_id >= ws->size())
@@ -975,6 +975,14 @@ public:
                     static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
             }
             return prior;
+        });
+        evaluator_.set_query_occurrence_dirty_fn([this](std::uint32_t node_id) -> bool {
+            auto* ws = evaluator_.workspace_flat();
+            if (!ws || node_id >= ws->size())
+                return false;
+            return ws->is_dirty_for(
+                node_id,
+                static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty));
         });
         // Issue #197: hook for (compile:inline-pass-stats).
         // The hook reads the static lifetime counters

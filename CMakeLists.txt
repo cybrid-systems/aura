@@ -5753,6 +5753,9 @@ aura_issue_test_link_llvm_jit(test_mutate_from_feedback_node_id_1772)
 # Issue #1774: demo-sv-self-evolution nested Guard (no unique_lock deadlock).
 aura_add_issue_test(test_demo_sv_nested_guard_1774)
 aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard_1774)
+# Issue #1779: compile:narrowing-dirty? uses read-only query (no set+restore race).
+aura_add_issue_test(test_narrowing_dirty_query_1779)
+aura_issue_test_link_llvm_jit(test_narrowing_dirty_query_1779)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

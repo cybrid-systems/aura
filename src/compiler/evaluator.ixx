@@ -2239,6 +2239,12 @@ public:
     void set_set_occurrence_dirty_fn(std::function<SetOccurrenceDirtyFn> fn) {
         set_occurrence_dirty_fn_ = std::move(fn);
     }
+    // Issue #1779: read-only kOccurrenceDirty query (no set+restore race).
+    using QueryOccurrenceDirtyFn = bool(std::uint32_t /*node_id*/);
+    std::function<QueryOccurrenceDirtyFn> query_occurrence_dirty_fn_ = nullptr;
+    void set_query_occurrence_dirty_fn(std::function<QueryOccurrenceDirtyFn> fn) {
+        query_occurrence_dirty_fn_ = std::move(fn);
+    }
     // Issue #197: hook to query the inliner's lifetime
     // total counters. The InlinePass tracks
     // total_inlined (pre-#197 constant-substitution path)

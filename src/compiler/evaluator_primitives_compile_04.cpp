@@ -878,7 +878,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 38 (orig 3044-3215)
 void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #240: (compile:narrowing-dirty? node-id) — query
+    // Issue #240 / #1779: (compile:narrowing-dirty? node-id) — query
     // whether a workspace FlatAST node has the kOccurrenceDirty
     // bit set. Useful for agents / observability that want to
     // check narrowing staleness without invoking the full
@@ -886,31 +886,17 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
     // dirty for narrowing, #f otherwise (also #f if the hook
     // is not installed or the node-id is out of range).
     //
+    // Issue #1779: uses dedicated query_occurrence_dirty_fn_ (read-only).
+    // Pre-#1779 peeked via set(true)+restore — racy under concurrent mark.
+    //
     // This is the read-only counterpart to mark-narrowing-dirty!.
     add("compile:narrowing-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
-        // The hook is dual-purpose: set with true queries the
-        // state. We pass false (clear) but capture the
-        // pre-clear state via... actually let's just expose
-        // the query via a separate path. For simplicity, we
-        // reuse the hook and call it with set=true after
-        // capturing a probe.
-        if (!ev.set_occurrence_dirty_fn_)
+        if (!ev.query_occurrence_dirty_fn_)
             return make_bool(false);
-        // The hook's contract: it returns the prior state
-        // when called with set=true. We use that to peek
-        // without modifying state. After the peek we call
-        // it with the prior value (true if already dirty,
-        // false otherwise) to restore the original state.
-        bool prior = ev.set_occurrence_dirty_fn_(node_id, true);
-        // Restore: if prior was true (was already dirty),
-        // set again (no-op since the bit is still set);
-        // if prior was false (was not dirty), clear (which
-        // undoes the set we just did).
-        ev.set_occurrence_dirty_fn_(node_id, prior);
-        return make_bool(prior);
+        return make_bool(ev.query_occurrence_dirty_fn_(node_id));
     });
 
     // (compile:occ-cache-stats) — Issue #340: returns
