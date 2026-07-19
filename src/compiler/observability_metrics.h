@@ -6445,6 +6445,34 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_env_frame_version_drift_prevented{0}; // #1640
     std::atomic<std::uint64_t> aot_incremental_reemit_triggered{0};      // #1640
 
+    // Issue #1641: Scheduler / Worker work-stealing awareness for
+    // YieldReason::MutationBoundary + per-fiber mutation stack /
+    // checkpoint transfer. Three new metrics covering the three
+    // gaps the spec calls out (defer + mitigation + safe-steal
+    // observability):
+    //   - steal_mutation_boundary_deferred_total: bumped when
+    //     worker.cpp::steal defers a steal because the victim is
+    //     at an inner mutation boundary (depth > 1 + held).
+    //     Pairs with the existing bump_deferred_inner (the same
+    //     site currently bumps the legacy counter; this is the
+    //     explicit per-#1641 metric).
+    //   - starvation_mitigated_for_boundary_count: bumped when
+    //     apply_starvation_mitigation fires due to a held mutation
+    //     boundary (priority boost / budget extension for the
+    //     affected fiber). Distinct from the starvation_prevented_count
+    //     generic counter so dashboards can filter "starvation
+    //     caused by mutation boundary" specifically.
+    //   - boundary_held_steal_safe_total: bumped when steal
+    //     succeeds while the victim's mutation boundary is still
+    //     held (cross-fiber safe-steal path). Pairs with the
+    //     existing static_cross_fiber_mutation_safe_steal_total
+    //     counter; this is the explicit per-#1641 metric
+    //     (the existing one is at the Fiber level, this is at
+    //     the Scheduler / Worker level).
+    std::atomic<std::uint64_t> steal_mutation_boundary_deferred_total{0};  // #1641
+    std::atomic<std::uint64_t> starvation_mitigated_for_boundary_count{0}; // #1641
+    std::atomic<std::uint64_t> boundary_held_steal_safe_total{0};          // #1641
+
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261

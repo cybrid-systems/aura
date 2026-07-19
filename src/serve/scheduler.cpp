@@ -389,6 +389,13 @@ void Scheduler::on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t dura
     if (fiber_id != 0) {
         if (Fiber* f = fiber_by_id(fiber_id)) {
             apply_starvation_mitigation(f);
+            // Issue #1641: paired starvation_mitigated_for_boundary_count
+            // bump (per-CompilerMetrics observability surface; pairs with
+            // the legacy adaptive_steal_stats starvation-related counters
+            // so dashboards can filter "starvation caused by mutation
+            // boundary" specifically).
+            if (auto* ev = Evaluator::yield_hook_evaluator())
+                ev->bump_starvation_mitigated_for_boundary_count();
             return;
         }
     }

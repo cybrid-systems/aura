@@ -1746,6 +1746,56 @@ public:
         }
         return 0;
     }
+    // Issue #1641: Scheduler/Worker work-stealing awareness for
+    // YieldReason::MutationBoundary + per-fiber mutation stack /
+    // checkpoint transfer. bump_/getter pair for the 3 new metrics
+    // covering the 3 spec gaps (defer + mitigation + safe-steal).
+    // Bumped from serve/worker.cpp + serve/scheduler.cpp at the
+    // steal decision points (the bump_ helpers are exposed as
+    // public Evaluator methods because Worker/Scheduler operate
+    // on the Evaluator's per-CompilerMetrics observability surface;
+    // the legacy per-Fiber counters like static_cross_fiber_
+    // mutation_safe_steal_total continue to bump independently at
+    // the Fiber level).
+    void bump_steal_mutation_boundary_deferred_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->steal_mutation_boundary_deferred_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_starvation_mitigated_for_boundary_count() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->starvation_mitigated_for_boundary_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_boundary_held_steal_safe_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->boundary_held_steal_safe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_steal_mutation_boundary_deferred_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->steal_mutation_boundary_deferred_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_starvation_mitigated_for_boundary_count() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->starvation_mitigated_for_boundary_count.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_boundary_held_steal_safe_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->boundary_held_steal_safe_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_post_steal_checkpoint_restore_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

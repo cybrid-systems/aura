@@ -226,6 +226,13 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             if (stolen->last_yield_reason() == YieldReason::MutationBoundary) {
                 stolen->bump_steal_outermost_mutation_boundary();
                 stolen->bump_cross_fiber_mutation_safe_steal();
+                // Issue #1641: paired boundary_held_steal_safe_total
+                // bump (per-CompilerMetrics observability surface;
+                // pairs with the legacy per-Fiber bump_cross_fiber_
+                // mutation_safe_steal counter for the Scheduler/Worker
+                // level aggregate).
+                if (auto* ev = Evaluator::yield_hook_evaluator())
+                    ev->bump_boundary_held_steal_safe_total();
             }
             call_probe_linear_on_steal();
             call_steal_outermost_enforced();
@@ -252,6 +259,13 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 metrics::adaptive_steal_stats().steal_deferred_inner_boundary.fetch_add(
                     1, std::memory_order_relaxed);
                 apply_starvation_mitigation(stolen);
+                // Issue #1641: paired steal_mutation_boundary_deferred_total
+                // + starvation_mitigated_for_boundary_count bumps
+                // (per-CompilerMetrics observability surface).
+                if (auto* ev = Evaluator::yield_hook_evaluator()) {
+                    ev->bump_steal_mutation_boundary_deferred_total();
+                    ev->bump_starvation_mitigated_for_boundary_count();
+                }
             } else {
                 // Non-inner but still not safe (edge): threshold boost
                 // after repeated defers (#1270 / #1445).
