@@ -2327,6 +2327,18 @@ aura_issue_test_link_llvm_jit(test_reflect_nested)
 # #547 / #1501 / #1609 / #1636.
 aura_add_issue_test(test_issue_1649)
 aura_issue_test_link_llvm_jit(test_issue_1649)
+# Issue #1650: query:pattern finer marker/hygiene predicate control
+# (partial-redundant-ship, refine #1636 / #1609 / #1501 / #547). Phase 1
+# ships the only_macro_introduced_ inverse flag in QueryMatcher +
+# paired inverse check in match_subtree + 2 inverse counters
+# (recursive_user_skipped_ + macro_intro_filtered_inverse_). Default
+# only_macro_introduced = false preserves #1636 backward compat. AC2
+# query:pattern-hygiene-stats primitive extension deferred to #1683;
+# AC3 runtime tests + EDSL surface (:only-macro-introduced #t +
+# :allow-macro-introduced #t) deferred to #1684. Composes into
+# existing primitive per "原语最小化" directive (no new primitive).
+aura_add_issue_test(test_issue_1650)
+aura_issue_test_link_llvm_jit(test_issue_1650)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

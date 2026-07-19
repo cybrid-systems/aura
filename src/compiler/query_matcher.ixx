@@ -128,8 +128,17 @@ private:
     StringPool* pat_pool_;
     SymId wildcard_sym_;
     bool skip_macro_introduced_ = false;
+    // Issue #1650: inverse flag for `only_macro_introduced` predicate (Task1
+    // review 建议 #4 — refine #1636). Pairs with skip_macro_introduced_ (the
+    // 2 are mutually exclusive in practice). Default false preserves #1636
+    // backward compatibility.
+    bool only_macro_introduced_ = false;
     std::uint64_t recursive_macro_skipped_ = 0;
     std::uint64_t macro_intro_filtered_strict_ = 0;
+    // Issue #1650: paired inverse counters for the only_macro_introduced
+    // predicate (bumped in query_matcher.cpp match_subtree inverse check).
+    std::uint64_t recursive_user_skipped_ = 0;
+    std::uint64_t macro_intro_filtered_inverse_ = 0;
 };
 
 } // namespace aura::compiler
