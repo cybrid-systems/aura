@@ -405,6 +405,12 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
     // FlatAST (not CompilerMetrics), so we read them via the
     // ev.workspace_flat() accessor on the Evaluator (which the
     // service.ixx snapshot() also uses).
+    //
+    // Issue #1851: shared_lock workspace_mtx_ while loading the
+    // workspace_flat_ pointer and reading its counters. Pre-#1851
+    // a concurrent set_workspace_flat (#1729 unique_lock swap)
+    // could leave this reader with a stale FlatAST* after the
+    // swap → UAF on counter loads. Pair with #1729 writer lock.
     ObservabilityPrims::register_stats_impl(
         "compile:invalidations-stats", [&ev](const auto&) -> EvalValue {
             // Re-use the build_hash pattern from compile:ir-soa-stats
@@ -450,15 +456,16 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                 return make_hash(hidx);
             };
             std::uint64_t bumps = 0, checks = 0, inits = 0, commits = 0;
-            // The counters live on the workspace FlatAST (set up in
-            // ast.ixx). Get the FlatAST via the Evaluator's
-            // ev.workspace_flat() accessor (added in #175 so
-            // service.ixx can read workspace state).
-            if (auto* ws_flat = ev.workspace_flat()) {
-                bumps = ws_flat->bump_generation_count();
-                checks = ws_flat->is_valid_check_count();
-                inits = ws_flat->stable_ref_invalidations();
-                commits = ws_flat->atomic_batch_commits_v();
+            // Issue #1851: hold shared_lock for pointer load + counter
+            // snapshot (vs #1729 set_workspace_flat unique_lock).
+            {
+                std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+                if (auto* ws_flat = ev.workspace_flat()) {
+                    bumps = ws_flat->bump_generation_count();
+                    checks = ws_flat->is_valid_check_count();
+                    inits = ws_flat->stable_ref_invalidations();
+                    commits = ws_flat->atomic_batch_commits_v();
+                }
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"bump-generation-count", make_int(static_cast<std::int64_t>(bumps))},
