@@ -100,13 +100,12 @@ bool check_predecessors_ac1_ac2_ac3() {
 }
 
 bool check_design_doc_present() {
-    std::println("\n--- #1647 docs/design/1647-stable-ref-auto-pin.md ---");
-    std::ifstream in("docs/design/1647-stable-ref-auto-pin.md");
-    if (!in) {
-        std::println("FAIL: design doc missing");
-        return false;
-    }
-    std::println("OK: design doc present");
+    // Issue #1647: design doc removed per Anqi 2026-07-19 directive
+    // ("don't need to have docs" — aura philosophy, AI-agent-developed
+    // repo). The source-driven ACs above remain authoritative; the
+    // docs/design/ artifact is no longer required.
+    std::println("\n--- #1647 docs/design/1647-stable-ref-auto-pin.md "
+                 "[REMOVED per Anqi 2026-07-19 directive] ---");
     return true;
 }
 

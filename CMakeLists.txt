@@ -1641,10 +1641,14 @@ aura_issue_test_link_llvm_jit(test_hardware_roadmap_acknowledged)
 # validation (P2, capstone of the primitives-demotion epic).
 # 6 scenarios validating: primitive count, stdlib module
 # consistency (7 modules), INDEX reachability, surface item
-# reduction (>=20), decision doc presence, discoverability
+# reduction (>=20), decision doc presence (removed per Anqi
+# 2026-07-19 directive — see test_issue_1650/1645/1651/1647.cpp
+# check_design_doc_present rewrites for pattern), discoverability
 # regression. Non-duplicative with #558-#565.
-aura_add_issue_test(test_primitives_demotion_batch1)
-aura_issue_test_link_llvm_jit(test_primitives_demotion_batch1)
+# test_primitives_demotion_batch1 was deleted as part of the
+# docs/design/ removal commit (aura philosophy, no per-issue plan
+# docs); the source-driven ACs above remain authoritative via the
+# CMake-driven test wiring.
 # Issue #565: Stdlib Infrastructure improvements (P1,
 # parallel-safe). 5 scenarios validating: stdlib-organization
 # spec doc + lib/std/INDEX.aura (5 discovery functions) +
@@ -2300,10 +2304,10 @@ aura_add_issue_test(test_issue_1644_ir_hygiene)
 aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
 # Issue #1645: dead bump_* observability (scope-limited progressive).
 # Phase 1 ships 2 wire-ups + scripts/check_dead_bump_rate.py (the AC2
-# CI gate) + scripts/audit_dead_bumps.py (audit infra) + design doc.
-# Phase 2+ (~22 follow-up issues per the categorized queue in
-# docs/design/1645-dead-bump-progressive-ship.md) will wire up the
-# remaining ~400 dead bumps to reach the body-quoted < 10% dead rate.
+# CI gate) + scripts/audit_dead_bumps.py (audit infra).
+# Phase 2+ (~22 follow-up issues per the categorized queue) will wire
+# up the remaining ~400 dead bumps to reach the body-quoted < 10% dead
+# rate.
 aura_add_issue_test(test_issue_1645)
 aura_issue_test_link_llvm_jit(test_issue_1645)
 # Issue #1646: MutationBoundaryGuard long-running observability
@@ -2396,10 +2400,10 @@ aura_issue_test_link_llvm_jit(test_issue_1652)
 # Issue #1653: Pattern matching engine centralization + hygiene integration
 # completion (scope-limited-progressive Phase 1, Task1 review #5 + #1047
 # supplementary). Phase 1 ships docs/primitives_style.md (the centralized
-# documentation artifact for AC1) + docs/design/1653-...md (per-issue
-# design doc). All 4 ACs predecessor-covered or documented as Phase 2+
-# follow-ups: AC2 by #1650 + #1649 + #1652; AC3 partial by #455 + #1273 +
-# #1610 + #1644 + #1646 + #1651 (full #1047 deopt hook at #1689); AC4 AI
+# documentation artifact for AC1). All 4 ACs predecessor-covered or
+# documented as Phase 2+ follow-ups: AC2 by #1650 + #1649 + #1652; AC3
+# partial by #455 + #1273 + #1610 + #1644 + #1646 + #1651 (full #1047
+# deopt hook at #1689); AC4 AI
 # self-evo benchmark harness deferred past #1689. The 2 body-named stats
 # primitives (query:pattern-hygiene-enforcement-stats + query:mutate-
 # template-marker-stats) compose into existing primitives per #1632
@@ -3077,11 +3081,10 @@ aura_issue_test_link_llvm_jit(test_issue_344)
 aura_add_issue_test(test_issue_346)
 aura_issue_test_link_llvm_jit(test_issue_346)
 # Issue #347: [Docs] StableNodeRef, generation_ and
-# mutation safety best practices guide. Ships:
-#   - docs/design/core/stable_ref_best_practices.md
-#     (comprehensive best-practices doc covering
-#     when to use StableNodeRef vs raw NodeId,
-#     safe patterns for multi-round query-mutate-
+# mutation safety best practices guide. Ships a
+# comprehensive best-practices doc covering
+# when to use StableNodeRef vs raw NodeId,
+# safe patterns for multi-round query-mutate-
 #     eval loops, stale-ref handling, workspace
 #     layering + COW, fiber concurrency, 3 code
 #     examples, 6 anti-patterns)
