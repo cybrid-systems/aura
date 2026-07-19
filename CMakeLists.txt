@@ -2212,6 +2212,23 @@ aura_issue_test_link_llvm_jit(test_issue_1907)
 # variable that all those tests interact with.
 aura_add_issue_test(test_issue_1654)
 aura_issue_test_link_llvm_jit(test_issue_1654)
+# Issue #1655: apply_closure epoch-stale helper extraction (single source
+# of truth for closure_epoch_mismatch_fallback gate, refine #1485 C1 +
+# #1660). Source-driven ACs AC1..AC9 + runtime cross-baseline AC10. Closes
+# the metric-inflation bug in the inline race-window path where the
+# closure_epoch_mismatch_fallback bump was unconditional — refactor
+# extracts file-static closure_is_epoch_stale helper in
+# src/compiler/evaluator_eval_flat.cpp, used by both closure_needs_safe_fallback
+# (replacing previous inline `bool epoch_or_env_stale` tracking + late
+# `ev.closure_is_epoch_or_env_stale(cl)` invariant check) and the inline
+# race-window path in apply_closure (replacing previous inline
+# `bridge_stale || env_stale` if-gate). Pure refactor + correctness fix
+# — no API change. Complements the existing apply_closure test suite
+# (test_apply_closure_envframe_soa_1660.cpp + test_issue_1485.cpp +
+# test_bridge_epoch_strict.cpp) by adding the single-source-of-truth
+# predicate coverage for the metric gate.
+aura_add_issue_test(test_issue_1655)
+aura_issue_test_link_llvm_jit(test_issue_1655)
 # Issue #542: Multi-Fiber MutationBoundary + Work-Stealing
 # Safety + Starvation Prevention Stress Tests (P0). New
 aura_add_issue_test(test_issue_1908)
