@@ -1393,6 +1393,9 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     return dropped;
 }
 
+// Issue #1360: stable resolve — nullptr only for NULL / OOB (BC).
+// Terminal INVALID_VERSION still returns a live pointer; callers use
+// is_env_frame_invalid / resolve_env_frame_detailed for that case.
 const EnvFrame* Evaluator::resolve_env_frame(EnvId id) const noexcept {
     if (id == NULL_ENV_ID || id >= env_frames_.size())
         return nullptr;
@@ -1403,6 +1406,33 @@ EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
     if (id == NULL_ENV_ID || id >= env_frames_.size())
         return nullptr;
     return &env_frames_[id];
+}
+
+// Issue #1756: distinguish NULL_ID / OOB / INVALID_VERSION / OK so
+// callers do not conflate "no env" with "truncated" with "terminal invalid".
+// frame is non-null only for OK (usable). INVALID_VERSION is reported
+// without exposing a poison pointer for materialize/GC-style callers.
+EnvFrameResolveResult Evaluator::resolve_env_frame_detailed(EnvId id) const noexcept {
+    if (id == NULL_ENV_ID)
+        return {nullptr, EnvFrameResolveStatus::NULL_ID};
+    if (id >= env_frames_.size())
+        return {nullptr, EnvFrameResolveStatus::OOB};
+    const EnvFrame& fr = env_frames_[id];
+    if (fr.version_ == INVALID_VERSION)
+        return {nullptr, EnvFrameResolveStatus::INVALID_VERSION};
+    // GENERATION_MISMATCH reserved for free-list reuse (#1360 follow-up).
+    return {&fr, EnvFrameResolveStatus::OK};
+}
+
+EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noexcept {
+    if (id == NULL_ENV_ID)
+        return {nullptr, EnvFrameResolveStatus::NULL_ID};
+    if (id >= env_frames_.size())
+        return {nullptr, EnvFrameResolveStatus::OOB};
+    EnvFrame& fr = env_frames_[id];
+    if (fr.version_ == INVALID_VERSION)
+        return {nullptr, EnvFrameResolveStatus::INVALID_VERSION};
+    return {&fr, EnvFrameResolveStatus::OK};
 }
 
 // Issue #1386: compact env_frames_ arena — reclaim stale frames

@@ -5682,6 +5682,9 @@ aura_issue_test_link_llvm_jit(test_env_frame_stale_vs_invalid_id_1754)
 # Issue #1755: validate_linear_ownership_state bridge_epoch drift metric.
 aura_add_issue_test(test_linear_validate_bridge_epoch_1755)
 aura_issue_test_link_llvm_jit(test_linear_validate_bridge_epoch_1755)
+# Issue #1756: resolve_env_frame_detailed NULL/OOB/INVALID_VERSION.
+aura_add_issue_test(test_resolve_env_frame_detailed_1756)
+aura_issue_test_link_llvm_jit(test_resolve_env_frame_detailed_1756)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
