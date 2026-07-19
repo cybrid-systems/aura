@@ -4406,7 +4406,8 @@ private:
     //   - Fiber pool may pin work to avoid path (2); agents should
     //     keep mutation sections short (see hold-time counters).
     //
-    // Hold-time: outermost Guard records enter_ts_; dtor updates
+    // Hold-time: outermost Guard records optional enter_ts_ (#1764);
+    // dtor updates
     // mutation_boundary_hold_* / mutation_hold_* CompilerMetrics.
     std::atomic<bool> mutation_boundary_held_{false};
     // Set by outermost MutationBoundaryGuard; used by
@@ -11984,7 +11985,10 @@ public:
         // (no lock, no depth, dtor is a no-op). try_acquire returns AuraError
         // instead of constructing inert.
         bool inert_ = false;
-        std::chrono::steady_clock::time_point enter_ts_{};
+        // Issue #1764: optional (not default time_point) — dtor must not
+        // use time_since_epoch().count() != 0 as a sentinel (impl-defined
+        // for steady_clock::time_point default construction).
+        std::optional<std::chrono::steady_clock::time_point> enter_ts_;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
@@ -12203,8 +12207,10 @@ public:
             // then publish with ≤6 atomic writes on the common path (was
             // 15+ scattered fetch_add/CAS on every dtor — cache-line bounce
             // under high-frequency mutate). Nested guards skip (no enter_ts_).
-            if (outermost && enter_ts_.time_since_epoch().count() != 0) {
-                const auto dur = std::chrono::steady_clock::now() - enter_ts_;
+            // Issue #1764: enter_ts_ is std::optional — has_value() replaces
+            // the fragile time_since_epoch().count() != 0 sentinel.
+            if (outermost && enter_ts_.has_value()) {
+                const auto dur = std::chrono::steady_clock::now() - *enter_ts_;
                 const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
                 const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
