@@ -284,12 +284,19 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
     }
 }
 
+// Issue #1861: multi-step write (bindings_ emplace + binding_index_
+// insert + optional pool intern). Not atomic / not locked — safe only
+// under the Env single-writer contract documented on class Env
+// (evaluator.ixx). Concurrent bind vs lookup on the same Env is
+// unsupported; do not add env_mtx_ on this hot path.
 void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state) {
     bindings_.emplace_back(std::string(n), std::move(v));
     binding_index_[bindings_.back().first] = bindings_.size() - 1;
     // Keep SymId SoA + linear state in lockstep when pool is set.
     if (pool_) {
-        // pool_ is const*; intern is non-const but safe on shared pool.
+        // pool_ is const*; intern mutates the pool. StringPool::intern
+        // is not thread-safe (#1861) — callers must serialize shared
+        // pool mutation externally (single-fiber eval / workspace lock).
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
         bindings_symid_.emplace_back(s, bindings_.back().second);
         bindings_linear_ownership_state_.push_back(state);
@@ -482,11 +489,14 @@ void EnvFrame::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 }
 
 // Issue #1539: bind with explicit linear ownership state.
+// Issue #1861: same single-writer contract as Env::bind_with_linear_state
+// (no frame-level lock; pool intern not TS without external serialize).
 void EnvFrame::bind_with_linear_state(const std::string& n, types::EvalValue v,
                                       std::uint8_t state) {
     bindings_.emplace_back(n, v);
     // If pool_ can resolve name → SymId, keep primary SoA in sync.
     if (pool_) {
+        // const_cast: pool_ is const*; intern mutates (not thread-safe).
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
         bindings_symid_.emplace_back(s, v);
         bindings_linear_ownership_state_.push_back(state);
