@@ -2019,6 +2019,12 @@ public:
     // EDSL workspace (set via (set-code ...)), this is the per-eval
     // source-being-evaluated.
     void set_workspace_flat(ast::FlatAST* f) {
+        // Issue #1729: exclusive workspace_mtx_ during the swap so
+        // concurrent set/get races cannot tear the pointer mid-rebuild;
+        // roll back workspace_flat_ if eager index rebuild throws so we
+        // never leave new flat + empty index half-committed.
+        std::unique_lock<std::shared_mutex> lk(workspace_mtx_);
+        ast::FlatAST* const saved = workspace_flat_;
         workspace_flat_ = f;
         // Issue #1419: re-stamp agent fingerprint onto the new
         // workspace so subsequent mutations inherit the author.
@@ -2034,8 +2040,15 @@ public:
         // invalidation is safe — invalidate is a no-op if
         // the index is already empty.)
         invalidate_tag_arity_index();
-        if (f && pattern_index_policy_ == PatternIndexPolicy::EagerAfterCow)
-            build_tag_arity_index(static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
+        try {
+            if (f && pattern_index_policy_ == PatternIndexPolicy::EagerAfterCow)
+                build_tag_arity_index(
+                    static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerCow));
+        } catch (...) {
+            workspace_flat_ = saved;
+            invalidate_tag_arity_index();
+            throw;
+        }
     }
     void set_workspace_pool(ast::StringPool* p) { workspace_pool_ = p; }
     ast::FlatAST* workspace_flat() const { return workspace_flat_; }

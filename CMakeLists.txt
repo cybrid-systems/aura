@@ -5479,6 +5479,9 @@ aura_issue_test_link_llvm_jit(test_panic_checkpoint_clear_1727)
 # Issue #1728: commit_panic_checkpoint must bump bridge_epoch.
 aura_add_issue_test(test_commit_panic_bridge_epoch_1728)
 aura_issue_test_link_llvm_jit(test_commit_panic_bridge_epoch_1728)
+# Issue #1729: set_workspace_flat lock + rollback on index rebuild throw.
+aura_add_issue_test(test_set_workspace_flat_1729)
+aura_issue_test_link_llvm_jit(test_set_workspace_flat_1729)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)
