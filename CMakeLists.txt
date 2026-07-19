@@ -5846,6 +5846,9 @@ aura_issue_test_link_llvm_jit(test_ast_ops_stats_workspace_lock_1852)
 # Issue #1853: compile:clear-instruction-dirty! MutationBoundaryGuard + try/catch.
 aura_add_issue_test(test_clear_instruction_dirty_guard_1853)
 aura_issue_test_link_llvm_jit(test_clear_instruction_dirty_guard_1853)
+# Issue #1854: query:incremental-effectiveness snapshot fail → void + metric.
+aura_add_issue_test(test_incremental_effectiveness_snapshot_fail_1854)
+aura_issue_test_link_llvm_jit(test_incremental_effectiveness_snapshot_fail_1854)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
