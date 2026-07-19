@@ -96,13 +96,10 @@ static void ac3_compact_sweep_skips() {
     CHECK(ev.save_panic_checkpoint(), "save ok");
     const auto skip0 = aura::gc_hooks::gc_sweep_skipped_pending_panic();
 
-    aura::serve::GCSweepBuffers marks{}; // empty marks — still must skip early
-    void* raw = ev.compact_sweep(&marks);
-    CHECK(raw != nullptr, "compact_sweep returns result object");
-    auto* result = static_cast<aura::messaging::GCSweepResultMsg*>(raw);
-    CHECK(result->closures_freed == 0 && result->pairs_freed == 0 && result->strings_freed == 0,
+    aura::serve::GCSweepBuffers marks{};    // empty marks — still must skip early
+    auto result = ev.compact_sweep(&marks); // Issue #1732: typed by-value
+    CHECK(result.closures_freed == 0 && result.pairs_freed == 0 && result.strings_freed == 0,
           "no reclaim while defer armed");
-    delete result;
 
     CHECK(aura::gc_hooks::gc_sweep_skipped_pending_panic() > skip0, "skip counter advanced");
 

@@ -575,14 +575,21 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
 // equivalent) and in a future iteration of the Aura evaluator
 // (likely via a generation index table).
 
-void* Evaluator::compact_sweep(void* sweep_buffers) {
+Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
+    // Issue #1732: typed CompactSweepResult (by value) — no void* cast
+    // at call sites. Layout is 4×size_t, matching messaging_bridge.h
+    // GCSweepResultMsg for optional bridge conversion.
+    static_assert(sizeof(CompactSweepResult) == 4 * sizeof(std::size_t),
+                  "CompactSweepResult must be 4×size_t (#1732 / #963)");
+    CompactSweepResult result{};
+
     // The opaque pointer is aura::serve::GCSweepBuffers* (set by
     // the serve_async.cpp callback or directly by the GC collector
     // test). Cast is safe because both the message-bridge caller
-    // and the direct test pass a real GCSweepBuffers.
+    // and the direct test pass a real GCSweepBuffers / PassThru.
     auto* marks = static_cast<aura::serve::GCSweepBuffers*>(sweep_buffers);
     if (!marks)
-        return nullptr;
+        return result; // zeroed — no work
 
     // Issue #1489 / #1581: skip destructive reclaim while a
     // PanicCheckpoint recovery window is open (process-wide gc_hooks
@@ -594,22 +601,10 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_blocked_by_panic_total.fetch_add(1, std::memory_order_relaxed);
         bump_gc_blocked_by_pending_panic();
-        using SweepResult = aura::messaging::GCSweepResultMsg;
-        auto* result = new SweepResult();
-        result->closures_freed = 0;
-        result->strings_freed = 0;
-        result->pairs_freed = 0;
-        result->fiber_results_freed = 0;
-        return result;
+        return result; // all zeros — reclaim skipped
     }
 
     std::lock_guard<std::mutex> lock(heap_mutex());
-    // Issue #963: allocate the shared GCSweepResultMsg layout from
-    // messaging_bridge.h (single definition; serve_async deletes it).
-    using SweepResult = aura::messaging::GCSweepResultMsg;
-    static_assert(sizeof(SweepResult) == 4 * sizeof(std::size_t),
-                  "GCSweepResultMsg must be 4×size_t");
-    auto* result = new SweepResult();
 
     // 1. closures_ — erase unmarked entries.
     //    This is the main leak-reduction path: each closure holds
@@ -625,7 +620,7 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
                 ++it;
             }
         }
-        result->closures_freed = before - closures_.size();
+        result.closures_freed = before - closures_.size();
     }
 
     // 2. string_heap_ — report dead count, no compaction.
@@ -635,19 +630,19 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     //    keeps stale entries but the GC metric tells the caller
     //    how much pressure exists.
     if (marks->string_marks) {
-        result->strings_freed = marks->string_marks->count_dead();
+        result.strings_freed = marks->string_marks->count_dead();
     }
 
     // 3. pairs_ — same. report dead count.
     if (marks->pair_marks) {
-        result->pairs_freed = marks->pair_marks->count_dead();
+        result.pairs_freed = marks->pair_marks->count_dead();
     }
 
     // 4. fiber_results — owned by s_fiber_results_ (TU-local). The
     //    GC sweep handles those separately when the
     //    message-bridge registers a fiber_result sweep callback.
     //    We report 0 here so the totals add up correctly.
-    result->fiber_results_freed = 0;
+    result.fiber_results_freed = 0;
 
     return result;
 }

@@ -120,36 +120,35 @@ bool test_flush_gc_roots_api() {
     return true;
 }
 
-// ── Test 4: compact_sweep void* API is reachable ───────────
+// ── Test 4: compact_sweep typed API is reachable ───────────
 // Same as test_flush_gc_roots_api, but for the sweep method.
-// Verifies the new public method (Issue #113 Phase 3) is
-// exposed on the Evaluator's interface and accepts a void*.
-// We don't call it with nullptr (the impl dereferences).
+// Verifies the public method (Issue #113 Phase 3 / #1732 typed
+// CompactSweepResult) is exposed on the Evaluator's interface.
 
 bool test_compact_sweep_api() {
     std::println("\n--- Test: compact_sweep API surface ---");
 
     aura::compiler::Evaluator eval;
 
-    using SweepFn = void* (aura::compiler::Evaluator::*)(void*);
+    using SweepFn =
+        aura::compiler::Evaluator::CompactSweepResult (aura::compiler::Evaluator::*)(void*);
     SweepFn fp = &aura::compiler::Evaluator::compact_sweep;
-    CHECK(fp != nullptr, "Evaluator::compact_sweep(void*) is reachable");
+    CHECK(fp != nullptr, "Evaluator::compact_sweep is reachable");
 
     return true;
 }
 
-// ── Test 5: compact_sweep with null returns null safely ─────
+// ── Test 5: compact_sweep with null returns zeroed result ───
 // Calling compact_sweep with a nullptr (no mark bits) is
-// guarded — it should return nullptr (no work done), not
-// crash. This is the contract the GC collector relies on
-// when no source registered.
+// guarded — returns zeroed CompactSweepResult (no work), not
+// crash. Issue #1732: by-value result (no nullptr heap object).
 
 bool test_compact_sweep_null() {
     std::println("\n--- Test: compact_sweep(null) is safe ---");
 
     aura::compiler::Evaluator eval;
-    void* r = eval.compact_sweep(nullptr);
-    CHECK(r == nullptr, "compact_sweep(nullptr) returns nullptr");
+    auto r = eval.compact_sweep(nullptr);
+    CHECK(r.empty(), "compact_sweep(nullptr) returns zeroed result");
 
     return true;
 }

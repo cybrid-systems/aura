@@ -393,15 +393,21 @@ void run_serve_async(int num_workers) {
     // reclamation path) and reports the dead-count for vector heaps
     // (string_heap_/pairs_ compaction is a future refactor).
     //
-    // Returns an opaque `GCSweepResultMsg*` (heap-allocated by
-    // compact_sweep). The caller is responsible for `delete`-ing
-    // it after reading the fields.
+    // Issue #1732: compact_sweep returns typed CompactSweepResult by
+    // value. Bridge edge still exposes void* GCSweepResultMsg* for
+    // messaging_bridge (heap-allocate a layout-compatible copy).
     aura::messaging::g_gc_sweep = [&sched](void* sweep_buffers) -> void* {
         auto* svc = static_cast<aura::compiler::CompilerService*>(
             aura::messaging::g_current_compiler_service);
         if (!svc || !sweep_buffers)
             return nullptr;
-        return svc->evaluator().compact_sweep(sweep_buffers);
+        auto r = svc->evaluator().compact_sweep(sweep_buffers);
+        auto* msg = new aura::messaging::GCSweepResultMsg{};
+        msg->strings_freed = r.strings_freed;
+        msg->pairs_freed = r.pairs_freed;
+        msg->closures_freed = r.closures_freed;
+        msg->fiber_results_freed = r.fiber_results_freed;
+        return msg;
     };
 
     // Register the sweep callback with the GC collector. The
@@ -453,18 +459,13 @@ void run_serve_async(int num_workers) {
             // as GCSweepBuffers so we can pass it through the
             // void* API without exposing the gc_coordinator.h
             // type across module boundaries.
-            // Issue #963: shared GCSweepPassThru / GCSweepResultMsg
-            // layouts from messaging_bridge.h (no local duplicates).
+            // Issue #963 / #1732: PassThru in; typed CompactSweepResult out
+            // (no void* cast of the result).
             aura::messaging::GCSweepPassThru holder{bufs.string_marks, bufs.pair_marks,
                                                     bufs.closure_marks};
-            auto* msg_ptr = static_cast<aura::messaging::GCSweepResultMsg*>(
-                svc->evaluator().compact_sweep(&holder));
-            if (!msg_ptr)
-                return {};
-            aura::serve::GCSweepResult r{msg_ptr->strings_freed, msg_ptr->pairs_freed,
-                                         msg_ptr->closures_freed, msg_ptr->fiber_results_freed};
-            delete msg_ptr;
-            return r;
+            auto r = svc->evaluator().compact_sweep(&holder);
+            return aura::serve::GCSweepResult{r.strings_freed, r.pairs_freed, r.closures_freed,
+                                              r.fiber_results_freed};
         });
 
     // GC collect — triggers a GC cycle via the GC collector.

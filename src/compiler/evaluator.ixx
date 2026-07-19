@@ -2438,19 +2438,26 @@ public:
     // `collect()` during the sweep phase (after the safepoint has
     // stopped all fibers, so no concurrent mutator can run).
     //
-    // The opaque `void*` is `aura::serve::GCSweepBuffers*` from
-    // gc_coordinator.h (cast at the call site in evaluator_gc.cpp
-    // to keep the include surface minimal — same pattern as
-    // `flush_gc_roots(void*)` above).
+    // The opaque `void*` is `aura::serve::GCSweepBuffers*` /
+    // messaging GCSweepPassThru (cast at the call site in
+    // evaluator_gc.cpp — same pattern as `flush_gc_roots(void*)`).
     //
-    // The opaque `void*` return is `aura::messaging::GCSweepResultMsg*`
-    // (defined in messaging_bridge.h) — a small POD with four
-    // size_t fields. The cast at the call site keeps the
-    // evaluator's public interface free of messaging_bridge
-    // dependencies (messaging_bridge.h is a non-module .h,
-    // which can't be imported into a module interface file).
-    // The caller (serve_async.cpp) extracts the fields.
-    void* compact_sweep(void* sweep_buffers);
+    // Issue #1732: return a typed POD (not void*) so callers need
+    // no cast. Layout matches messaging_bridge.h GCSweepResultMsg
+    // (4×size_t) for ABI-compatible conversion at the bridge edge.
+    struct CompactSweepResult {
+        std::size_t strings_freed = 0;
+        std::size_t pairs_freed = 0;
+        std::size_t closures_freed = 0;
+        std::size_t fiber_results_freed = 0;
+        [[nodiscard]] bool empty() const noexcept {
+            return strings_freed == 0 && pairs_freed == 0 && closures_freed == 0 &&
+                   fiber_results_freed == 0;
+        }
+    };
+    // Null sweep_buffers → zeroed result (no work). Non-null → fill
+    // counts; never heap-allocates the result (Issue #1732).
+    CompactSweepResult compact_sweep(void* sweep_buffers);
 
 
     void

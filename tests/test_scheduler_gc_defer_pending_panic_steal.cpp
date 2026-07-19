@@ -88,12 +88,9 @@ static void ac2_compact_sweep_and_restore() {
 
     CHECK(ev.save_panic_checkpoint(), "save ok");
     GCSweepBuffers marks{};
-    void* raw = ev.compact_sweep(&marks);
-    CHECK(raw != nullptr, "compact_sweep returns result");
-    auto* result = static_cast<aura::messaging::GCSweepResultMsg*>(raw);
-    CHECK(result->closures_freed == 0 && result->pairs_freed == 0 && result->strings_freed == 0,
+    auto result = ev.compact_sweep(&marks); // Issue #1732: typed by-value
+    CHECK(result.closures_freed == 0 && result.pairs_freed == 0 && result.strings_freed == 0,
           "no reclaim while deferred");
-    delete result;
     CHECK(aura::gc_hooks::gc_sweep_skipped_pending_panic() > skip0, "skip counter advanced");
 
     // Mutate then restore — pinned recovery path.
@@ -144,10 +141,8 @@ static void ac4_repin_under_pending() {
     CHECK(true, "steal refresh + arena compact hook under pending (no crash)");
     // compact still skipped
     GCSweepBuffers marks{};
-    void* raw = ev.compact_sweep(&marks);
-    auto* result = static_cast<aura::messaging::GCSweepResultMsg*>(raw);
-    CHECK(result && result->closures_freed == 0, "still no reclaim");
-    delete result;
+    auto result = ev.compact_sweep(&marks);
+    CHECK(result.closures_freed == 0, "still no reclaim");
     ev.commit_panic_checkpoint();
 }
 
@@ -194,12 +189,8 @@ static void ac5_thousand_iter_concurrent_stress() {
                 steal_ok.fetch_add(1, std::memory_order_relaxed);
                 // compact under pending must not reclaim
                 GCSweepBuffers marks{};
-                void* raw = ev.compact_sweep(&marks);
-                if (raw) {
-                    auto* r = static_cast<aura::messaging::GCSweepResultMsg*>(raw);
-                    (void)r->closures_freed;
-                    delete r;
-                }
+                auto r = ev.compact_sweep(&marks);
+                (void)r.closures_freed;
                 if (ev.has_panic_checkpoint())
                     ev.commit_panic_checkpoint();
                 else if (ev.gc_defer_armed_for_pending_panic())
