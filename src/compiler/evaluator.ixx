@@ -1966,6 +1966,12 @@ public:
     // Clear the checkpoint (call after successful mutation commit).
     void commit_panic_checkpoint() {
         clear_panic_checkpoint();
+        // Issue #1728: bump bridge_epoch so cross-COW / cross-evaluator
+        // closure freshness checks (is_bridge_stale / aura_closure_call)
+        // observe the committed workspace transition. Same hook used by
+        // compact_env_frames (#1510). No-op when service not bound.
+        if (bridge_epoch_bump_fn_ && compiler_service_)
+            bridge_epoch_bump_fn_(compiler_service_);
         // Issue #548: bump panic_checkpoint_commit_count_
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.
