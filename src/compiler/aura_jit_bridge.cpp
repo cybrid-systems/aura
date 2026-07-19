@@ -882,6 +882,66 @@ extern "C" int aura_jit_is_deopt_pending(const char* name) {
     return g_batch_deopt_jit->is_deopt_pending(name) ? 1 : 0;
 }
 
+// Issue #1637: panic checkpoint lifecycle hardening — file-scope
+// atomic fallback for the three restore paths (post-steal /
+// post-compact / post-hot-swap) plus the two outcome counters
+// (cross_fiber_panic_heal_success + mutation_boundary_steal_safe_total).
+// Same dual-write pattern as #1908 (aura_macro_provenance_repin_*):
+// the bridge hook here bumps only the file-scope atomic (always,
+// regardless of ev_ptr presence); the per-CompilerMetrics path
+// lives in evaluator_fiber_mutation.cpp (which has the Evaluator
+// C++20 module imported) via the aura_evaluator_post_*_panic_restore
+// trampolines. Both bump on every restore invocation so the unified
+// surface stays consistent across module-aware callers and
+// module-unaware test consumers.
+static std::atomic<std::uint64_t> g_1637_steal_restore_fallback_total{0};
+static std::atomic<std::uint64_t> g_1637_compact_restore_fallback_total{0};
+static std::atomic<std::uint64_t> g_1637_hot_swap_restore_fallback_total{0};
+static std::atomic<std::uint64_t> g_1637_panic_heal_success_fallback_total{0};
+static std::atomic<std::uint64_t> g_1637_boundary_steal_safe_fallback_total{0};
+
+extern "C" void aura_evaluator_post_steal_panic_restore(void* ev_ptr) {
+    (void)ev_ptr;
+    g_1637_steal_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_1637_boundary_steal_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_evaluator_post_compact_panic_restore(void* ev_ptr) {
+    (void)ev_ptr;
+    g_1637_compact_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_evaluator_hot_swap_panic_restore(void* ev_ptr) {
+    (void)ev_ptr;
+    g_1637_hot_swap_restore_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_1637_panic_heal_success_fallback_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1637: C accessors read from file-scope atomic fallbacks.
+// Per-CompilerMetrics view is via (query:mutation-boundary-coverage-stats)
+// primitive (evaluator_primitives_query.cpp) using the Evaluator getters.
+extern "C" std::uint64_t aura_post_steal_checkpoint_restore_total(void) {
+    return g_1637_steal_restore_fallback_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_post_compact_checkpoint_restore_total(void) {
+    return g_1637_compact_restore_fallback_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_post_hot_swap_checkpoint_restore_total(void) {
+    return g_1637_hot_swap_restore_fallback_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_cross_fiber_panic_heal_success_total(void) {
+    return g_1637_panic_heal_success_fallback_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_mutation_boundary_steal_safe_total(void) {
+    return g_1637_boundary_steal_safe_fallback_total.load(std::memory_order_relaxed);
+}
+
 // Issue #1536: bulk walk_active_closures C-API.
 extern "C" std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch) {
     if (!g_batch_deopt_jit)

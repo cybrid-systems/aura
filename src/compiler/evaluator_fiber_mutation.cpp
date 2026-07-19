@@ -532,11 +532,23 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
 // the active Guard stack and call re_pin_cow_children_from_snapshot()
 // on each (outermost + nested) to keep StableNodeRef / COW pins in
 // sync with the post-compact arena state.
+//
+// Issue #1637: appended the panic checkpoint closed-loop restore
+// step (restore_panic_checkpoint_on_arena_compact_if_needed —
+// bumps post_compact_checkpoint_restore_total on success). The
+// no-pending-checkpoint fast path is a single null-check + branch
+// so steady-state cost stays negligible; only pending checkpoints
+// drive the truncate / generation / invalidate / walk_active_closures
+// / clear lifecycle close.
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     re_pin_cow_children_from_snapshot();
     // Issue #1612: GC compact path — MacroIntroduced marker/provenance repin.
     (void)refresh_stale_macro_frames(0, 0);
     probe_and_repin_macro_provenance();
+    // Issue #1637: closed-loop panic checkpoint restore on GC compact
+    // (paired with the resume path via run_post_restore_lifecycle_close
+    // in evaluator_workspace_tree.cpp).
+    restore_panic_checkpoint_on_arena_compact_if_needed();
 }
 
 bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
@@ -1454,6 +1466,39 @@ extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std
 }
 
 // Issue #683: linear ownership enforcement on work-steal.
+
+// Issue #1637: per-Evaluator C trampolines for the panic checkpoint
+// lifecycle restore path. Bridge hooks in aura_jit_bridge.cpp
+// (aura_evaluator_post_steal_panic_restore / _post_compact_panic_restore /
+// _hot_swap_panic_restore) bump file-scope atomic fallbacks for
+// module-unaware callers; these module-aware trampolines drive the
+// real restore via yield_hook_evaluator() (g_yield_hook_stack top,
+// RAII-paired with bind/unbind) and additionally bump per-CompilerMetrics
+// counters via Evaluator::bump_*_total so (query:mutation-boundary-
+// coverage-stats) surfaces the same events.
+extern "C" void aura_evaluator_post_steal_panic_restore() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        return;
+    ev->bump_post_steal_checkpoint_restore_total();
+    ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
+}
+
+extern "C" void aura_evaluator_post_compact_panic_restore() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        return;
+    ev->bump_post_compact_checkpoint_restore_total();
+    ev->restore_panic_checkpoint_on_arena_compact_if_needed();
+}
+
+extern "C" void aura_evaluator_hot_swap_panic_restore() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        return;
+    ev->bump_post_hot_swap_checkpoint_restore_total();
+    ev->restore_panic_checkpoint_on_hot_swap_if_needed();
+}
 
 // Issue #812: steal+arena+GC coordination hooks
 extern "C" void aura_evaluator_bump_steal_arena_yield() {

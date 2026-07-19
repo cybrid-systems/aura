@@ -2204,6 +2204,15 @@ aura_issue_test_link_llvm_jit(test_issue_1907)
 # Safety + Starvation Prevention Stress Tests (P0). New
 aura_add_issue_test(test_issue_1908)
 aura_issue_test_link_llvm_jit(test_issue_1908)
+# Issue #1637: PanicCheckpoint lifecycle hardening under fiber
+# steal / GC compact / self-mutation hot-swap. 9 ACs source-driven
+# (declarations + callsite smoke + query surface + bridge hook
+# file-scope atomic fallback coverage). Replaces the 98-line
+# test_fiber_steal_panic_checkpoint_nested_gc.cpp smoke with a
+# source-citation harness paired with the new
+# check_panic_checkpoint_lifecycle_coverage.py linter (10 ACs).
+aura_add_issue_test(test_issue_1637)
+aura_issue_test_link_llvm_jit(test_issue_1637)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

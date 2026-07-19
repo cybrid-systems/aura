@@ -1488,7 +1488,25 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 {"cow-repin-on-steal", make_int(m ? load(m->cow_repin_on_steal) : 0)},
                 {"checkpoint-lost-on-compact",
                  make_int(m ? load(m->checkpoint_lost_on_compact) : 0)},
-                {"schema", make_int(1444)},
+                // Issue #1637: panic checkpoint lifecycle hardening
+                // (post-steal / post-compact / post-hot-swap closed-loop
+                // restore counters + outcome counters). Bumped from
+                // restore_panic_checkpoint_on_<event>_if_needed() in
+                // evaluator_workspace_tree.cpp; per-path counter pairs
+                // enable dashboards to distinguish which event triggered
+                // the restore; the two outcome counters surface heal vs.
+                // safe-under-boundary race outcomes.
+                {"post-steal-checkpoint-restore-total",
+                 make_int(m ? load(m->post_steal_checkpoint_restore_total) : 0)},
+                {"post-compact-checkpoint-restore-total",
+                 make_int(m ? load(m->post_compact_checkpoint_restore_total) : 0)},
+                {"post-hot-swap-checkpoint-restore-total",
+                 make_int(m ? load(m->post_hot_swap_checkpoint_restore_total) : 0)},
+                {"cross-fiber-panic-heal-success",
+                 make_int(m ? load(m->cross_fiber_panic_heal_success) : 0)},
+                {"mutation-boundary-steal-safe-total",
+                 make_int(m ? load(m->mutation_boundary_steal_safe_total) : 0)},
+                {"schema", make_int(1637)}, // lineage 1444
             };
             return build_hash(kv);
         });
