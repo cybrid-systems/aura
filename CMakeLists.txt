@@ -445,6 +445,59 @@ aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 
+# ─────────────────────────────────────────────────────────────────
+# Test build architecture (Anqi 2026-07-20 "ship in order" directive)
+# ─────────────────────────────────────────────────────────────────
+#
+# Three concentric layers, each compiles a different scope:
+#
+#   1. aura_add_issue_test(NAME)         — 55+ per-test executables
+#      tests/test_ir.cpp + tests/test_fiber.cpp + tests/test_observability.cpp +
+#      tests/test_mutation.cpp + tests/test_persist.cpp + tests/test_issue_NNN.cpp.
+#      Each is a standalone .cpp binary for per-issue debugging
+#      (e.g. `./build/test_issue_1485` to reproduce a specific issue).
+#      Source: tests/ root or tests/issues/test_issue_NNN.cpp
+#      (resolved by aura_resolve_test_cpp, see cmake/AuraTest.cmake).
+#
+#   2. aura_add_issue_bundle(PROFILE)    — 12 bundle executables
+#      tests/bundles/test_issues_<profile>_main.cpp + all member files
+#      (declared in AURA_ISSUE_BUNDLE_<PROFILE>_MEMBERS). Bundle driver
+#      forks each member test (tests/issues/test_issue_NNN.cpp extern
+#      `aura_issue_NNN_run()` symbols). Profiles: light / jit / jit_minimal /
+#      jit_contract / jit_tests / fiber / jit_late1..5 / light_late.
+#      Source: tests/issues/test_issue_NNN.cpp (per AURA_ISSUE_BUNDLE_*_MEMBERS).
+#
+#   3. aura_test_objects (line ~478)      — shared static lib
+#      Compiles each .cpp ONCE, links the resulting libaura_test_objects.a
+#      into every test_issue_* binary. Eliminates per-test-*.o duplication.
+#
+# Domain file convention (Phase 4 framework, 2026-07-20):
+#
+#   5 NEW domain files at tests/ root (test_fiber / test_ir /
+#   test_observability / test_mutation / test_persist) are STUBS
+#   for future AURA_ISSUE_TEST migration. The AURA_ISSUE_TEST macro
+#   (defined in tests/test_harness.hpp) generates
+#   `extern "C" int aura_issue_NNN_run()` in a domain file, replacing
+#   the legacy per-issue `int main()` in tests/issues/test_issue_NNN.cpp.
+#   See tests/templates/test_issue_pattern.cpp BEFORE CREATING block for
+#   the new convention + tests/domain_classification.md for the migration
+#   map of existing 635 issues to 5 domains.
+#
+# Pre-commit hook habit change (Phase 3, 2026-07-20):
+#
+#   .githooks/pre-commit soft-nudges newly added tests/test_issue_*.cpp
+#   files (detected via `git diff --cached --diff-filter=A`). Not a hard
+#   block — informational warning that suggests adding to existing
+#   tests/test_<domain>.cpp via AURA_ISSUE_TEST instead.
+#
+# 635 per-issue files in tests/issues/ compile as part of bundle
+# targets (NOT as separate test executables, except the few that
+# also have explicit aura_add_issue_test() calls for per-issue
+# debugging). Future migration (Phase 4 multi-ship) moves per-issue
+# bodies into domain files via AURA_ISSUE_TEST, reducing compile
+# duplication further.
+# ─────────────────────────────────────────────────────────────────
+
 # Shared object library for test_issue_* binaries.
 #
 # Why: 40-44 of 55 test_issue_* binaries list the same ~25 .cpp
