@@ -189,15 +189,17 @@ std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
 // primitive can read these file-level atomics from another TU without the
 // Evaluator module import (paired pattern with #1648 reflect.hh +
 // #1651 macro_expansion.cpp).
+// C-linkage readers: atomics live in this namespace (not ::global),
+// so use unqualified names — ::g_* fails under modules (#1652/#1757).
 extern "C" {
 inline std::uint64_t aura_macro_expansion_total_v_read() noexcept {
-    return ::g_macro_expansion_total.load(std::memory_order_relaxed);
+    return g_macro_expansion_total.load(std::memory_order_relaxed);
 }
 inline std::uint64_t aura_macro_introduced_nodes_created_total_v_read() noexcept {
-    return ::g_macro_introduced_nodes_created_total.load(std::memory_order_relaxed);
+    return g_macro_introduced_nodes_created_total.load(std::memory_order_relaxed);
 }
 inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexcept {
-    return ::g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
+    return g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
 }
 } // extern "C"
 

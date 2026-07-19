@@ -85,7 +85,7 @@ bool test_compact_pairs_empty_mask_all_live() {
     auto& ev = cs.evaluator();
     // Empty live_mask = all live
     std::vector<bool> empty_mask;
-    std::int64_t n_after = ev.compact_pairs(empty_mask);
+    std::size_t n_after = ev.compact_pairs(empty_mask);
     CHECK(n_after == 5, "5 pairs remain after compact (all live)");
     // Remap: 0→0, 1→1, 2→2, 3→3, 4→4
     for (std::uint64_t i = 0; i < 5; ++i) {
@@ -106,7 +106,7 @@ bool test_compact_pairs_selective_mask() {
     auto& ev = cs.evaluator();
     // Mark pairs 1 and 3 as dead. Live: 0, 2, 4.
     std::vector<bool> mask = {true, false, true, false, true};
-    std::int64_t n_after = ev.compact_pairs(mask);
+    std::size_t n_after = ev.compact_pairs(mask);
     CHECK(n_after == 3, "3 pairs remain after compact (5 - 2 dead)");
     // Expected remap:
     //   old 0 (live, 1st) → new 0
@@ -210,7 +210,7 @@ bool test_compact_pairs_all_dead() {
     alloc_pairs(cs, 4);
     auto& ev = cs.evaluator();
     std::vector<bool> mask = {false, false, false, false};
-    std::int64_t n_after = ev.compact_pairs(mask);
+    std::size_t n_after = ev.compact_pairs(mask);
     CHECK(n_after == 0, "0 pairs remain after all-dead compact");
     for (std::uint64_t i = 0; i < 4; ++i) {
         CHECK(ev.resolve_pair(i) == -1, "resolve_pair(" + std::to_string(i) + ") is -1 (all dead)");
