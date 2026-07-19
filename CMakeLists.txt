@@ -5561,6 +5561,9 @@ aura_issue_test_link_llvm_jit(test_mbp_macro_no_break_1745)
 # Issue #1746: mutation_boundary_depth_slot keyed by instance_id.
 aura_add_issue_test(test_depth_slot_instance_id_1746)
 aura_issue_test_link_llvm_jit(test_depth_slot_instance_id_1746)
+# Issue #1747: MutationBoundaryGuard dtor batches hold metrics atomics.
+aura_add_issue_test(test_guard_dtor_batch_metrics_1747)
+aura_issue_test_link_llvm_jit(test_guard_dtor_batch_metrics_1747)
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

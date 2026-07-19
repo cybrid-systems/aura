@@ -11995,86 +11995,118 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = (*slot)--;
             bool outermost = (prev == 1);
-            // Issue #1253 / #1373 / #1375: observe outermost mutation hold duration.
-            // enter_ts_ is set only for the outermost Guard; nested guards skip.
+            // Issue #1253 / #1373 / #1375 / #1747: outermost hold-duration
+            // telemetry. Issue #1747: compute BatchMutationMetrics locally,
+            // then publish with ≤6 atomic writes on the common path (was
+            // 15+ scattered fetch_add/CAS on every dtor — cache-line bounce
+            // under high-frequency mutate). Nested guards skip (no enter_ts_).
             if (outermost && enter_ts_.time_since_epoch().count() != 0) {
                 const auto dur = std::chrono::steady_clock::now() - enter_ts_;
                 const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
                 const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-                    m->mutation_hold_duration_us_total.fetch_add(uus, std::memory_order_relaxed);
-                    m->mutation_hold_samples.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #1373: Agent-facing hold counters (query:mutation-boundary-hold-stats).
-                    m->mutation_boundary_hold_time_total_us.fetch_add(uus,
-                                                                      std::memory_order_relaxed);
-                    m->mutation_boundary_holds_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #1493: adaptive safepoint frequency from hold time.
-                    ev_->adapt_gc_frequency_from_hold_us(uus);
+                    // ── local batch (no atomics yet) ──
+                    struct BatchMutationMetrics {
+                        std::uint64_t hold_us = 0;
+                        std::uint64_t holds = 0;
+                        std::uint64_t holds_over_1ms = 0;
+                        std::uint64_t too_long = 0;
+                        std::uint64_t starvation_prevented = 0;
+                        std::uint64_t extreme = 0;
+                        std::uint64_t contention_us = 0;
+                        std::size_t hist_bucket = 0;
+                        std::uint64_t long_fiber_id = 0;
+                        bool update_max = false;
+                        bool force_fail = false;
+                    } b{};
+                    b.hold_us = uus;
+                    b.holds = 1;
                     if (uus > 1000)
-                        m->mutation_boundary_holds_over_1ms_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    // Issue #1375: 9-bucket hold-time histogram for p50/p99 style ops.
-                    {
-                        std::size_t bucket = 8; // >1s
-                        if (uus < 100)
-                            bucket = 0;
-                        else if (uus < 500)
-                            bucket = 1;
-                        else if (uus < 1000)
-                            bucket = 2;
-                        else if (uus < 5000)
-                            bucket = 3;
-                        else if (uus < 10000)
-                            bucket = 4;
-                        else if (uus < 50000)
-                            bucket = 5;
-                        else if (uus < 100000)
-                            bucket = 6;
-                        else if (uus < 1000000)
-                            bucket = 7;
-                        m->mutation_boundary_hold_histogram[bucket].fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                    // Issue #1443: configurable threshold via atomic (default 500ms).
-                    // Read racy on purpose — best-effort policy, not safety critical.
+                        b.holds_over_1ms = 1;
+                    // Issue #1375: 9-bucket hold-time histogram.
+                    b.hist_bucket = 8; // >1s
+                    if (uus < 100)
+                        b.hist_bucket = 0;
+                    else if (uus < 500)
+                        b.hist_bucket = 1;
+                    else if (uus < 1000)
+                        b.hist_bucket = 2;
+                    else if (uus < 5000)
+                        b.hist_bucket = 3;
+                    else if (uus < 10000)
+                        b.hist_bucket = 4;
+                    else if (uus < 50000)
+                        b.hist_bucket = 5;
+                    else if (uus < 100000)
+                        b.hist_bucket = 6;
+                    else if (uus < 1000000)
+                        b.hist_bucket = 7;
+                    // Issue #1493: adaptive safepoint (may touch GC hooks; not a metric atomic).
+                    ev_->adapt_gc_frequency_from_hold_us(uus);
+                    // Issue #1443: threshold load (1 relaxed load; not a write).
                     const auto max_us = static_cast<std::int64_t>(
                         m->long_mutation_threshold_us.load(std::memory_order_relaxed));
                     if (us > max_us) {
-                        m->mutation_too_long_total.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #1443: bump starvation prevention counter + capture telemetry.
-                        m->starvation_prevented_count.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #1443/#1445/#1633: notify scheduler (if hook set)
-                        // with real Fiber::id() so on_long_mutation_held can
-                        // resolve + apply_starvation_mitigation.
-                        const std::uint64_t fid = aura_fiber_current_id();
-                        ::aura_invoke_long_mutation_scheduler_hook(fid, uus);
-                        m->last_long_mutation_fiber_id.store(fid, std::memory_order_relaxed);
-                        m->last_long_mutation_duration_us.store(uus, std::memory_order_relaxed);
-                        // Strict mode: extreme hold triggers rollback path.
+                        b.too_long = 1;
+                        b.starvation_prevented = 1;
+                        b.contention_us = uus;
+                        b.long_fiber_id = aura_fiber_current_id();
+                        b.update_max = true;
+                        ::aura_invoke_long_mutation_scheduler_hook(b.long_fiber_id, uus);
                         const auto extreme_us = static_cast<std::int64_t>(
                             m->max_extreme_mutation_us.load(std::memory_order_relaxed));
                         if (m->long_mutation_strict_mode.load(std::memory_order_relaxed) != 0 &&
                             us > extreme_us) {
-                            m->long_mutation_extreme_total.fetch_add(1, std::memory_order_relaxed);
-                            if (flag_)
-                                *flag_ = false; // force outer Guard to mark failure
-                        }
-                        // Issue #1272: contention histogram sample (µs held).
-                        m->mutation_boundary_contention_us_hist.fetch_add(
-                            uus, std::memory_order_relaxed);
-                        if (us > static_cast<std::int64_t>(m->mutation_hold_duration_us_max.load(
-                                     std::memory_order_relaxed))) {
-                            m->mutation_hold_duration_us_max.store(uus, std::memory_order_relaxed);
+                            b.extreme = 1;
+                            b.force_fail = true;
                         }
                     } else {
-                        auto prev_max =
+                        // Only publish max if uus might raise it (1 load; CAS later if needed).
+                        const auto prev_max =
                             m->mutation_hold_duration_us_max.load(std::memory_order_relaxed);
-                        while (uus > prev_max &&
-                               !m->mutation_hold_duration_us_max.compare_exchange_weak(
-                                   prev_max, uus, std::memory_order_relaxed)) {
-                        }
+                        b.update_max = (uus > prev_max);
                     }
-                    m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
+
+                    // ── publish common path: ≤6 atomic writes (#1747) ──
+                    // 1–4: dual hold counters (legacy #1253 + agent #1373)
+                    // 5: histogram bucket
+                    // 6: max (store) when raised; over_1ms is rare path extra
+                    m->mutation_hold_duration_us_total.fetch_add(b.hold_us,
+                                                                 std::memory_order_relaxed);
+                    m->mutation_hold_samples.fetch_add(b.holds, std::memory_order_relaxed);
+                    m->mutation_boundary_hold_time_total_us.fetch_add(b.hold_us,
+                                                                      std::memory_order_relaxed);
+                    m->mutation_boundary_holds_total.fetch_add(b.holds, std::memory_order_relaxed);
+                    m->mutation_boundary_hold_histogram[b.hist_bucket].fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (b.update_max) {
+                        // Single store is enough when uus is a new max under relaxed
+                        // telemetry (races only lose intermediate max samples).
+                        m->mutation_hold_duration_us_max.store(b.hold_us,
+                                                               std::memory_order_relaxed);
+                    }
+                    // Optional / rare path atomics (not on every dtor).
+                    if (b.holds_over_1ms)
+                        m->mutation_boundary_holds_over_1ms_total.fetch_add(
+                            b.holds_over_1ms, std::memory_order_relaxed);
+                    if (b.too_long) {
+                        m->mutation_too_long_total.fetch_add(b.too_long, std::memory_order_relaxed);
+                        m->starvation_prevented_count.fetch_add(b.starvation_prevented,
+                                                                std::memory_order_relaxed);
+                        m->last_long_mutation_fiber_id.store(b.long_fiber_id,
+                                                             std::memory_order_relaxed);
+                        m->last_long_mutation_duration_us.store(b.hold_us,
+                                                                std::memory_order_relaxed);
+                        m->mutation_boundary_contention_us_hist.fetch_add(
+                            b.contention_us, std::memory_order_relaxed);
+                        if (b.extreme)
+                            m->long_mutation_extreme_total.fetch_add(1, std::memory_order_relaxed);
+                        if (b.force_fail && flag_)
+                            *flag_ = false;
+                    }
+                    // Export-ready: one load + conditional store (avoid write every dtor).
+                    if (m->runtime_obs_export_ready.load(std::memory_order_relaxed) == 0)
+                        m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
                 }
             }
             // Issue #1461: Agent Decision Metrics liveness — outermost

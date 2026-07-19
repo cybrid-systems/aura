@@ -792,6 +792,11 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->eval_ir_path_relower_total.load(std::memory_order_relaxed))
                   : 0;
+            // Local load helper must be declared before the kv brace list
+            // (C++ point-of-instantiation; #1639 keys use load()).
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"impact-blocks-hit", make_int(impact_blocks_hit)},
                 {"partial-relowers", make_int(partial_relowers)},

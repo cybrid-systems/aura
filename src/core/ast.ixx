@@ -7350,9 +7350,14 @@ public:
     // is always retained. When keep_all_rolledback is true, older
     // RolledBack records are also retained (diagnostics for #1299).
     // Returns number of records dropped. Idempotent when log is small.
-    // Default keep_recent=1000 bounds log to ~1K + RolledBack count.
-    [[nodiscard]] std::size_t compact_mutation_log(std::size_t keep_recent = 1000,
-                                                   bool keep_all_rolledback = true) {
+    // keep_recent bounds retained tail; keep_all_rolledback retains
+    // older RolledBack records for diagnostics. No default args —
+    // the zero-arg compact_mutation_log() is shrink_to_fit (bytes).
+    // Callers that want record drop must pass keep_recent explicitly
+    // (typical keep_recent=1000). Avoids overload ambiguity with the
+    // no-arg shrink_to_fit overload (#1638 / rebuild with #1747).
+    [[nodiscard]] std::size_t compact_mutation_log(std::size_t keep_recent,
+                                                   bool keep_all_rolledback) {
         if (mutation_log_.size() <= keep_recent)
             return 0;
         const std::size_t drop_to = mutation_log_.size() - keep_recent;
