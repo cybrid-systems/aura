@@ -78,8 +78,11 @@ bool test_fresh_frame_not_stale() {
 bool test_invalid_frame_is_stale() {
     std::println("\n--- AC3: invalid id is treated as stale (safety net) ---");
     aura::compiler::Evaluator ev;
-    CHECK(ev.is_env_frame_stale(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID is stale (defensive)");
-    CHECK(ev.is_env_frame_stale(999999), "out-of-range id is stale (defensive)");
+    // Issue #1754: NULL/OOB are invalid_id, not version-stale.
+    CHECK(ev.is_env_frame_invalid_id(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID is invalid_id");
+    CHECK(ev.is_env_frame_invalid_id(999999), "out-of-range is invalid_id");
+    CHECK(!ev.is_env_frame_stale(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID is not version-stale");
+    CHECK(!ev.is_env_frame_stale(999999), "out-of-range is not version-stale");
     return true;
 }
 
