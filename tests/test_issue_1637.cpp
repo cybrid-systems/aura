@@ -168,15 +168,17 @@ bool check_wires_ac5() {
         contains(wst, "restore_panic_checkpoint_on_hot_swap_if_needed() noexcept");
     bool mut_wired_arena = contains(mut, "on_arena_compact_hook") &&
                            contains(mut, "restore_panic_checkpoint_on_arena_compact_if_needed");
-    bool mut_wired_trampolines = contains(mut, "aura_evaluator_post_steal_panic_restore") &&
-                                 contains(mut, "aura_evaluator_post_compact_panic_restore") &&
-                                 contains(mut, "aura_evaluator_hot_swap_panic_restore");
+    // Sole C entry points live in fiber_mutation (void*); bridge only
+    // notes fallback counters under distinct aura_1637_note_* names.
+    bool mut_wired_trampolines =
+        contains(mut, "aura_evaluator_post_steal_panic_restore(void* ev_ptr)") &&
+        contains(mut, "aura_evaluator_post_compact_panic_restore(void* ev_ptr)") &&
+        contains(mut, "aura_evaluator_hot_swap_panic_restore(void* ev_ptr)");
     bool types_wired = contains(types, "restore_panic_checkpoint_on_hot_swap_if_needed") &&
                        contains(types, "hot-swap:fn");
-    bool bridge_wired =
-        contains(bridge, "aura_evaluator_post_steal_panic_restore(void* ev_ptr)") &&
-        contains(bridge, "aura_evaluator_post_compact_panic_restore(void* ev_ptr)") &&
-        contains(bridge, "aura_evaluator_hot_swap_panic_restore(void* ev_ptr)");
+    bool bridge_wired = contains(bridge, "aura_1637_note_steal_restore_fallback") &&
+                        contains(bridge, "aura_1637_note_compact_restore_fallback") &&
+                        contains(bridge, "aura_1637_note_hot_swap_restore_fallback");
     bool all = wst_wired && mut_wired_arena && mut_wired_trampolines && types_wired && bridge_wired;
     if (!all) {
         std::println("FAIL: wst={} mut_arena={} mut_tramp={} types={} bridge={}", wst_wired,

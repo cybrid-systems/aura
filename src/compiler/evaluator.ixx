@@ -1175,6 +1175,10 @@ public:
     // Without this, arena-allocated Envs leak at process exit (the
     // arena's bump-allocator doesn't run destructors).
     ~Evaluator();
+    // Issue #1746: stable identity for thread-local maps (depth slot).
+    // Never recycled; survives free-list address reuse so Guard depth
+    // cannot alias a destroyed Evaluator's TLS entry.
+    [[nodiscard]] std::uint64_t instance_id() const noexcept { return instance_id_; }
     // Issue #1546 / #1554: C-style allow_fn for ASTArena / ArenaGroup owners.
     // Shared by set_arena, set_temp_arena, and arena_group default owner.
     static bool arena_quota_allow(void* owner, std::size_t size) noexcept {
@@ -3402,6 +3406,10 @@ private:
     // disabled (Evaluator constructed without service
     // orchestration; e.g. legacy standalone usage).
     void* compiler_metrics_ = nullptr;
+    // Issue #1746: process-unique Evaluator identity for TLS maps
+    // (mutation_boundary_depth_slot). Assigned once in ctor; never 0
+    // after construction (counter starts at 1).
+    std::uint64_t instance_id_ = 0;
     // Issue #1563: when true, bump_jit_deopt_on_mutate uses render throttle
     // even outside an active render hotpath frame (render-critical mutate).
     mutable std::atomic<bool> prefer_render_critical_deopt_throttle_{false};
@@ -10957,14 +10965,14 @@ public:
     // entry route exclusively through the per-fiber storage.
     static void sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept;
 
-    // Issue #236 follow-up: per-fiber (thread_local) depth
-    // counter for MutationBoundaryGuard nesting. The
-    // implementation lives in evaluator_fiber_mutation.cpp and uses
-    // a `thread_local std::unordered_map<Evaluator*, int>`
-    // keyed by this address. thread_local gives us LIFO
-    // ordering on each fiber's call stack; multiple fibers
-    // on the same Evaluator are independent (each fiber's
-    // guard scope is its own stack). Cross-fiber serialization
+    // Issue #236 follow-up / #1746: per-fiber (thread_local) depth
+    // counter for MutationBoundaryGuard nesting. Implementation in
+    // evaluator_fiber_mutation.cpp uses
+    // `thread_local std::unordered_map<std::uint64_t, int>` keyed by
+    // Evaluator::instance_id_ (not raw address — free-list reuse must
+    // not revive a dead Evaluator's depth). thread_local gives LIFO
+    // ordering on each fiber's call stack; multiple fibers on the
+    // same Evaluator are independent. Cross-fiber serialization
     // happens at the unique_lock layer.
     static int* mutation_boundary_depth_slot(Evaluator* ev);
 
@@ -11830,12 +11838,11 @@ public:
             }
             if (flag_)
                 *flag_ = true; // optimistic default
-            // Issue #236 fix-up: thread_local depth counter
-            // keyed by Evaluator address. Each fiber has its
-            // own LIFO call stack, so nested guards on a
-            // single fiber are always outermost-then-inner
-            // (destructed innermost-first). Cross-fiber
-            // synchronization happens at the unique_lock.
+            // Issue #236 / #1746: thread_local depth counter keyed by
+            // Evaluator::instance_id_ (not address). Each fiber has its
+            // own LIFO call stack, so nested guards on a single fiber
+            // are always outermost-then-inner (destructed innermost-
+            // first). Cross-fiber synchronization happens at unique_lock.
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = ++(*slot);
             bool outermost = (prev == 1);

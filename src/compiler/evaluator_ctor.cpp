@@ -65,6 +65,11 @@ void Evaluator::build_primitive_slots() {
 }
 
 Evaluator::Evaluator() {
+    // Issue #1746: monotonic instance id for TLS maps (depth slot).
+    // Never recycled; independent of heap address reuse.
+    static std::atomic<std::uint64_t> next_instance_id{1};
+    instance_id_ = next_instance_id.fetch_add(1, std::memory_order_relaxed);
+
     // Issue #1352: retain process-wide terminal buffer registry for this Evaluator.
     primitives_detail::retain_terminal_buffer_registry();
 
