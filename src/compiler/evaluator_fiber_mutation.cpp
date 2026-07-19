@@ -1003,6 +1003,11 @@ void Evaluator::flush_mutation_boundary() {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->dirty_propagation_to_ir_count.fetch_add(1, std::memory_order_relaxed);
                 m->epoch_bump_for_macro.fetch_add(1, std::memory_order_relaxed);
+
+                // Issue #1908: outermost Guard exit enforced hygiene boundary
+                // (dirty/epoch bump prevents MacroIntroduced provenance drift
+                // from manifesting as a violation under concurrent steal).
+                bump_hygiene_violation_prevented_on_boundary_total();
             }
         }
         // Issue #1272: structured observability sample on flush.
@@ -1278,6 +1283,14 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
         bump_concurrent_safety_aot_reload_at_guard();
     }
     bump_macro_hygiene_panic_restamp_from_workspace();
+
+    // Issue #1908: PanicCheckpoint transfer bound macro clone provenance
+    // (panic restamp above already walked MacroIntroduced nodes; bump the
+    //  boundary-interaction counters so the transfer is visible in
+    //  (query:macro-provenance-stats) + (#1908 AC "macro clone counters
+    //  bound to PanicCheckpoint transfer" satisfied).
+    bump_macro_provenance_repin_on_steal_total();
+    bump_hygiene_violation_prevented_on_boundary_total();
     // Ensure pending panic still defers GC reclaim until commit/restore.
     arm_gc_defer_for_pending_panic();
     return true;
@@ -1309,6 +1322,13 @@ void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
     // Fiber::resume / steal (out of scope for the inline
     // mutation-file edit). The hook bumps
     // aot_bridge_epoch_bump_on_steal_total + aot_stale_deopt_on_steal_total
+
+    // Issue #1908: post-steal repin enforced MacroIntroduced boundary.
+    // (probe_and_repin_macro_provenance above already did the per-fiber
+    //  provenance restamp; bump the boundary-interaction counters so
+    //  (query:macro-provenance-stats) shows the repin landed.)
+    bump_macro_provenance_repin_on_steal_total();
+    bump_hygiene_violation_prevented_on_boundary_total();
     // on bridge_epoch drift between the resumed fiber's snapshot
     // and the global current. See docs/design/1905-aot-hot-update-loop.md.
     (void)refreshed; // suppress unused warning

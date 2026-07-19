@@ -2287,6 +2287,20 @@ public:
             return m->macro_stale_ref_prevented_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #1908: MutationBoundaryGuard + macro clone provenance
+    // hardening (refine #1014 / #1047). Read-only on the 2 new
+    // counters backing (query:macro-provenance-stats) primitive +
+    // bridge-hook observability for self-evolution Agents.
+    [[nodiscard]] std::uint64_t get_macro_provenance_repin_on_steal_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->macro_provenance_repin_on_steal_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_hygiene_violation_prevented_on_boundary_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->hygiene_violation_prevented_on_boundary_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_macro_provenance_repin_total() const noexcept {
         if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
             return m->macro_provenance_repin_total.load(std::memory_order_relaxed);
@@ -5379,6 +5393,33 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->macro_expand_checkpoint_saves_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1908: MutationBoundaryGuard + macro clone provenance hardening.
+    // Bump sites (per #1908 plan):
+    //   - bump_macro_provenance_repin_on_steal_total: clone_macro_body
+    //     MacroIntroduced path (via bridge hook
+    //     aura_macro_provenance_repin_on_steal) +
+    //     complete_post_resume_steal_refresh post probe +
+    //     transfer_and_revalidate_panic_checkpoint post panic restamp.
+    //   - bump_hygiene_violation_prevented_on_boundary_total: outermost
+    //     flush_mutation_boundary exit post dirty/epoch bump +
+    //     complete_post_resume_steal_refresh post probe +
+    //     transfer_and_revalidate_panic_checkpoint post panic restamp.
+    // Both counters track boundary-interaction signals: the boundary
+    // did its job (repin / prevent violation) under concurrent fiber
+    // steal + GC compact + macro clone (the #1908 AC contract).
+    void bump_macro_provenance_repin_on_steal_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_provenance_repin_on_steal_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_hygiene_violation_prevented_on_boundary_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->hygiene_violation_prevented_on_boundary_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
     }
     void bump_macro_reflect_hygiene_validation() const noexcept {

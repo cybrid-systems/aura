@@ -16,6 +16,7 @@ import aura.compiler.evaluator_pure;
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
 extern "C" std::uint64_t aura_fiber_current_id();
+extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
 
 namespace aura::compiler::macro_exp {
 
@@ -447,6 +448,17 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
         // materialization). The recursive calls already set the
         // marker on each child node, so this is just the outer
         // wrapper node.
+
+        // Issue #1908: force repin on MacroIntroduced clone (per #1908 AC).
+        // The bridge hook routes through the active Evaluator (ev_ptr fallback
+        // for module-aware call sites) and bumps both per-CompilerMetrics counters
+        // + the file-level atomic fallback (covers module-unaware call sites
+        // like clone_macro_body). This is the "强制 repin 在 MacroIntroduced 路径"
+        // half of the #1908 improvement pseudocode.
+        if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
+            (void)aura_macro_provenance_repin_on_steal(nullptr,
+                                                       static_cast<std::uint64_t>(cloned_marker));
+        }
         target.set_marker(new_id, cloned_marker);
         target.set_loc(new_id, v.line, v.col);
         // Issue #390: populate the per-node schema
