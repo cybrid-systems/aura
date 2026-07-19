@@ -228,7 +228,7 @@ jobs:
         printf '%s\n' \
           '(define m (engine:metrics))' \
           '(unless (hash? m) (error "engine:metrics not hash"))' \
-          '(unless (= 1 (hash-ref m "schema")) (error "schema"))' \
+          '(unless (= 2 (hash-ref m "schema")) (error "schema"))' \
           '(display "s0 engine:metrics ok")' \
           '(newline)' \
           | ./build/aura
