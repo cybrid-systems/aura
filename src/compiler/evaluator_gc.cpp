@@ -114,6 +114,9 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
 // entries that WOULD be marked, without allocating the GCRootSet.
 // Useful for pre-GC metrics and unit tests that want to verify the
 // root set is populated without paying for the GCRootSet heap allocs.
+// Issue #1864: unlike flush_gc_roots (safepoint + heap_mutex),
+// gc_root_count is public outside safepoint — it takes
+// shared_lock(closures_mtx_) when walking closures_.
 
 void Evaluator::flush_gc_roots(void* root_set_out) {
     // The opaque pointer is aura::serve::GCRootSet* (set by the
@@ -175,8 +178,14 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
 }
 
 std::size_t Evaluator::gc_root_count() const {
-    // No lock — called at safepoint time. Returns upper bound.
+    // Issue #1864: shared_lock closures_mtx_ while iterating closures_.
+    // This is a public metrics / test API (not safepoint-only); concurrent
+    // register_active_closure / free can realloc or erase the map and
+    // UAF an unlocked iterator. Returns an approximate upper bound —
+    // string_heap_/pairs_ size() remain unlocked (heap_mutex_ covers
+    // those in flush_gc_roots / compact_sweep at safepoint).
     std::size_t n = string_heap_.size() + pairs_.size();
+    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
     for (const auto& [id, _] : closures_) {
         if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
             ++n;

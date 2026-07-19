@@ -2692,6 +2692,9 @@ public:
     // Cheap (no allocation, just sizes + map iteration). Useful for
     // pre-GC metrics and for tests that want to verify root set
     // population without allocating the GCRootSet.
+    // Issue #1864: takes shared_lock(closures_mtx_) for the closures_
+    // walk — callable outside safepoint (metrics / tests); not an
+    // unlocked "safepoint only" helper.
     [[nodiscard]] std::size_t gc_root_count() const;
     // Issue #682: export tree-walker Closure / EnvId roots for
     // compiler GC coordination (bridge epoch gate).
