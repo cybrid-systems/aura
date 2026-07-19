@@ -43,7 +43,8 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -51,7 +52,7 @@ bool check_filescope_counter_present() {
     std::println("\n--- AC1 (Phase 1): file-scope atomic counter ---");
     std::string rh = read_file("src/reflect/reflect.hh");
     bool counter_decl = contains(rh, "reflect_nested_struct_throw_count_ref()") &&
-                         contains(rh, "std::atomic<std::uint64_t>");
+                        contains(rh, "std::atomic<std::uint64_t>");
     bool accessor_read = contains(rh, "aura_reflect_nested_struct_throw_count_v_read()");
     bool accessor_bump = contains(rh, "aura_reflect_nested_struct_throw_count_v_bump(");
     if (!counter_decl || !accessor_read || !accessor_bump) {
@@ -69,8 +70,9 @@ bool check_throw_site_serialize() {
     std::string rh = read_file("src/reflect/reflect.hh");
     // Site 1: auto_serialize nested MemberKind::Struct case (around line 678).
     // Must have the counter bump immediately before the throw (per #1124 invariant).
-    bool serialized_bump = contains(rh, "auto_serialize: nested MemberKind::Struct not yet supported") &&
-                           contains(rh, "aura_reflect_nested_struct_throw_count_v_bump(1);");
+    bool serialized_bump =
+        contains(rh, "auto_serialize: nested MemberKind::Struct not yet supported") &&
+        contains(rh, "aura_reflect_nested_struct_throw_count_v_bump(1);");
     if (!serialized_bump) {
         std::println("FAIL: auto_serialize throw site missing counter bump or #1124 reference");
         return false;
@@ -84,10 +86,12 @@ bool check_throw_site_deserialize() {
     std::string rh = read_file("src/reflect/reflect.hh");
     // Site 2: auto_deserialize_struct nested MemberKind::Struct case (around line 993).
     // Must have the counter bump immediately before the throw (per #1125 invariant).
-    bool deserialized_bump = contains(rh, "auto_deserialize_struct: nested MemberKind::Struct not yet supported") &&
-                             contains(rh, "aura_reflect_nested_struct_throw_count_v_bump(1);");
+    bool deserialized_bump =
+        contains(rh, "auto_deserialize_struct: nested MemberKind::Struct not yet supported") &&
+        contains(rh, "aura_reflect_nested_struct_throw_count_v_bump(1);");
     if (!deserialized_bump) {
-        std::println("FAIL: auto_deserialize_struct throw site missing counter bump or #1125 reference");
+        std::println(
+            "FAIL: auto_deserialize_struct throw site missing counter bump or #1125 reference");
         return false;
     }
     std::println("OK: auto_deserialize_struct throw site wired with counter bump");
@@ -117,24 +121,29 @@ bool check_design_doc_present() {
     return true;
 }
 
-}  // namespace aura_1648_detail
+} // namespace aura_1648_detail
 
 int main() {
     using namespace aura_1648_detail;
 
     int rc = 0;
-    if (!check_filescope_counter_present()) rc = 1;
-    if (!check_throw_site_serialize())      rc = 1;
-    if (!check_throw_site_deserialize())    rc = 1;
-    if (!check_1676_followup_pointer())     rc = 1;
-    if (!check_design_doc_present())        rc = 1;
+    if (!check_filescope_counter_present())
+        rc = 1;
+    if (!check_throw_site_serialize())
+        rc = 1;
+    if (!check_throw_site_deserialize())
+        rc = 1;
+    if (!check_1676_followup_pointer())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         std::println("\n#1648 scope-limited-progressive-ship Phase 1 \u2014 all
-"
+                     "
                      "AC checks green \u2705\n"
                      "    (Full recursive reflect_members \u2014 depth + cycle
-"
+                     "
                      "detect + auto-forwarding \u2014 deferred to #1676)");
     } else {
         std::println("\n#1648 \u2014 some AC checks FAILED \u274c");

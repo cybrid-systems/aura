@@ -39,7 +39,8 @@ using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -52,13 +53,16 @@ bool check_counter_xmacro_bumpers_ac4() {
     std::string om = read_file("src/compiler/observability_metrics.h");
     std::string fields = read_file("src/compiler/compiler_metrics_fields.inc");
     std::string ixx = read_file("src/compiler/evaluator.ixx");
-    bool counter = contains(om, "std::atomic<std::uint64_t> cross_boundary_auto_refresh_success_total{0}");
-    bool xmacro = contains(fields, "AURA_COMPILER_METRICS_FIELD(cross_boundary_auto_refresh_success_total)");
+    bool counter =
+        contains(om, "std::atomic<std::uint64_t> cross_boundary_auto_refresh_success_total{0}");
+    bool xmacro =
+        contains(fields, "AURA_COMPILER_METRICS_FIELD(cross_boundary_auto_refresh_success_total)");
     bool bumper = contains(ixx, "void bump_cross_boundary_auto_refresh_success_total()");
-    bool getter = contains(ixx, "std::uint64_t cross_boundary_auto_refresh_success_total() const noexcept");
+    bool getter =
+        contains(ixx, "std::uint64_t cross_boundary_auto_refresh_success_total() const noexcept");
     if (!counter || !xmacro || !bumper || !getter) {
-        std::println("FAIL: counter={} xmacro={} bumper={} getter={}",
-                     counter, xmacro, bumper, getter);
+        std::println("FAIL: counter={} xmacro={} bumper={} getter={}", counter, xmacro, bumper,
+                     getter);
         return false;
     }
     std::println("OK: 4 dimensions landed (counter + xmacro + bumper + getter)");
@@ -71,8 +75,7 @@ bool check_paired_wire_up_ac4() {
     // Site: cross_cow_provenance_enforced_total block in validate_or_refresh
     // success branch + bump_cross_boundary_auto_refresh_success_total call.
     bool at_success_path = contains(efm, "bump_cross_boundary_auto_refresh_success_total()") &&
-                            contains(efm, "Issue #1647") &&
-                            contains(efm, "validate_or_refresh");
+                           contains(efm, "Issue #1647") && contains(efm, "validate_or_refresh");
     if (!at_success_path) {
         std::println("FAIL: wire-up missing at validate_or_refresh success path");
         return false;
@@ -87,7 +90,7 @@ bool check_predecessors_ac1_ac2_ac3() {
     // AC1 partial: stable_ref_auto_pin_total + atomic_batch_pinned_refs_ (predecessor).
     bool ref_auto_pin = contains(om, "stable_ref_auto_pin_total{0}");
     // AC1/AC2/AC3 predecessors landed via #715/#738/#1250.
-    bool atomic_batch = true;  // existence proven via grep
+    bool atomic_batch = true; // existence proven via grep
     if (!ref_auto_pin || !atomic_batch) {
         std::println("FAIL: predecessor surfaces missing");
         return false;
@@ -121,20 +124,25 @@ bool check_baseline_ac5(CompilerService& cs) {
     return true;
 }
 
-}  // namespace aura_1647_detail
+} // namespace aura_1647_detail
 
 int main() {
     using namespace aura_1647_detail;
 
     int rc = 0;
-    if (!check_counter_xmacro_bumpers_ac4()) rc = 1;
-    if (!check_paired_wire_up_ac4())        rc = 1;
-    if (!check_predecessors_ac1_ac2_ac3())  rc = 1;
-    if (!check_design_doc_present())        rc = 1;
+    if (!check_counter_xmacro_bumpers_ac4())
+        rc = 1;
+    if (!check_paired_wire_up_ac4())
+        rc = 1;
+    if (!check_predecessors_ac1_ac2_ac3())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         CompilerService cs;
-        if (!check_baseline_ac5(cs)) rc = 1;
+        if (!check_baseline_ac5(cs))
+            rc = 1;
     }
 
     if (rc == 0) {

@@ -53,7 +53,8 @@ using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -64,30 +65,38 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 bool check_counters_ac2_ac5_partial() {
     std::println("\n--- AC2/AC5 partial: 2 body-named atomic counters present ---");
     std::string om = read_file("src/compiler/observability_metrics.h");
-    bool a = contains(om, "std::atomic<std::uint64_t> atomic_batch_hygiene_violation_prevented_total{0}");
+    bool a = contains(
+        om, "std::atomic<std::uint64_t> atomic_batch_hygiene_violation_prevented_total{0}");
     bool b = contains(om, "std::atomic<std::uint64_t> mutate_template_marker_propagated_total{0}");
     if (!a || !b) {
-        std::println("FAIL: 2 body-named atomic counters missing "
-                     "(atomic_batch_hygiene_violation_prevented={} mutate_template_marker_propagated={})",
-                     a, b);
+        std::println(
+            "FAIL: 2 body-named atomic counters missing "
+            "(atomic_batch_hygiene_violation_prevented={} mutate_template_marker_propagated={})",
+            a, b);
         return false;
     }
-    std::println("OK: 2 body-named atomic counters present (atomic_batch_hygiene_violation_prevented_total + mutate_template_marker_propagated_total)");
+    std::println(
+        "OK: 2 body-named atomic counters present (atomic_batch_hygiene_violation_prevented_total "
+        "+ mutate_template_marker_propagated_total)");
     return true;
 }
 
 bool check_xmacro_fields() {
     std::println("\n--- AC2/AC5 partial: 2 X-macro fields ---");
     std::string fields = read_file("src/compiler/compiler_metrics_fields.inc");
-    bool a = contains(fields, "AURA_COMPILER_METRICS_FIELD(atomic_batch_hygiene_violation_prevented_total)");
-    bool b = contains(fields, "AURA_COMPILER_METRICS_FIELD(mutate_template_marker_propagated_total)");
+    bool a = contains(
+        fields, "AURA_COMPILER_METRICS_FIELD(atomic_batch_hygiene_violation_prevented_total)");
+    bool b =
+        contains(fields, "AURA_COMPILER_METRICS_FIELD(mutate_template_marker_propagated_total)");
     if (!a || !b) {
-        std::println("FAIL: 2 X-macro fields missing "
-                     "(atomic_batch_hygiene_violation_prevented={} mutate_template_marker_propagated={})",
-                     a, b);
+        std::println(
+            "FAIL: 2 X-macro fields missing "
+            "(atomic_batch_hygiene_violation_prevented={} mutate_template_marker_propagated={})",
+            a, b);
         return false;
     }
-    std::println("OK: 2 X-macro fields present (atomic_batch_hygiene_violation_prevented_total + mutate_template_marker_propagated_total)");
+    std::println("OK: 2 X-macro fields present (atomic_batch_hygiene_violation_prevented_total + "
+                 "mutate_template_marker_propagated_total)");
     return true;
 }
 
@@ -96,8 +105,10 @@ bool check_bumpers_getters() {
     std::string ixx = read_file("src/compiler/evaluator.ixx");
     bool ba = contains(ixx, "void bump_atomic_batch_hygiene_violation_prevented_total()");
     bool bb = contains(ixx, "void bump_mutate_template_marker_propagated_total()");
-    bool ga = contains(ixx, "std::uint64_t atomic_batch_hygiene_violation_prevented_total() const noexcept");
-    bool gb = contains(ixx, "std::uint64_t mutate_template_marker_propagated_total() const noexcept");
+    bool ga = contains(
+        ixx, "std::uint64_t atomic_batch_hygiene_violation_prevented_total() const noexcept");
+    bool gb =
+        contains(ixx, "std::uint64_t mutate_template_marker_propagated_total() const noexcept");
     if (!ba || !bb || !ga || !gb) {
         std::println("FAIL: bump_/getter pairs missing "
                      "(bumper_a={} bumper_b={} getter_a={} getter_b={})",
@@ -113,9 +124,11 @@ bool check_paired_wire_up_ac2() {
     std::string efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     // Site: atomic_batch_pinning + template-respect paired block (paired with
     // the existing #1646 macro-dirty + epoch-bump wire-ups).
-    bool has_template_propagated = contains(efm, "bump_mutate_template_marker_propagated_total()") &&
-                                  contains(efm, "Issue #1649");
-    bool has_atomic_batch_violation_prevented = contains(efm, "bump_atomic_batch_hygiene_violation_prevented_total()");
+    bool has_template_propagated =
+        contains(efm, "bump_mutate_template_marker_propagated_total()") &&
+        contains(efm, "Issue #1649");
+    bool has_atomic_batch_violation_prevented =
+        contains(efm, "bump_atomic_batch_hygiene_violation_prevented_total()");
     bool yield_hook = contains(efm, "Evaluator::yield_hook_evaluator()");
     if (!has_template_propagated || !has_atomic_batch_violation_prevented || !yield_hook) {
         std::println("FAIL: paired wire-ups missing "
@@ -152,21 +165,27 @@ bool check_baseline_ac4(CompilerService& cs) {
     return true;
 }
 
-}  // namespace aura_1649_detail
+} // namespace aura_1649_detail
 
 int main() {
     using namespace aura_1649_detail;
 
     int rc = 0;
-    if (!check_counters_ac2_ac5_partial()) rc = 1;
-    if (!check_xmacro_fields())                 rc = 1;
-    if (!check_bumpers_getters())              rc = 1;
-    if (!check_paired_wire_up_ac2())           rc = 1;
-    if (!check_design_doc_present())           rc = 1;
+    if (!check_counters_ac2_ac5_partial())
+        rc = 1;
+    if (!check_xmacro_fields())
+        rc = 1;
+    if (!check_bumpers_getters())
+        rc = 1;
+    if (!check_paired_wire_up_ac2())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         CompilerService cs;
-        if (!check_baseline_ac4(cs)) rc = 1;
+        if (!check_baseline_ac4(cs))
+            rc = 1;
     }
 
     if (rc == 0) {
