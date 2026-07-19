@@ -2,7 +2,7 @@
 ; Returns #t when reload API smoke checks pass.
 
 (require "std/hot-update" all:)
-(require "std/hot-update/reload" all:)
+(require "std/hot-update-reload" all:)
 
 (define (test-hot-update-reload)
   (let* ((cfg (hot-update:default-config))

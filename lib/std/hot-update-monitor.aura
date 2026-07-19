@@ -1,7 +1,11 @@
-; lib/std/hot-update/monitor.aura — Issue #1370
+; lib/std/hot-update-monitor.aura — Issue #1370
 ; Lightweight hot-update health monitor (poll N times, no sleep).
 ;
-; (require "std/hot-update/monitor" all:)
+; (require "std/hot-update-monitor" all:)
+;
+; Flattened from lib/std/hot-update/monitor.aura per Anqi 2026-07-20
+; directive wave 15 (aura philosophy: flat directory structure, no
+; multi-file subdirs).
 
 (require "std/hot-update" all:)
 

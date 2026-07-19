@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**65** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**68** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -31,6 +31,9 @@
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-keys` `hash-values` `hash-length` `hash->list` … (+6) | hash.aura -- Hash table operations |
 | `std/heal` | `heal` | — |
+| `std/hot-update-monitor` | `make-hot-update-monitor` `monitor:poll` `monitor:run-n` `monitor:stop` `monitor:running?` `monitor:last-stats` | lib/std/hot-update-monitor.aura — Issue #1370 |
+| `std/hot-update-region` | `region:own-mask` `region:isolate!` `region:get` `region:compatible?` `region:clear!` | lib/std/hot-update-region.aura — Issue #1370 |
+| `std/hot-update-reload` | `make-manual-reload` `make-threshold-reload` `make-composite-reload` `make-once-reload` | lib/std/hot-update-reload.aura — Issue #1370 |
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |

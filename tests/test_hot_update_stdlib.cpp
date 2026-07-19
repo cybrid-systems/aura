@@ -41,9 +41,9 @@ bool eval_bool(CompilerService& cs, const char* expr) {
 int main() {
     // ── Files present ──
     CHECK(file_exists("lib/std/hot-update.aura"), "hot-update.aura");
-    CHECK(file_exists("lib/std/hot-update/reload.aura"), "reload.aura");
-    CHECK(file_exists("lib/std/hot-update/region.aura"), "region.aura");
-    CHECK(file_exists("lib/std/hot-update/monitor.aura"), "monitor.aura");
+    CHECK(file_exists("lib/std/hot-update-reload.aura"), "reload.aura");
+    CHECK(file_exists("lib/std/hot-update-region.aura"), "region.aura");
+    CHECK(file_exists("lib/std/hot-update-monitor.aura"), "monitor.aura");
     CHECK(file_exists("lib/std/hot-update.aura-type"), "hot-update.aura-type");
     CHECK(file_exists("lib/std/tests/test_hot_update_reload.aura"), "test reload aura");
     CHECK(file_exists("lib/std/tests/test_hot_update_region.aura"), "test region aura");
@@ -107,7 +107,7 @@ int main() {
     // ── region module ──
     {
         CompilerService cs;
-        CHECK(cs.eval("(require \"std/hot-update/region\" all:)").has_value(), "require region");
+        CHECK(cs.eval("(require \"std/hot-update-region\" all:)").has_value(), "require region");
         CHECK(eval_bool(cs, "(begin (region:clear!) (= (region:get) 0))"), "clear region");
         CHECK(eval_bool(cs, "(> (region:own-mask 7) 0)"), "own-mask non-zero");
         CHECK(eval_bool(cs, "(begin (region:isolate! 3) "
@@ -120,7 +120,7 @@ int main() {
     // ── reload strategies ──
     {
         CompilerService cs;
-        CHECK(cs.eval("(require \"std/hot-update/reload\" all:)").has_value(), "require reload");
+        CHECK(cs.eval("(require \"std/hot-update-reload\" all:)").has_value(), "require reload");
         CHECK(eval_bool(cs, "(not ((make-manual-reload \"/tmp/nope_1370.so\")))"),
               "manual reload missing → #f");
         CHECK(eval_bool(cs, "(let ((o (make-once-reload \"/tmp/nope_1370.so\"))) "
@@ -131,7 +131,7 @@ int main() {
     // ── monitor ──
     {
         CompilerService cs;
-        CHECK(cs.eval("(require \"std/hot-update/monitor\" all:)").has_value(), "require monitor");
+        CHECK(cs.eval("(require \"std/hot-update-monitor\" all:)").has_value(), "require monitor");
         auto r =
             cs.eval("(let* ((hits 0)"
                     "       (m (make-hot-update-monitor (lambda (s) (set! hits (+ hits 1)) s))))"
