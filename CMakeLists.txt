@@ -5810,6 +5810,9 @@ aura_issue_test_link_llvm_jit(test_verify_dirty_totals_snapshot_1840)
 # Issue #1841: seva:run-demo-with-metrics strategy lock + metrics ownership.
 aura_add_issue_test(test_seva_demo_metrics_1841)
 aura_issue_test_link_llvm_jit(test_seva_demo_metrics_1841)
+# Issue #1842: evaluator:compact-env-frames MutationBoundaryGuard + try/catch.
+aura_add_issue_test(test_compact_env_frames_guard_1842)
+aura_issue_test_link_llvm_jit(test_compact_env_frames_guard_1842)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

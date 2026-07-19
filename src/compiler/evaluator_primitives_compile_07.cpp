@@ -908,8 +908,35 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // as an int. See Evaluator::compact_env_frames for the
     // algorithm + concurrency contract (caller must serialize
     // at the workspace level).
+    //
+    // Issue #1842: wrap in MutationBoundaryGuard + try/catch.
+    // Pre-#1842 the primitive called compact_env_frames() raw —
+    // a throw mid-remap left env_frames_ / Closure::env_id
+    // partially consistent with no panic-checkpoint restore.
+    // New contract: Guard captures checkpoint; on exception
+    // flip guard_ok=false so dtor restores (outermost-only
+    // lock, #184/#236). Metrics mirror #1902 EDA Guard path.
     add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
-        return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
+        try {
+            return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
+        } catch (const std::exception&) {
+            guard_ok = false; // Issue #1842: restore panic checkpoint
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return types::make_int(-1);
+        } catch (...) {
+            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
+            // (eda_guard_uncaught_exception_total); dtor restores
+            // (#1669 class A intentional-return-value).
+            guard_ok = false;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return types::make_int(-1);
+        }
     });
 
     // Issue #1420 AC3: (compile:bidirectional-stats)
