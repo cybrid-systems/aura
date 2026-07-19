@@ -641,9 +641,16 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
     //     :remove-child-failure  — RemoveChildMutator failures
     //   The AI agent reads this to see which strategies get
     //   the most traffic (and which always roll back).
+    //
+    // Issue #1849: capture() under shared_lock so multi-field
+    // snapshot is coherent vs concurrent apply_mutation /
+    // apply_by_kind / apply_by_name unique bumps. Pre-#1849
+    // loaded each atomic with relaxed independently — torn
+    // totals across the alist.
     ObservabilityPrims::register_stats_impl(
         "compile:mutator-dispatch-stats", [&ev](const auto&) -> EvalValue {
-            auto& s = aura::ast::mutators::dispatch_stats();
+            // Issue #1849: coherent snapshot (shared_lock inside capture).
+            const auto s = aura::ast::mutators::dispatch_stats().capture();
 
             auto cvt = [&](std::uint64_t n) -> EvalValue {
                 auto idx = ev.string_heap_.size();
@@ -668,49 +675,27 @@ void CompilePrims::register_compile_p53(PrimRegistrar add, Evaluator& ev) {
 
             // 12 entries: total + 3 dispatcher counters + 1 failure +
             // 4 success + 3 failure-per-kind (NoOp never fails).
+            using aura::ast::mutators::kind_index;
+            using aura::ast::mutators::StrategyKind;
             auto e_total = add_entry(":total", cvt(s.total()));
-            auto e_amut = add_entry(":apply-mutation-total",
-                                    cvt(s.apply_mutation_total.load(std::memory_order_relaxed)));
-            auto e_aknd = add_entry(":apply-by-kind-total",
-                                    cvt(s.apply_by_kind_total.load(std::memory_order_relaxed)));
-            auto e_anam = add_entry(":apply-by-name-total",
-                                    cvt(s.apply_by_name_total.load(std::memory_order_relaxed)));
-            auto e_fail =
-                add_entry(":failure-total", cvt(s.failure_total.load(std::memory_order_relaxed)));
-            auto e_nsucc = add_entry(
-                ":noop-success", cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                                        aura::ast::mutators::StrategyKind::NoOp)]
-                                         .load(std::memory_order_relaxed)));
-            auto e_rsucc =
-                add_entry(":replace-child-success",
-                          cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::ReplaceChild)]
-                                  .load(std::memory_order_relaxed)));
-            auto e_isucc =
-                add_entry(":insert-child-success",
-                          cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::InsertChild)]
-                                  .load(std::memory_order_relaxed)));
-            auto e_xsucc =
-                add_entry(":remove-child-success",
-                          cvt(s.kind_success[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::RemoveChild)]
-                                  .load(std::memory_order_relaxed)));
-            auto e_rfail =
-                add_entry(":replace-child-failure",
-                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::ReplaceChild)]
-                                  .load(std::memory_order_relaxed)));
-            auto e_ifail =
-                add_entry(":insert-child-failure",
-                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::InsertChild)]
-                                  .load(std::memory_order_relaxed)));
-            auto e_xfail =
-                add_entry(":remove-child-failure",
-                          cvt(s.kind_failure[aura::ast::mutators::kind_index(
-                                                 aura::ast::mutators::StrategyKind::RemoveChild)]
-                                  .load(std::memory_order_relaxed)));
+            auto e_amut = add_entry(":apply-mutation-total", cvt(s.apply_mutation_total));
+            auto e_aknd = add_entry(":apply-by-kind-total", cvt(s.apply_by_kind_total));
+            auto e_anam = add_entry(":apply-by-name-total", cvt(s.apply_by_name_total));
+            auto e_fail = add_entry(":failure-total", cvt(s.failure_total));
+            auto e_nsucc =
+                add_entry(":noop-success", cvt(s.kind_success[kind_index(StrategyKind::NoOp)]));
+            auto e_rsucc = add_entry(":replace-child-success",
+                                     cvt(s.kind_success[kind_index(StrategyKind::ReplaceChild)]));
+            auto e_isucc = add_entry(":insert-child-success",
+                                     cvt(s.kind_success[kind_index(StrategyKind::InsertChild)]));
+            auto e_xsucc = add_entry(":remove-child-success",
+                                     cvt(s.kind_success[kind_index(StrategyKind::RemoveChild)]));
+            auto e_rfail = add_entry(":replace-child-failure",
+                                     cvt(s.kind_failure[kind_index(StrategyKind::ReplaceChild)]));
+            auto e_ifail = add_entry(":insert-child-failure",
+                                     cvt(s.kind_failure[kind_index(StrategyKind::InsertChild)]));
+            auto e_xfail = add_entry(":remove-child-failure",
+                                     cvt(s.kind_failure[kind_index(StrategyKind::RemoveChild)]));
 
             // Cons them onto the result list (in reverse so the head is :total).
             std::uint64_t entries[] = {e_xfail, e_ifail, e_rfail, e_xsucc, e_isucc, e_rsucc,
