@@ -5948,6 +5948,9 @@ aura_issue_test_link_llvm_jit(test_env_lookup_by_symid_race_1862)
 # Issue #1863: Env::bindings_with_names raw walk + resolve under single-writer.
 aura_add_issue_test(test_env_bindings_with_names_race_1863)
 aura_issue_test_link_llvm_jit(test_env_bindings_with_names_race_1863)
+# Issue #1864: gc_root_count shared_lock(closures_mtx_) — not safepoint-only.
+aura_add_issue_test(test_gc_root_count_lock_1864)
+aura_issue_test_link_llvm_jit(test_gc_root_count_lock_1864)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
