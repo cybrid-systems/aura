@@ -51,7 +51,7 @@ TEST_PREFIXES = (
     "lib/std/edsl-test-harness.aura",
     "lib/std/test.aura",
     "lib/std/tests/",
-    "scripts/run_pets_regression.py",
+    "scripts/run_pets_regression.py REMOVED per Anqi 2026-07-19 directive wave 11 (broken — referenced deleted demos).",
 )
 
 # New public registration patterns (for --require-name-mention).
