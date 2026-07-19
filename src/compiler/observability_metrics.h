@@ -6428,6 +6428,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_block_hit_rate_numerator_total{0};   // #1639
     std::atomic<std::uint64_t> relower_block_hit_rate_denominator_total{0}; // #1639
 
+    // Issue #1640: AOT bridge mangle versioning + region filtering +
+    // aot_emit_version stale 检测 + incremental re-emit +
+    // hot-update observability. Two new metrics:
+    //   - aot_env_frame_version_drift_prevented: bumped when
+    //     reload detects env_frame_version drift between the
+    //     binary's stamped value and the host's current value,
+    //     preventing the stale binary from being activated
+    //     (positive control — every detection is counted).
+    //   - aot_incremental_reemit_triggered: bumped when the
+    //     incremental re-emit hook fires on a stale/region/drift
+    //     reload attempt (graceful fallback before reload false
+    //     return). Pairs with the existing aot_incremental_reemit_count
+    //     (which tracks cumulative re-emitted fn count) so dashboards
+    //     can compute the average re-emit count per trigger.
+    std::atomic<std::uint64_t> aot_env_frame_version_drift_prevented{0}; // #1640
+    std::atomic<std::uint64_t> aot_incremental_reemit_triggered{0};      // #1640
+
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261
