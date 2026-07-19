@@ -37,7 +37,8 @@ using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
@@ -60,13 +61,12 @@ bool check_counters_xmacros_bumpers_ac1() {
     bool all = true;
     for (const auto& n : names) {
         bool counter = contains(om, "std::atomic<std::uint64_t> " + n);
-        bool xmacro  = contains(fields, "AURA_COMPILER_METRICS_FIELD(" + n + ")");
-        bool bumper  = contains(ixx, "bump_" + n);
-        bool getter  = contains(ixx, n + "() const noexcept");
+        bool xmacro = contains(fields, "AURA_COMPILER_METRICS_FIELD(" + n + ")");
+        bool bumper = contains(ixx, "bump_" + n);
+        bool getter = contains(ixx, n + "() const noexcept");
         bool seen = counter && xmacro && bumper && getter;
         all = all && seen;
-        std::println("  {}\tctr={}\txm={}\tbump={}\tget={}",
-                     n, counter, xmacro, bumper, getter);
+        std::println("  {}\tctr={}\txm={}\tbump={}\tget={}", n, counter, xmacro, bumper, getter);
     }
     if (!all) {
         std::println("FAIL: at least one missing dimension (counter / xmacro / bumper / getter)");
@@ -85,16 +85,16 @@ bool check_paired_wireups_ac1() {
         contains(efm, "bump_mutation_boundary_epoch_bump_for_macro_total()") &&
         contains(efm, "Issue #1646");
     // ensure_hygiene_violation_detection paired bump.
-    bool hygiene_paired =
-        contains(efm, "ensure_hygiene_violation_detection") &&
-        contains(efm, "bump_mutation_boundary_hygiene_violation_total()");
+    bool hygiene_paired = contains(efm, "ensure_hygiene_violation_detection") &&
+                          contains(efm, "bump_mutation_boundary_hygiene_violation_total()");
     if (!cross_cow_paired || !hygiene_paired) {
         std::println("FAIL: paired wire-ups missing "
                      "(cross_cow_paired={} hygiene_paired={})",
                      cross_cow_paired, hygiene_paired);
         return false;
     }
-    std::println("OK: 2 paired wire-up sites landed (cross_cow refresh + ensure_hygiene_violation_detection)");
+    std::println("OK: 2 paired wire-up sites landed (cross_cow refresh + "
+                 "ensure_hygiene_violation_detection)");
     return true;
 }
 
@@ -108,14 +108,16 @@ bool check_new_primitive_ac2() {
                           contains(pq, "mutation_boundary_epoch_bump_for_macro_total()") &&
                           contains(pq, "mutation_boundary_hygiene_violation_total()");
     // Per-call queries_total counter bump.
-    bool queries_counter_bump = contains(pq, "mutation_boundary_observability_queries_total.fetch_add");
+    bool queries_counter_bump =
+        contains(pq, "mutation_boundary_observability_queries_total.fetch_add");
     if (!header || !reads_counters || !queries_counter_bump) {
         std::println("FAIL: primitive incomplete "
                      "(header={} reads_counters={} queries_counter_bump={})",
                      header, reads_counters, queries_counter_bump);
         return false;
     }
-    std::println("OK: query:mutation-boundary-observability-stats primitive + queries_total surface");
+    std::println(
+        "OK: query:mutation-boundary-observability-stats primitive + queries_total surface");
     return true;
 }
 
@@ -144,20 +146,25 @@ bool check_baseline_ac4(CompilerService& cs) {
     return true;
 }
 
-}  // namespace aura_1646_detail
+} // namespace aura_1646_detail
 
 int main() {
     using namespace aura_1646_detail;
 
     int rc = 0;
-    if (!check_counters_xmacros_bumpers_ac1()) rc = 1;
-    if (!check_paired_wireups_ac1())          rc = 1;
-    if (!check_new_primitive_ac2())           rc = 1;
-    if (!check_design_doc_present())          rc = 1;
+    if (!check_counters_xmacros_bumpers_ac1())
+        rc = 1;
+    if (!check_paired_wireups_ac1())
+        rc = 1;
+    if (!check_new_primitive_ac2())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         CompilerService cs;
-        if (!check_baseline_ac4(cs)) rc = 1;
+        if (!check_baseline_ac4(cs))
+            rc = 1;
     }
 
     if (rc == 0) {
