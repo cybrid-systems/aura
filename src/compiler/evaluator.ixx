@@ -13112,8 +13112,18 @@ export using aura::compiler::macro_exp::macro_expand_all;
 
 // ── EnvView — read-only view over an Env's bindings ────────
 // Exposes both the string-keyed bindings (legacy) and the
-// SymId-keyed bindings (Issue #145 fast path). Spans stay
-// valid as long as the underlying Env does.
+// SymId-keyed bindings (Issue #145 fast path).
+//
+// Lifetime (Issue #1868): zero-copy spans over env.bindings_ /
+// bindings_symid_. Any mutation that reallocates those vectors
+// (bind / bind_with_linear_state / bind_symid* / replace_string_bindings)
+// invalidates the view — UAF if the span is used after. Concurrent
+// mutation of the same Env is unsupported under the Env single-writer
+// contract (#1861). Valid use: build view, read, drop — no bind on
+// that Env until the view is discarded. parent is a raw Env* with the
+// same non-owning contract (parent Env must outlive the walk).
+// Defensive owned copies were considered and rejected to keep the
+// #145 zero-copy / JIT bridge contract.
 export struct EnvView {
     std::span<const std::pair<std::string, types::EvalValue>> string_bindings;
     std::span<const std::pair<aura::ast::SymId, types::EvalValue>> symid_bindings;

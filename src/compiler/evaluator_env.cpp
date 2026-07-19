@@ -1841,10 +1841,11 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
 }
 // ── Issue #145: EnvView / ClosureView impls ──────────────────
 //
-// make_env_view: build a zero-copy view over an Env's
-// bindings. The spans stay valid as long as the Env does
-// (no vector reallocation expected — the Env's bindings_
-// grows monotonically within a single eval).
+// make_env_view: zero-copy view over Env's bindings vectors.
+// Issue #1868: spans dangle if env is mutated (vector realloc on
+// bind*). Not locked — same Env single-writer contract as #1861.
+// Callers must not retain the view across bind / replace on `env`.
+// See EnvView class comment (evaluator.ixx) for the full contract.
 EnvView make_env_view(const Env& env) {
     EnvView v;
     v.string_bindings = env.bindings();
