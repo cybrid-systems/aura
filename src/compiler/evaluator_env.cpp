@@ -63,8 +63,10 @@ using types::make_void;
 // not 2N. (The issue body claimed double-counting; that was
 // incorrect — confirmed by tests/test_env_lookup_depth_1858.cpp.)
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
-// Shared by Env::lookup / lookup_binding / lookup_by_symid so a
-// cyclic parent graph cannot stack-overflow any of them (#1858/#1860).
+// Shared by Env::lookup / lookup_binding / lookup_by_symid and
+// EnvView::lookup* so a cyclic parent graph cannot stack-overflow
+// any of them (#1858/#1860/#1869). One increment per hop (Env or
+// EnvView local frame); see #1858 (not 2N).
 thread_local std::size_t g_env_lookup_depth = 0;
 struct EnvLookupDepthGuard {
     bool armed = false;
@@ -1856,7 +1858,14 @@ EnvView make_env_view(const Env& env) {
     return v;
 }
 
+// Issue #1869: share g_env_lookup_depth / MAX_ENV_DEPTH with Env::lookup
+// so a cyclic parent Env graph cannot stack-overflow via EnvView.
+// parent is const Env* — fallthrough uses Env::{lookup,lookup_by_*}
+// which also enter the same counter (one hop per frame, #1858).
 std::optional<EvalValue> EnvView::lookup(const std::string& name) const {
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
     for (auto it = string_bindings.rbegin(); it != string_bindings.rend(); ++it)
         if (it->first == name)
             return it->second;
@@ -1872,6 +1881,10 @@ std::optional<EvalValue> EnvView::lookup_by_intern(const std::string& n,
     // fallbacks (those live on Env, not EnvView), so the
     // behavior matches EnvView::lookup for the "name not
     // found" case: nullopt.
+    // Issue #1869: depth-guard entry (same as lookup / lookup_by_symid).
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
     if (!pool)
         return std::nullopt; // EnvView: no fallback pool
     // const_cast is safe — intern() is logically idempotent
@@ -1887,6 +1900,10 @@ std::optional<EvalValue> EnvView::lookup_by_intern(const std::string& n,
 }
 
 std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
+    // Issue #1869: depth-guard entry (see EnvView::lookup).
+    if (!env_lookup_enter())
+        return std::nullopt;
+    EnvLookupDepthGuard dec(true);
     for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
         if (it->first == s)
             return it->second;
