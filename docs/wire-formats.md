@@ -53,8 +53,6 @@ Later sections (Agent-facing, not FlatAST binary):
 10. [Parallel orchestration contracts (#1584–#1600)](#10-parallel-orchestration-contracts-1584--1600)
     — `(parallel-intend)` result hash, orch/mailbox/join/quota metrics
 
-Tutorial: [orchestration-tutorial.md](orchestration-tutorial.md)
-
 ---
 
 ## 1. NodeView wire format
@@ -572,7 +570,7 @@ query skips, IR stamps, fiber repin, reflect gate, TypedMutationAudit trail).
 Agent-facing **hash / metrics** shapes for multi-fiber parallel work.
 These are not FlatAST binary frames; they are stable EvalValue hashes
 returned by primitives and `engine:metrics` surfaces. Unknown keys must
-be ignored. Full tutorial: [orchestration-tutorial.md](orchestration-tutorial.md).
+be ignored.
 
 ### 10.1 `(parallel-intend …)` result hash (schema **1587**)
 

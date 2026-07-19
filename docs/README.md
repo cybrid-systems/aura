@@ -7,9 +7,6 @@
 | 我想… | 去看 |
 |------|------|
 | macOS 开发 | [../README.md — Platform Notes](../README.md#platform-notes) |
-| CI 多平台 (Win/macOS) | [ci-platforms.md](ci-platforms.md) (#1573) |
-| 快速上手 | [tutorial.md](tutorial.md) |
-| **并行 / multi-fiber 编排** | [orchestration-tutorial.md](orchestration-tutorial.md)（#1603） |
 | 有哪些原语 | `(api-reference)` 或 [generated/primitives.md](generated/primitives.md) |
 | 新 primitive vs stdlib? | [design/primitive-governance-policy.md](design/primitive-governance-policy.md) · [decision-framework](design/primitive-vs-stdlib-decision-framework.md) |
 | Agent 提示词 / 红线 | [agent-prompt-template.md](agent-prompt-template.md) |
@@ -27,8 +24,6 @@
 
 | 文件 | 说明 |
 |------|------|
-| [tutorial.md](tutorial.md) | 可运行示例 |
-| [orchestration-tutorial.md](orchestration-tutorial.md) | multi-fiber / parallel-intend 实践（#1603） |
 | [api-reference.md](api-reference.md) | 如何查原语 |
 | [generated/](generated/) | 从源码生成：primitives / modules / stdlib |
 | [architecture.md](architecture.md) | 模块地图与数据流（含 src/orch 管线） |

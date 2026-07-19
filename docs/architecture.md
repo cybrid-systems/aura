@@ -25,7 +25,7 @@
 
 Agent 自修改路径：`set-code` → `query:*` / `mutate:*` → `eval-current`（可走 JIT）。JSON 入口：`--serve-async`（见 [wire-formats.md](wire-formats.md)）。
 
-并行 Agent 路径：`parallel-intend` / `orch:spawn-agent` → Scheduler fibers → `Fiber::join` + MultiFiberMailbox → 结果 hash（见 [orchestration-tutorial.md](orchestration-tutorial.md)）。
+并行 Agent 路径：`parallel-intend` / `orch:spawn-agent` → Scheduler fibers → `Fiber::join` + MultiFiberMailbox → 结果 hash。
 
 ## C++ 模块（`export module`）
 
@@ -157,7 +157,6 @@ Aura 层 helper：`lib/std/query.aura`（3 个）、`lib/std/refactor.aura`、`l
 
 **文档与测试：**
 
-- 教程：[orchestration-tutorial.md](orchestration-tutorial.md)（#1603）
 - 设计：`docs/design/parallel-orch.md` · `docs/design/src-orch-module.md` · `src/orch/README.md`
 - 协议字段：[wire-formats.md §10](wire-formats.md#10-parallel-orchestration-contracts-1584--1600)
 - 测试：`tests/suite/orchestrator.aura` · `tests/suite/concurrent.aura` · `tests/suite/parallel_orchestration_stress.aura` (#1602) · `tests/test_parallel_orch.cpp` · `tests/test_orch_agent_spawn.cpp`

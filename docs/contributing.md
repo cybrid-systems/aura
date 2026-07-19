@@ -2,7 +2,7 @@
 
 面向修改 `src/compiler/evaluator.ixx` 及 `evaluator_*.cpp` 分区实现的运行时开发者。
 
-用户/Agent 上手见 [tutorial.md](tutorial.md)；模块地图见 [architecture.md](architecture.md)。
+模块地图见 [architecture.md](architecture.md)。
 
 ## 构建与测试
 
