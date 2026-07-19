@@ -293,6 +293,10 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // that may have lost the original marker on some children.
     // The primitive does NOT bump defuse_version_ — marker
     // changes are observational metadata, not workspace state.
+    //
+    // Issue #1782: FlatAST children can form cycles (DAG / self-
+    // mutate). Dense seen[] + kMaxVisit abort (parity #1679 /
+    // #1682) prevents unbounded stack growth on cycles.
     add("syntax:propagate-marker", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
             return make_int(0);
@@ -301,28 +305,40 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         auto marker_val = static_cast<int>(as_int(a[1]));
         if (!ev.workspace_flat_)
             return make_int(0);
-        if (root >= ev.workspace_flat_->size())
+        if (root == aura::ast::NULL_NODE || root >= ev.workspace_flat_->size())
             return make_int(0);
         if (marker_val < 0 || marker_val > 2)
             return make_int(0);
-        // Recursive DFS — no mutation guard since this is
-        // metadata-only. We walk via workspace_flat_->children()
-        // which returns PersistentChildVector<NodeId>.
+        auto& flat = *ev.workspace_flat_;
+        // Iterative DFS with visited set — metadata-only, no
+        // mutation guard. Walk via flat.children().
         std::int64_t count = 0;
-        std::vector<aura::ast::NodeId> stack = {root};
+        std::vector<aura::ast::NodeId> stack;
+        std::vector<std::uint8_t> seen(flat.size(), 0);
+        stack.push_back(root);
+        seen[static_cast<std::size_t>(root)] = 1;
+        std::size_t visited = 1;
+        const std::size_t kMaxVisit = flat.size();
         while (!stack.empty()) {
             auto cur = stack.back();
             stack.pop_back();
-            if (cur == aura::ast::NULL_NODE || cur >= ev.workspace_flat_->size())
+            if (cur == aura::ast::NULL_NODE || cur >= flat.size())
                 continue;
-            ev.workspace_flat_->set_marker(cur, static_cast<aura::ast::SyntaxMarker>(marker_val));
+            flat.set_marker(cur, static_cast<aura::ast::SyntaxMarker>(marker_val));
             ++count;
-            // Snapshot children before pushing to avoid
-            // invalidation issues (set_marker doesn't
-            // reallocate, but defensive).
-            const auto& children = ev.workspace_flat_->children(cur);
+            const auto& children = flat.children(cur);
             for (std::uint32_t ci = 0; ci < children.size(); ++ci) {
-                stack.push_back(children[ci]);
+                const auto c = children[ci];
+                if (c == aura::ast::NULL_NODE || c >= flat.size())
+                    continue;
+                const auto cix = static_cast<std::size_t>(c);
+                if (seen[cix])
+                    continue; // cycle edge or shared DAG child
+                seen[cix] = 1;
+                ++visited;
+                if (visited > kMaxVisit)
+                    return make_int(count); // defensive abort
+                stack.push_back(c);
             }
         }
         return make_int(count);
