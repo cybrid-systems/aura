@@ -495,9 +495,11 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
             std::int64_t bridge_overhead = 0;
             std::int64_t fallback_freq = 0;
 
-            // Read the latest snapshot. Wrapped in try/catch so a
-            // service-side throw doesn't propagate as an
-            // unhandled error value.
+            // Issue #1854: snapshot failure must NOT look like a
+            // clean (0 0 0 0) 4-tuple — agents would skip re-lower.
+            // Typed catch: bump metric + return void (distinguishable).
+            // catch (...) still marked [SILENCE-PRIM-#615] as intentional
+            // return-value (class A: void, not silent zero-tuple).
             try {
                 auto snap = svc->snapshot();
                 auto total_defines = svc->ir_cache_v2_size();
@@ -510,9 +512,20 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
                 bridge_overhead = static_cast<std::int64_t>(snap.closure_bridge_calls);
                 fallback_freq =
                     static_cast<std::int64_t>(snap.closure_tw_calls + snap.closure_ffi_calls);
+            } catch (const std::exception&) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->incremental_effectiveness_snapshot_failures.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                return make_void();
             } catch (...) {
-                // [SILENCE-PRIM-#615] Service-side metric snapshot
-                // failure; zeros are already initialized.
+                // [SILENCE-PRIM-#615] #1854: snapshot failure → void
+                // (not false-clean zero-tuple); metric bumped.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->incremental_effectiveness_snapshot_failures.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                return make_void();
             }
 
             // Build 4-tuple as nested pairs (right-associated):

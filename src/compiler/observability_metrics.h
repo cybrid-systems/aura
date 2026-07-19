@@ -4437,6 +4437,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_partial_relower_total{0};
     std::atomic<std::uint64_t> incremental_full_fallback_total{0};
     std::atomic<std::uint64_t> incremental_time_saved_us_total{0};
+    // Issue #1854: query:incremental-effectiveness snapshot() threw;
+    // primitive returns void (not a false-clean 4-tuple of zeros).
+    std::atomic<std::uint64_t> incremental_effectiveness_snapshot_failures{0};
 
     // Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership
     // + GC root sync safety counters for
