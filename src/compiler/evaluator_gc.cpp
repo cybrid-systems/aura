@@ -229,14 +229,18 @@ static void record_linear_gc_probe(Evaluator& ev, bool violation,
         return;
     m->linear_post_mutate_enforcements_total.fetch_add(1, std::memory_order_relaxed);
     if (violation) {
-        m->linear_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
-        m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
-        m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_relaxed);
-        m->linear_typed_mutate_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1867: safety-critical violation counters use release so
+        // audit / stats readers that acquire-load cannot miss a just-
+        // recorded violation under concurrent probe vs dashboard.
+        // Success-path tallies stay relaxed (non-safety).
+        m->linear_violations_caught_total.fetch_add(1, std::memory_order_release);
+        m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_release);
+        m->linear_gc_safepoint_violations.fetch_add(1, std::memory_order_release);
+        m->linear_typed_mutate_safe_fallbacks.fetch_add(1, std::memory_order_release);
         m->linear_postmutate_escape_violations_prevented_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
+                                                                         std::memory_order_release);
         // Issue #1515 / #763: GC-compiler correlation counter.
-        m->linear_ownership_gc_violations_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        m->linear_ownership_gc_violations_prevented_total.fetch_add(1, std::memory_order_release);
     } else {
         m->linear_check_pass_count_.fetch_add(1, std::memory_order_relaxed);
         m->linear_postmutate_guard_boundary_linear_safe_total.fetch_add(1,

@@ -5368,7 +5368,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t dirty_uses =
                 m->per_defuse_index_visited_total.load(std::memory_order_relaxed);
             const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+                m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */;
             const std::uint64_t leaks =
                 m->linear_leak_prevented_total.load(std::memory_order_relaxed);
             const std::uint64_t escape_hits =
@@ -5395,7 +5395,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t revalidations =
                 m->linear_post_mutate_revalidations_total.load(std::memory_order_relaxed);
             const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+                m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */;
             const std::uint64_t deopt =
                 m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed);
             const std::uint64_t leaks =
@@ -5419,7 +5419,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!m)
                 return make_int(0);
             const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+                m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */;
             const std::uint64_t deopt_mismatch =
                 m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
             const std::uint64_t enforcements =
@@ -5557,8 +5557,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:linear-boundary-consistency-stats",
         [&ev, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            // Issue #1867: acquire so release-stores from record_linear_gc_probe
+            // violations are visible to this audit/stats reader.
             const auto L = [&](const std::atomic<std::uint64_t>* field) -> std::int64_t {
-                return field ? static_cast<std::int64_t>(field->load(std::memory_order_relaxed))
+                return field ? static_cast<std::int64_t>(field->load(std::memory_order_acquire))
                              : 0;
             };
             // Optional log lines of linear violation provenance.
@@ -5764,7 +5766,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!m)
                 return make_int(0);
             const std::uint64_t violations =
-                m->linear_violations_caught_total.load(std::memory_order_relaxed);
+                m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */;
             const std::uint64_t deopt_mismatch =
                 m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed);
             const std::uint64_t enforcement_hits =

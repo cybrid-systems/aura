@@ -665,7 +665,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
             const std::uint64_t safepoint_v =
-                m ? m->linear_gc_safepoint_violations.load(std::memory_order_relaxed) : 0;
+                m ? m->linear_gc_safepoint_violations.load(std::memory_order_acquire) /* #1867 */
+                  : 0;
             const std::uint64_t steal_enf =
                 m ? m->linear_steal_enforced.load(std::memory_order_relaxed) : 0;
             const std::uint64_t relower_hits =
@@ -3360,7 +3361,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         m->linear_dirty_revalidate_count.load(std::memory_order_relaxed)
                   : 0;
             const std::uint64_t violations =
-                m ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
+                m ? m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */
+                  : 0;
             const std::uint64_t enforcements =
                 m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t safe_fallbacks =
@@ -3472,7 +3474,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t enforcements =
                 m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t violations =
-                m ? m->linear_violations_caught_total.load(std::memory_order_relaxed) : 0;
+                m ? m->linear_violations_caught_total.load(std::memory_order_acquire) /* #1867 */
+                  : 0;
             const std::uint64_t deopts =
                 m ? m->linear_deopt_on_mismatch_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t passes =
