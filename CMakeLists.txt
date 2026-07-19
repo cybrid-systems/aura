@@ -5798,6 +5798,9 @@ aura_issue_test_link_llvm_jit(test_compiler_metrics_ownership_1835)
 # Issue #1837: document type_registry_ non-owning ownership contract.
 aura_add_issue_test(test_type_registry_ownership_1837)
 aura_issue_test_link_llvm_jit(test_type_registry_ownership_1837)
+# Issue #1838: hygiene:protected? metadata reader lock vs set-marker.
+aura_add_issue_test(test_hygiene_protected_metadata_lock_1838)
+aura_issue_test_link_llvm_jit(test_hygiene_protected_metadata_lock_1838)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

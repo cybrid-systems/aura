@@ -219,6 +219,9 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (id >= ev.workspace_flat_->size())
             return make_bool(false);
+        // Issue #1838 / #1783: shared metadata lock vs concurrent
+        // syntax:set-marker / macro expansion writes to marker column.
+        auto rlock = ev.workspace_flat_->try_acquire_metadata_reader_lock();
         return make_bool(ev.workspace_flat_->is_macro_introduced(id));
     });
 }
