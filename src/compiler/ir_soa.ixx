@@ -445,6 +445,49 @@ export struct IRModuleV2 {
         func.narrow_evidence_[idx] = narrow_evidence;
         if (coercion_tag != 0)
             func.coercion_tags_[idx] = coercion_tag;
+        // Issue #1657: auto-mark the patched instruction dirty so the
+        // next relower_define_* pass sees it. Without this, the
+        // instruction_dirty_ bitmask can desync from block_dirty_
+        // (the block is already marked dirty by the caller, but the
+        // specific instruction patch wasn't visible to the
+        // relower_define_function_minimal path). Bump the SoA dirty
+        // sync counter via the global metric tracker when present.
+        func.instruction_dirty_[idx] = 1;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->soa_dirty_sync_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #1657: explicit block→instruction dirty propagation
+    // helper. Walks every dirty block and ensures all of its
+    // instructions are also marked dirty. Returns the number of
+    // instruction bits flipped 0→1 (for metric accounting). Called
+    // from cascade_block_to_instructions callers + from lowering
+    // consistency-mismatch fallback in lowering_impl.cpp.
+    std::size_t sync_instruction_dirty_from_block_dirty() {
+        std::size_t flipped = 0;
+        for (std::uint32_t bi = 0; bi < block_dirty_.size(); ++bi) {
+            if (block_dirty_[bi] == 0)
+                continue;
+            if (bi >= blocks_.size())
+                continue;
+            const auto& block = blocks_[bi];
+            for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                if (i >= instruction_dirty_.size()) {
+                    instruction_dirty_.resize(i + 1, 1);
+                    ++flipped;
+                } else if (instruction_dirty_[i] == 0) {
+                    instruction_dirty_[i] = 1;
+                    ++flipped;
+                }
+            }
+        }
+        if (flipped > 0) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                m->soa_dirty_sync_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return flipped;
     }
 
     // Get a view of the i-th instruction in a function.

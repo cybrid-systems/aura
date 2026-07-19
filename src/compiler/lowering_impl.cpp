@@ -1681,8 +1681,30 @@ static IRModule lower_to_ir_impl(
         ++g_last_soa_snapshot.consistency_checks;
         if (!ok) {
             ++g_last_soa_snapshot.consistency_mismatches;
-            for (auto& fn : g_last_soa_snapshot.module.functions)
-                fn.mark_all_blocks_dirty();
+            // Issue #1657: targeted partial dirty instead of full SoA
+            // mark_all_blocks_dirty(). The mismatch is function-count
+            // based (aos_fns != soa_fns), so we dirty only the SoA
+            // functions that don't have a matching AoS counterpart.
+            // The full-dirty path stays as a fallback when the
+            // function counts diverge so widely that we can't safely
+            // align individual functions. Bumps
+            // soa_consistency_partial_dirty_total when the targeted
+            // path resolves the mismatch; otherwise bumps the
+            // pre-existing consistency_mismatches counter.
+            if (aos_fns > 0 && soa_fns > 0 && aos_fns <= soa_fns) {
+                // SoA has extra functions (e.g. helpers emitted
+                // after the matching AoS pass) — dirty the tail only.
+                for (std::size_t fi = aos_fns; fi < soa_fns; ++fi) {
+                    g_last_soa_snapshot.module.functions[fi].mark_all_blocks_dirty();
+                }
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->soa_consistency_partial_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            } else {
+                // Counts diverge too widely — safe re-lower fallback.
+                for (auto& fn : g_last_soa_snapshot.module.functions)
+                    fn.mark_all_blocks_dirty();
+            }
         }
     }
     return state.module;

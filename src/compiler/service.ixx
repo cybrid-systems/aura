@@ -5415,6 +5415,18 @@ public:
                         }
                     }
                 }
+                // Issue #1657: also walk Quote + Lambda free-var + macro
+                // subtree references that the basic Variable walk above
+                // would miss. Each non-Variable reference is recorded as
+                // a dep_graph_ edge miss so callers can fall back to
+                // coarse full-dirty for affected defines. Bumps the
+                // dep_graph_edge_miss_count metric on miss.
+                if (nv.tag == aura::ast::NodeTag::Quote || nv.tag == aura::ast::NodeTag::Lambda ||
+                    nv.tag == aura::ast::NodeTag::Macro) {
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->dep_graph_edge_miss_count.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
                 for (auto c : nv.children)
                     stack.push_back(c);
             }

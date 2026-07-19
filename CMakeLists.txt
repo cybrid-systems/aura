@@ -5456,6 +5456,10 @@ aura_issue_test_link_llvm_jit(test_concept_constraints)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
+# Issue #1657: P0 [Incremental] finer-grained per-instruction dirty
+# bitmask propagation and minimal re-lower observability surface.
+aura_add_issue_test(test_fine_dirty_relower)
+aura_issue_test_link_llvm_jit(test_fine_dirty_relower)
 # Issue #1579: dedicated ResourceQuota module + process fiber enforcement.
 aura_add_issue_test(test_resource_quota_module)
 aura_issue_test_link_llvm_jit(test_resource_quota_module)

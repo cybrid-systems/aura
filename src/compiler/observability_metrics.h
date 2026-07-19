@@ -112,6 +112,28 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> incremental_eval_relower_hits{0};
     std::atomic<std::uint64_t> eval_path_relower_total{0};
     std::atomic<std::uint64_t> eval_ir_path_relower_total{0};
+    // Issue #1657: finer-grained per-instruction dirty bitmask
+    // propagation and minimal re-lower strategy in ir_cache_v2_ /
+    // relower_define_*. See scripts/check_fine_dirty_relower_coverage.py
+    // for the source-level invariants enforced by the linter.
+    //   - relower_instruction_level_hits: how many times the
+    //     instruction-level minimal re-lower path succeeded
+    //     (preserves func_id, runs per-func passes only on dirty
+    //     instructions instead of full re-lower)
+    //   - dep_graph_edge_miss_count: dep_graph_ populate/record
+    //     missed a Quote + Lambda free-var + macro-expanded subtree
+    //     reference (caller-side fallback to coarse full dirty)
+    //   - soa_dirty_sync_total: count of
+    //     sync_instruction_dirty_from_block_dirty() invocations
+    //     (block→instruction dirty propagation)
+    //   - soa_consistency_partial_dirty_total: count of
+    //     consistency-mismatch handlers that correctly dirty only
+    //     affected functions instead of mark_all_blocks_dirty() on
+    //     the whole SoA module
+    std::atomic<std::uint64_t> relower_instruction_level_hits{0};
+    std::atomic<std::uint64_t> dep_graph_edge_miss_count{0};
+    std::atomic<std::uint64_t> soa_dirty_sync_total{0};
+    std::atomic<std::uint64_t> soa_consistency_partial_dirty_total{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.

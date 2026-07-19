@@ -6157,6 +6157,65 @@ public:
             m->incremental_time_saved_us_total.fetch_add(us, std::memory_order_relaxed);
         }
     }
+    // Issue #1657: finer-grained per-instruction dirty bitmask
+    // propagation and minimal re-lower observability. Each bumper
+    // is bumped from the matching decision site in service.ixx::
+    // mark_define_dirty / relower_define_blocks / dep_graph_
+    // populate / lowering_impl.cpp consistency mismatch handler.
+    // See scripts/check_fine_dirty_relower_coverage.py for the
+    // source-level invariants enforced by the linter.
+    void bump_relower_instruction_level_hit() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->relower_instruction_level_hits.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_dep_graph_edge_miss(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->dep_graph_edge_miss_count.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_soa_dirty_sync(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->soa_dirty_sync_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_soa_consistency_partial_dirty(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->soa_consistency_partial_dirty_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_relower_instruction_level_hits() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->relower_instruction_level_hits.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_dep_graph_edge_miss_count() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->dep_graph_edge_miss_count.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_soa_dirty_sync_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->soa_dirty_sync_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_soa_consistency_partial_dirty_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            return m->soa_consistency_partial_dirty_total.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
     // Issue #719: Prompt 6 closure/EnvFrame epoch + linear ownership
     // + GC root sync safety counters backing the
     // (query:closure-env-epoch-safety-stats) primitive. These are
