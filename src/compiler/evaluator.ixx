@@ -1922,6 +1922,8 @@ public:
         // expected_evaluator_id (set here) != ctx (current binding)
         // → Guard skips restore + bumps
         // restores_discriminator_failed counter (no UB).
+        // Issue #1727: also bind clear so mismatch path drops stale
+        // panic_safe_* / GC-defer without restoring wrong state.
         return aura::core::panic_cp::PanicCheckpointHost{
             &ev,
             &ev, // expected_evaluator_id discriminator (Issue #1393)
@@ -1930,6 +1932,10 @@ public:
             },
             [](void* p) noexcept -> bool {
                 return static_cast<Evaluator*>(p)->restore_panic_checkpoint();
+            },
+            [](void* p) noexcept -> bool {
+                static_cast<Evaluator*>(p)->clear_panic_checkpoint();
+                return true;
             },
         };
     }
@@ -1940,8 +1946,10 @@ public:
         return aura::core::panic_cp::PanicCheckpointGuard(panic_checkpoint_host(*this));
     }
 
-    // Clear the checkpoint (call after successful mutation commit).
-    void commit_panic_checkpoint() {
+    // Issue #1727: drop panic checkpoint fields without restore.
+    // Used when cross-evaluator discriminator skips restore, and as
+    // the shared body of commit_panic_checkpoint's field wipe.
+    void clear_panic_checkpoint() noexcept {
         // Issue #1489 / #1667: release process-wide GC defer FIRST so a
         // throw from later bookkeeping cannot leave depth permanently
         // elevated (exception-safe dual of ~Evaluator release).
@@ -1953,6 +1961,11 @@ public:
         panic_safe_pairs_size_ = 0;
         panic_safe_string_heap_size_ = 0;
         panic_safe_env_frames_size_ = 0;
+    }
+
+    // Clear the checkpoint (call after successful mutation commit).
+    void commit_panic_checkpoint() {
+        clear_panic_checkpoint();
         // Issue #548: bump panic_checkpoint_commit_count_
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.

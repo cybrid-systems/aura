@@ -31,6 +31,10 @@ struct PanicCheckpointStats {
     // bumps this counter and skips restore (no UB) — operators
     // can monitor via the stats accessor or primitive.
     std::uint64_t restores_discriminator_failed = 0;
+    // Issue #1727: discriminator mismatch also clears the stale
+    // checkpoint (via host.clear) so panic_safe_* / GC defer do not
+    // permanently leak when restore is skipped.
+    std::uint64_t restores_discriminator_cleared = 0;
 };
 
 inline PanicCheckpointStats g_panic_checkpoint_raii_stats{};
@@ -40,7 +44,7 @@ inline void reset_panic_checkpoint_raii_stats() noexcept {
 }
 
 // Type-erased host: Evaluator (or a test double) binds save/restore.
-// save/restore may be null (stats-only / no-op host).
+// save/restore/clear may be null (stats-only / no-op host).
 //
 // Issue #1393: added `expected_evaluator_id` discriminator.
 // PanicCheckpointGuard dtor verifies host.expected_evaluator_id ==
@@ -51,11 +55,16 @@ inline void reset_panic_checkpoint_raii_stats() noexcept {
 // discriminator lives in the host (not Guard) so a Guard that
 // outlives its Evaluator can detect the mismatch on dtor without
 // needing a thread_local "current evaluator" pointer.
+//
+// Issue #1727: on the same mismatch path, invoke `clear` (if set)
+// so the evaluator that received save() does not keep a stale
+// panic_safe_* snapshot / GC-defer arm forever.
 struct PanicCheckpointHost {
     void* ctx = nullptr;
     void* expected_evaluator_id = nullptr; // Issue #1393: cross-evaluator discriminator
     bool (*save)(void* ctx) noexcept = nullptr;
     bool (*restore)(void* ctx) noexcept = nullptr;
+    bool (*clear)(void* ctx) noexcept = nullptr; // Issue #1727
 };
 
 // RAII guard: save on construct; restore on dtor unless commit().
@@ -88,6 +97,13 @@ public:
         if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
             ++g_panic_checkpoint_raii_stats.restores_discriminator_failed;
             ++g_panic_checkpoint_raii_stats.auto_rollbacks;
+            // Issue #1727: skip restore (wrong evaluator) but still clear
+            // the checkpoint that save() wrote on host_.ctx — otherwise
+            // panic_safe_* + GC defer can permanently leak.
+            if (host_.clear && host_.ctx) {
+                if (host_.clear(host_.ctx))
+                    ++g_panic_checkpoint_raii_stats.restores_discriminator_cleared;
+            }
             return;
         }
         if (saved_ && host_.restore && host_.ctx) {
