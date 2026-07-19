@@ -655,6 +655,14 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
 
     std::lock_guard<std::mutex> lock(heap_mutex());
 
+    // Issue #1865: drop pair_remap_ at the start of any successful
+    // sweep path. compact_pairs() builds remaps for a prior live_mask;
+    // after sweep reclaims (or reports reclaimable) heap state those
+    // indices can be stale. Clearing forces callers to re-derive via
+    // compact_pairs / resolve_pair identity (empty → identity). Do not
+    // clear on the panic-defer early return above (no heap mutation).
+    pair_remap_.clear();
+
     // 1. closures_ — erase unmarked entries.
     //    This is the main leak-reduction path: each closure holds
     //    an arena-allocated flat, pool, and env that can be
@@ -682,7 +690,9 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         result.strings_freed = marks->string_marks->count_dead();
     }
 
-    // 3. pairs_ — same. report dead count.
+    // 3. pairs_ — same. report dead count. (No pairs_ shrink yet —
+    //    pair_remap_ already cleared above so prior compact_pairs
+    //    remaps cannot outlive this sweep.)
     if (marks->pair_marks) {
         result.pairs_freed = marks->pair_marks->count_dead();
     }
