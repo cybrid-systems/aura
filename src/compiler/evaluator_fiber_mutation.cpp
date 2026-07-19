@@ -490,6 +490,12 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
             m->cross_cow_provenance_enforced_total.fetch_add(1, std::memory_order_relaxed);
         aura::core::provenance::record_cross_cow_provenance_enforced();
     }
+    // Issue #1647: paired legacy + per-CompilerMetrics bump at the
+    // validate_or_refresh success path (refresh-success counter,
+    // distinct from stable_ref_auto_pin_total which counts pin-time).
+    if (auto* ev_1647 = aura::compiler::Evaluator::yield_hook_evaluator()) {
+        ev_1647->bump_cross_boundary_auto_refresh_success_total();
+    }
     aura::core::provenance::record_ensure_valid_success();
     return view;
 }
