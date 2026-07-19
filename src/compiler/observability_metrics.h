@@ -4314,6 +4314,24 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_rollbacks_total{0};
     std::atomic<std::uint64_t> mutation_boundary_yield_resumes_total{0};
     std::atomic<std::uint64_t> mutation_boundary_recovery_failures_total{0};
+
+    // Issue #1646: MutationBoundaryGuard long-running observability wiring
+    // (refine #1637 / #1014). Bumped at Guard dtor (success path) /
+    // flush_mutation_boundary (deep path) / hygiene-violation-detection
+    // sites. Distinct from the legacy flush-time-counter (per-Fiber)
+    // already covered by bump_mutation_boundary_recovery_failures_total +
+    // bump_mutation_boundary_recovery_failure per-CompilerMetrics pair
+    // via #1908 / #1641 lineage. The new success_total /
+    // macro_dirty_propagated_total / epoch_bump_for_macro_total /
+    // hygiene_violation_total slots are the explicitly-requested
+    // observability gaps from #1646 body’s Guard success + propagation +
+    // epoch + hygiene-violation sites.
+    std::atomic<std::uint64_t> mutation_boundary_success_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_macro_dirty_propagated_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_epoch_bump_for_macro_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_hygiene_violation_total{0};
+    // Per-call counter for (query:mutation-boundary-observability-stats).
+    std::atomic<std::uint64_t> mutation_boundary_observability_queries_total{0};
     // Issue #1684: Guard::run_or_rollback caught a throw mid-mutate.
     std::atomic<std::uint64_t> mutation_boundary_exception_rollback_total{0};
 

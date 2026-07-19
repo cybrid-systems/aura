@@ -2277,6 +2277,16 @@ aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
 # remaining ~400 dead bumps to reach the body-quoted < 10% dead rate.
 aura_add_issue_test(test_issue_1645)
 aura_issue_test_link_llvm_jit(test_issue_1645)
+# Issue #1646: MutationBoundaryGuard long-running observability
+# (partial-redundant-ship, refine #1637 / #1014). Phase 1 ships 5 fresh
+# counters + 4 fresh bumpers + 4 fresh getters + 2 paired legacy/new
+# wire-ups at cross_cow refresh + ensure_hygiene_violation_detection
+# + the new (query:mutation-boundary-observability-stats) primitive.
+# AC3 (insert_kv refactor 249 sites) + Guard dtor success wire-up +
+# 5-field hash table composition + rollback-path wire-up deferred to
+# follow-up #1668 / #1669 / #1670 / #1671 per design doc.
+aura_add_issue_test(test_issue_1646)
+aura_issue_test_link_llvm_jit(test_issue_1646)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

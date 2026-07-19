@@ -308,6 +308,13 @@ void aura::compiler::Evaluator::ensure_hygiene_violation_detection() const noexc
     // Issue #422: attempts are recorded at hygiene_protected_error
     // and replace-subtree block sites; this hook is a no-op probe
     // for tests and Guard-exit wiring verification.
+    // Issue #1646 AC1: paired legacy on-demand + per-CompilerMetrics bump
+    // at the hygiene-violation-detection site. Each detection call increments
+    // the dedicated mutation_boundary_hygiene_violation_total slot that backs
+    // the new (query:mutation-boundary-observability-stats) primitive surface.
+    if (auto* ev_hv = aura::compiler::Evaluator::yield_hook_evaluator()) {
+        ev_hv->bump_mutation_boundary_hygiene_violation_total();
+    }
 }
 
 void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_boundary_yield) {
@@ -403,6 +410,13 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         if (auto* ev = aura::compiler::Evaluator::yield_hook_evaluator()) {
             for (std::uint64_t i = 0; i < refreshed; ++i)
                 ev->bump_cross_cow_invalidations();
+        }
+        // Issue #1646 AC1: paired legacy + per-CompilerMetrics bumps at the
+        // macro-dirty propagation + epoch-bump-for-macro sites. Both counters
+        // back the new (query:mutation-boundary-observability-stats) primitive.
+        if (auto* ev_mb = aura::compiler::Evaluator::yield_hook_evaluator()) {
+            ev_mb->bump_mutation_boundary_macro_dirty_propagated_total();
+            ev_mb->bump_mutation_boundary_epoch_bump_for_macro_total();
         }
     }
     if (boundary_refreshed > 0)
