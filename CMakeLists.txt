@@ -2339,6 +2339,19 @@ aura_issue_test_link_llvm_jit(test_issue_1649)
 # existing primitive per "原语最小化" directive (no new primitive).
 aura_add_issue_test(test_issue_1650)
 aura_issue_test_link_llvm_jit(test_issue_1650)
+# Issue #1651: large/deep AST dirty propagation + children_stable
+# optimization (scope-limited-progressive Phase 1, refine #1251 / #1345
+# / #398 / #1500 / #392). Phase 1 ships the body-named copy-avoided
+# surface (children_stable_span_calls_total_) + the AC2 structural
+# change (children_stable_span_view method returning std::span<const
+# StableNodeRef>). Pre-existing mark_dirty_early_exit_count_ (#1251)
+# covers the body-named dirty_walk_early_exit_hits; #1345 ships the
+# existing dirty-bit fast path in mark_dirty_upward_fast. Full
+# subtree_gen_ refinement (AC1) deferred to #1685; large-AST perf +
+# TSan/benchmark (AC3+AC4) deferred to #1686; parent_stable span variant
+# deferred to #1687. Composes into existing primitives per "原语最小化".
+aura_add_issue_test(test_issue_1651)
+aura_issue_test_link_llvm_jit(test_issue_1651)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
