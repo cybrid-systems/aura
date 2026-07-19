@@ -60,10 +60,10 @@ from threading import Lock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
+from benchmark_cases import load_typecheck_cases
 from integ_cases import load_integ_cases
 from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets
 from smoke_cases import load_smoke_cases
-from typecheck_cases import load_typecheck_cases
 
 ROOT = Path(__file__).resolve().parent
 BENCH = ROOT / "tests" / "benchmark.py"
