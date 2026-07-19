@@ -66,9 +66,9 @@ Aura 遵循三个原则：
 |------|----------|
 | GitHub Actions CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml)（**不是** `.github/ci_pipeline.yml`） |
 | Benchmark / SLO gate | [`tests/benchmark.py`](tests/benchmark.py) · `./build.py bench --strict`（**不是** `src/test/benchmark_gate.ixx`） |
-| Issue-test 模式 | [`docs/test_harness_pattern.md`](docs/test_harness_pattern.md) · [`tests/test_harness.hpp`](tests/test_harness.hpp) · 模板 [`tests/templates/test_issue_pattern.cpp`](tests/templates/test_issue_pattern.cpp) |
+| Issue-test 模式 | [`tests/test_harness.hpp`](tests/test_harness.hpp) · 模板 [`tests/templates/test_issue_pattern.cpp`](tests/templates/test_issue_pattern.cpp) |
 
-贡献运行时：[`docs/contributing.md`](docs/contributing.md)。测试上手：[`docs/test_harness_pattern.md`](docs/test_harness_pattern.md)。
+贡献运行时：[`docs/contributing.md`](docs/contributing.md)。
 
 ## Platform Notes
 

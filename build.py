@@ -721,7 +721,6 @@ def test_bench():
     """Benchmark 基线 + 回归检测（#1569: strict SLO gate).
 
     Path map (#1570): this is the benchmark gate — NOT src/test/benchmark_gate.ixx.
-    See docs/test_harness_pattern.md.
     """
     print(f"{B}═══ Benchmark ═══{N}")
     if not AURA.exists():

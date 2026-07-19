@@ -1,7 +1,6 @@
 // @category: unit
 // @reason: TEMPLATE only — copy to tests/test_<feature>.cpp and register via
 //          aura_add_issue_test(...) in cmake/AuraDomainTests.cmake (or CMakeLists).
-//          See docs/test_harness_pattern.md (Issue #1570).
 //
 // This file is NOT a CMake target. Do not add_executable it.
 

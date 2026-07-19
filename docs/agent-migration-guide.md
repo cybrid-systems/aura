@@ -124,6 +124,5 @@ issues (see `Related` below).
 - Issue #562 — `query:*` namespace audit
 - Issue #1449 / Epic #1462 — SlimSurface + this guide
 - `lib/std/compat.aura` — compat shims (new in this commit)
-- `docs/agent-prompt-template.md` — to be updated to recommend new names
 
 Refs: #1462

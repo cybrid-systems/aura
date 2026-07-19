@@ -50,21 +50,11 @@ std::string read_file(const std::string& path) {
 }
 
 bool check_primitives_style_doc_ac1() {
-    std::println("\n--- AC1: docs/primitives_style.md exists + Phase 1 architecture ---");
-    std::string doc = read_file("docs/primitives_style.md");
-    bool exists = !doc.empty();
-    bool has_surface = contains(doc, "Surface layer");
-    bool has_algo = contains(doc, "Algorithm layer");
-    bool has_source = contains(doc, "Source layer");
-    bool has_hygiene = contains(doc, "Hygiene surface");
-    bool has_observ = contains(doc, "Observability pattern reference");
-    if (!exists || !has_surface || !has_algo || !has_source || !has_hygiene || !has_observ) {
-        std::println("FAIL: primitives_style.md missing or incomplete "
-                     "(exists={} surface={} algo={} source={} hygiene={} observability={})",
-                     exists, has_surface, has_algo, has_source, has_hygiene, has_observ);
-        return false;
-    }
-    std::println("OK: docs/primitives_style.md present with Phase 1 architecture");
+    // docs/primitives_style.md removed per Anqi 2026-07-19 directive
+    // (aura philosophy, no per-issue plan docs / style docs — code
+    // itself is the surface/algorithm/source/hygiene/observability
+    // contract); AC1 short-circuits to pass.
+    std::println("\n--- AC1: docs/primitives_style.md [REMOVED per Anqi 2026-07-19 directive] ---");
     return true;
 }
 

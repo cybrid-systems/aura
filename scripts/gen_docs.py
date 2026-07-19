@@ -100,7 +100,9 @@ def is_deprecated_name(name: str) -> bool:
 
 # Issue #559: 4-category classification (matches the issue's
 # suggested taxonomy). Default-mapped from primitive name
-# prefix; overrideable via docs/primitive_categories.yaml.
+# prefix. (docs/primitive_categories.yaml override removed per
+# Anqi 2026-07-19 directive — aura philosophy, no per-issue plan
+# docs / style docs.)
 CATEGORY_PREFIX_MAP: dict[str, str] = {
     # mutation-safety: directly participate in mutate / guard /
     # workspace safety protocols. Must remain a primitive
@@ -180,41 +182,26 @@ CATEGORY_PREFIX_MAP: dict[str, str] = {
 
 
 def _load_category_overrides() -> dict[str, str]:
-    """Load docs/primitive_categories.yaml if present.
-
-    YAML format (one line per primitive):
-      primitive-name: category
-    Comments start with '#'. Categories must be one of:
-    core, mutation-safety, internal-observable, convenience.
+    """No-op stub: docs/primitive_categories.yaml removed per
+    Anqi 2026-07-19 directive. Kept as a stub for backward compat
+    (always returns empty overrides — classification falls back to
+    CATEGORY_PREFIX_MAP heuristic + 'core' default).
     """
-    yaml_path = ROOT / "docs" / "primitive_categories.yaml"
-    if not yaml_path.exists():
-        return {}
-    overrides: dict[str, str] = {}
-    for line in yaml_path.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if ":" not in s:
-            continue
-        name, _, cat = s.partition(":")
-        name = name.strip()
-        cat = cat.strip()
-        if name and cat in {"core", "mutation-safety", "internal-observable", "convenience"}:
-            overrides[name] = cat
-    return overrides
+    return {}
 
 
 def classify_primitive(name: str, overrides: dict[str, str]) -> str:
     """Map a primitive name to its category.
 
     Order of precedence:
-      1. Explicit override (docs/primitive_categories.yaml)
-      2. Prefix heuristic (CATEGORY_PREFIX_MAP)
-      3. Default to 'core' (engine-boot guarantee)
+      1. Prefix heuristic (CATEGORY_PREFIX_MAP)
+      2. Default to 'core' (engine-boot guarantee)
+
+    (docs/primitive_categories.yaml override removed per Anqi
+    2026-07-19 directive; the `overrides` param is kept as a no-op
+    stub for backward compat with callers.)
     """
-    if name in overrides:
-        return overrides[name]
+    del overrides  # no-op (override file removed)
     # Longest-prefix match so "string->" wins over "string-" etc.
     best: str | None = None
     best_len = -1
@@ -341,11 +328,13 @@ def render_primitives(primitives: list[Primitive]) -> str:
         lines.append(f"- **{cat}**: {n} primitives ({pct:.0f}%)")
     lines.append("")
     lines.append(
-        "Categories follow the taxonomy in "
-        "[design/primitive-vs-stdlib-decision-framework.md]"
-        "(design/primitive-vs-stdlib-decision-framework.md). "
-        "Override per-primitive classifications via "
-        "`docs/primitive_categories.yaml`."
+        "Categories follow the CATEGORY_PREFIX_MAP heuristic in "
+        "`scripts/gen_docs.py` (Issue #559 taxonomy: mutation-safety / "
+        "internal-observable / convenience / core default). "
+        "Per-primitive classification overrides via "
+        "`docs/primitive_categories.yaml` were removed per "
+        "Anqi 2026-07-19 directive (aura philosophy, no per-issue "
+        "plan docs)."
     )
     lines.append("")
 
