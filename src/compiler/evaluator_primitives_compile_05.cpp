@@ -606,17 +606,27 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
                 // (count ancestors of def_node, excluding def_node
                 // itself). The size()-bounded safety cap is preserved
                 // inside the visitor via early-return.
+                //
+                // Issue #1786: dense seen[] stops parent_of cycles so
+                // each ancestor is counted at most once (max_count alone
+                // still overcounts cycles shorter than flat.size()).
                 std::int64_t chain_len = 0;
                 auto start = ev.workspace_flat_->parent_of(def_node);
                 const auto max_count = static_cast<std::size_t>(ev.workspace_flat_->size());
                 if (start != aura::ast::NULL_NODE) {
+                    std::vector<std::uint8_t> seen(ev.workspace_flat_->size(), 0);
                     chain_len =
                         static_cast<std::int64_t>(aura::compiler::walk_ancestors<std::uint32_t>(
                             *ev.workspace_flat_, start,
-                            [&chain_len, max_count](aura::ast::NodeId) -> bool {
-                                if (static_cast<std::size_t>(chain_len) >= max_count) {
+                            [&seen, &chain_len, max_count](aura::ast::NodeId cur) -> bool {
+                                if (static_cast<std::size_t>(chain_len) >= max_count)
                                     return false; // safety cap
-                                }
+                                if (cur >= seen.size())
+                                    return false;
+                                const auto ci = static_cast<std::size_t>(cur);
+                                if (seen[ci])
+                                    return false; // cycle — stop, do not re-count
+                                seen[ci] = 1;
                                 ++chain_len;
                                 return true;
                             }));

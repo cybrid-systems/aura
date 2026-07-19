@@ -5774,6 +5774,9 @@ aura_issue_test_link_llvm_jit(test_inline_pass_stats_unpack_1784)
 # Issue #1785: per-symbol-dirty-stats locked find_by_name (no unlocked intern).
 aura_add_issue_test(test_per_symbol_dirty_pool_lock_1785)
 aura_issue_test_link_llvm_jit(test_per_symbol_dirty_pool_lock_1785)
+# Issue #1786: per-symbol-dirty-stats ancestor walk visited-set (cycle guard).
+aura_add_issue_test(test_per_symbol_dirty_cycle_guard_1786)
+aura_issue_test_link_llvm_jit(test_per_symbol_dirty_cycle_guard_1786)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
