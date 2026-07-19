@@ -560,9 +560,16 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
         } else {
             return ev.make_merr("bad-arg", "symbol name string index out of range");
         }
+        // Issue #1785: hold workspace_mtx_ for pool lookup + FlatAST
+        // walks so concurrent mutate / intern cannot race. Prefer
+        // find_by_name (read-only) over intern(write) — unbound
+        // names stay INVALID_SYM and return zeroed stats (AC5)
+        // without mutating the pool hash table.
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         aura::ast::SymId target_sym = aura::ast::INVALID_SYM;
         if (ev.workspace_flat_ && ev.workspace_pool_) {
-            target_sym = ev.workspace_pool_->intern(sym_name);
+            if (auto found = ev.workspace_pool_->find_by_name(sym_name))
+                target_sym = *found;
         }
         // Compute per-symbol affected set (O(n) walk).
         std::vector<aura::ast::NodeId> per_symbol_affected;
@@ -617,6 +624,7 @@ void CompilePrims::register_compile_p45(PrimRegistrar add, Evaluator& ev) {
                 ancestor_affected = chain_len;
             }
         }
+        rlock.unlock(); // done with pool + flat; metrics are atomics
         // Bump metrics_.
         std::uint64_t lookup_count = 0;
         if (ev.compiler_metrics_) {
