@@ -487,7 +487,7 @@ void register_workspace_query_primitives(
     // Issue #1449 / Tier-1 demotion: (query:siblings) removed from the public
     // engine registry. Use lib/std/compat.aura shim or:
     //   (filter (lambda (s) (not (= s n))) (query:children (query:parent n)))
-    // See docs/agent-migration-guide.md.
+    // See lib/std/compat.aura for the demotion shim.
 
     // ═══════════════════════════════════════════════════════════════
     // P8a: Query/Transform EDSL — combined filter/where (P1)

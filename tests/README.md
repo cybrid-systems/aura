@@ -37,7 +37,7 @@ tests/
 | 真·单测（IR/AST） | `test_ir.cpp` 等 unit，或新 `test_<topic>.cpp` |
 | **禁止默认** | `test_issue_<N>.cpp` |
 
-详见 [`domain/README.md`](domain/README.md) 与 [`docs/contributing.md`](../docs/contributing.md)。
+详见 [`domain/README.md`](domain/README.md)。
 
 ## 运行方式
 

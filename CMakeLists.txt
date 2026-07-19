@@ -3088,11 +3088,10 @@ aura_issue_test_link_llvm_jit(test_issue_344)
 # mutate context.
 aura_add_issue_test(test_issue_346)
 aura_issue_test_link_llvm_jit(test_issue_346)
-# Issue #347: [Docs] StableNodeRef, generation_ and
-# mutation safety best practices guide. Ships a
-# comprehensive best-practices doc covering
-# when to use StableNodeRef vs raw NodeId,
-# safe patterns for multi-round query-mutate-
+# Issue #347: StableNodeRef, generation_ and mutation safety
+# best practices — moved to source code (StableNodeRef usage
+# patterns are documented in src/core/ast.ixx comments per the
+# aura philosophy: code is the documentation.
 #     eval loops, stale-ref handling, workspace
 #     layering + COW, fiber concurrency, 3 code
 #     examples, 6 anti-patterns — doc REMOVED per Anqi

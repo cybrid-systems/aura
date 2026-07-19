@@ -17,7 +17,7 @@
 //     by default (breaking change; out of scope).
 //   - Performance benchmark (1000+ round edit loop cost
 //     reduction); separate measurement.
-//   - Cross-mutate storage guidelines in docs/contributing.md.
+//   - Cross-mutate storage guidelines in src/core/ast.ixx.
 //
 // Test pattern (matches test_issue_244, test_issue_247, #248):
 // Each AC uses (set-code "...") + query primitives via

@@ -15,7 +15,7 @@
 ; warning into the engine, this file will gain a `printf` to stderr
 ; guarded by an engine-managed "already-warned" set.
 ;
-; Removal timeline: see docs/agent-migration-guide.md. The shim
+; Removal timeline: documented in lib/std/compat.aura header. The shim
 ; itself goes away two releases after the engine primitive is
 ; removed.
 
