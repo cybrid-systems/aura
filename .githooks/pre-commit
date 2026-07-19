@@ -254,5 +254,25 @@ if [ -n "$test_registry_files" ]; then
     echo "pre-commit: test-registry verify (--check) clean ✓"
 fi
 
+# ── Aura philosophy guard: no docs/design/ in commits ─────────────
+# Per Anqi 2026-07-19 directive — aura philosophy, AI-agent-developed
+# repo, no per-issue plan docs in docs/design/. This guard prevents
+# local commits from shipping docs/design/* files. The external
+# mergebot is the source of docs/design/* re-additions on origin/main;
+# this guard catches them at commit time so future agents don't
+# propagate them. The CI workflow (`.github/workflows/ci.yml`) has the
+# same guard for mergebot pushes that bypass this hook.
+design_files=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '^docs/design/' \
+    || true)
+if [ -n "$design_files" ]; then
+    echo "❌ pre-commit: docs/design/ files staged — aura philosophy forbids per-issue plan docs" >&2
+    echo "   Staged design files:" >&2
+    echo "$design_files" | sed 's/^/     /' >&2
+    echo "   Hint: git rm -rf --cached docs/design/ && rm -rf docs/design/" >&2
+    exit 1
+fi
+echo "pre-commit: docs/design/ guard clean ✓"
+
 # If neither C++ nor Python staged, exit 0 (nothing to format).
 exit 0
