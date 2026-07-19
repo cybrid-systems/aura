@@ -24,6 +24,12 @@ void aura_evaluator_bump_steal_deferred_violation() __attribute__((weak));
 void aura_evaluator_bump_mutation_steal_attempt() __attribute__((weak));
 void aura_evaluator_bump_steal_arena_yield() __attribute__((weak));
 void aura_evaluator_bump_steal_outermost_enforced() __attribute__((weak));
+// Issue #1641: per-CompilerMetrics steal observability (weak; strong defs
+// in evaluator_fiber_mutation.cpp). Avoids importing Evaluator module
+// into serve/*.cpp (non-module TU).
+void aura_evaluator_bump_boundary_held_steal_safe() __attribute__((weak));
+void aura_evaluator_bump_steal_mutation_boundary_deferred() __attribute__((weak));
+void aura_evaluator_bump_starvation_mitigated_for_boundary() __attribute__((weak));
 }
 
 static inline void call_steal_arena_yield() noexcept {
@@ -231,8 +237,8 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 // pairs with the legacy per-Fiber bump_cross_fiber_
                 // mutation_safe_steal counter for the Scheduler/Worker
                 // level aggregate).
-                if (auto* ev = Evaluator::yield_hook_evaluator())
-                    ev->bump_boundary_held_steal_safe_total();
+                if (aura_evaluator_bump_boundary_held_steal_safe)
+                    aura_evaluator_bump_boundary_held_steal_safe();
             }
             call_probe_linear_on_steal();
             call_steal_outermost_enforced();
@@ -262,10 +268,10 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 // Issue #1641: paired steal_mutation_boundary_deferred_total
                 // + starvation_mitigated_for_boundary_count bumps
                 // (per-CompilerMetrics observability surface).
-                if (auto* ev = Evaluator::yield_hook_evaluator()) {
-                    ev->bump_steal_mutation_boundary_deferred_total();
-                    ev->bump_starvation_mitigated_for_boundary_count();
-                }
+                if (aura_evaluator_bump_steal_mutation_boundary_deferred)
+                    aura_evaluator_bump_steal_mutation_boundary_deferred();
+                if (aura_evaluator_bump_starvation_mitigated_for_boundary)
+                    aura_evaluator_bump_starvation_mitigated_for_boundary();
             } else {
                 // Non-inner but still not safe (edge): threshold boost
                 // after repeated defers (#1270 / #1445).

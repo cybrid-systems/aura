@@ -3211,13 +3211,19 @@ public:
     // chain ends (parent_id == NULL_ENV_ID). Pure index walk —
     // no pointer chase, no cache-unfriendly hop.
     //
-    // Phase C4: `requires aura::core::AuraInvocable<F, EnvId,
-    // const EnvFrame&>` — the visitor must return something
+    // Phase C4 / Issue #1753: visitor must return something
     // convertible to bool (true = continue walk, false = stop).
-    // Zero runtime cost; compiles to the same code as before.
-    template <typename F>
-        requires aura::core::AuraInvocable<F, EnvId, const EnvFrame&>
-    void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
+    // Prefer static_assert over a `requires` clause so a wrong F
+    // signature yields a clear diagnostic (and the constraint is
+    // not solely a C++20 concept gate). Project build is C++26
+    // (CMAKE_CXX_STANDARD 26); zero runtime cost.
+    template <typename F> void walk_env_frames(EnvId start, F&& f) const pre(start != NULL_ENV_ID) {
+        // Issue #1753: explicit invocable+bool-return check.
+        static_assert(std::is_invocable_v<F, EnvId, const EnvFrame&>,
+                      "walk_env_frames: F must be invocable with (EnvId, const EnvFrame&)");
+        static_assert(std::is_convertible_v<std::invoke_result_t<F, EnvId, const EnvFrame&>, bool>,
+                      "walk_env_frames: F must return a type convertible to bool "
+                      "(true=continue, false=stop)");
         EnvId cur = start;
         while (cur != NULL_ENV_ID) {
             // Issue #1360: skip/stop on stale (truncated) EnvIds

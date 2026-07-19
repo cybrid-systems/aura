@@ -1528,6 +1528,33 @@ extern "C" void aura_evaluator_bump_steal_outermost_enforced() {
     ev->bump_steal_outermost_only_enforced();
 }
 
+// Issue #1641: C trampolines for Scheduler/Worker steal observability
+// (serve/*.cpp cannot name Evaluator / import the module).
+extern "C" void aura_evaluator_bump_boundary_held_steal_safe() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_boundary_held_steal_safe_total();
+}
+extern "C" void aura_evaluator_bump_steal_mutation_boundary_deferred() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_steal_mutation_boundary_deferred_total();
+}
+extern "C" void aura_evaluator_bump_starvation_mitigated_for_boundary() {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return;
+    ev->bump_starvation_mitigated_for_boundary_count();
+}
+
 extern "C" void aura_evaluator_probe_linear_on_steal() {
     auto* ev = Evaluator::yield_hook_evaluator();
     if (!ev)
