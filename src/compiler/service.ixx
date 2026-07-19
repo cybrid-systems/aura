@@ -4919,6 +4919,17 @@ public:
         if (dirty_blocks > 0)
             metrics_.ir_soa_block_dirty_hits_total.fetch_add(dirty_blocks,
                                                              std::memory_order_relaxed);
+        // Issue #1639: dirty_block_ratio running sums — numerator is
+        // dirty_blocks (the hit count), denominator is dirty_blocks +
+        // blocks_saved (the total block count seen across all calls).
+        // Dashboards compute dirty_block_ratio = numerator / denominator
+        // (or the per-snapshot basis-points variant in the primitive).
+        {
+            std::size_t total_blocks_seen = dirty_blocks;
+            for (const auto& fb : it->second.block_dirty_per_func_)
+                total_blocks_seen += fb.size();
+            evaluator_.bump_dirty_block_ratio(dirty_blocks, total_blocks_seen);
+        }
         if (dirty_blocks == 0) {
             // Bitmask says nothing changed → reuse cached IR.
             // Bump the skip counter; do NOT call lowering.
@@ -5009,6 +5020,15 @@ public:
                         metrics_.relower_partial_funcs_saved_total.fetch_add(
                             clean_funcs, std::memory_order_relaxed);
                     }
+                    // Issue #1639: hit-rate numerator bump on partial
+                    // success (paired with the denominator bump in
+                    // the full-fallback path). Together they let
+                    // dashboards compute relower_block_hit_rate =
+                    // numerator / denominator (basis points). Pairs
+                    // with the existing relower_per_function_called_count
+                    // + relower_skipped_entirely_count for full per-call
+                    // observability of the partial vs full decision.
+                    evaluator_.bump_relower_block_hit_rate(1, 1); // 1 hit, 1 total attempt
                     // Issue #1495: stamp source after partial so
                     // lookup_define_v2 hits (hash match + clean dirty).
                     if (!source.empty()) {
@@ -5034,6 +5054,14 @@ public:
         // through lowering; today we still re-lower the
         // whole function bundle.
         metrics_.relower_full_called_count.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1639: full_relower_count (alias atomic — spec wants
+        // the explicit metric name distinct from relower_full_called_count;
+        // dual-write keeps both bumps consistent for dashboards that
+        // prefer the spec name). Also bumps the hit-rate denominator
+        // (relower_block_hit_rate_denominator_total) since this call
+        // did not contribute to the hit-rate numerator.
+        evaluator_.bump_full_relower_count();
+        evaluator_.bump_relower_block_hit_rate(0, 1); // 0 incremental, 1 total attempt
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;

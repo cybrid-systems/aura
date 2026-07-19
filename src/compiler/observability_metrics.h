@@ -6405,6 +6405,29 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_log_compact_bytes_saved{0};  // #1638
     std::atomic<std::uint64_t> env_frame_version_drift_prevented{0}; // #1638
 
+    // Issue #1639: per-block dirty bitmask → partial re-lower wiring
+    // (refine #1474 / #1495 / #1505 / #1514 / #1555 / #1601 / #1605).
+    // Existing `incremental_relower_blocks_total` (above) tracks the
+    // cumulative # of blocks re-lowered via partial path. The 5 new
+    // metrics complete the spec's observability surface:
+    //   - full_relower_count: bumped when relower_define_blocks falls
+    //     back to full re-lower (8+ dirty blocks or no impact_scope
+    //     data). Pair with the existing relower_full_called_count
+    //     for dual-write observability.
+    //   - dirty_block_ratio_numerator_total + denominator_total:
+    //     running sums of (dirty_block_hits, dirty_block_hits +
+    //     relower_blocks_saved) per call so dashboards compute
+    //     dirty_block_ratio = numerator / denominator.
+    //   - relower_block_hit_rate_numerator_total + denominator_total:
+    //     running sums of (incremental_relower_blocks,
+    //     incremental_relower_blocks + full_relower_count) per call.
+    //     The hit rate = incremental / (incremental + full).
+    std::atomic<std::uint64_t> full_relower_count{0};                       // #1639
+    std::atomic<std::uint64_t> dirty_block_ratio_numerator_total{0};        // #1639
+    std::atomic<std::uint64_t> dirty_block_ratio_denominator_total{0};      // #1639
+    std::atomic<std::uint64_t> relower_block_hit_rate_numerator_total{0};   // #1639
+    std::atomic<std::uint64_t> relower_block_hit_rate_denominator_total{0}; // #1639
+
     // ── Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1261_1265_active{1};
     std::atomic<std::uint64_t> dep_graph_defuse_version_bumps{0};     // #1261

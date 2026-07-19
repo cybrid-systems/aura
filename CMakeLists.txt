@@ -2221,6 +2221,16 @@ aura_issue_test_link_llvm_jit(test_issue_1637)
 # MVP test (#1478) which was deferred-scoped under #1541.
 aura_add_issue_test(test_soa_dual_path_consistency)
 aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
+# Issue #1639: per-block dirty bitmask → partial re-lower wiring
+# (refine #1474/#1495/#1505/#1514/#1555/#1601/#1605/#1623). 7 ACs
+# source-driven + cross-layer baseline regression (paired with
+# check_incremental_relower_coverage.py linter which has 10 ACs).
+# Complements the existing test_incremental_relower.cpp (251 lines,
+# 6 ACs covering #1605) by adding the 4 spec metrics observability
+# surface (full_relower_count + dirty_block_ratio + relower_block_hit_rate
+# + running sums for time-weighted averages).
+aura_add_issue_test(test_incremental_relower_perblock)
+aura_issue_test_link_llvm_jit(test_incremental_relower_perblock)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
