@@ -2287,6 +2287,18 @@ aura_issue_test_link_llvm_jit(test_issue_1645)
 # follow-up #1668 / #1669 / #1670 / #1671 per design doc.
 aura_add_issue_test(test_issue_1646)
 aura_issue_test_link_llvm_jit(test_issue_1646)
+# Issue #1647: StableNodeRef cross-boundary auto-refresh observability
+# (partial-redundant-ship, refine #715 / #738 / #1250). Phase 1 ships
+# the new (refresh-success) counter + paired legacy/new wire-up at the
+# validate_or_refresh success path + composition into existing
+# query:stable-ref-stats primitive (no new primitive per "原语最小化").
+# AC1 (auto-pin default in query:children-stable / parent-stable) +
+# AC2 (auto-pin default in mutate hot path) + AC3 (AI multi-layer
+# orchestration demo + ensure-stable-ref helper) + AC4 (full 1000-iter
+# stress) deferred to follow-up #1672 / #1673 / #1675 / #1674 per
+# the design doc.
+aura_add_issue_test(test_issue_1647)
+aura_issue_test_link_llvm_jit(test_issue_1647)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation

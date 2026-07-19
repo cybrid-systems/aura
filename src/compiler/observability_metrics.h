@@ -6291,7 +6291,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hygiene_tracer_depth_max{0};              // #1248
     std::atomic<std::uint64_t> agent_string_heap_bounds_hardened{1};     // #1249
     std::atomic<std::uint64_t> stable_ref_auto_pin_total{0};             // #1250
-    std::atomic<std::uint64_t> stable_ref_full_path_enforced{1};         // #1250
+    // Issue #1647: StableNodeRef auto-refresh observability pairing —
+    // bumped when validate_or_refresh / refresh_if_stale succeeds on a
+    // cross-boundary (cross-COW / cross-sub-workspace / cross-fiber)
+    // ref. Pairs with #1250's stable_ref_auto_pin_total (pin-time) so
+    // the (query:stable-ref-stats) surface can expose both pin-time
+    // and refresh-success counts. Distinct from the existing
+    // bump_stable_ref_cross_cow_refresh legacy per-Fiber counter
+    // (which counts pin-time, not refresh-success).
+    std::atomic<std::uint64_t> cross_boundary_auto_refresh_success_total{0};
+    std::atomic<std::uint64_t> stable_ref_full_path_enforced{1}; // #1250
 
     // ── Issues #1251–#1255: dirty/Guard/steal/pattern Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1251_1255_active{1};

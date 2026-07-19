@@ -7175,6 +7175,27 @@ public:
                          ->mutation_boundary_hygiene_violation_total.load(std::memory_order_relaxed)
                    : 0;
     }
+    // Issue #1647: StableNodeRef cross-boundary auto-refresh observability
+    // pairing — per-CompilerMetrics bump at successful validate_or_refresh /
+    // refresh_if_stale sites across COW / sub-workspace / fiber boundaries
+    // (paired with the legacy namespace-scope bump_stable_ref_cross_cow_refresh
+    // counter at the #1250 / #715 / #738 sites). Distinct from
+    // stable_ref_auto_pin_total (pin-time) — this is refresh-success.
+    void bump_cross_boundary_auto_refresh_success_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->cross_boundary_auto_refresh_success_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Getter paired with the Issue #1637 / #1641 / #1644 / #1646
+    // observability hook pattern — used by the (query:stable-ref-stats)
+    // composition layer (no new primitive per #1632 "Aura 原语最小化").
+    std::uint64_t cross_boundary_auto_refresh_success_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->cross_boundary_auto_refresh_success_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
     // Issue #758: runtime auto_validate bridge for user-defined
     // EDSL structs under MutationBoundaryGuard with macro hygiene
     // invariant correlation counters backing the
