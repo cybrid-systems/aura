@@ -4,18 +4,47 @@
 //
 // This file is NOT a CMake target. Do not add_executable it.
 
+// ⚠️  BEFORE creating a new tests/test_issue_NNN.cpp OR tests/test_<name>.cpp  ⚠️
+//
+// Aura convention (Anqi 2026-07-20 directive, "ship in order"):
+//   1. Look at the 5 domain files in tests/ first:
+//        - tests/test_fiber.cpp        (fiber / GC safepoint / steal / resume)
+//        - tests/test_ir.cpp           (parser / IR / lowering / opt / type checker)
+//        - tests/test_observability.cpp (observability / stats / metrics / counters)
+//        - tests/test_mutation.cpp     (mutation / dirty_propagation / post_invalidate)
+//        - tests/test_persist.cpp      (persist / save / load / stdlib)
+//   2. If your issue fits one of these domains, add a test case THERE
+//      (not a new file). The domain file is the natural home for
+//      domain-related tests; the per-issue file pattern is the
+//      LEGACY pattern (tests/issues/test_issue_NNN.cpp) that we're
+//      moving away from.
+//   3. Only create a NEW file if the issue is truly a NEW DOMAIN
+//      (no existing domain file fits). Justify in commit message
+//      "why this needs a new domain file".
+//   4. The pre-commit hook will WARN (not block) on new test_issue_*.cpp
+//      files added without a justification comment in the commit message.
+//
+// The 5 domain files are PLACEHOLDERS today (Phase 2 of consolidation
+// 2026-07-20). Future issues should add test cases there. See
+// tests/domain_classification.md for the current mapping of which
+// existing tests/issues/test_issue_NNN.cpp files belong to which
+// domain (Phase 4+ will physically migrate them).
+
 /*
 ================================================================================
 COPY-PASTE CHECKLIST
-  1. Rename to tests/test_<name>.cpp (or tests/domain/<name>.cpp)
-  2. Replace ISSUE_N / query name / ACs
-  3. cmake/AuraDomainTests.cmake:
+  1. NEW ISSUE → prefer tests/test_<domain>.cpp (5 domains above)
+     - if domain fits, add test case there (no new file)
+     - only create new file if truly NEW domain (justify in commit)
+  2. NEW FILE: rename to tests/test_<name>.cpp (or tests/domain/<name>.cpp)
+  3. Replace ISSUE_N / query name / ACs
+  4. cmake/AuraDomainTests.cmake:
        aura_add_issue_test(test_<name>)
        aura_issue_test_link_llvm_jit(test_<name>)   # if CompilerService/JIT needed
        add_dependencies(all_test_issue_targets test_<name>)
-  4. Build: cmake --build build --target test_<name> -j
-  5. Run:   ./build/test_<name>
-  6. If you touch evaluator_primitives*.cpp / evaluator.ixx: gate needs this
+  5. Build: cmake --build build --target test_<name> -j
+  6. Run:   ./build/test_<name>
+  7. If you touch evaluator_primitives*.cpp / evaluator.ixx: gate needs this
      tests/ file staged with the prod change (#1453 binding).
 ================================================================================
 */
