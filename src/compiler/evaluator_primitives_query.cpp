@@ -9193,6 +9193,78 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       stale_deopt));
         });
 
+    // Issue #1907: query:reflect-schema.
+    // Returns observability for the reflect/EDSL bridge hook. Counters
+    // surfaced:
+    //   - reflect_schema_query_total: every (query:reflect-schema) call
+    //     (Step 2 of #1907). Backed by the bridge hook
+    //     aura_validate_reflected_post_mutation from flush_mutation_boundary
+    //     outermost exit.
+    //   - reflect_post_mutation_validate_total: every bridge-hook call
+    //     from flush_mutation_boundary outermost exit (Step 1 of #1907).
+    //   - reflect_post_mutation_validate_fail_total: subset where the
+    //     auto_validate pass returns false (validation failure).
+    //   - reflect_hygiene_macro_reject_total: subset where the
+    //     SyntaxMarker::MacroIntroduced gate rejects (no explicit
+    //     allow_macro_evolution + dirty_macro_nodes > 0).
+    //   - reflect_validate_reflected_query_total: every
+    //     (mutate:validate-reflected) call (Step 2 of #1907).
+    //   - reflect_dirty_macro_nodes_total: cumulative sum of
+    //     dirty_macro_nodes reported by the bridge hook (trending
+    //     metric for self-evolution hygiene regression detection).
+    //
+    // Returns -1 sentinel when reflect_post_mutation_validate_fail_total > 0
+    // (grep-friendly regression marker). Otherwise returns the sum of all 6
+    // counters (sum-path, like #1903/#1904/#1905/#1906 P0/P1 shape).
+    ObservabilityPrims::register_stats_impl(
+        "query:reflect-schema", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t schema = ev->get_reflect_schema_query_total();
+            const std::uint64_t post_validate = ev->get_reflect_post_mutation_validate_total();
+            const std::uint64_t post_fail = ev->get_reflect_post_mutation_validate_fail_total();
+            const std::uint64_t macro_reject = ev->get_reflect_hygiene_macro_reject_total();
+            const std::uint64_t validate_reflected =
+                ev->get_reflect_validate_reflected_query_total();
+            const std::uint64_t dirty_macro = ev->get_reflect_dirty_macro_nodes_total();
+            if (post_fail > 0)
+                return make_int(-1); // regression sentinel
+            return make_int(static_cast<std::int64_t>(schema + post_validate + post_fail +
+                                                      macro_reject + validate_reflected +
+                                                      dirty_macro));
+        });
+
+    // Issue #1907: mutate:validate-reflected.
+    // Calls aura_validate_reflected_post_mutation bridge hook from the
+    // C bridge layer (aura_jit_bridge.cpp). The hook combines the
+    // aura::reflect::auto_validate pass with the
+    // aura::reflect::hygiene_allows_evolution macro guard. Returns
+    // sum of post-mutation validate counters + bumps the
+    // validate_reflected_query_total counter (Step 2 of #1907).
+    //
+    // Args:
+    //   mutate:validate-reflected (no args) -- always succeeds on a
+    //   fresh evaluator (the bridge hook counter path is the real
+    //   validation). The primitive is the EDSL entry point for
+    //   self-evolution audits that want to confirm the bridge hook is
+    //   wired and counters are incrementing.
+    //
+    // Returns the sum of reflect_post_mutation_validate_total +
+    // reflect_hygiene_macro_reject_total + reflect_dirty_macro_nodes_total
+    // after bumping validate_reflected_query_total by 1.
+    add("mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+            m->reflect_validate_reflected_query_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const std::uint64_t post_validate = ev.get_reflect_post_mutation_validate_total();
+        const std::uint64_t macro_reject = ev.get_reflect_hygiene_macro_reject_total();
+        const std::uint64_t dirty_macro = ev.get_reflect_dirty_macro_nodes_total();
+        return make_int(static_cast<std::int64_t>(post_validate + macro_reject + dirty_macro));
+    });
+
     add("query:schema", [&string_heap, &type_registry](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);

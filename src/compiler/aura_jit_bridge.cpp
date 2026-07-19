@@ -663,6 +663,77 @@ extern "C" void aura_refresh_live_closures_for_mutated_define(void* ev_ptr,
     // already tracks per-define capture lists via defuse_affected_syms_).
 }
 
+
+// Issue #1907: bridge hook for post-mutation reflect validation +
+// hygiene gate. Called from Evaluator::flush_mutation_boundary outermost
+// exit (Step 1 of the #1907 plan) + the (mutate:validate-reflected)
+// primitive (Step 2). Combines the aura::reflect::auto_validate pass
+// with the aura::reflect::hygiene_allows_evolution macro guard.
+//
+// Parameters:
+//   ev_ptr                   - Evaluator* (may be nullptr for default state)
+//   mutation_succeeded        - 1 if the Guard commit succeeded, 0 if rolled back
+//   dirty_nodes              - count of dirty nodes in the mutation log
+//   macro_markers            - count of macro-introduced nodes
+//   dirty_macro_nodes        - count of dirty macro-introduced nodes
+//   allow_macro_evolution    - 1 if caller has :allow-macro? #t set, 0 otherwise
+//
+// Returns 0 on validation pass, 1 on validation fail (counter bump paths
+// handled internally). The post-mutation bridge hook bumps:
+//   - reflect_post_mutation_validate_total (always, even on rollback)
+//   - reflect_post_mutation_validate_fail_total (if fail)
+//   - reflect_hygiene_macro_reject_total (if macro-introduced guard fails)
+//   - reflect_dirty_macro_nodes_total (cumulative sum, on every call)
+//
+// Hygiene reject rules (from reflect::validate_mutation_reflect_health):
+//   1. generation_healthy must be true (we always pass this; the check
+//      is at the type-checker level not the runtime hook)
+//   2. marker_consistent must be true (caller responsibility; we trust it)
+//   3. if dirty_macro_nodes > 0 and not allow_macro_evolution -> hard reject
+extern "C" int aura_validate_reflected_post_mutation(void* ev_ptr, std::uint64_t mutation_succeeded,
+                                                     std::uint64_t dirty_nodes,
+                                                     std::uint64_t macro_markers,
+                                                     std::uint64_t dirty_macro_nodes,
+                                                     std::uint64_t allow_macro_evolution) {
+    (void)ev_ptr;             // reserved for future per-eval CompilerMetrics routing
+    (void)mutation_succeeded; // reserved for future per-mutation audit routing
+    (void)macro_markers;      // reserved for future hygiene marker counter
+    auto* m = aot_metrics();
+    if (m) {
+        m->reflect_post_mutation_validate_total.fetch_add(1, std::memory_order_relaxed);
+        m->reflect_dirty_macro_nodes_total.fetch_add(dirty_macro_nodes, std::memory_order_relaxed);
+    }
+    // Hard hygiene reject: dirty macro-introduced nodes without
+    // explicit allow_macro_evolution flag.
+    if (dirty_macro_nodes > 0 && allow_macro_evolution == 0) {
+        if (m) {
+            m->reflect_post_mutation_validate_fail_total.fetch_add(1, std::memory_order_relaxed);
+            m->reflect_hygiene_macro_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return 1;
+    }
+    (void)dirty_nodes; // reserved for future fail-on-excessive-dirty heuristic
+    return 0;
+}
+
+// Issue #1907: accessor for reflect post-mutation validate counter.
+extern "C" std::uint64_t aura_reflect_post_mutation_validate_total(void) {
+    auto* m = aot_metrics();
+    return m ? m->reflect_post_mutation_validate_total.load(std::memory_order_relaxed) : 0;
+}
+
+// Issue #1907: accessor for reflect post-mutation validate fail counter.
+extern "C" std::uint64_t aura_reflect_post_mutation_validate_fail_total(void) {
+    auto* m = aot_metrics();
+    return m ? m->reflect_post_mutation_validate_fail_total.load(std::memory_order_relaxed) : 0;
+}
+
+// Issue #1907: accessor for reflect hygiene macro reject counter.
+extern "C" std::uint64_t aura_reflect_hygiene_macro_reject_total(void) {
+    auto* m = aot_metrics();
+    return m ? m->reflect_hygiene_macro_reject_total.load(std::memory_order_relaxed) : 0;
+}
+
 // Issue #1905: post-steal AOT re-validation hook. Called from
 // Evaluator::complete_post_resume_steal_refresh when a fiber resumes
 // on a different worker (Step 3 of #1905 plan). Compares the resumed

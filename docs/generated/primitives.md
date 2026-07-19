@@ -2,13 +2,13 @@
 
 # Primitives (generated)
 
-**525** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**526** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 99 primitives (19%)
+- **mutation-safety**: 100 primitives (19%)
 - **core**: 375 primitives (71%)
 - **internal-observable**: 43 primitives (8%)
 - **convenience**: 8 primitives (2%)
@@ -61,13 +61,14 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `query:templates` *[internal-observable]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `query:where` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
-## Mutate: (5)
+## Mutate: (6)
 
 - `mutate:extract-function` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
 - `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
 
 ## Ast: (15)
 
@@ -680,7 +681,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (99)
+### Mutation safety (must remain primitive) (100)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -753,6 +754,7 @@ Categories follow the taxonomy in [design/primitive-vs-stdlib-decision-framework
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
 - `panic-restore` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
