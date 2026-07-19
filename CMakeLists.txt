@@ -5889,6 +5889,9 @@ aura_issue_test_link_llvm_jit(test_env_lookup_binding_depth_1860)
 # Issue #1861: Env bind_with_linear_state single-writer; StringPool::intern not TS.
 aura_add_issue_test(test_env_bind_linear_race_1861)
 aura_issue_test_link_llvm_jit(test_env_bind_linear_race_1861)
+# Issue #1862: Env::lookup_by_symid raw walk under single-writer (no env_symid_mtx_).
+aura_add_issue_test(test_env_lookup_by_symid_race_1862)
+aura_issue_test_link_llvm_jit(test_env_lookup_by_symid_race_1862)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

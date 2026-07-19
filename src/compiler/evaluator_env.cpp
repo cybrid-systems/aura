@@ -261,6 +261,10 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
     bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
 }
 
+// Issue #1862 (writer side of lookup_by_symid race): multi-step write
+// to bindings_symid_ / linear state / optional string mirror. No lock
+// — same Env single-writer contract as bind_with_linear_state (#1861).
+// Concurrent lookup_by_symid during this write is unsupported.
 void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state) {
     bindings_symid_.emplace_back(s, std::move(v));
     bindings_linear_ownership_state_.push_back(state);
@@ -333,6 +337,13 @@ bool Env::set_linear_ownership_state_by_name(std::string_view n, std::uint8_t st
 //
 // Issue #1860: parent_ recursion uses the same depth budget as
 // lookup / lookup_binding (cycle + deep-chain guard).
+//
+// Issue #1862: no shared_lock / env_symid_mtx_. bindings_symid_
+// rbegin/rend is a raw vector walk; concurrent bind_symid*
+// emplace_back can realloc and UAF the iterator. That race is
+// unsupported under the Env single-writer contract (#1861) —
+// do not add a per-Env mutex on this hot path. Sequential
+// bind_symid then lookup_by_symid is the supported model.
 std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     if (!env_lookup_enter())
         return std::nullopt;
