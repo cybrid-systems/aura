@@ -1208,8 +1208,7 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/compute_kind_impl.cpp
-    src/compiler/hardware_backend_impl.cpp
-    tests/_stubs/issue_212_runtime_stubs.cpp)
+    src/compiler/hardware_backend_impl.cpp)
 # Match aura_test_objects's compile flags so the prebuilt BMIs
 # in module_cache/aura_test_objects.dir/ (produced by the .ixx
 # compile) have the same identity the .cpp imports expect.

@@ -39,6 +39,37 @@
 #include <string>
 #include <vector>
 
+// ── runtime stubs (replaces tests/_stubs/issue_212_runtime_stubs.cpp) ──
+//
+// Pure evaluator functions in aura.compiler.evaluator_pure reference
+// `aura_alloc_float` and `aura_float_ref` for the float path. This
+// benchmark doesn't link aura_jit.cpp / aura_jit_runtime.cpp (would be
+// a circular dep), so we provide minimal stubs here. The float path
+// is NOT exercised by this benchmark (only the int path); the stubs
+// just satisfy the linker so the int path can compile and link.
+//
+// Real float behavior is exercised by test_issue_210, which links
+// the full JIT runtime.
+extern "C" {
+
+// `aura_alloc_float`: tags a double as a float-pool reference.
+// Returns a dummy index "valid" in the float range. This bench
+// never inspects the result via as_float, so the content of the
+// float doesn't matter.
+std::int64_t aura_alloc_float(double d) {
+    (void)d;
+    return 1;
+}
+
+// `aura_float_ref`: dereferences a float-pool index. Not exercised
+// by the bench; return 0.0 as a safe default.
+double aura_float_ref(std::int64_t idx) {
+    (void)idx;
+    return 0.0;
+}
+
+} // extern "C"
+
 import aura.compiler.ir;
 import aura.compiler.constant_folding;
 import aura.compiler.pass_manager;
