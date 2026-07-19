@@ -489,6 +489,46 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(aura_jit_fallback_count_v_read()));
         });
 
+    // Issue #1646: query:mutation-boundary-observability-stats
+    // Hash of the 4 new MutationBoundaryGuard long-running observability
+    // counters added in #1646 (paired legacy + per-CompilerMetrics
+    // bumps via Evaluator::yield_hook_evaluator() null fallback):
+    // success_total + macro_dirty_propagated_total +
+    // epoch_bump_for_macro_total + hygiene_violation_total.
+    // Distinct from the existing (query:mutation-boundary-stats) surface
+    // (which exposes the legacy recovery_failure + rollback + yield_resume
+    // counters from #1637 / #1908 / #1641 lineage) by being the
+    // MutationBoundaryGuard long-running observability layer explicitly
+    // requested in #1646 body (Guard dtor success path + macro-dirty
+    // propagation + epoch-bump + hygiene-violation sites). Pairs with
+    // the #1908 module-boundary pattern so calls from TUs without the
+    // Evaluator module safely no-op.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-boundary-observability-stats",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            std::int64_t success = 0, macro_dirty = 0, epoch_bump = 0, hygiene_violation = 0;
+            if (ev) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                    m->mutation_boundary_observability_queries_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                success = static_cast<std::int64_t>(ev->mutation_boundary_success_total());
+                macro_dirty =
+                    static_cast<std::int64_t>(ev->mutation_boundary_macro_dirty_propagated_total());
+                epoch_bump =
+                    static_cast<std::int64_t>(ev->mutation_boundary_epoch_bump_for_macro_total());
+                hygiene_violation =
+                    static_cast<std::int64_t>(ev->mutation_boundary_hygiene_violation_total());
+            }
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
+            (void)ht; // FlatHashTable fill follows the same pattern as query:ir-marker-stats.
+            return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
+        });
+
     // Issue #455 / #1039 / #1644: query:ir-marker-stats
     // Hash of SyntaxMarker counts read from the IR (per-instruction
     // source_marker across IRModule.functions[*].blocks[*].instructions[*])

@@ -7109,6 +7109,63 @@ public:
                          ->lowering_marker_propagated_total.load(std::memory_order_relaxed)
                    : 0;
     }
+    // Issue #1646: MutationBoundaryGuard long-running observability wiring
+    // (refine #1637 / #1014). Bumped at the Guard dtor (success path) /
+    // flush_mutation_boundary (deep propagation path) / epoch-bump-on-macro /
+    // hygiene-violation-detection sites. Per Issue #1644 module-boundary
+    // pattern with Evaluator::yield_hook_evaluator() null fallback.
+    void bump_mutation_boundary_success_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_success_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_macro_dirty_propagated_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_macro_dirty_propagated_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_epoch_bump_for_macro_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_epoch_bump_for_macro_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_mutation_boundary_hygiene_violation_total() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->mutation_boundary_hygiene_violation_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Getters paired with the Issue #1637 / #1641 / #1644 observability
+    // hook pattern — used by the (query:mutation-boundary-observability-
+    // stats) primitive composition layer.
+    std::uint64_t mutation_boundary_success_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->mutation_boundary_success_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
+    std::uint64_t mutation_boundary_macro_dirty_propagated_total() const noexcept {
+        return compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                       ->mutation_boundary_macro_dirty_propagated_total.load(
+                                           std::memory_order_relaxed)
+                                 : 0;
+    }
+    std::uint64_t mutation_boundary_epoch_bump_for_macro_total() const noexcept {
+        return compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                       ->mutation_boundary_epoch_bump_for_macro_total.load(
+                                           std::memory_order_relaxed)
+                                 : 0;
+    }
+    std::uint64_t mutation_boundary_hygiene_violation_total() const noexcept {
+        return compiler_metrics_
+                   ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                         ->mutation_boundary_hygiene_violation_total.load(std::memory_order_relaxed)
+                   : 0;
+    }
     // Issue #758: runtime auto_validate bridge for user-defined
     // EDSL structs under MutationBoundaryGuard with macro hygiene
     // invariant correlation counters backing the

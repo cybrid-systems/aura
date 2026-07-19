@@ -1514,6 +1514,15 @@ AURA_COMPILER_METRICS_FIELD(aot_incremental_reemit_triggered)
 AURA_COMPILER_METRICS_FIELD(steal_mutation_boundary_deferred_total)
 AURA_COMPILER_METRICS_FIELD(starvation_mitigated_for_boundary_count)
 AURA_COMPILER_METRICS_FIELD(boundary_held_steal_safe_total)
+// Issue #1646: MutationBoundaryGuard long-running stability
+// observability wiring (refine #1637 / #1014). 4 new counters tied to
+// Guard dtor success / macro-dirty propagation / epoch bump /
+// hygiene-violation detection sites.
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_success_total)
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_macro_dirty_propagated_total)
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_epoch_bump_for_macro_total)
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_hygiene_violation_total)
+AURA_COMPILER_METRICS_FIELD(mutation_boundary_observability_queries_total)
 // Issue #1644: IR hygiene full-pipeline observability (refine #1047).
 AURA_COMPILER_METRICS_FIELD(ir_macro_introduced_inlined_skipped_total)
 AURA_COMPILER_METRICS_FIELD(lowering_marker_propagated_total)
