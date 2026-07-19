@@ -5853,6 +5853,9 @@ aura_issue_test_link_llvm_jit(test_clear_instruction_dirty_guard_1853)
 # Issue #1854: query:incremental-effectiveness snapshot fail → void + metric.
 aura_add_issue_test(test_incremental_effectiveness_snapshot_fail_1854)
 aura_issue_test_link_llvm_jit(test_incremental_effectiveness_snapshot_fail_1854)
+# Issue #1855: compile:relower-strategy locked ir_cache dirty snapshot.
+aura_add_issue_test(test_relower_strategy_cache_lock_1855)
+aura_issue_test_link_llvm_jit(test_relower_strategy_cache_lock_1855)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

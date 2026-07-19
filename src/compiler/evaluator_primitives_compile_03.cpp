@@ -559,26 +559,35 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
     // a different threshold can use the
     // query:compiler-cache-stats 3-tuple and decide
     // themselves. This primitive is the convenient default.
+    //
+    // Issue #1855: dirty_block_count via
+    // ir_cache_v2_dirty_block_count (shared_lock on
+    // jit_cache_mtx_) so concurrent mark/clear/invalidate
+    // cannot race the map / entry. compiler_service_ is
+    // non-owning (#1839 ownership / quiescence — no
+    // shared_ptr on every cache probe).
     add("compile:relower-strategy", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
+        // Issue #1839 / #1855: raw back-pointer; service lives
+        // for eval lifetime under quiescence contract.
         auto* svc_void = ev.compiler_service();
         if (!svc_void)
             return make_bool(false);
         auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
         const std::string& fname = ev.string_heap_[idx];
-        // Look up the entry in ir_cache_v2_
-        auto it = svc->ir_cache_v2_find(fname);
-        if (!it) {
+        // Issue #1855: locked snapshot (not ir_cache_v2_find pointer).
+        auto dirty_opt = svc->ir_cache_v2_dirty_block_count(fname);
+        if (!dirty_opt) {
             // Function not in cache — return 'unknown symbol
             auto sym_idx = ev.keyword_table_.size();
             ev.keyword_table_.push_back("unknown");
             return make_keyword(sym_idx);
         }
-        std::size_t dirty = it->dirty_block_count();
+        const std::size_t dirty = *dirty_opt;
         const char* tag = nullptr;
         if (dirty == 0)
             tag = "none";

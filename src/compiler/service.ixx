@@ -4814,6 +4814,10 @@ public:
     // is marked dirty).
     bool mark_block_dirty_v2(const std::string& name, std::size_t func_idx,
                              std::uint32_t block_idx) {
+        // Issue #1855: unique vs compile:relower-strategy shared
+        // snapshot of dirty_block_count (same jit_cache_mtx_ as
+        // invalidate / JIT cache writers).
+        std::unique_lock cache_write(jit_cache_mtx_);
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return false;
@@ -4845,6 +4849,8 @@ public:
     // exist.
     bool clear_block_dirty_v2(const std::string& name, std::size_t func_idx,
                               std::uint32_t block_idx) {
+        // Issue #1855: unique vs relower-strategy shared read.
+        std::unique_lock cache_write(jit_cache_mtx_);
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return false;
@@ -9623,11 +9629,29 @@ public:
     // Returns nullptr if the function is not in the cache.
     // Used by (compile:relower-strategy) to look up
     // dirty_block_count for a specific function.
+    //
+    // Issue #1855: unlocked pointer return is racy vs concurrent
+    // mark/clear/invalidate — prefer ir_cache_v2_dirty_block_count()
+    // which snapshots under jit_cache_mtx_ shared_lock. Kept for
+    // single-threaded / already-locked call sites.
     [[nodiscard]] const IRCacheEntry* ir_cache_v2_find(const std::string& name) const noexcept {
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end())
             return nullptr;
         return &it->second;
+    }
+
+    // Issue #1855: coherent dirty_block_count for
+    // (compile:relower-strategy). shared_lock pairs with
+    // mark_block_dirty_v2 / clear_block_dirty_v2 / invalidate
+    // unique_lock on jit_cache_mtx_. nullopt = not in cache.
+    [[nodiscard]] std::optional<std::size_t>
+    ir_cache_v2_dirty_block_count(const std::string& name) const noexcept {
+        std::shared_lock cache_read(jit_cache_mtx_);
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return std::nullopt;
+        return it->second.dirty_block_count();
     }
 
     // Issue #429: SoA dirty stats aggregate. The hook
