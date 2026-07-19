@@ -75,7 +75,7 @@ jobs:
     # origin/main; this CI guard catches them so future agents / merges
     # don't propagate. Mirrors the pre-commit hook guard at
     # `.githooks/pre-commit`.
-    - name: Aura philosophy guard: no docs/design/
+    - name: "Aura philosophy guard: no docs/design/"
       run: |
         if find docs/design -type f -name '*.md' 2>/dev/null | grep -q .; then
           echo "❌ docs/design/ files exist in working tree — aura philosophy forbids per-issue plan docs" >&2
@@ -222,7 +222,7 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py test suite-s0
 
-    - name: engine:metrics under s0
+    - name: "engine:metrics under s0"
       env:
         AURA_PRIMITIVES: s0
         AURA_RUNTIME_DIR: ${{ github.workspace }}
