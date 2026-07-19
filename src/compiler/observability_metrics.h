@@ -14,6 +14,16 @@
 
 namespace aura::compiler {
 
+// Issue #1797: consistent multi-field type-cache counter view.
+// Used by compile:type-cache-stats so hits/misses/stale/gen_saved
+// (and derived ratio_bp) are not mixed across concurrent typechecks.
+struct TypeCacheStatsSnapshot {
+    std::uint64_t hits = 0;
+    std::uint64_t misses = 0;
+    std::uint64_t stale = 0;
+    std::uint64_t gen_saved = 0;
+};
+
 // Top-level counters. Single instance per CompilerService.
 // Note: counters are std::atomic<uint64_t> for thread safety
 // (Issue #62 Iter 1). They serialize as plain integers via
@@ -570,6 +580,29 @@ struct CompilerMetrics {
     // rejections eliminated). gen_saved_total is a
     // lifetime counter; the snapshot mirrors it.
     std::atomic<std::uint64_t> typecheck_gen_saved_total{0};
+
+    // Issue #1797: load the 4 type-cache counters as one logical
+    // snapshot. Double-check acquire loop: if any counter moves
+    // between the first and second full read, retry (up to 16×).
+    // Avoids mixed-epoch ratio_bp without a writer-side mutex
+    // (counters remain lock-free fetch_add on the hot path).
+    [[nodiscard]] TypeCacheStatsSnapshot snapshot_type_cache_stats() const noexcept {
+        TypeCacheStatsSnapshot s;
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            s.hits = typecheck_cache_hits_total.load(std::memory_order_acquire);
+            s.misses = typecheck_cache_misses_total.load(std::memory_order_acquire);
+            s.stale = typecheck_stale_cache_total.load(std::memory_order_acquire);
+            s.gen_saved = typecheck_gen_saved_total.load(std::memory_order_acquire);
+            if (typecheck_cache_hits_total.load(std::memory_order_acquire) == s.hits &&
+                typecheck_cache_misses_total.load(std::memory_order_acquire) == s.misses &&
+                typecheck_stale_cache_total.load(std::memory_order_acquire) == s.stale &&
+                typecheck_gen_saved_total.load(std::memory_order_acquire) == s.gen_saved) {
+                return s;
+            }
+        }
+        return s; // best-effort after retries
+    }
+
     // Issue #412 follow-up #1: per-binding gen check
     // observability. The full #412 follow-up #1 scope
     // is to replace the global `type_cache_generation_`

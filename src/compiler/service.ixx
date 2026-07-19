@@ -6754,17 +6754,16 @@ public:
             s.mark_dirty_upward_call_count = ws_flat->mark_dirty_upward_call_count();
             s.mark_dirty_total_nodes = ws_flat->mark_dirty_total_nodes();
         }
-        // Issue #258: multi-mutation incremental typecheck
-        // observability. Read lifetime totals from
-        // CompilerMetrics, compute the derived
-        // multi_mutation_recompute_ratio (basis points:
-        // cache_misses / (hits + misses + stale) * 10000).
-        s.typecheck_cache_hits_total =
-            metrics_.typecheck_cache_hits_total.load(std::memory_order_relaxed);
-        s.typecheck_cache_misses_total =
-            metrics_.typecheck_cache_misses_total.load(std::memory_order_relaxed);
-        s.typecheck_stale_cache_total =
-            metrics_.typecheck_stale_cache_total.load(std::memory_order_relaxed);
+        // Issue #258 / #1797: multi-mutation incremental typecheck
+        // observability. Read the 4 type-cache counters as one
+        // snapshot so derived ratios are not mixed across epochs.
+        {
+            const auto tc_snap = metrics_.snapshot_type_cache_stats();
+            s.typecheck_cache_hits_total = tc_snap.hits;
+            s.typecheck_cache_misses_total = tc_snap.misses;
+            s.typecheck_stale_cache_total = tc_snap.stale;
+            s.typecheck_gen_saved_total = tc_snap.gen_saved;
+        }
         s.delta_solve_time_us = metrics_.delta_solve_time_us.load(std::memory_order_relaxed);
         const std::uint64_t total = s.typecheck_cache_hits_total + s.typecheck_cache_misses_total +
                                     s.typecheck_stale_cache_total;
@@ -6773,13 +6772,7 @@ public:
         } else {
             s.multi_mutation_recompute_ratio_bp = 0;
         }
-        // Issue #412: mirror the gen_saved lifetime counter
-        // and compute the derived gen_saved_ratio_bp (basis
-        // points: gen_saved / (stale + gen_saved) * 10000).
-        // Higher = more false-positive stale rejections
-        // eliminated by the gen check.
-        s.typecheck_gen_saved_total =
-            metrics_.typecheck_gen_saved_total.load(std::memory_order_relaxed);
+        // Issue #412: gen_saved_ratio_bp from the same snapshot.
         const std::uint64_t gen_total = s.typecheck_stale_cache_total + s.typecheck_gen_saved_total;
         if (gen_total > 0) {
             s.typecheck_gen_saved_ratio_bp = (s.typecheck_gen_saved_total * 10000u) / gen_total;

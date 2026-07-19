@@ -667,20 +667,21 @@ void CompilePrims::register_compile_p6(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
-            std::uint64_t hits = 0, misses = 0, stale = 0, solve_us = 0;
+            // Issue #1797: consistent type-cache triple via snapshot
+            // (same contract as compile:type-cache-stats).
+            TypeCacheStatsSnapshot snap;
+            std::uint64_t solve_us = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-                hits = m->typecheck_cache_hits_total.load(std::memory_order_relaxed);
-                misses = m->typecheck_cache_misses_total.load(std::memory_order_relaxed);
-                stale = m->typecheck_stale_cache_total.load(std::memory_order_relaxed);
+                snap = m->snapshot_type_cache_stats();
                 solve_us = m->delta_solve_time_us.load(std::memory_order_relaxed);
             }
-            std::uint64_t total = hits + misses + stale;
-            std::uint64_t ratio_bp = (total > 0) ? (misses * 10000u / total) : 0;
+            std::uint64_t total = snap.hits + snap.misses + snap.stale;
+            std::uint64_t ratio_bp = (total > 0) ? (snap.misses * 10000u / total) : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"cache-hits-total", make_int(static_cast<std::int64_t>(hits))},
-                {"cache-misses-total", make_int(static_cast<std::int64_t>(misses))},
-                {"stale-cache-total", make_int(static_cast<std::int64_t>(stale))},
+                {"cache-hits-total", make_int(static_cast<std::int64_t>(snap.hits))},
+                {"cache-misses-total", make_int(static_cast<std::int64_t>(snap.misses))},
+                {"stale-cache-total", make_int(static_cast<std::int64_t>(snap.stale))},
                 {"delta-solve-time-us", make_int(static_cast<std::int64_t>(solve_us))},
                 {"multi-mutation-recompute-ratio-bp",
                  make_int(static_cast<std::int64_t>(ratio_bp))},
