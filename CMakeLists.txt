@@ -2163,9 +2163,9 @@ aura_issue_test_link_llvm_jit(test_issue_1903)
 #   - mutation_legacy_manual_lock_total counter (#1904)
 #   - (engine:metrics "query:mutation-guard-coverage") primitive
 #     (returns -1 regression sentinel / 10000 vacuous / basis points)
-#   - scripts/check_legacy_mutate_lock.py CI linter (regex + self-test
-#     + synthetic fixture detection) wired through tests/test_issue_1904.cpp
-#     AC6 + AC7
+#   - scripts/check_legacy_mutate_lock.py CI linter REMOVED per Anqi
+#     2026-07-19 directive (scripts/ cleanup wave 10 — ship-time linters
+#     obsolete after issue ships; source code is verification).
 #   - 4 Evaluator accessors: get_mutation_boundary_primitives_wrapped /
 #     get_mutation_legacy_manual_lock_total /
 #     get_mutation_guard_try_acquire_total /
@@ -2196,8 +2196,9 @@ aura_issue_test_link_llvm_jit(test_issue_1904)
 #   - (engine:metrics "query:aot-hot-update-stats") primitive returns
 #     -1 sentinel when aot_stale_deopt_on_steal_total > 0; otherwise
 #     sum of 6 counters (sum-path, like #1903/#1904 P0 shape)
-#   - scripts/check_aot_hot_update_coverage.py CI linter (regex +
-#     self-test + comment stripping + production file scan)
+#   - scripts/check_aot_hot_update_coverage.py CI linter REMOVED per
+#     Anqi 2026-07-19 directive (scripts/ cleanup wave 10 — ship-time
+#     linters obsolete after issue ships; source code is verification).
 #   - Wire-up of flush_mutation_boundary Step 2 + complete_post_resume_steal_refresh
 #     Step 3 marker in evaluator_fiber_mutation.cpp
 # Non-duplicative with #1046 (foundation), #1508/#1491/#1632 (dual-check),
@@ -2245,21 +2246,24 @@ aura_issue_test_link_llvm_jit(test_issue_1908)
 # file-scope atomic fallback coverage). Replaces the 98-line
 # test_fiber_steal_panic_checkpoint_nested_gc.cpp smoke with a
 # source-citation harness paired with the new
-# check_panic_checkpoint_lifecycle_coverage.py linter (10 ACs).
+# check_panic_checkpoint_lifecycle_coverage.py linter (REMOVED per
+# Anqi 2026-07-19 directive wave 10 — ship-time linter obsolete).
 aura_add_issue_test(test_issue_1637)
 aura_issue_test_link_llvm_jit(test_issue_1637)
 # Issue #1638: SoA EnvFrame dual-path (bindings_ vs bindings_symid_ +
 # linear_ownership) full-path version stamping + stale detection +
 # mutation_log compact. 9 ACs source-driven + cross-layer baseline
 # regression (paired with check_soa_dual_path_consistency_coverage.py
-# linter which has 10 ACs). Complements the linear_post_mutate_enforce
+# linter REMOVED per Anqi 2026-07-19 directive wave 10 — ship-time linter
+# obsolete). Complements the linear_post_mutate_enforce
 # MVP test (#1478) which was deferred-scoped under #1541.
 aura_add_issue_test(test_soa_dual_path_consistency)
 aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
 # Issue #1639: per-block dirty bitmask → partial re-lower wiring
 # (refine #1474/#1495/#1505/#1514/#1555/#1601/#1605/#1623). 7 ACs
 # source-driven + cross-layer baseline regression (paired with
-# check_incremental_relower_coverage.py linter which has 10 ACs).
+# check_incremental_relower_coverage.py linter REMOVED per Anqi
+# 2026-07-19 directive wave 10 — ship-time linter obsolete).
 # Complements the existing test_incremental_relower.cpp (251 lines,
 # 6 ACs covering #1605) by adding the 4 spec metrics observability
 # surface (full_relower_count + dirty_block_ratio + relower_block_hit_rate
@@ -2270,8 +2274,8 @@ aura_issue_test_link_llvm_jit(test_incremental_relower_perblock)
 # aot_emit_version stale 检测 + incremental re-emit + hot-update
 # observability (refine #136/#243/#708/#1262/#1367/#1369/#1480).
 # 7 ACs source-driven + cross-layer baseline regression (paired
-# with check_aot_hot_update_incremental_coverage.py linter which
-# has 10 ACs). Complements the existing AOT test suite
+# with check_aot_hot_update_incremental_coverage.py linter REMOVED per
+# Anqi 2026-07-19 directive wave 10 — ship-time linter obsolete). Complements the existing AOT test suite
 # (test_aot_hotupdate_versioning.cpp + test_aot_bridge_checkpoint_
 # version_steal.cpp + test_aot_region_per_eval.cpp + test_aot_
 # metrics_lazy.cpp) by adding the env_frame_version drift check
@@ -2282,8 +2286,8 @@ aura_issue_test_link_llvm_jit(test_aot_hot_update_incremental)
 # YieldReason::MutationBoundary + per-fiber mutation stack /
 # checkpoint transfer (refine #1633/#1492/#1445/#1270/#1483).
 # 7 ACs source-driven + cross-layer baseline regression (paired
-# with check_orchestration_steal_boundary_coverage.py linter which
-# has 10 ACs). Complements the existing orchestration test suite
+# with check_orchestration_steal_boundary_coverage.py linter REMOVED
+# per Anqi 2026-07-19 directive wave 10 — ship-time linter obsolete). Complements the existing orchestration test suite
 # (test_orchestration_steal_boost.cpp + test_fiber_mutation_steal_
 # safety.cpp + test_fiber_join_linear.cpp) by adding the 3 new
 # per-CompilerMetrics observability counters (defer + mitigation +
@@ -2305,8 +2309,9 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 aura_add_issue_test(test_issue_1644_ir_hygiene)
 aura_issue_test_link_llvm_jit(test_issue_1644_ir_hygiene)
 # Issue #1645: dead bump_* observability (scope-limited progressive).
-# Phase 1 ships 2 wire-ups + scripts/check_dead_bump_rate.py (the AC2
-# CI gate) + scripts/audit_dead_bumps.py (audit infra).
+# Phase 1 ships 2 wire-ups + scripts/audit_dead_bumps.py (audit infra).
+# scripts/check_dead_bump_rate.py REMOVED per Anqi 2026-07-19 directive
+# wave 10 (ship-time linter obsolete).
 # Phase 2+ (~22 follow-up issues per the categorized queue) will wire
 # up the remaining ~400 dead bumps to reach the body-quoted < 10% dead
 # rate.
@@ -7029,14 +7034,7 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/demos
         DESTINATION ${CMAKE_INSTALL_DATADIR}/aura
         OPTIONAL)
 
-# File size lint (.ixx + large .cpp/.h caps). See scripts/file_size_policy.md.
-# On demand: cmake --build build --target lint_file_size
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
-    add_custom_target(lint_file_size
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_file_size.py
-                --src ${CMAKE_SOURCE_DIR}/src
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        COMMENT "Linting source file sizes (.ixx + cpp caps)"
-        VERBATIM)
-endif()
+# File size lint (.ixx + large .cpp/.h caps) REMOVED per Anqi
+# 2026-07-19 directive wave 10 (scripts/check_file_size.py +
+# scripts/file_size_policy.md deleted — file size is now governed
+# by code review, not by an automated linter target).
