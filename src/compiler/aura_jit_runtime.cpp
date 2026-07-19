@@ -616,8 +616,20 @@ extern "C" std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id) 
         return 0;
     std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
     const auto cid = static_cast<std::size_t>(closure_id);
-    // #1706: 0 = OOR *or* valid epoch 0 — use aura_closure_exists first.
-    return cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+    if (cid >= g_closure_bridge_epochs.size())
+        return 0;
+    // Issue #1656: a freed slot must not return its stale provenance value.
+    // g_closure_freed[cid]==1 means the slot was freed via aura_free_closure;
+    // emit-side LLVM IR probes this value as a freshness check, so a stale
+    // hit would cause false-fresh calls into freed memory (UB). Return 0
+    // so the caller can compare `get() != aura_get_current_bridge_epoch()`
+    // and correctly observe stale. Complements #1706's aura_closure_exists
+    // contract: callers wanting OOR-vs-valid disambiguation should call
+    // aura_closure_exists first; this accessor now also returns 0 for
+    // freed slots, so 0 == either OOR *or* freed *or* valid-0.
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    return g_closure_bridge_epochs[cid];
 }
 
 extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id) {
@@ -625,8 +637,13 @@ extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id
         return 0;
     std::shared_lock<std::shared_mutex> lock(g_closure_table_mtx);
     const auto cid = static_cast<std::size_t>(closure_id);
-    // #1706: 0 = OOR *or* valid version 0 — use aura_closure_exists first.
-    return cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+    if (cid >= g_closure_defuse_versions.size())
+        return 0;
+    // Issue #1656: same freed-bitmap guard as aura_get_closure_bridge_epoch
+    // (see comment there for the emit-side LLVM IR freshness-probe rationale).
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return 0;
+    return g_closure_defuse_versions[cid];
 }
 
 // ── Closure inline cache (monomorphic, direct-mapped) ──

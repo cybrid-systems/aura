@@ -76,6 +76,12 @@
 //         fix-up; without that wire the C-side g_current_bridge_epoch stays
 //         at the static-init default 0 and lib/runtime.c's aura_closure_call
 //         2-check passes vacuously.
+//   AC11: Issue #1656 — aura_get_closure_bridge_epoch /
+//         aura_get_closure_defuse_version return 0 after aura_free_closure
+//         (freed-bitmap guard, not the stale pre-free provenance value).
+//   AC12: Issue #1656 — both accessors return non-zero for a live slot
+//         (never freed); proves the freed-bitmap guard doesn't shadow
+//         live slots, only freed ones.
 
 #include "test_harness.hpp"
 
@@ -242,6 +248,66 @@ int aura_issue_1485_run() {
         CHECK(read3 == 0, std::format("AC10: aura_set_current_bridge_epoch(0) → "
                                       "aura_get_current_bridge_epoch() returns 0 (got {})",
                                       read3));
+    }
+
+    // ── AC11: Issue #1656 — freed slot returns 0 from both accessors ──
+    {
+        // Allocate a closure, capture its pre-free provenance, free it,
+        // then verify both accessors return 0 (the freed-bitmap guard).
+        aura_reset_runtime();
+        const auto cid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cid >= 0, std::format("AC11: aura_alloc_closure(0) succeeds (got {})", cid));
+        if (cid >= 0) {
+            // Before free: both accessors return the auto-stamped value
+            // (bridge_epoch = aura_aot_func_table_epoch() at alloc time per
+            // push_back at aura_jit_runtime.cpp L755).
+            const auto pre_bridge = aura_get_closure_bridge_epoch(cid);
+            const auto pre_defuse = aura_get_closure_defuse_version(cid);
+            CHECK(pre_bridge != 0,
+                  std::format("AC11: pre-free bridge_epoch non-zero (got {})", pre_bridge));
+            CHECK(pre_defuse != 0,
+                  std::format("AC11: pre-free defuse_version non-zero (got {})", pre_defuse));
+
+            aura_free_closure(cid);
+
+            // After free: both accessors must return 0 (freed-bitmap guard,
+            // not the stale provenance value).
+            const auto post_bridge = aura_get_closure_bridge_epoch(cid);
+            const auto post_defuse = aura_get_closure_defuse_version(cid);
+            CHECK(post_bridge == 0,
+                  std::format("AC11: post-free aura_get_closure_bridge_epoch({}) returns 0 "
+                              "(got {} — freed-bitmap guard not honored)",
+                              cid, post_bridge));
+            CHECK(post_defuse == 0,
+                  std::format("AC11: post-free aura_get_closure_defuse_version({}) returns 0 "
+                              "(got {} — freed-bitmap guard not honored)",
+                              cid, post_defuse));
+        }
+    }
+
+    // ── AC12: Issue #1656 — live slot (no free) returns non-zero ─────
+    {
+        // Sanity check: freed-bitmap guard must NOT shadow live slots.
+        // A freshly-allocated closure (never freed) should return the
+        // auto-stamped bridge_epoch + defuse_version (non-zero in normal
+        // operation since the AOT table epoch starts > 0 after init).
+        aura_reset_runtime();
+        const auto cid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cid >= 0, std::format("AC12: aura_alloc_closure(0) succeeds (got {})", cid));
+        if (cid >= 0) {
+            const auto bridge = aura_get_closure_bridge_epoch(cid);
+            const auto defuse = aura_get_closure_defuse_version(cid);
+            CHECK(bridge != 0,
+                  std::format("AC12: live aura_get_closure_bridge_epoch({}) returns non-zero "
+                              "(got {} — freed-bitmap guard incorrectly shadowing live slot)",
+                              cid, bridge));
+            CHECK(defuse != 0,
+                  std::format("AC12: live aura_get_closure_defuse_version({}) returns non-zero "
+                              "(got {} — freed-bitmap guard incorrectly shadowing live slot)",
+                              cid, defuse));
+            // Don't free — AC12 leaves the slot live so other tests can observe
+            // the live state without re-allocating.
+        }
     }
 
     std::println("\n=== test_issue_1485 — passed {}, failed {} ===\n", ::aura::test::g_passed,
