@@ -132,27 +132,53 @@ static void record_epoch_stale_steal_caught(CompilerMetrics* m) {
     m->linear_violation_prevented_epoch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #1655: file-local single-source-of-truth predicate for the
+// "is this closure epoch-or-env stale?" check that gates the
+// closure_epoch_mismatch_fallback metric. Mirrors the logic of
+// Evaluator::closure_is_epoch_or_env_stale but lives next to both call
+// sites (closure_needs_safe_fallback + the inline race-window path in
+// apply_closure) so the predicate is co-located with the metric it
+// guards. Excludes linear-only stale by design — that path bumps
+// linear_ownership_violation_prevented instead (Issue #1478 / #1626 /
+// #1660 invariant: epoch-vs-env-vs-linear metrics stay cleanly split).
+//
+// Issue #1485 C1 originally had closure_needs_safe_fallback track
+// `bool epoch_or_env_stale` inline + a late
+// `ev.closure_is_epoch_or_env_stale(cl)` invariant check. The inline
+// race-window path in apply_closure (#1485 C1, #1558, #1632) inlined
+// the same bridge/env checks but accidentally bumped
+// closure_epoch_mismatch_fallback UNCONDITIONALLY — any future
+// broadening of the race-window predicate (e.g. adding a linear arm)
+// would silently inflate the metric. Extracting this helper makes the
+// gate the single source of truth and prevents future drift.
+static bool closure_is_epoch_stale(const Evaluator& ev, const Closure& cl) noexcept {
+    if (ev.is_bridge_stale(cl.bridge_epoch, ev.current_bridge_epoch()))
+        return true;
+    if (cl.env_id != NULL_ENV_ID &&
+        (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)))
+        return true;
+    return false;
+}
+
 // Issue #681 / #1287 / #1491 / #1632 / #1660: pre-call epoch/version
 // enforcement for live closures held across mutate:rebind /
 // invalidate_function. Dual-path apply_closure (map + bridge) MUST treat
 // bridge_epoch / EnvFrame version (defuse) mismatch as mandatory safe
 // fallback (no dangling flat*/pool* use after mutation).
 //
-// #1660: single source-of-truth is Evaluator::closure_is_epoch_or_env_stale
-// (both dual paths + materialize/JIT share the same predicate). Metrics
-// distinguish epoch-stale (bridge) vs env-stale (SoA version_) vs
-// linear-stale cleanly.
+// #1655: closure_is_epoch_stale (defined above) is the single source of
+// truth for the closure_epoch_mismatch_fallback gate. Replaces the
+// previous inline `bool epoch_or_env_stale` tracking + late
+// `ev.closure_is_epoch_or_env_stale(cl)` invariant check (#1660
+// redundant after #1655 extraction — the new helper is the canonical
+// predicate).
 static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                                         CompilerMetrics* m) {
     bool stale = false;
-    // Issue #1485 C1 / #1660: epoch_or_env_stale excludes linear-only so
-    // closure_epoch_mismatch_fallback stays correctly scoped.
-    bool epoch_or_env_stale = false;
     const auto cur_epoch = ev.current_bridge_epoch();
     // Bridge half — #1365 strict is_bridge_stale.
     if (ev.is_bridge_stale(cl.bridge_epoch, cur_epoch)) {
         stale = true;
-        epoch_or_env_stale = true;
         if (m) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
             m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -167,7 +193,6 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         // EnvFrame SoA half — version_ / invalid (parent_id_ walk uses same frames).
         if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
             stale = true;
-            epoch_or_env_stale = true;
             if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
                 m->compiler_closure_envframe_stale_total.fetch_add(1, std::memory_order_relaxed);
@@ -185,12 +210,6 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
             }
         }
     }
-    // #1660 invariant: epoch/env half matches the public unified helper.
-    // (linear-only stale is intentionally outside that helper.)
-    if (ev.closure_is_epoch_or_env_stale(cl)) {
-        stale = true;
-        epoch_or_env_stale = true;
-    }
     if (stale) {
         ev.bump_compiler_root_stale_closure_detected();
         // Issue #1509: every apply_closure that observes a stale closure.
@@ -205,10 +224,18 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
         // Issue #1632 AC3: live_closure_stale_prevented on apply path
         // (parity with JIT walk / invalidate active-closure metrics).
         ev.bump_compiler_live_closure_stale_prevented();
-        // Issue #1485 C1 / #1632 / #1660: lifetime count of safe-fallback
-        // paths after bridge_epoch / EnvFrame version_ mismatch
-        // (excludes linear-only so linear fallbacks don't bleed).
-        if (epoch_or_env_stale)
+        // Issue #1485 C1 / #1632 / #1655 / #1660: lifetime count of
+        // safe-fallback paths after bridge_epoch / EnvFrame version_
+        // mismatch. Gate on the single-source-of-truth predicate
+        // (#1655) so linear-only stale fallbacks don't bleed into
+        // the epoch-mismatch metric.
+        // Issue #1655: gate on closure_is_epoch_stale (helper above) —
+        // single source of truth for the metric. Replaces the previous
+        // inline boolean tracking (a false init + three assignments
+        // across the bridge / env / late-invariant branches) and the
+        // now-redundant late Evaluator unified-helper invariant check
+        // from the prior #1660 mandate.
+        if (closure_is_epoch_stale(ev, cl))
             ev.bump_closure_epoch_mismatch_fallback();
     }
     return stale;
@@ -458,17 +485,25 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
             {
-                // Issue #1287 / #1558: race-window dual-check after
+                // Issue #1287 / #1558 / #1655: race-window dual-check after
                 // materialize_call_env — never eval through stale flat*/pool*
                 // or EnvFrame after concurrent mutate / steal / GC compact.
                 // (closure_needs_safe_fallback already ran; mutation may race
                 // between that check and eval_flat.)
-                const auto cur_epoch = current_bridge_epoch();
-                const bool bridge_stale = is_bridge_stale(cl_copy.bridge_epoch, cur_epoch);
+                //
+                // Issue #1655: race-window path now uses closure_is_epoch_stale
+                // (file-local helper) as the single source of truth for the
+                // epoch-stale predicate. Replaces the previous inline
+                // `bridge_stale || env_stale` check which left
+                // closure_epoch_mismatch_fallback unconditional (bug: future
+                // broadening of the predicate — e.g. adding a linear arm —
+                // would silently inflate the metric). The body still gates
+                // the envframe per-cause bump on env_stale separately to
+                // preserve per-cause granularity.
                 const bool env_stale =
                     cl_copy.env_id != NULL_ENV_ID &&
                     (is_env_frame_invalid(cl_copy.env_id) || is_env_frame_stale(cl_copy.env_id));
-                if (bridge_stale || env_stale) {
+                if (closure_is_epoch_stale(*this, cl_copy)) {
                     if (metrics) {
                         metrics->compiler_closure_safe_fallbacks.fetch_add(
                             1, std::memory_order_relaxed);
