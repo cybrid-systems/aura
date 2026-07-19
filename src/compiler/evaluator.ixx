@@ -1343,6 +1343,15 @@ public:
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
+    // Issue #911 / #1837: type_registry_ is either (a) non-owning
+    // external (CompilerService::type_registry_ wired once in the
+    // service ctor via set_type_registry(&type_registry_)) or
+    // (b) owned when created by ensure_type_registry(). Production
+    // service path is (a): registry lives with the service. Concurrent
+    // set_type_registry / free while hw-coercion primitives or other
+    // type_registry_ readers run is unsupported (same quiescence class
+    // as #1835 compiler_metrics_). Hot paths keep raw loads — no
+    // shared_ptr tax on every coercion / typecheck lookup.
     void set_type_registry(void* reg); // Issue #911: defined in evaluator_ctor.cpp
     // Issue #911/#912: ensure owned TypeRegistry (returns opaque void*; cast at
     // use sites in TUs that import aura.core.type — TypeRegistry is incomplete

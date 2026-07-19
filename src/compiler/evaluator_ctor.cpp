@@ -322,6 +322,9 @@ void Evaluator::backfill_capability_tiers() {
 
 void Evaluator::set_type_registry(void* reg) {
     // Issue #911: drop owned registry before adopting external.
+    // Issue #1837: not concurrent-safe vs readers of type_registry_
+    // (compile:hw-coercion-lossy? / hw-coercion-warning / typecheck).
+    // Call only under eval quiescence (see evaluator.ixx contract).
     if (owns_type_registry_ && type_registry_ && type_registry_ != reg) {
         delete static_cast<aura::core::TypeRegistry*>(type_registry_);
         owns_type_registry_ = false;
