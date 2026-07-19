@@ -11328,8 +11328,9 @@ public:
     [[nodiscard]] std::uint64_t macro_rollback_hits() const noexcept {
         return macro_rollback_hits_.load(std::memory_order_relaxed);
     }
-    // Issue #417: lightweight cross-TU invariant check for
+    // Issue #417 / #1766: lightweight cross-TU invariant check for
     // active_mutation_stack() vs mutation_boundary_depth_slot.
+    // noexcept so Guard dtor cannot skip post-check cleanup via throw.
     void ensure_mutation_invariants() noexcept;
     // Issue #420: clone/expand → query → mutate → IR
     // MacroIntroduced hygiene contract probe. Verifies
@@ -12409,8 +12410,13 @@ public:
                 // roll back to it. (Pre-#241 behavior on
                 // failure was to leave the checkpoint.)
             }
-            // Issue #417: verify stack/depth-slot consistency
+            // Issue #417 / #1766: verify stack/depth-slot consistency
             // after boundary exit (cross-TU drift detection).
+            // Depth was already decremented above (prev = (*slot)--).
+            // ensure_mutation_invariants / ensure_hygiene_violation_detection
+            // / probe_arena_auto_policy_on_boundary_exit are all noexcept
+            // (Issue #1766) — they cannot throw past remaining dtor work
+            // without std::terminate. try/catch is intentionally not used.
             ev_->ensure_mutation_invariants();
             // Issue #422: hygiene violation detection hook on
             // Guard exit (mutate paths record attempts at block).

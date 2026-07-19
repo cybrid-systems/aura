@@ -292,6 +292,8 @@ bool aura::compiler::Evaluator::any_active_mutation_boundary() const noexcept {
     return slot != nullptr && *slot > 0;
 }
 
+// Issue #417 / #1766: noexcept probe — Guard dtor calls this after
+// depth-slot decrement; throwing would terminate, not skip cleanup.
 void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
     auto& stack = active_mutation_stack();
     int* depth = mutation_boundary_depth_slot(this);
