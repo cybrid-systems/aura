@@ -114,61 +114,65 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // the main thread's alloc_env_frame from reallocating the
     // deque's map array underneath us (which would free the
     // map pointer we're reading).
+    //
+    // Issue #1859: walk parent_id_ **iteratively** under one
+    // shared_lock. Pre-#1859 used recursive `Env tmp; tmp.lookup(n)`
+    // which (1) nested shared_lock on the same env_frames mutex
+    // (UB / deadlock — shared_mutex is not recursive) and
+    // (2) grew the C++ stack one frame per hop. Hop count is
+    // bounded by MAX_ENV_DEPTH (same cycle budget as parent_
+    // pointer walk; #1858: one hop per frame, not 2×).
     if (parent_id_ != NULL_ENV_ID && owner_) {
         std::shared_lock<std::shared_mutex> env_rlock(owner_->env_frames_lock());
-        const EnvFrame& pfr = owner_->env_frame(parent_id_);
-        // Walk the parent frame's bindings (string-keyed)
-        for (auto& b : pfr.bindings_) {
-            if (b.first == n) {
-                if (is_cell(b.second)) {
-                    auto ci = as_cell_id(b.second);
-                    if (ci < owner_->cells().size())
-                        return owner_->cells()[ci];
-                }
-                return b.second;
-            }
-        }
-        // Issue #1482: EnvFrame primary storage is bindings_symid_ (string
-        // bindings_ often empty post-capture). Resolve free vars from outer
-        // let/define that only live on the SymId path.
-        if (pool_ && !pfr.bindings_symid_.empty()) {
-            auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
-            for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend(); ++it) {
-                if (it->first == s) {
-                    if (is_cell(it->second)) {
-                        auto ci = as_cell_id(it->second);
+        EnvId cur = parent_id_;
+        std::size_t hops = 0;
+        while (cur != NULL_ENV_ID && hops < MAX_ENV_DEPTH) {
+            ++hops;
+            const EnvFrame& pfr = owner_->env_frame(cur);
+            // Walk the frame's bindings (string-keyed)
+            for (auto& b : pfr.bindings_) {
+                if (b.first == n) {
+                    if (is_cell(b.second)) {
+                        auto ci = as_cell_id(b.second);
                         if (ci < owner_->cells().size())
                             return owner_->cells()[ci];
                     }
-                    return it->second;
+                    return b.second;
                 }
             }
-        }
-        // Recurse via SoA: walk the parent's parent_id_ chain.
-        // Capture the result but only return if non-null — if the
-        // recursive lookup returns nullopt, fall through to the
-        // primitive + ADT fallbacks below (otherwise primitives
-        // like `+` and `*` would be reported as unbound variables).
-        if (pfr.parent_id != NULL_ENV_ID) {
-            Env tmp;
-            tmp.set_owner(owner_);
-            tmp.set_parent_id(pfr.parent_id);
-            if (auto r = tmp.lookup(n))
-                return *r;
+            // Issue #1482: EnvFrame primary storage is bindings_symid_
+            // (string bindings_ often empty post-capture).
+            if (pool_ && !pfr.bindings_symid_.empty()) {
+                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+                for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
+                     ++it) {
+                    if (it->first == s) {
+                        if (is_cell(it->second)) {
+                            auto ci = as_cell_id(it->second);
+                            if (ci < owner_->cells().size())
+                                return owner_->cells()[ci];
+                        }
+                        return it->second;
+                    }
+                }
+            }
+            cur = pfr.parent_id;
         }
         // Final fallback: the frame at parent_id_ has the snapshot
         // of the env at capture time. If that env is still live
-        // (e.g., it'"'"'s a heap-allocated module env or the top_
+        // (e.g., it's a heap-allocated module env or the top_
         // env), check its live bindings too. The frame is a snapshot
         // and may be stale if bindings were added after the frame
         // was created (e.g., via require in a nested module load).
         // We use the owner_ pointer to find the live env: for index 0
-        // it'"'"'s top_, for higher indices we walk the env_frames_
+        // it's top_, for higher indices we walk the env_frames_
         // pool to find a matching live env. The simplest case
         // (index 0 = top_) is the most common and we handle that
         // directly via owner_->top().
+        // Note: still under env_rlock for frame stability; top_env
+        // live bindings are a separate structure (not env_frames_).
         if (parent_id_ == 0 && owner_) {
-            // Check live top_ env'"'"'s bindings
+            // Check live top_ env's bindings
             for (auto it = const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
                  it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend();
                  ++it) {
