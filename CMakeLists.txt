@@ -5807,6 +5807,9 @@ aura_issue_test_link_llvm_jit(test_compiler_service_ownership_1839)
 # Issue #1840: verify_*_dirty_total acquire + multi-field snapshot for SEVA.
 aura_add_issue_test(test_verify_dirty_totals_snapshot_1840)
 aura_issue_test_link_llvm_jit(test_verify_dirty_totals_snapshot_1840)
+# Issue #1841: seva:run-demo-with-metrics strategy lock + metrics ownership.
+aura_add_issue_test(test_seva_demo_metrics_1841)
+aura_issue_test_link_llvm_jit(test_seva_demo_metrics_1841)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
