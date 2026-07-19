@@ -1510,5 +1510,9 @@ AURA_COMPILER_METRICS_FIELD(relower_block_hit_rate_denominator_total)
 // Issue #1640: AOT hot-update observability.
 AURA_COMPILER_METRICS_FIELD(aot_env_frame_version_drift_prevented)
 AURA_COMPILER_METRICS_FIELD(aot_incremental_reemit_triggered)
+// Issue #1641: Scheduler/Worker work-stealing for MutationBoundary.
+AURA_COMPILER_METRICS_FIELD(steal_mutation_boundary_deferred_total)
+AURA_COMPILER_METRICS_FIELD(starvation_mitigated_for_boundary_count)
+AURA_COMPILER_METRICS_FIELD(boundary_held_steal_safe_total)
 
 #undef AURA_COMPILER_METRICS_FIELD

@@ -2243,6 +2243,18 @@ aura_issue_test_link_llvm_jit(test_incremental_relower_perblock)
 # + incremental re-emit observability surface.
 aura_add_issue_test(test_aot_hot_update_incremental)
 aura_issue_test_link_llvm_jit(test_aot_hot_update_incremental)
+# Issue #1641: Scheduler/Worker work-stealing awareness for
+# YieldReason::MutationBoundary + per-fiber mutation stack /
+# checkpoint transfer (refine #1633/#1492/#1445/#1270/#1483).
+# 7 ACs source-driven + cross-layer baseline regression (paired
+# with check_orchestration_steal_boundary_coverage.py linter which
+# has 10 ACs). Complements the existing orchestration test suite
+# (test_orchestration_steal_boost.cpp + test_fiber_mutation_steal_
+# safety.cpp + test_fiber_join_linear.cpp) by adding the 3 new
+# per-CompilerMetrics observability counters (defer + mitigation +
+# safe-steal) that pair with the legacy per-Fiber counters.
+aura_add_issue_test(test_orchestration_steal_boundary)
+aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 # stress binary complementing #321/#345 with: 8-50
 # std::threads concurrent mutate + version-stamp
 # monotonicity, GC safepoint coordination under mutation
