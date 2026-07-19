@@ -1206,6 +1206,14 @@ public:
     // transfers ownership (the moved-from FlatAST keeps its
     // mutex as nullptr; the moved-to owns it).
     OwnedSharedMutex structural_mtx_;
+    // Issue #1783: shared_mutex for marker_ / provenance_ columns.
+    // Metadata-only — does NOT bump generation_ (unlike
+    // StructuralMutationGuard). Writers take exclusive lock via
+    // begin_metadata_mutation(); readers take shared via
+    // try_acquire_metadata_reader_lock(). Serializes cross-fiber
+    // syntax:set-marker / set-provenance / propagate-marker vs
+    // syntax-marker / get-provenance without invalidating StableNodeRef.
+    OwnedSharedMutex metadata_mtx_;
     std::pmr::vector<NodeId> parent_;
     // Issue #1689: inverted multi-parent edge index.
     // For each child NodeId, list of (parent, child_index) edges that
@@ -3914,6 +3922,82 @@ public:
         std::shared_lock<std::shared_mutex> lock_;
     };
     [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const { return ReaderLockGuard(this); }
+
+    // Issue #1783: exclusive lock on metadata_mtx_ (marker_ /
+    // provenance_). Unlike StructuralMutationGuard, does NOT bump
+    // generation_ — marker/provenance are observational metadata.
+    class MetadataWriteGuard {
+    public:
+        MetadataWriteGuard() noexcept = default;
+        explicit MetadataWriteGuard(FlatAST* ast) noexcept
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::unique_lock<std::shared_mutex>(ast->metadata_mtx_.get());
+        }
+        ~MetadataWriteGuard() = default;
+        MetadataWriteGuard(const MetadataWriteGuard&) = delete;
+        MetadataWriteGuard& operator=(const MetadataWriteGuard&) = delete;
+        MetadataWriteGuard(MetadataWriteGuard&& o) noexcept
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
+        MetadataWriteGuard& operator=(MetadataWriteGuard&& o) noexcept {
+            if (this != &o) {
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+
+    private:
+        FlatAST* ast_ = nullptr;
+        std::unique_lock<std::shared_mutex> lock_;
+    };
+    [[nodiscard]] MetadataWriteGuard begin_metadata_mutation() { return MetadataWriteGuard(this); }
+
+    // Issue #1783: shared (reader) lock on metadata_mtx_.
+    class MetadataReadGuard {
+    public:
+        MetadataReadGuard() noexcept = default;
+        explicit MetadataReadGuard(const FlatAST* ast) noexcept
+            : ast_(ast)
+            , lock_() {
+            if (ast_)
+                lock_ = std::shared_lock<std::shared_mutex>(ast->metadata_mtx_.mutable_get());
+        }
+        ~MetadataReadGuard() = default;
+        MetadataReadGuard(const MetadataReadGuard&) = delete;
+        MetadataReadGuard& operator=(const MetadataReadGuard&) = delete;
+        MetadataReadGuard(MetadataReadGuard&& o) noexcept
+            : ast_(o.ast_)
+            , lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
+        MetadataReadGuard& operator=(MetadataReadGuard&& o) noexcept {
+            if (this != &o) {
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+
+    private:
+        const FlatAST* ast_ = nullptr;
+        std::shared_lock<std::shared_mutex> lock_;
+    };
+    [[nodiscard]] MetadataReadGuard try_acquire_metadata_reader_lock() const {
+        return MetadataReadGuard(this);
+    }
 
     // Issue #222 slice 3/3: _locked() variants of the structural
     // mutators. Caller MUST hold the structural mutation lock
