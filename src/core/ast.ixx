@@ -190,6 +190,14 @@ export enum class SummaryFlag : std::uint32_t {
 // All storage is arena-allocated via pmr vector. reset() reclaims
 // everything.
 //
+// Thread safety (Issue #1861): intern() mutates buf_ / hash_tbl_ with
+// no internal lock. Concurrent intern (or intern vs resolve that
+// races a rehash) on the same StringPool is undefined. Shared pools
+// (workspace / canonical) must be serialized by the owner — e.g.
+// workspace_mtx_ writers, or single-fiber eval that alone binds
+// into Envs holding that pool. resolve() / find_by_name() are const
+// reads and are safe only while no concurrent intern runs.
+//
 export class StringPool {
 public:
     explicit StringPool(std::pmr::polymorphic_allocator<std::byte> alloc = {})
@@ -201,7 +209,8 @@ public:
         rehash(64);
     }
 
-    // Intern a string — returns a stable SymId
+    // Intern a string — returns a stable SymId.
+    // Not thread-safe (Issue #1861); see class comment.
     SymId intern(std::string_view s) {
         if (s.empty())
             return 0;

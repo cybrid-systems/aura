@@ -399,6 +399,16 @@ export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
 // (would require 2^64 - 1 MutationBoundaryGuard entries).
 export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64_t>::max();
 
+// Issue #1861: Env is a single-writer structure (same quiescence class
+// as compiler_metrics_ / type_registry_ / compiler_service_ — #1835–
+// #1839). bind / bind_with_linear_state / bind_symid* mutate
+// bindings_, binding_index_, bindings_symid_, and (when pool_ is set)
+// call StringPool::intern — none of which are thread-safe.
+// Concurrent bind vs lookup (or concurrent binds) on the *same* Env
+// instance is unsupported; higher layers serialize (single-fiber eval
+// of a given frame, workspace_mtx_ for shared pools). Sibling audits:
+// #1862 (bind_symid), #1863 (lookup_by_symid). EnvFrame bind* paths
+// share the same contract.
 export class Env final {
 public:
     Env() = default;
