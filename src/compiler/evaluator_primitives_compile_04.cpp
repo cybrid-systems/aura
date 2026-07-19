@@ -369,7 +369,7 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
             const auto sv_reasons =
                 aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
-            // Issue #1902 (refine #1818): wrap throwable external
+            // Issue #1902 / #1773 (refine #1818): wrap throwable external
             // helpers (hardware::on_structural_mutation,
             // sv_ir::reemit_sv_node / emit_sv_diff / validate_sv_emit)
             // in try/catch. Pre-#1902 code did not flip guard_ok
@@ -416,7 +416,7 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
                                                           !reemit.commercial_do_stub.empty());
                 }
             } catch (const std::exception& e) {
-                guard_ok = false; // Issue #1902: notify Guard dtor to restore.
+                guard_ok = false; // Issue #1902 / #1773: notify Guard dtor to restore.
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -425,7 +425,7 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
                 // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
                 // (eda_guard_uncaught_exception_total); dtor restores
                 // (#1669 class A intentional-return-value).
-                guard_ok = false;
+                guard_ok = false; // Issue #1902 / #1773
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
                 }

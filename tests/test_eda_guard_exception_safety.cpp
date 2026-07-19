@@ -1,4 +1,4 @@
-// test_eda_guard_exception_safety.cpp — Issue #1902
+// test_eda_guard_exception_safety.cpp — Issue #1902 / #1773
 // (refine #1818 / #1821): EDA primitive
 // MutationBoundaryGuard exception path. Pre-#1902 code did not
 // flip guard_ok on exception, so Guard dtor would
