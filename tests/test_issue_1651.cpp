@@ -51,15 +51,16 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 
 std::string read_file(const std::string& path) {
     std::ifstream in(path);
-    if (!in) return {};
+    if (!in)
+        return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
 bool check_flat_ast_struct_field_ac2() {
     std::println("\n--- AC2: children_stable_span_calls_total_ atomic counter ---");
     std::string ast = read_file("src/core/ast.ixx");
-    bool counter_decl = contains(ast,
-                                  "mutable std::atomic<std::uint64_t> children_stable_span_calls_total_{0}");
+    bool counter_decl =
+        contains(ast, "mutable std::atomic<std::uint64_t> children_stable_span_calls_total_{0}");
     bool has_1651_ref = contains(ast, "Issue #1651: calls to children_stable_span_view");
     if (!counter_decl || !has_1651_ref) {
         std::println("FAIL: file-level atomic missing "
@@ -67,30 +68,32 @@ bool check_flat_ast_struct_field_ac2() {
                      counter_decl, has_1651_ref);
         return false;
     }
-    std::println("OK: FlatAST children_stable_span_calls_total_ atomic counter + #1651 comment landed");
+    std::println(
+        "OK: FlatAST children_stable_span_calls_total_ atomic counter + #1651 comment landed");
     return true;
 }
 
 bool check_span_view_method_ac2() {
     std::println("\n--- AC2: children_stable_span_view method ---");
     std::string ast = read_file("src/core/ast.ixx");
-    bool method_decl = contains(ast,
-                                "[[nodiscard]] std::span<const StableNodeRef> children_stable_span_view(NodeId id) const");
-    bool null_filter = contains(ast,
-                                "// Out-of-range ids return an empty span (no buffer mutation).") ||
-                       contains(ast, "if (cid == NULL_NODE)") ||
-                       contains(ast, "if (id >= children_.size())");
-    bool bumps_call_counter = contains(ast,
-                                      "children_stable_span_calls_total_.fetch_add(1, std::memory_order_relaxed)");
-    bool returns_empty_span = contains(ast, "return {};") ||
-                              contains(ast, "return {buf.data(), buf.size()};");
+    bool method_decl = contains(
+        ast,
+        "[[nodiscard]] std::span<const StableNodeRef> children_stable_span_view(NodeId id) const");
+    bool null_filter =
+        contains(ast, "// Out-of-range ids return an empty span (no buffer mutation).") ||
+        contains(ast, "if (cid == NULL_NODE)") || contains(ast, "if (id >= children_.size())");
+    bool bumps_call_counter =
+        contains(ast, "children_stable_span_calls_total_.fetch_add(1, std::memory_order_relaxed)");
+    bool returns_empty_span =
+        contains(ast, "return {};") || contains(ast, "return {buf.data(), buf.size()};");
     if (!method_decl || !null_filter || !bumps_call_counter || !returns_empty_span) {
         std::println("FAIL: children_stable_span_view method incomplete "
                      "(decl={} filter={} bump={} return={})",
                      method_decl, null_filter, bumps_call_counter, returns_empty_span);
         return false;
     }
-    std::println("OK: children_stable_span_view span-return method landed (bumps call counter + filters NULL_NODE)");
+    std::println("OK: children_stable_span_view span-return method landed (bumps call counter + "
+                 "filters NULL_NODE)");
     return true;
 }
 
@@ -98,21 +101,20 @@ bool check_predecessor_coverage_ac1() {
     std::println("\n--- AC1: predecessors (existing early-exit infrastructure) ---");
     std::string ast = read_file("src/core/ast.ixx");
     // Existing predecessor file-level atomics (Issue #1251 + #1345).
-    bool has_mark_dirty_truncated = contains(ast,
-                                            "mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0}");
-    bool has_mark_dirty_boundary = contains(ast,
-                                            "mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0}");
-    bool has_mark_dirty_early_exit = contains(ast,
-                                              "mutable std::atomic<std::uint64_t> mark_dirty_early_exit_count_{0}");
+    bool has_mark_dirty_truncated =
+        contains(ast, "mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0}");
+    bool has_mark_dirty_boundary =
+        contains(ast, "mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0}");
+    bool has_mark_dirty_early_exit =
+        contains(ast, "mutable std::atomic<std::uint64_t> mark_dirty_early_exit_count_{0}");
     // Existing mark_dirty_upward_fast early-exit dirty-bit fast path.
-    bool has_fast_is_dirty_for = contains(ast,
-                                          "if (!is_dirty_for(nid, reasons)) {");
+    bool has_fast_is_dirty_for = contains(ast, "if (!is_dirty_for(nid, reasons)) {");
     if (!has_mark_dirty_truncated || !has_mark_dirty_boundary || !has_mark_dirty_early_exit ||
         !has_fast_is_dirty_for) {
         std::println("FAIL: predecessor coverage missing "
                      "(truncated={} boundary={} early_exit={} fast_is_dirty_for={})",
-                     has_mark_dirty_truncated, has_mark_dirty_boundary,
-                     has_mark_dirty_early_exit, has_fast_is_dirty_for);
+                     has_mark_dirty_truncated, has_mark_dirty_boundary, has_mark_dirty_early_exit,
+                     has_fast_is_dirty_for);
         return false;
     }
     std::println("OK: predecessors #1251/#1345 file-level atomics + dirty-bit fast path present");
@@ -130,16 +132,20 @@ bool check_design_doc_present() {
     return true;
 }
 
-}  // namespace aura_1651_detail
+} // namespace aura_1651_detail
 
 int main() {
     using namespace aura_1651_detail;
 
     int rc = 0;
-    if (!check_flat_ast_struct_field_ac2()) rc = 1;
-    if (!check_span_view_method_ac2())        rc = 1;
-    if (!check_predecessor_coverage_ac1())    rc = 1;
-    if (!check_design_doc_present())          rc = 1;
+    if (!check_flat_ast_struct_field_ac2())
+        rc = 1;
+    if (!check_span_view_method_ac2())
+        rc = 1;
+    if (!check_predecessor_coverage_ac1())
+        rc = 1;
+    if (!check_design_doc_present())
+        rc = 1;
 
     if (rc == 0) {
         std::println("\n#1651 scope-limited-progressive-ship Phase 1 — all AC checks green ✅\n"

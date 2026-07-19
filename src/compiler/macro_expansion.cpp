@@ -199,7 +199,7 @@ inline std::uint64_t aura_macro_introduced_nodes_created_total_v_read() noexcept
 inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexcept {
     return ::g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
 }
-}  // extern "C"
+} // extern "C"
 
 aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                                    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
