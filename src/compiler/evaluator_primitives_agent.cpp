@@ -2214,11 +2214,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         ev.timeline_push("evolve:" + evolved.name + " from " + src->name + " (" + reason + ")");
 
-        // Insert into ev.strategies_ (avoid name collision: bump suffix)
+        // Insert into ev.strategies_ (avoid name collision: bump suffix).
+        // Issue #1726: cap iterations — unbounded for(;;) can hang if
+        // strategies_ is stuffed with every base + "-N" variant.
         {
             std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_); // #1720/#1722
-            std::string final_name = evolved.name;
-            for (int bump = 2;; ++bump) {
+            const std::string base_name = evolved.name;
+            std::string final_name = base_name;
+            constexpr int kMaxNameCollisions = 10000;
+            bool found_slot = false;
+            for (int attempt = 0; attempt < kMaxNameCollisions; ++attempt) {
                 bool taken = false;
                 for (auto& s : ev.strategies_) {
                     if (s.name == final_name) {
@@ -2226,9 +2231,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         break;
                     }
                 }
-                if (!taken)
+                if (!taken) {
+                    found_slot = true;
                     break;
-                final_name = evolved.name + "-" + std::to_string(bump);
+                }
+                // base, base-2, base-3, ...
+                final_name = base_name + "-" + std::to_string(attempt + 2);
+            }
+            if (!found_slot) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->agent_evolve_name_collision_exhausted.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                return make_void(); // give up rather than hang
             }
             evolved.name = final_name;
             ev.strategies_.push_back(evolved);

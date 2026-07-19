@@ -6584,6 +6584,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> agent_closure_freed_during_call{0};
     // #1724: evolve-strategy analytics stod/stoi parse failure (keep defaults)
     std::atomic<std::uint64_t> agent_evolve_analytics_parse_failures{0};
+    // #1726: evolve-strategy name-collision bump loop exhausted
+    std::atomic<std::uint64_t> agent_evolve_name_collision_exhausted{0};
     // #1328 Phase 3: query essentials keep-list
     std::atomic<std::uint64_t> query_essentials_plan_active{1};
     std::atomic<std::uint64_t> query_essentials_keep_count{10};
