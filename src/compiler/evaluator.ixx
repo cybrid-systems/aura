@@ -408,7 +408,8 @@ export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64
 // instance is unsupported; higher layers serialize (single-fiber eval
 // of a given frame, workspace_mtx_ for shared pools). Sibling audits
 // under the same contract (no env_symid_mtx_):
-// #1862 (lookup_by_symid raw iteration), #1863 (bindings_with_names).
+// #1862 (lookup_by_symid raw iteration),
+// #1863 (bindings_with_names + pool resolve).
 // EnvFrame bind* paths share the same contract.
 export class Env final {
 public:

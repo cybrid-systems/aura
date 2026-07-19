@@ -384,6 +384,13 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
 // For envs without pool_ set, the name is rendered as
 // "@<symid:N>" where N is the SymId value. This is a
 // fallback for envs that haven't been migrated yet.
+//
+// Issue #1863: no shared_lock / env_symid_mtx_. Iteration of
+// bindings_symid_ plus pool_->resolve(sym) is unlocked. Concurrent
+// bind_symid* / bind_with_linear_state can realloc the vector
+// (UAF) or race pool intern vs resolve (#1861). Unsupported under
+// the Env single-writer contract — sequential bind then
+// bindings_with_names is the supported model (same class as #1862).
 std::vector<std::pair<std::string, types::EvalValue>> Env::bindings_with_names() const {
     std::vector<std::pair<std::string, types::EvalValue>> out;
     out.reserve(bindings_symid_.size());
@@ -393,7 +400,8 @@ std::vector<std::pair<std::string, types::EvalValue>> Env::bindings_with_names()
             // pool_->resolve() returns the canonical name
             // (string_view) for this SymId. If the SymId
             // is not in the pool (defensive), the resolved
-            // view is empty.
+            // view is empty. Const read only — safe vs concurrent
+            // intern only under external serialize (#1861/#1863).
             std::string_view resolved = pool_->resolve(sym);
             if (!resolved.empty())
                 name.assign(resolved.data(), resolved.size());

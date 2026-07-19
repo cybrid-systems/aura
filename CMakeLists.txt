@@ -5945,6 +5945,9 @@ aura_issue_test_link_llvm_jit(test_env_bind_linear_race_1861)
 # Issue #1862: Env::lookup_by_symid raw walk under single-writer (no env_symid_mtx_).
 aura_add_issue_test(test_env_lookup_by_symid_race_1862)
 aura_issue_test_link_llvm_jit(test_env_lookup_by_symid_race_1862)
+# Issue #1863: Env::bindings_with_names raw walk + resolve under single-writer.
+aura_add_issue_test(test_env_bindings_with_names_race_1863)
+aura_issue_test_link_llvm_jit(test_env_bindings_with_names_race_1863)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
