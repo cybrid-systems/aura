@@ -839,7 +839,8 @@ public:
         // buffer to avoid lifetime issues across the std::function
         // boundary. Returns "" if no JIT is attached.
         evaluator_.set_get_jit_stats_fn([this]() -> const char* {
-            thread_local char buf[1024];
+            // Issue #1917: format line grew (critical opcode + PrimCall keys).
+            thread_local char buf[1536];
             // Always format — even a no-JIT build produces a
             // valid string with all-zero counters. The primitive
             // (query:jit-stats) just returns it as-is. Saves

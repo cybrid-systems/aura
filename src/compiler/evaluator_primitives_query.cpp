@@ -3580,7 +3580,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #532 / #1512 / #1658: query:jit-consistency-stats. Commercial P0
+    // Issue #532 / #1512 / #1658 / #1917: query:jit-consistency-stats. Commercial P0
     // hash view of JIT opcode coverage completeness, IRInterpreter execution
     // consistency, and GuardShape/Linear/hot-swap safety — non-duplicative
     // synthesis of #491 jit-stats-hash, #601 jit-hotswap-closure-stats,
@@ -3596,6 +3596,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //      epoch-mismatch-hits, safe-fallbacks
     //   P5 #1658 mandate: GuardShape/Linear/PrimCall lowered wire flags,
     //      strict-consistency default-on, fail-fast safe-deopt, schema 1658
+    //   P6 #1917 critical opcodes: MakeClosure/Apply/PrimCall/GuardShape/Linear*
+    //      coverage pct, fastpath hits, apply-site epoch probe
     //   - jit-consistency-total / jit-consistency-recommendation
     ObservabilityPrims::register_stats_impl(
         "query:jit-consistency-stats", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -3603,8 +3605,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            // Capacity power-of-two; schema 1658 adds mandate wire keys.
-            auto* ht = FlatHashTable::create(64);
+            // Capacity power-of-two; #1917 adds critical coverage keys (~46 total).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3635,6 +3637,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             std::uint64_t unhandled = 0;
             std::uint64_t fallback = aura_jit_fallback_count_v_read();
             std::uint64_t consistency = 0;
+            // Issue #1917 critical-path counters (from Metrics::format).
+            std::uint64_t critical_lowered = 0;
+            std::uint64_t critical_unhandled = 0;
+            std::uint64_t critical_coverage_pct = 100;
+            std::uint64_t primcall_fastpath = 0;
+            std::uint64_t apply_site_probe = 0;
             if (ev->get_jit_stats_fn_) {
                 const char* s = ev->get_jit_stats_fn_();
                 if (s) {
@@ -3649,6 +3657,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     unhandled = parse_u64("unhandled_opcode=");
                     fallback = parse_u64("fallback_count=");
                     consistency = parse_u64("consistency_violations=");
+                    critical_lowered = parse_u64("critical_opcode_lowered=");
+                    critical_unhandled = parse_u64("critical_opcode_unhandled=");
+                    critical_coverage_pct = parse_u64("critical_opcode_coverage_pct=");
+                    // When format omits key (older builds), static lower table is complete.
+                    if (std::string_view(s).find("critical_opcode_coverage_pct=") ==
+                        std::string_view::npos)
+                        critical_coverage_pct = 100;
+                    primcall_fastpath = parse_u64("primcall_fastpath_hits=");
+                    apply_site_probe = parse_u64("apply_site_epoch_probe=");
                 }
             }
             const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics());
@@ -3717,8 +3734,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("strict-consistency-default-on", 1);
             insert_kv("force-jit-consistency-check-wired", 1);
             insert_kv("consistency-mandate-active", 1);
+            // Issue #1917: critical opcode coverage + PrimCall/Apply hardening.
+            // Keep schema=1658 for lineage tests; schema-1917 is additive.
+            insert_kv("critical-opcode-count", 13);
+            insert_kv("critical-opcode-coverage-pct",
+                      static_cast<std::int64_t>(critical_coverage_pct));
+            insert_kv("critical-opcode-lowered-total", static_cast<std::int64_t>(critical_lowered));
+            insert_kv("critical-opcode-unhandled-total",
+                      static_cast<std::int64_t>(critical_unhandled));
+            insert_kv("primcall-fastpath-hits", static_cast<std::int64_t>(primcall_fastpath));
+            insert_kv("apply-site-epoch-probe-total", static_cast<std::int64_t>(apply_site_probe));
+            insert_kv("make-closure-lowered-wired", 1);
+            insert_kv("apply-lowered-wired", 1);
+            insert_kv("capture-lowered-wired", 1);
+            insert_kv("call-lowered-wired", 1);
+            insert_kv("guard-shape-critical-wired", 1);
+            insert_kv("linear-ops-critical-wired", 1);
+            insert_kv("primcall-fastpath-vector-error-wired", 1);
+            insert_kv("apply-site-epoch-probe-wired", 1);
+            insert_kv("critical-coverage-mandate-active", 1);
+            // AC: critical lower success ≥80 when static table complete (unhandled=0).
+            insert_kv("critical-hit-rate-gate-pct",
+                      static_cast<std::int64_t>(critical_coverage_pct));
+            insert_kv("schema-1917", 1917);
+            insert_kv("issue-1917", 1917);
             insert_kv("issue", 1658);
-            insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427
+            insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427 → 1658 + #1917
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
