@@ -4724,6 +4724,10 @@ add_dependencies(all_test_issue_targets test_arena_auto_compact_intelligent_1919
 aura_add_issue_test(test_ir_soa_phase2_adoption_1920)
 aura_issue_test_link_llvm_jit(test_ir_soa_phase2_adoption_1920)
 add_dependencies(all_test_issue_targets test_ir_soa_phase2_adoption_1920)
+# Issue #1923: typechecker solve_delta / infer_flat_partial minimal recheck locality.
+aura_add_issue_test(test_typechecker_incremental_locality_1923)
+aura_issue_test_link_llvm_jit(test_typechecker_incremental_locality_1923)
+add_dependencies(all_test_issue_targets test_typechecker_incremental_locality_1923)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

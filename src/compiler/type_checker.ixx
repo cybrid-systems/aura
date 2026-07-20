@@ -4,6 +4,7 @@ module;
 #include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -711,6 +712,10 @@ public:
     std::uint64_t predicate_memo_partial_evictions() const noexcept {
         return predicate_memo_partial_evictions_;
     }
+    // Issue #1923: count of targeted (affected-set) memo invalidations.
+    std::uint64_t predicate_memo_targeted_invalidations() const noexcept {
+        return predicate_memo_targeted_invalidations_;
+    }
     std::size_t predicate_memo_size() const noexcept { return predicate_memo_.size(); }
     // Issue #434: per-node occurrence dirty recovery.
     // Returns the lifetime total of narrowing
@@ -881,11 +886,10 @@ public:
     // counterpart to the coarse epoch gate above (which
     // invalidates the *whole* type cache on epoch change).
     //
-    // When the epoch advances (#168 path), we clear the memo
-    // wholesale. We don't try to be smarter than the global
-    // dirty mechanism: that's #262's job. We just want to skip
-    // redundant work for the common case where the same
-    // (string? x) predicate is analyzed N times in a row.
+    // When the epoch advances (#168 path), pre-#1923 cleared the memo
+    // wholesale. Issue #1923: keep entries; stale-epoch lookups miss
+    // automatically, and invalidate_predicate_memo_for_nodes() drops
+    // only affected conds after infer_flat_partial builds its set.
     //
     // Issue #1872: on size overflow (not epoch change) we do
     // *partial* LRU eviction via last_used stamps instead of
@@ -905,6 +909,8 @@ public:
     // (subset of predicate_memo_evictions_ that were not
     // epoch wholesale clears).
     std::uint64_t predicate_memo_partial_evictions_ = 0;
+    // Issue #1923: partial invalidations by affected NodeId (not full epoch).
+    std::uint64_t predicate_memo_targeted_invalidations_ = 0;
     std::uint64_t predicate_memo_clock_ = 0; // monotonic access stamp for LRU
     // Issue #434: per-node occurrence dirty
     // tracking. The narrowing_dirty_recovery_total
@@ -932,6 +938,13 @@ public:
     // Issue #1872: when size > MAX, drop oldest until size <=
     // MAX/2 (amortize O(n) victim scans across inserts).
     void evict_predicate_memo_if_over_capacity();
+    // Issue #1923: drop memo entries only for affected cond NodeIds
+    // (and If nodes whose cond is in the set). Prefer over epoch
+    // wholesale clear for infer_flat_partial paths.
+    void invalidate_predicate_memo_for_nodes(std::span<const aura::ast::NodeId> nodes,
+                                             const aura::ast::FlatAST* flat = nullptr);
+    // Prefer evicting stale-epoch entries first when over capacity.
+    void prune_predicate_memo_stale_epochs();
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the

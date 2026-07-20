@@ -7163,6 +7163,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};
+    // Issue #1923: minimal recheck locality gate metrics.
+    std::atomic<std::uint64_t> incremental_recheck_affected_total{0};
+    std::atomic<std::uint64_t> incremental_recheck_ratio_bp{0}; // affected*10000/workspace
+    std::atomic<std::uint64_t> predicate_memo_hit_rate_bp{0};   // hits*10000/(hits+misses)
+    std::atomic<std::uint64_t> predicate_memo_targeted_invalidations_total{0};
+    std::atomic<std::uint64_t> incremental_locality_minimal_recheck_wired{1};
     // #1338 Type → IR + DeadCoercionElimination parent-type stamp
     std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
     std::atomic<std::uint64_t> ir_parent_type_stamped_total{0};

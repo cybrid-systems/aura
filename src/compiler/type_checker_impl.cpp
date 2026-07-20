@@ -2697,19 +2697,14 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         epoch_invalidated_ = true;
         last_inference_epoch_ = cache_epoch_;
         ++epoch_invalidations_;
-        // Issue #281: clear the predicate memo wholesale on
-        // epoch change. The epoch advances when a mutation
-        // happened; we can't tell which cond nodes were
-        // affected, so the safe move is to drop everything.
-        // The next call to synthesize_flat_if will repopulate
-        // the memo on demand.
-        if (!predicate_memo_.empty()) {
-            const auto n = predicate_memo_.size();
-            ++predicate_memo_evictions_;
-            predicate_memo_.clear();
-            // Issue #1884: epoch-wide memo drop under mutation thrash.
-            aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
-        }
+        // Issue #1923: do NOT wholesale-clear predicate_memo_ on
+        // epoch change. Entries with epoch != cache_epoch_ miss
+        // automatically (safe). Stale entries are dropped preferentially
+        // when over capacity (evict_predicate_memo_if_over_capacity).
+        // Targeted invalidation for known affected nodes is done from
+        // infer_flat_partial via invalidate_predicate_memo_for_nodes.
+        // Same-epoch multi-site hits on unchanged predicates survive.
+        evict_predicate_memo_if_over_capacity();
     }
 
     if (!preserve_cs)
@@ -4084,7 +4079,11 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
 // overflow (hot entries lost under high-mutation thrash). Now we
 // drop oldest-by-last_used down to MAX/2 so subsequent inserts
 // amortize the O(n) victim scans and recent hits survive.
+// Issue #1923: first drop stale-epoch entries before LRU.
 void InferenceEngine::evict_predicate_memo_if_over_capacity() {
+    if (predicate_memo_.size() <= PREDICATE_MEMO_MAX_ENTRIES)
+        return;
+    prune_predicate_memo_stale_epochs();
     if (predicate_memo_.size() <= PREDICATE_MEMO_MAX_ENTRIES)
         return;
     const std::size_t target = PREDICATE_MEMO_MAX_ENTRIES / 2;
@@ -4094,6 +4093,55 @@ void InferenceEngine::evict_predicate_memo_if_over_capacity() {
         ++predicate_memo_evictions_;
         ++predicate_memo_partial_evictions_;
         // Issue #1884: correlate thrash with last invariant outcome.
+        aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
+    }
+}
+
+// Issue #1923: erase memo entries whose stored epoch != current cache_epoch_.
+void InferenceEngine::prune_predicate_memo_stale_epochs() {
+    if (predicate_memo_.empty())
+        return;
+    std::size_t n = 0;
+    for (auto it = predicate_memo_.begin(); it != predicate_memo_.end();) {
+        if (it->second.epoch != cache_epoch_) {
+            it = predicate_memo_.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    if (n > 0) {
+        ++predicate_memo_partial_evictions_;
+        predicate_memo_targeted_invalidations_ += n;
+        aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
+    }
+}
+
+// Issue #1923: targeted invalidation for affected cond / If nodes only.
+void InferenceEngine::invalidate_predicate_memo_for_nodes(std::span<const aura::ast::NodeId> nodes,
+                                                          const aura::ast::FlatAST* flat) {
+    if (nodes.empty() || predicate_memo_.empty())
+        return;
+    std::size_t n = 0;
+    for (auto id : nodes) {
+        if (id == aura::ast::NULL_NODE)
+            continue;
+        // Erase by cond id directly.
+        if (predicate_memo_.erase(id) > 0)
+            ++n;
+        // If this is an If node, also erase its cond child entry.
+        if (flat && id < flat->size()) {
+            auto v = flat->get(id);
+            if (v.tag == aura::ast::NodeTag::IfExpr) {
+                auto kids = flat->children(id);
+                if (!kids.empty() && predicate_memo_.erase(kids[0]) > 0)
+                    ++n;
+            }
+        }
+    }
+    if (n > 0) {
+        ++predicate_memo_partial_evictions_;
+        predicate_memo_targeted_invalidations_ += n;
         aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
     }
 }
@@ -6083,6 +6131,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
                                                on_cross_delta_conflict_);
     engine.set_active_mutation_id(rec.mutation_id);
+    // Issue #1923: targeted predicate_memo invalidation for affected
+    // / occurrence if-nodes only (not epoch wholesale clear).
+    {
+        std::vector<NodeId> memo_targets;
+        memo_targets.reserve(affected.size() + occurrence_targets.size());
+        for (auto id : affected)
+            memo_targets.push_back(id);
+        for (auto id : occurrence_targets)
+            memo_targets.push_back(id);
+        engine.invalidate_predicate_memo_for_nodes(memo_targets, &flat);
+    }
     // Issue #1529: pre-seed blame affected sequence from the
     // mutation primary + a bounded prefix of the affected set
     // (full dump is O(delta), not O(workspace)).
@@ -6259,12 +6318,29 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             metrics_);
     }
 
-    // Issue #1528: lifetime re-infer node counter for O(delta)
+    // Issue #1528 / #1923: lifetime re-infer node counter for O(delta)
     // dashboards (pairs with type_dep_graph expand + solve_delta
-    // worklist prune metrics).
-    if (re_inferred > 0 && metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)->incremental_reinfer_nodes_total.fetch_add(
-            re_inferred, std::memory_order_relaxed);
+    // worklist prune metrics). Also record recheck ratio vs workspace
+    // size and predicate_memo hit rate for AI multi-round gates.
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        if (re_inferred > 0)
+            m->incremental_reinfer_nodes_total.fetch_add(re_inferred, std::memory_order_relaxed);
+        // Affected-set size (pre-dedupe recheck frontier).
+        m->incremental_recheck_affected_total.fetch_add(affected.size(), std::memory_order_relaxed);
+        const auto workspace = flat.size() > 0 ? flat.size() : 1;
+        const auto ratio_bp = static_cast<std::uint64_t>((affected.size() * 10000ull) / workspace);
+        m->incremental_recheck_ratio_bp.store(ratio_bp, std::memory_order_relaxed);
+        // Predicate memo hit rate (engine-local for this partial call).
+        const auto mh = engine.predicate_memo_hits();
+        const auto mm = engine.predicate_memo_misses();
+        const auto mden = mh + mm;
+        if (mden > 0) {
+            m->predicate_memo_hit_rate_bp.store((mh * 10000ull) / mden, std::memory_order_relaxed);
+        }
+        m->predicate_memo_targeted_invalidations_total.fetch_add(
+            engine.predicate_memo_targeted_invalidations(), std::memory_order_relaxed);
+        m->incremental_locality_minimal_recheck_wired.store(1, std::memory_order_relaxed);
     }
 
     return re_inferred;
@@ -7621,6 +7697,11 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
 //      boundary once, then stop). Prevents dirty-upward from
 //      flooding the whole workspace.
 //
+// Issue #1923: for small leaf / expression primaries (not
+// Define/Let/Module), skip ancestor climb beyond a single parent
+// hop — recheck_nodes stays << full subtree for AI multi-round
+// leaf typed_mutate.
+//
 // Returns empty vector if no usable root so the caller can
 // fall back to a full infer_flat.
 std::vector<aura::ast::NodeId>
@@ -7634,6 +7715,13 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
         // under a shared Begin (Issue #1456).
         return t == NodeTag::Define || t == NodeTag::Let || t == NodeTag::LetRec ||
                t == NodeTag::DefineModule || t == NodeTag::Interface || t == NodeTag::Begin;
+    };
+
+    auto is_leafish_primary = [](NodeTag t) noexcept {
+        // Expression-level mutations: no full binding rebind.
+        return t == NodeTag::Variable || t == NodeTag::LiteralInt || t == NodeTag::LiteralFloat ||
+               t == NodeTag::LiteralString || t == NodeTag::Call || t == NodeTag::IfExpr ||
+               t == NodeTag::TypeAnnotation || t == NodeTag::Coercion || t == NodeTag::Pair;
     };
 
     // #1456: target first (precise), parent only as fallback.
@@ -7667,7 +7755,18 @@ affected_subtree_from_mutation(const aura::ast::FlatAST& flat,
     if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size() && rec.parent_id != primary)
         add(rec.parent_id);
 
-    // Bounded dirty-upward climb from primary.
+    const auto primary_tag = flat.get(primary).tag;
+    const bool leafish = is_leafish_primary(primary_tag) && !is_locality_boundary(primary_tag);
+
+    // Issue #1923: leaf/expression primary → parent only (no climb).
+    if (leafish) {
+        NodeId par = flat.parent_of(primary);
+        if (par != NULL_NODE && par < flat.size())
+            add(par);
+        return affected;
+    }
+
+    // Bounded dirty-upward climb from primary (binding / structure).
     {
         NodeId cur = flat.parent_of(primary);
         std::size_t safety = 0;
