@@ -560,6 +560,44 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
     return out;
 }
 
+// Issue #1951: post-Guard-failure linear recovery consolidation.
+// Bundles the 4-step closed-loop pattern at evaluator.ixx:12800-12820
+// (linear_post_mutate_enforce_all + enforce_linear_boundary_consistency
+//  + walk_active_closures + guard_failure_linear_enforce_total bump)
+// into one helper call. Concrete measurable reduction: 4 calls → 1 call,
+// ~14 lines of repeated pattern → 1 helper invocation. Future cycles
+// can extend the helper with more recovery steps without touching the
+// call site (which lives in the hot ~MutationBoundaryGuard dtor path).
+Evaluator::LinearPostFailureResult
+Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
+    LinearPostFailureResult out;
+
+    // Step 1: scan + enforce post-mutation linear pipeline (no-op return).
+    (void)linear_post_mutate_enforce_all();
+
+    // Step 2: enforce linear boundary consistency (mark all linear
+    // captures invalid — same path as invalidate/compact/steal).
+    auto boundary = enforce_linear_boundary_consistency(path, /*mark_all_linear=*/true);
+    out.frames_checked = boundary.frames_checked;
+    out.closures_scanned = boundary.closures_scanned;
+    out.marked_invalid = boundary.marked_invalid;
+    out.epoch_fence_hits = boundary.epoch_fence_hits;
+    out.moved_violations = boundary.moved_violations;
+    out.all_safe = boundary.all_safe;
+
+    // Step 3: walk live closures (metrics-only probe; deopt driven by
+    // is_bridge_stale on next apply_closure / closure_needs_safe_fallback).
+    walk_active_closures([](ClosureId, Closure&) {
+        // no-op; ensures registry is hot for the next apply.
+    });
+
+    // Step 4: bump the guard-failure linear-enforce metric.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->guard_failure_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
+
+    return out;
+}
+
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
     // Issue #1557 / #1568: full boundary consistency (scan all linear +
     // epoch fence + enforce_all + GC root audit).

@@ -3079,6 +3079,24 @@ public:
     };
     LinearBoundaryEnforceResult
     enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_linear = true) noexcept;
+    // Issue #1951: post-Guard-failure linear recovery consolidation.
+    // Bundles the 4-step closed-loop pattern (linear_post_mutate_enforce_all +
+    // enforce_linear_boundary_consistency + walk_active_closures +
+    // guard_failure_linear_enforce_total bump) into one helper call.
+    // Concrete measurable reduction at the post-Guard-failure site: 4 calls →
+    // 1 helper invocation. Future cycles can extend the helper with more
+    // recovery steps without touching the call site (which is in the
+    // hot dtor of MutationBoundaryGuard).
+    struct LinearPostFailureResult {
+        std::size_t frames_checked = 0;
+        std::size_t closures_scanned = 0;
+        std::size_t marked_invalid = 0;
+        std::size_t epoch_fence_hits = 0;
+        std::size_t moved_violations = 0;
+        bool all_safe = true;
+    };
+    [[nodiscard]] LinearPostFailureResult
+    enforce_linear_post_failure(std::uint8_t path = kLinearGcRootAuditTypedMutate) noexcept;
     // Force Drop / logical invalid: Closure.bridge_epoch = 0 → safe_fallback.
     void force_drop_or_mark_invalid(ClosureId id) noexcept;
     // Linear violation provenance audit ring (#1568).
@@ -12802,17 +12820,12 @@ public:
             // linear/JIT state after dual-epoch restore.
             if (outermost) {
                 if (!success) {
-                    (void)ev_->linear_post_mutate_enforce_all();
-                    (void)ev_->enforce_linear_boundary_consistency(
-                        Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/true);
-                    // Walk live closures so JIT/IR see post-rollback epoch.
-                    ev_->walk_active_closures([](ClosureId, Closure&) {
-                        // Metrics-only probe; deopt is driven by is_bridge_stale
-                        // on next apply. Walk ensures registry is hot.
-                    });
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics()))
-                        m->guard_failure_linear_enforce_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
+                    // Issue #1951: 4-step closed-loop pattern
+                    // (linear_post_mutate_enforce_all + enforce_linear_boundary_consistency +
+                    //  walk_active_closures + guard_failure_linear_enforce_total bump)
+                    // consolidated into 1 helper call. See evaluator_gc.cpp impl.
+                    (void)ev_->enforce_linear_post_failure(
+                        Evaluator::kLinearGcRootAuditTypedMutate);
                 } else {
                     (void)ev_->enforce_linear_boundary_consistency(
                         Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
