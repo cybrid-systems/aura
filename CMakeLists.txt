@@ -2519,10 +2519,6 @@ aura_issue_test_link_llvm_jit(test_constraint_system_solve_delta_cross_delta_tas
 # are static_assert — pure compile-time. If the build
 # succeeds, all 9 concepts correctly accept the documented
 # good shapes and reject the documented bad shapes.
-# Issue #411 fu1 follow-up #1: per-DefUseIndex caller tracking.
-# Pure-header test (no LLVM/JIT needed) — registers without
-# aura_issue_test_link_llvm_jit.
-aura_add_issue_test(test_per_defuse_index)
 aura_add_issue_test(test_pcv_heap_use_after_free)
 aura_issue_test_link_llvm_jit(test_pcv_heap_use_after_free)
 aura_add_issue_test_standalone(test_issue_273)
@@ -5166,12 +5162,6 @@ aura_issue_test_link_llvm_jit(test_aot_stats_null_metrics_1843)
 # Issue #1844: compile_07 reuses build_kv_hash (dedup 7× build_hash lambdas).
 aura_add_issue_test(test_build_kv_hash_compile07_1844)
 aura_issue_test_link_llvm_jit(test_build_kv_hash_compile07_1844)
-# Issue #1845: per-defuse-index-add MutationBoundaryGuard + try/catch.
-aura_add_issue_test(test_per_defuse_index_add_guard_1845)
-aura_issue_test_link_llvm_jit(test_per_defuse_index_add_guard_1845)
-# Issue #1846: PerDefUseIndexTracker shared_mutex (add vs get_callers).
-aura_add_issue_test(test_per_defuse_index_tracker_lock_1846)
-aura_issue_test_link_llvm_jit(test_per_defuse_index_tracker_lock_1846)
 # Issue #1847: compile:subtree-bump MutationBoundaryGuard + try/catch.
 aura_add_issue_test(test_subtree_bump_guard_1847)
 aura_issue_test_link_llvm_jit(test_subtree_bump_guard_1847)

@@ -17,6 +17,14 @@ aura_add_issue_test(test_issues_819_829_batch)
 aura_issue_test_link_llvm_jit(test_issues_819_829_batch)
 set_target_properties(test_issues_819_829_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #411 fu1 follow-up #1 + #1845 + #1846: per_defuse_index family
+# batch (consolidates 3 standalone tests into 1 batch entry, per the
+# 5-domain-file Phase 4+ migration in tests/test_*.cpp headers).
+# EXCLUDE_FROM_ALL: on-demand only (`ninja test_per_defuse_batch`).
+aura_add_issue_test(test_per_defuse_batch)
+aura_issue_test_link_llvm_jit(test_per_defuse_batch)
+set_target_properties(test_per_defuse_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
