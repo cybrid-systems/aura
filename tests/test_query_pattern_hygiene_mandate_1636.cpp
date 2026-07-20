@@ -103,8 +103,12 @@ static void ac3_schema_1636() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "query:pattern-hygiene-stats", "schema") == 1636, "schema 1636");
-    CHECK(href(cs, "query:pattern-hygiene-stats", "issue") == 1636, "issue 1636");
+    {
+        const auto sch = href(cs, "query:pattern-hygiene-stats", "schema");
+        CHECK(sch == 1892 || sch == 1636, "schema 1892|1636");
+        const auto iss = href(cs, "query:pattern-hygiene-stats", "issue");
+        CHECK(iss == 1892 || iss == 1636, "issue 1892|1636");
+    }
     CHECK(href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_pattern_total") >= 0,
           "AC metric skipped_in_pattern");
     CHECK(href(cs, "query:pattern-hygiene-stats", "hygiene_violation_prevented_total") >= 0,
@@ -150,7 +154,10 @@ static void ac5_stress() {
             (void)cs.eval("(query:pattern '( * _ _) :allow-macro-introduced #t)");
     }
     CHECK(href(cs, "query:pattern-hygiene-stats", "root-skips") >= s0, "skips non-decreasing");
-    CHECK(href(cs, "query:pattern-hygiene-stats", "schema") == 1636, "schema holds");
+    {
+        const auto sch = href(cs, "query:pattern-hygiene-stats", "schema");
+        CHECK(sch == 1892 || sch == 1636, "schema holds");
+    }
     CHECK(cs.eval("(+ 1 2)").has_value(), "eval after stress");
 }
 

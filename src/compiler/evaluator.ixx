@@ -4414,7 +4414,9 @@ private:
     // Issue #422: blocked mutate attempts on MacroIntroduced
     // nodes (hygiene_protected_error + replace-subtree gate).
     std::atomic<std::uint64_t> hygiene_violation_attempts_{0};
-    std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
+    // mutable: snapshot_tag_arity_bucket (const) credits MacroIntroduced
+    // excluded by the user-only index into this counter (#1892).
+    mutable std::atomic<std::uint64_t> macro_introduced_skipped_in_query_{0};
     std::atomic<std::uint64_t> total_query_calls_{0};
     // Issue #478: primitive-layer error counter. Bumped by
     // primitives_detail::make_primitive_error when a hotspot

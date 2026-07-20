@@ -6,7 +6,8 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
-#include "serve/fiber.h" // Issue #1630: aura_fiber_current_id for query:stable-ref
+#include "serve/fiber.h"          // Issue #1630: aura_fiber_current_id for query:stable-ref
+#include "typed_mutation_audit.h" // Issue #1892: hygiene skip audit trail
 
 module aura.compiler.evaluator;
 
@@ -1647,13 +1648,12 @@ void register_workspace_query_primitives(
 
 
         // Walk every node in workspace and try matching at each position.
-        // Issue #140: skip nodes with SyntaxMarker::MacroIntroduced
-        // (the matcher's root position is the user-written top-level
-        // code, not the macro-expanded body). Hygiene correctness:
-        // matching a macro-introduced call as if it were user code
-        // would be misleading. The pattern only matches user-written
-        // code by default. Issue #267: pass :include-macro-introduced
-        // #t to opt in to matching macro-introduced root positions.
+        // Issue #140 / #1636 / #1892: MANDATE default skip of
+        // SyntaxMarker::MacroIntroduced roots (and recursive subtrees via
+        // QueryMatcher). Hygiene correctness for AI self-evolution:
+        // matching macro-introduced code as user code would leak into
+        // mutate feedback loops. Opt-in only via
+        // :include-macro-introduced / :allow-macro-introduced #t.
         //
         // Issue #186: also skip nodes whose children count doesn't
         // match the pattern's children count (the pattern's
@@ -1673,6 +1673,10 @@ void register_workspace_query_primitives(
         // The index is built lazily on first use and cached
         // per-workspace (invalidated when ws.workspace_flat is
         // changed via set_workspace_flat).
+        //
+        // Issue #1892: count skips this call for TypedMutationAudit
+        // (one summary event per query — not per-node, hotpath safe).
+        std::uint64_t macro_skips_this_query = 0;
         if (use_index_fast_path) {
             // Issue #593: tag_arity delta hits during hygiene query.
             if (flat.tag_arity_index_dirty())
@@ -1690,8 +1694,8 @@ void register_workspace_query_primitives(
             const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
             const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
                                           static_cast<std::uint64_t>(pat_child_count);
-            // Issue #1501: hygiene default uses user-only tag_arity index
-            // (MacroIntroduced roots excluded at bucket serve time).
+            // Issue #1501 / #1892: hygiene default uses user-only tag_arity
+            // index (MacroIntroduced roots excluded at bucket serve time).
             // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
             const auto bucket =
                 ev.snapshot_tag_arity_bucket(pat_key, /*trigger=*/0,
@@ -1708,10 +1712,11 @@ void register_workspace_query_primitives(
                 if (id >= flat.size())
                     continue;
                 if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                    // Issue #458 / #1501 / #1609 / #1636: MANDATE force-skip
-                    // MacroIntroduced on query:pattern hot path (default
-                    // hygiene) unless :allow-macro-introduced #t.
+                    // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
+                    // force-skip MacroIntroduced on query:pattern hot path
+                    // (default hygiene) unless :allow-macro-introduced #t.
                     ev.bump_macro_introduced_skipped_in_query();
+                    ++macro_skips_this_query;
                     if (flat.provenance(id) != 0)
                         ev.bump_macro_hygiene_provenance_violation();
                     continue;
@@ -1752,6 +1757,7 @@ void register_workspace_query_primitives(
             for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 if (!include_macro_introduced && flat.is_macro_introduced(id)) {
                     ev.bump_macro_introduced_skipped_in_query();
+                    ++macro_skips_this_query;
                     if (flat.provenance(id) != 0)
                         ev.bump_macro_hygiene_provenance_violation();
                     continue;
@@ -1810,13 +1816,14 @@ void register_workspace_query_primitives(
             }
         }
 
-        // Issue #421: sync recursive hygiene skips + verify
+        // Issue #421 / #1892: sync recursive hygiene skips + verify
         // default-hygiene results never surface MacroIntroduced
         // node ids (post query-split contract).
         if (matcher.recursive_macro_skipped() > 0) {
             ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
             // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
             ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
+            macro_skips_this_query += matcher.recursive_macro_skipped();
         }
         if (matcher.macro_intro_filtered_strict() > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
@@ -1825,11 +1832,24 @@ void register_workspace_query_primitives(
             }
         }
         if (!include_macro_introduced) {
+            const auto violations_before = ev.get_pattern_macro_filter_violations();
             ev.verify_pattern_result_hygiene(flat, result, with_markers);
-            // Issue #1280: default exclude-MacroIntroduced path is the
-            // production hygiene contract for query:pattern.
+            const auto violations_after = ev.get_pattern_macro_filter_violations();
+            // Issue #1280 / #1892: default exclude-MacroIntroduced path is the
+            // production hygiene contract for query:pattern (self-evo hotpath).
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1892: TypedMutationAudit summary for this query call.
+            // Success = intentional default skip (hygiene held). Error =
+            // verify found MacroIntroduced leakage in results (must be 0).
+            if (macro_skips_this_query > 0 || violations_after > violations_before) {
+                const bool leaked = violations_after > violations_before;
+                typed_audit::capture_macro_hygiene_audit(
+                    leaked ? "query-pattern-macro-leak" : "query-pattern-macro-skip",
+                    leaked ? typed_audit::AuditOutcome::Error : typed_audit::AuditOutcome::Success,
+                    /*target_node=*/0, static_cast<std::int64_t>(aura_fiber_current_id()),
+                    ev.capability_tenant_id());
+            }
         }
         return result;
     });
