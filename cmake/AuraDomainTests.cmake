@@ -33,6 +33,14 @@ aura_add_issue_test(test_env_lookup_batch)
 aura_issue_test_link_llvm_jit(test_env_lookup_batch)
 set_target_properties(test_env_lookup_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1580 + #1608 + #1631: fiber resume post-steal family batch
+# (EnvFrame/bridge_epoch/StableNodeRef auto-refresh + panic checkpoint
+# transfer + linear safety probe). EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_fiber_resume_batch`.
+aura_add_issue_test(test_fiber_resume_batch)
+aura_issue_test_link_llvm_jit(test_fiber_resume_batch)
+set_target_properties(test_fiber_resume_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
