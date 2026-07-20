@@ -3553,6 +3553,16 @@ struct CompilerMetrics {
     // scan_live_closures_for_linear_captures invocation.
     // Issue #1733: walk_active_closures callback threw; walk continued.
     std::atomic<std::uint64_t> walk_active_closures_callback_exceptions{0};
+    // Issue #1949: scan counter for walk_active_closures calls from
+    // mutation/GC/JIT/fiber-steal boundary wirings. Bumped once per
+    // walk_active_closures invocation at the 5+ boundaries:
+    //   1. invalidate_function / mark_define_dirty cascade
+    //   2. compact_env_frames (evaluator_env.cpp:1649)
+    //   3. truncate_env_frames_to_checkpoint (evaluator_env.cpp:1480)
+    //   4. JIT ResourceTracker notification (aura_jit.h:344)
+    //   5. fiber steal/resume (evaluator_fiber_mutation.cpp:1787)
+    //   6. GC safepoint / root registration
+    //   7. materialize_call_env NULL_ENV_ID + linear-body case
     std::atomic<std::uint64_t> linear_live_closure_scans_total{0};
     // Closures marked invalid (bridge_epoch=0) because they captured
     // linear-tracked bindings during a scan with mark_invalid=true.

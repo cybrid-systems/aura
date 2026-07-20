@@ -4634,6 +4634,12 @@ add_dependencies(all_test_issue_targets test_envframe_truncate_epoch_1889)
 aura_add_issue_test(test_envframe_truncate_guard_1948)
 aura_issue_test_link_llvm_jit(test_envframe_truncate_guard_1948)
 add_dependencies(all_test_issue_targets test_envframe_truncate_guard_1948)
+# Issue #1949: linear ownership safety — walk_active_closures wiring
+# to 5+ mutation/GC/JIT/fiber-steal boundaries (refine of #1928/#1895).
+# Adds linear_live_closure_scans_total metric + concurrent 4-thread stress.
+aura_add_issue_test(test_linear_ownership_post_mutate_1949)
+aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate_1949)
+add_dependencies(all_test_issue_targets test_linear_ownership_post_mutate_1949)
 # Issue #1890: EnvFrame invalid vs stale + closure table multi-vector hygiene.
 aura_add_issue_test(test_envframe_resolve_distinction_1890)
 aura_issue_test_link_llvm_jit(test_envframe_resolve_distinction_1890)
