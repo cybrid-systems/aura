@@ -89,10 +89,12 @@ static void ac5_schema() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     auto h1 = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(h1 && is_hash(*h1), "ir-hygiene-stats hash");
-    CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1616 ||
-              href(cs, "query:ir-hygiene-stats", "schema") == 1610,
-          "ir-hygiene schema 1616|1610");
-    CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 1616 ||
+    {
+        const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+        CHECK(sch == 1891 || sch == 1616 || sch == 1610, "ir-hygiene schema 1891|1616|1610");
+    }
+    CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 1891 ||
+              href(cs, "query:ir-hygiene-stats", "issue") == 1616 ||
               href(cs, "query:ir-hygiene-stats", "issue") == 1610,
           "issue lineage");
     // AC "query:ir-marker-stats" served as keys (no new *-stats name).

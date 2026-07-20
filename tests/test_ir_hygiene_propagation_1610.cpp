@@ -53,12 +53,12 @@ static void ac1_stats_hash_schema() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     auto h = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(h && is_hash(*h), "authoritative hash (not bare int)");
-    CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1616 ||
-              href(cs, "query:ir-hygiene-stats", "schema") == 1610,
-          "schema 1616|1610");
-    CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 1616 ||
-              href(cs, "query:ir-hygiene-stats", "issue") == 1610,
-          "issue 1616|1610");
+    {
+        const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+        CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema 1891|1616|1610");
+        const auto iss = href(cs, "query:ir-hygiene-stats", "issue");
+        CHECK(iss == 1891 || iss == 1616 || iss == 1610, "issue 1891|1616|1610");
+    }
     CHECK(href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count") >= 0,
           "ir-hygiene-stamped-count");
     CHECK(href(cs, "query:ir-hygiene-stats", "provenance-stamped-count") >= 0,
@@ -102,9 +102,10 @@ static void ac5_mutate_requery() {
     (void)cs.eval("(query:pattern \"*\")");
     auto h = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     CHECK(h && is_hash(*h), "stats after mutate");
-    CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1616 ||
-              href(cs, "query:ir-hygiene-stats", "schema") == 1610,
-          "schema holds after mutate");
+    {
+        const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+        CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema holds after mutate");
+    }
     const auto stamped1 = href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count");
     CHECK(stamped1 >= stamped0, "stamped count non-decreasing after mutate");
     auto r = cs.eval("(+ 1 1)");
@@ -120,9 +121,10 @@ static void ac_stress() {
         if ((i % 10) == 0)
             (void)cs.eval("(query:pattern \"*\")");
     }
-    CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1616 ||
-              href(cs, "query:ir-hygiene-stats", "schema") == 1610,
-          "schema after stress");
+    {
+        const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+        CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema after stress");
+    }
     CHECK(href(cs, "query:ir-hygiene-stats", "ir-hygiene-total") >= 0, "ir-hygiene-total");
 }
 

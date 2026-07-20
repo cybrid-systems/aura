@@ -3134,10 +3134,10 @@ private:
             if (respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/ &&
                 callee->marker != 1) {
                 macro_hygiene_skipped_.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1644: local InlinePass counter only (pass_manager
-                // must not name Evaluator — module boundary). Host metrics
-                // are aggregated via query:ir-hygiene-stats / InlinePass
-                // export paths.
+                // Issue #1644 / #1891: local InlinePass counter only
+                // (pass_manager must not name Evaluator — module boundary).
+                // Host metrics aggregate via get_macro_hygiene_skipped_fn_
+                // + query:ir-hygiene-stats / query:ir-marker-stats.
                 continue;
             }
             // Check trivial-inlinable (pre-#197 fast path:
