@@ -111,6 +111,15 @@ aura_add_issue_test(test_walk_batch)
 aura_issue_test_link_llvm_jit(test_walk_batch)
 set_target_properties(test_walk_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1842 + #1666 + #1362 + #1757: compact family batch
+# (compact_env_frames Guard + compact hook replace/chain +
+# mutation_log compact + compact_pairs size_t return).
+# EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch convention.
+# On-demand `ninja test_compact_batch`.
+aura_add_issue_test(test_compact_batch)
+aura_issue_test_link_llvm_jit(test_compact_batch)
+set_target_properties(test_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
@@ -554,11 +563,6 @@ add_dependencies(all_test_issue_targets test_issue_1386_compact_env_frames)
 aura_add_issue_test(test_closure_free)
 aura_issue_test_link_llvm_jit(test_closure_free)
 add_dependencies(all_test_issue_targets test_closure_free)
-
-# Issue #1362: compact committed mutation_log_ (prevent long-run leak)
-aura_add_issue_test(test_compact_mutation_log)
-aura_issue_test_link_llvm_jit(test_compact_mutation_log)
-add_dependencies(all_test_issue_targets test_compact_mutation_log)
 
 # Issue #1363: PanicCheckpointGuard RAII wired to Evaluator save/restore
 aura_add_issue_test(test_panic_checkpoint_raii)
