@@ -4,9 +4,11 @@
 // Issue #1969: auto-evolve-* is a commercial self-evolution AI vertical
 // (DOMAIN_STATUS deferred). The 7 auto-evolve-* names are gated by
 // AURA_ENABLE_AUTO_EVOLVE (CMake option, default ON). agent:running? /
-// agent:tick and strategy:* co-registered in register_auto_evolve_primitives
-// stay available when the flag is OFF (agent:tick degrades to no-op when
+// agent:tick stay available when the flag is OFF (agent:tick degrades when
 // auto-evolve-tick/once are unregistered). See docs/auto-evolve.md.
+// Issue #1973: strategy:* (4 names) gated by AURA_ENABLE_STRATEGY in
+// register_auto_evolve_primitives; query:strategy-evolution-stats stays on.
+// See docs/strategy.md.
 // Issue #1974: synthesize:* (4 names) gated by AURA_ENABLE_SYNTHESIZE in
 // register_synthesize_primitives; query:templates stays always on.
 // See docs/synthesize.md.
@@ -42,6 +44,9 @@ module;
 #endif
 #ifndef AURA_ENABLE_SYNTHESIZE
 #define AURA_ENABLE_SYNTHESIZE 1
+#endif
+#ifndef AURA_ENABLE_STRATEGY
+#define AURA_ENABLE_STRATEGY 1
 #endif
 
 module aura.compiler.evaluator;
@@ -420,6 +425,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return make_int(0);
     });
 
+#if AURA_ENABLE_STRATEGY
     // ── Issue #444: strategy evolution controller ────────
     //
     // 3 built-in strategies. Each mutation success bumps
@@ -446,6 +452,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #1714: invalid name / bad args return tagged make_merr pairs
     // (not silent make_void) so EDSL callers can distinguish typos from
     // success (int) and from deliberate void returns elsewhere.
+    // Issue #1973: commercial strategy: vertical (AURA_ENABLE_STRATEGY).
     add("strategy:set-strategy", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return ev.make_merr("bad-arg", "usage: (strategy:set-strategy strategy-name)");
@@ -524,6 +531,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         (void)a;
         return make_bool(true);
     });
+#endif // AURA_ENABLE_STRATEGY
 
     // (query:strategy-evolution-stats) — Issue #444:
     // hash variant of the strategy pheromone counters.
@@ -533,6 +541,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //   - bugfix-hits / bugfix-successes
     //   - minimal-hits / minimal-successes
     //   - escalations
+    // Always registered (#1973 only gates strategy:* prefix).
     ObservabilityPrims::register_stats_impl(
         "query:strategy-evolution-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =

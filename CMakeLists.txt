@@ -223,6 +223,13 @@ option(AURA_ENABLE_SYNTHESIZE
 # Independent of http-get/http-post/getenv in the same register_network_primitives.
 option(AURA_ENABLE_TCP "Register tcp-* domain primitives (integration, #1975)" ON)
 
+# Issue #1973: strategy:* evolution controller commercial vertical (deferred).
+# Default ON for strategy/intend tests; slim: -DAURA_ENABLE_STRATEGY=OFF
+# (see docs/strategy.md). Only the 4 strategy:* names are gated; intend /
+# define-strategy / query:strategy-evolution-stats stay always on.
+option(AURA_ENABLE_STRATEGY
+       "Register strategy:* domain primitives (commercial, #1973)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -238,8 +245,8 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967–#1975: per-source commercial/integration vertical flags (avoids
-# PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
+# Issue #1967–#1975 + #1973: per-source commercial/integration vertical flags
+# (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
 else()
@@ -280,6 +287,11 @@ if(AURA_ENABLE_TCP)
 else()
     set(_AURA_ENABLE_TCP_VAL 0)
 endif()
+if(AURA_ENABLE_STRATEGY)
+    set(_AURA_ENABLE_STRATEGY_VAL 1)
+else()
+    set(_AURA_ENABLE_STRATEGY_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -292,13 +304,13 @@ set_source_files_properties(
     src/compiler/evaluator_primitives_compile.cpp
     PROPERTIES COMPILE_DEFINITIONS
                "AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL};AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL}")
-# agent.cpp: auto-evolve-* (#1969) + synthesize:* (#1974).
-# agent:/strategy: co-registered stay always on.
+# agent.cpp: auto-evolve (#1969) + synthesize (#1974) + strategy: (#1973).
+# agent:/intend/define-strategy co-registered stay always on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_agent.cpp
     PROPERTIES
         COMPILE_DEFINITIONS
-        "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL}")
+        "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL};AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL}")
 # io.cpp: git-* (#1970) + tcp-* (#1975). getenv/http/terminal-buffer stay on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_io.cpp
@@ -317,6 +329,8 @@ message(STATUS "git-* domain: AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL} (#1970)")
 message(STATUS
         "terminal:* domain: AURA_ENABLE_TERMINAL=${_AURA_ENABLE_TERMINAL_VAL} (#1971)")
 message(STATUS "seva:* domain: AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL} (#1972)")
+message(STATUS
+        "strategy:* domain: AURA_ENABLE_STRATEGY=${_AURA_ENABLE_STRATEGY_VAL} (#1973)")
 message(STATUS
         "synthesize:* domain: AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL} (#1974)")
 message(STATUS "tcp-* domain: AURA_ENABLE_TCP=${_AURA_ENABLE_TCP_VAL} (#1975)")
