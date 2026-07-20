@@ -4636,6 +4636,10 @@ add_dependencies(all_test_issue_targets test_query_pattern_hygiene_mandate_1892)
 aura_add_issue_test(test_atomic_batch_metadata_1893)
 aura_issue_test_link_llvm_jit(test_atomic_batch_metadata_1893)
 add_dependencies(all_test_issue_targets test_atomic_batch_metadata_1893)
+# Issue #1894: TypedMutationAudit hotpath contextual gate + Full force-rollback.
+aura_add_issue_test(test_typed_mutation_audit_hotpath_1894)
+aura_issue_test_link_llvm_jit(test_typed_mutation_audit_hotpath_1894)
+add_dependencies(all_test_issue_targets test_typed_mutation_audit_hotpath_1894)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

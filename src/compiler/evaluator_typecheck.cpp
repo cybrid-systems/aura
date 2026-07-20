@@ -447,12 +447,17 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
 
     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
     typed_audit::record_invariant_audit_result(mutation_id, op_name, r, before_epoch, after_epoch,
-                                               target_node, fid);
+                                               target_node, fid, capability_tenant_id());
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->typed_mutation_invariant_audits_total.fetch_add(1, std::memory_order_relaxed);
-        if (!r.all_ok())
+        // #1894 AC aliases on CompilerMetrics
+        m->typed_mutation_audit_triggered_total.fetch_add(1, std::memory_order_relaxed);
+        if (!r.all_ok()) {
             m->typed_mutation_invariant_violations_total.fetch_add(1, std::memory_order_relaxed);
+            m->typed_mutation_violations_caught_total.fetch_add(1, std::memory_order_relaxed);
+            m->provenance_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
         if (r.type_ok)
             m->typed_mutation_type_ok_total.fetch_add(1, std::memory_order_relaxed);
         if (r.linear_ok)

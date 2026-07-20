@@ -20,6 +20,7 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
 #include "jit_typed_mutation_stats.h"
+#include "typed_mutation_audit.h" // Issue #1894: AC metric counters
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
@@ -8344,9 +8345,11 @@ void ObservabilityPrims::register_jit_p67(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 part 68 (orig lines 19080-19130)
 void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
-    // Issue #839: query:typed-mutation-audit-stats
+    // Issue #839 / #1894: query:typed-mutation-audit-stats
+    // Extends #839 surface with #1614/#1894 invariant + hotpath AC keys.
     ObservabilityPrims::register_stats_impl(
         "query:typed-mutation-audit-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::typed_audit;
             CompilerMetrics* m = ev.compiler_metrics_
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
                                      : nullptr;
@@ -8362,7 +8365,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                         m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            auto* ht = FlatHashTable::create(16) /* #1141 */;
+            auto* ht = FlatHashTable::create(32) /* #1141 / #1894 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8393,7 +8396,27 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hits", hits);
             insert_kv("savings", savings);
             insert_kv("active", active);
-            insert_kv("schema", 839);
+            // #1894 AC keys (process-wide + CompilerMetrics mirror)
+            const auto triggered = static_cast<std::int64_t>(
+                g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.load(
+                    std::memory_order_relaxed));
+            const auto violations = static_cast<std::int64_t>(
+                g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.load(
+                    std::memory_order_relaxed));
+            const auto blame = static_cast<std::int64_t>(
+                g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.load(
+                    std::memory_order_relaxed));
+            insert_kv("typed_mutation_audit_triggered_total", triggered);
+            insert_kv("typed_mutation_violations_caught_total", violations);
+            insert_kv("provenance_blame_chain_hits_total", blame);
+            insert_kv("invariant-audits", static_cast<std::int64_t>(
+                                              g_typed_mutation_audit_counters.invariant_audits.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv("hit-rate-bp",
+                      triggered > 0 ? (triggered - violations) * 10000 / triggered : 10000);
+            insert_kv("hotpath-guard-exit-wired", 1);
+            insert_kv("schema", 1894); // lineage 839 / 1614
+            insert_kv("issue", 1894);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

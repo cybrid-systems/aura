@@ -18,9 +18,11 @@
 
 namespace aura::compiler::typed_audit {
 
-inline constexpr int kTypedMutationAuditPassPhase = 3; // #1614 invariant enforcement (+#1882 wire)
-inline constexpr int kTypedMutationAuditIssue = 1614;  // lineage 1589; AOT wire is #1882
+inline constexpr int kTypedMutationAuditPassPhase = 4; // #1894 hotpath contextual + Full rollback
+inline constexpr int kTypedMutationAuditIssue = 1894;  // lineage 1614 / 1589; AOT wire #1882
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
+// Force audit when dirty scope is large (Sampled strategy still hits).
+inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
 inline constexpr std::size_t kAuditNameCap = 48;
 
 enum class AuditStrategy : std::uint8_t {
@@ -87,6 +89,12 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> provenance_invariant_fail{0};
     std::atomic<std::uint64_t> invariant_violations_caught{0};
     std::atomic<std::uint64_t> invariant_all_pass{0};
+    // Issue #1894 AC metric names (aliases of invariant suite + contextual gate).
+    std::atomic<std::uint64_t> typed_mutation_audit_triggered_total{0};
+    std::atomic<std::uint64_t> typed_mutation_violations_caught_total{0};
+    std::atomic<std::uint64_t> provenance_blame_chain_hits_total{0};
+    std::atomic<std::uint64_t> full_strategy_force_rollback_total{0};
+    std::atomic<std::uint64_t> contextual_force_audit_total{0};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};
@@ -160,6 +168,29 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
         return false;
     }
     return true;
+}
+
+// Issue #1894: contextual gate — also force audit when dirty scope is large
+// or linear ops are present (self-evo closed-loop must not under-sample
+// ownership-sensitive mutations).
+[[nodiscard]] inline bool should_audit_contextual(std::uint64_t mutation_id,
+                                                  std::uint64_t nodes_changed,
+                                                  bool linear_ops_present = false) noexcept {
+    const auto s = get_strategy();
+    if (s == AuditStrategy::Off)
+        return false;
+    if (s == AuditStrategy::Full) {
+        g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    // Sampled: force-hit for large dirty scopes / linear mutations.
+    if (linear_ops_present || nodes_changed >= kAuditForceNodesChanged) {
+        g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.contextual_force_audit_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return true;
+    }
+    return should_audit(mutation_id);
 }
 
 [[nodiscard]] inline MutationKind classify_kind(std::string_view op) noexcept {
@@ -381,9 +412,12 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
                                           const InvariantAuditResult& r,
                                           std::uint64_t before_epoch = 0,
                                           std::uint64_t after_epoch = 0,
-                                          std::uint32_t target_node = 0,
-                                          std::int64_t fiber_id = 0) noexcept {
+                                          std::uint32_t target_node = 0, std::int64_t fiber_id = 0,
+                                          std::uint64_t tenant_id = 0) noexcept {
     g_typed_mutation_audit_counters.invariant_audits.fetch_add(1, std::memory_order_relaxed);
+    // #1894 AC: exact metric name for audit triggers.
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.fetch_add(
+        1, std::memory_order_relaxed);
     if (r.type_ok)
         g_typed_mutation_audit_counters.type_invariant_ok.fetch_add(1, std::memory_order_relaxed);
     else
@@ -409,6 +443,13 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     } else {
         g_typed_mutation_audit_counters.invariant_violations_caught.fetch_add(
             1, std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // #1894: dual-record blame for forensic self-evo rollback trails.
+        g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aura::core::provenance::record_macro_hygiene_provenance(
+            target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
         capture_audit_event(mutation_id, "invariant-fail", MutationKind::Other, before_epoch,
                             after_epoch, AuditOutcome::Error, target_node, r.notes_count, fiber_id,
                             r.notes_count);
@@ -482,6 +523,16 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.provenance_invariant_fail.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.full_strategy_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.contextual_force_audit_total.store(0,
+                                                                       std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_attempts.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_audits.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.aot_hotupdate_ok.store(0, std::memory_order_relaxed);

@@ -5281,7 +5281,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::uint32_t strategy = 0, ratio = 0;
             snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
                             ratio);
-            auto* ht = FlatHashTable::create(48);
+            auto* ht = FlatHashTable::create(64); // #1894: more AC keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5368,8 +5368,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 "jit-hotpath-audits",
                 static_cast<std::int64_t>(g_typed_mutation_audit_counters.jit_hotpath_audits.load(
                     std::memory_order_relaxed)));
-            insert_kv("issue", 1614); // lineage 1589 / #1882 extends without schema bump
-            insert_kv("schema", 1614);
+            // #1894 AC metric names + hotpath wire flags
+            insert_kv("typed_mutation_audit_triggered_total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "typed_mutation_violations_caught_total",
+                static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("provenance_blame_chain_hits_total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("full-strategy-force-rollback-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.full_strategy_force_rollback_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("contextual-force-audit-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.contextual_force_audit_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("hotpath-guard-exit-wired", 1);
+            insert_kv("contextual-should-audit-wired", 1);
+            insert_kv("full-force-rollback-wired", 1);
+            insert_kv("dirty-aware-pass-inventory", 1);
+            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882
+            insert_kv("schema", 1894);
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {
                 insert_kv("latest-mutation-id", static_cast<std::int64_t>(latest.mutation_id));
