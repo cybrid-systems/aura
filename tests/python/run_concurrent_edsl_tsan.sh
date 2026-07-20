@@ -23,7 +23,7 @@
 # CompilerService isn't yet lock-free internally — we serialize
 # at the test boundary via SharedState::eval_mtx.
 
-set -e
+set -euo pipefail
 
 BUILD_DIR="${1:-build_tsan_edsl}"
 mkdir -p "$BUILD_DIR"

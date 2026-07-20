@@ -26,7 +26,7 @@
 # briefly during the move but the post-processing is fast. Worst case
 # under heavy parallelism is a duplicate .gcm (a few hundred KB on
 # disk), never a corrupt one.
-set -u
+set -euo pipefail
 
 BUILD_DIR="${AURA_BUILD_DIR:-$PWD}"
 SHARED_GCM_ROOT="${AURA_SHARED_GCM_DIR:-$BUILD_DIR/module_cache}"
