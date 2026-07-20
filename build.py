@@ -1551,8 +1551,8 @@ def cmd_catch_silent_swallow():
 
 
 def cmd_mutation_guard_coverage():
-    """Issue #1931 / #1950: compile:*/mutate:* must use MutationBoundaryGuard."""
-    print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950) ═══{N}")
+    """Issue #1931 / #1950 / #1953: compile:*/mutate:* must use MutationBoundaryGuard."""
+    print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950 / #1953) ═══{N}")
     script = ROOT / "scripts" / "check_mutation_guard_coverage.py"
     if not script.exists():
         fail(f"missing {script}")

@@ -100,6 +100,7 @@ static void ac2_schema() {
     CHECK(href(cs, "schema") == 1897, "lineage 1897");
     CHECK(href(cs, "schema-1931") == 1931, "schema-1931");
     CHECK(href(cs, "issue-1931") == 1931, "issue-1931");
+    CHECK(href(cs, "schema-1953") == 1953, "1953 refine lineage");
     CHECK(href(cs, "schema-1950") == 1950, "1950 lineage");
     CHECK(href(cs, "schema-1747") == 1747, "1747 lineage");
     CHECK(href(cs, "dtor-common-path-atomics-cap") == 6, "atomics cap 6");

@@ -1,20 +1,20 @@
-// mutation_guard_helpers.hh — Issue #1950 / #1931
+// mutation_guard_helpers.hh — Issue #1950 / #1931 / #1953
 // Shared header exposing run_under_mutation_guard template to all
 // evaluator_primitives_*.cpp files. Previously the template was
 // defined in evaluator_primitives_compile.cpp's anonymous namespace,
 // which prevented other primitives files (e.g. mutate:* at
 // evaluator_primitives_mutate.cpp) from using the same Guard wrap
-// pattern. Issue #1950 / #1931 AC requires 100% Guard wrap on
+// pattern. Issue #1950 / #1931 / #1953 AC requires 100% Guard wrap on
 // compile:* + mutate:* primitives — this header makes the helper
 // available to all of them.
 //
 // AC: "所有 compile:* / mutate:* primitives 100% 包装 Guard +
 // StableNodeRef 验证". The Guard dtor (evaluator.ixx,
-// batched to ≤6 atomics per #1747 / #1931) owns the defuse_version_ +
-// total_mutations_ bump — primitives intentionally removed their
-// manual #1904 path. This header keeps the wrap pattern uniform.
-// Metrics: mutation_guard_exception_total +
-// compile_primitive_stale_ir_prevented_total (#1931 AC).
+// batched to ≤6 atomics per #1747 / #1931 / #1953) owns the
+// defuse_version_ + total_mutations_ bump — primitives intentionally
+// removed their manual #1904 path. This header keeps the wrap pattern
+// uniform. Metrics: mutation_guard_exception_total +
+// compile_primitive_stale_ir_prevented_total (#1931 / #1953 AC).
 //
 // Include AFTER `module aura.compiler.evaluator;` (+ value imports) so
 // Evaluator / EvalValue / CompilerMetrics are in scope. Do not pull

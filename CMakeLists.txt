@@ -5683,6 +5683,9 @@ aura_issue_test_link_llvm_jit(test_issue_1951)
 # (aura_set_aot_emit_fn callback replaces #1481 skeleton).
 aura_add_issue_test(test_issue_1952)
 aura_issue_test_link_llvm_jit(test_issue_1952)
+# Issue #1953: MutationBoundaryGuard systemic refine of #1931 (schema-1953 + dtor ≤6).
+aura_add_issue_test(test_issue_1953)
+aura_issue_test_link_llvm_jit(test_issue_1953)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 # Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
 # Issue #488: post-mutate reflect validation + Guard impact snapshot.

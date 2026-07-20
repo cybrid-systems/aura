@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_mutation_guard_coverage.py — Issue #1950 cycle 1
+"""check_mutation_guard_coverage.py — Issue #1950 / #1931 / #1953
 
 Audit script that scans all `add("compile:*", ...)` and
 `add("mutate:*", ...)` primitive registrations in
@@ -8,11 +8,10 @@ wrapped in `run_under_mutation_guard(...)` (Issue #1842/#1889
 pattern) vs which ones have raw `ev.*` mutation calls without a
 Guard.
 
-Issue #1950 AC #2: "所有 compile:* / mutate:* primitives 100%
-包装 Guard + StableNodeRef 验证". The dtor atomic-batching (AC
-#1) was already shipped in #1747 (≤6 atomics, in-code comment at
-evaluator.ixx:12588). The remaining gap is primitive-surface Guard
-coverage — this linter measures the gap.
+Issue #1950 / #1931 / #1953 AC: "所有 compile:* / mutate:* primitives
+100% 包装 Guard + StableNodeRef 验证". The dtor atomic-batching was
+shipped in #1747 / #1931 / #1953 (≤6 atomics on common path). This
+linter is the regression gate for primitive-surface Guard coverage.
 
 Default: non-strict (exit 0, prints coverage stats). Use
 --strict to enforce (exit 1 if any uncovered primitive found —

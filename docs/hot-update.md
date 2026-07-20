@@ -113,7 +113,7 @@ These remain open and are pre-requisites or extensions of the MVP:
 - [#1947] `make_closure_view` copies Closure raw pointer
 - [#1950] `MutationBoundaryGuard` dtor 15+ atomic ops per call *(closed via #1747/#1931 batch)*
 - [#1952] Complete `aura_reemit_aot_for_dirty` real LLVM incremental re-emit
-- [#1953] Systemic `MutationBoundaryGuard` enforcement + dtor atomic batch opt
+- [#1953] Systemic `MutationBoundaryGuard` refine of #1931 *(closed: schema-1953 + gate coverage)*
 - [#1954] Strengthen `make_closure_view` lifetime + walk_active_closures
 - [#1955] `compact_env_frames` / `truncate_env_frames_to_checkpoint`
   consistency: Guard + …
