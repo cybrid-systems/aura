@@ -4744,6 +4744,10 @@ add_dependencies(all_test_issue_targets test_closure_view_uaf_guard_1926)
 aura_add_issue_test(test_envframe_truncate_guard_dual_epoch_1927)
 aura_issue_test_link_llvm_jit(test_envframe_truncate_guard_dual_epoch_1927)
 add_dependencies(all_test_issue_targets test_envframe_truncate_guard_dual_epoch_1927)
+# Issue #1928: walk_active_closures + linear force Drop on 5+ boundaries.
+aura_add_issue_test(test_linear_walk_active_closures_1928)
+aura_issue_test_link_llvm_jit(test_linear_walk_active_closures_1928)
+add_dependencies(all_test_issue_targets test_linear_walk_active_closures_1928)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
