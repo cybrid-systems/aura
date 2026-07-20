@@ -1440,13 +1440,20 @@ void Evaluator::invalidate_post_rollback_env_frames() {
     }
 }
 
-// Issue #1360: shrink env_frames_ to the panic checkpoint size.
+// Issue #1360 / #1739 / #1889: shrink env_frames_ to the panic checkpoint size.
 // Append-only EnvId: pre-checkpoint indices [0, N) are unchanged
 // and remain valid for live Closure::env_id. Post-checkpoint
 // EnvIds become OOB; resolve_env_frame returns nullptr (no UAF).
 // Also marks doomed frames INVALID_VERSION before erase so any
 // concurrent reader that raced before resize sees terminal
 // invalid, then bumps env_generation_ + truncate counters.
+//
+// Dual-epoch contract (#1485 / #1889): after truncate we MUST bump
+// bridge_epoch (via bridge_epoch_bump_fn_) so apply_closure's
+// is_bridge_stale rejects closures stamped pre-truncate. Without the
+// bump, a Closure with env_id past the checkpoint can pass freshness
+// and then materialize an OOB frame. Structural mutation of env_frames_
+// is paired with this bump + doomed-closure bridge_epoch=0 restamp.
 std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
@@ -1468,13 +1475,37 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
     bump_envframe_truncate(dropped);
-    // Issue #1739: bump bridge_epoch so cross-COW / cross-evaluator
+    // Issue #1739 / #1889: bump bridge_epoch so cross-COW / cross-evaluator
     // closure freshness checks (is_bridge_stale / aura_closure_call)
     // observe that post-checkpoint EnvIds are no longer valid.
     // Same hook used by compact_env_frames (#1510) and
     // commit_panic_checkpoint (#1728). No-op when service not bound.
-    if (bridge_epoch_bump_fn_ && compiler_service_)
+    if (bridge_epoch_bump_fn_ && compiler_service_) {
         bridge_epoch_bump_fn_(compiler_service_);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->bridge_epoch_bump_on_truncate_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #1889: defense-in-depth — force dual-check stale for any
+    // Closure still holding an env_id past the checkpoint (OOB after
+    // resize). bridge_epoch=0 is STALE under active tracking (#1365).
+    std::size_t doomed = 0;
+    {
+        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        for (auto& kv : closures_) {
+            const auto id = kv.second.env_id;
+            if (id != NULL_ENV_ID && id >= checkpoint_size) {
+                kv.second.bridge_epoch = 0;
+                // Leave env_id so resolve_env_frame_detailed reports OOB;
+                // safe_fallback path uses dual-check.
+                ++doomed;
+            }
+        }
+    }
+    if (doomed > 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->envframe_truncate_doomed_closures_total.fetch_add(doomed, std::memory_order_relaxed);
+        }
+    }
     return dropped;
 }
 

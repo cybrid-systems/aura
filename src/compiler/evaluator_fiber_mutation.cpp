@@ -1794,6 +1794,9 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
 
     // Heavy path: reclaim dead frames / rewrite orphan env_ids when
     // OOB or INVALID frames were observed (true drift, not soft stale).
+    // Issue #1889: compact_env_frames itself dual-epoch bumps under its
+    // interlock (no public primitive Guard here — internal steal repair;
+    // public surface is evaluator:compact-env-frames with Guard #1842).
     if (need_compact) {
         (void)compact_env_frames();
         if (m)

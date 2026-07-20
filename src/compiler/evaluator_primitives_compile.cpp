@@ -5897,13 +5897,16 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // algorithm + concurrency contract (caller must serialize
     // at the workspace level).
     //
-    // Issue #1842: wrap in MutationBoundaryGuard + try/catch.
+    // Issue #1842 / #1889: wrap in MutationBoundaryGuard + try/catch.
     // Pre-#1842 the primitive called compact_env_frames() raw —
     // a throw mid-remap left env_frames_ / Closure::env_id
     // partially consistent with no panic-checkpoint restore.
     // New contract: Guard captures checkpoint; on exception
     // flip guard_ok=false so dtor restores (outermost-only
     // lock, #184/#236). Metrics mirror #1902 EDA Guard path.
+    // #1889: all structural env compaction entry points from the
+    // public primitive surface must go through Guard (truncate is
+    // internal to panic restore, not a free primitive).
     add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
         bool guard_ok = true;
         aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);

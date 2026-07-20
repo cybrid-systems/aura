@@ -715,6 +715,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:test-strategy-stats",
     // Issue #1888 — ClosureView lifetime / dangling prevented
     "query:closure-view-lifetime-stats",
+    // Issue #1889 — truncate/compact dual-epoch + Guard surface
+    "query:envframe-truncate-epoch-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats

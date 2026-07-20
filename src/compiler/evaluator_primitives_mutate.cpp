@@ -5552,6 +5552,65 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
+    // ── Issue #1889: query:envframe-truncate-epoch-stats ──
+    // truncate_env_frames_to_checkpoint dual-epoch + Guard observability.
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-truncate-epoch-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            insert_kv("schema", 1889);
+            insert_kv("issue", 1889);
+            insert_kv("active", 1);
+            insert_kv("bridge-epoch-bump-on-truncate",
+                      m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("truncate-doomed-closures",
+                      m ? static_cast<std::int64_t>(m->envframe_truncate_doomed_closures_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("truncate-count",
+                      static_cast<std::int64_t>(ev.get_envframe_truncate_count()));
+            insert_kv("truncated-frames",
+                      static_cast<std::int64_t>(ev.get_envframe_truncated_frames()));
+            insert_kv("compact-epoch-bumps",
+                      m ? static_cast<std::int64_t>(
+                              m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed))
+                        : 0);
+            // Primitive path uses MutationBoundaryGuard (#1842 / #1889 AC).
+            insert_kv("compact-primitive-guarded", 1);
+            insert_kv("truncate-bumps-bridge-epoch", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // ── Issue #1888: query:closure-view-lifetime-stats ──
     // ClosureView lifetime stamp / dangling-prevented surface.
     ObservabilityPrims::register_stats_impl(

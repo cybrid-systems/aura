@@ -3177,10 +3177,11 @@ public:
     // indices [0, checkpoint) stay valid; post-checkpoint
     // EnvIds become OOB and resolve to nullptr. Bumps
     // env_generation_ + envframe_truncate counters.
-    // Issue #1739: also bumps bridge_epoch (via service hook)
+    // Issue #1739 / #1889: also bumps bridge_epoch (via service hook)
     // when frames are dropped so cross-COW freshness checks
-    // observe the truncate (same class as #1728 commit).
-    // Returns number of frames dropped.
+    // observe the truncate (same class as #1728 commit / #1510 compact).
+    // Doomed Closures with env_id past the checkpoint get bridge_epoch=0
+    // (defense-in-depth dual-check). Returns number of frames dropped.
     std::size_t truncate_env_frames_to_checkpoint();
     // Issue #1386 / #1510 / #1526: compact env_frames_ arena — reclaim
     // stale frames (version_ < current defuse_version_) that are not

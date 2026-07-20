@@ -317,6 +317,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> envframe_compact_rewrites_total{0};
     std::atomic<std::uint64_t> envframe_compact_epoch_bumps_total{0};
     std::atomic<std::uint64_t> envframe_compact_bridge_restamps_total{0};
+    // Issue #1889: truncate_env_frames_to_checkpoint dual-epoch observability.
+    //   - bridge_epoch_bump_on_truncate_total: # of times truncate advanced
+    //     bridge_epoch (must match successful drop path, not no-op)
+    //   - envframe_truncate_doomed_closures_total: Closures with env_id past
+    //     the checkpoint that were forced bridge_epoch=0 after truncate
+    std::atomic<std::uint64_t> bridge_epoch_bump_on_truncate_total{0};
+    std::atomic<std::uint64_t> envframe_truncate_doomed_closures_total{0};
     std::atomic<std::uint64_t> materialize_fallback_total{0};
     // Issue #1511: dual check on closure_bridge_ callback entry
     // (local-miss + local-stale recovery paths).
