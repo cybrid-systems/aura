@@ -4666,6 +4666,11 @@ aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
 aura_add_issue_test(test_aot_hotupdate_typed_audit_1882)
 aura_issue_test_link_llvm_jit(test_aot_hotupdate_typed_audit_1882)
 add_dependencies(all_test_issue_targets test_aot_hotupdate_typed_audit_1882)
+
+# Issue #1883: self-evolution-loop-stats hash + aot-hotupdate aggregation
+aura_add_issue_test(test_self_evolution_loop_stats_1883)
+aura_issue_test_link_llvm_jit(test_self_evolution_loop_stats_1883)
+add_dependencies(all_test_issue_targets test_self_evolution_loop_stats_1883)
 # Issue #1590: ResourceQuota hot-path (arena + Guard + query schema 1590).
 aura_add_issue_test(test_resource_quota_hotpath)
 aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)

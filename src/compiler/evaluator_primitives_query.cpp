@@ -6529,29 +6529,121 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       pass + fail + commit + cross_cow));
         });
 
-    // Issue #595: query:self-evolution-loop-stats. Returns the
-    // sum of 5 marker/dirty/epoch/Guard self-evolution loop
-    // counters (non-duplicative synthesis of #541/#525/#557
-    // themes; avoids #597 macro+reflect 8-counter bundle and
-    // #619 follow-up 4-counter bundle):
-    //   - hygiene_skips: macro_introduced_skipped_in_query_
-    //   - dirty_propagated: dirty_propagation_count_
-    //   - epoch_deltas: guard_dirty_epoch_count_
-    //   - validation_pass: schema_validation_pass_count_
-    //   - rollback_count: mutation_log_rollback_count_
+    // Issue #595 / #1883: query:self-evolution-loop-stats.
+    // #595 shipped a sum int of 5 marker/dirty/epoch/Guard loop counters.
+    // #1883 upgrades to a structured hash for AI Agent health dashboards
+    // while keeping "total" == legacy sum for monotonic back-compat.
+    // Fields (schema 1883):
+    //   total, hygiene-skips, dirty-propagated, epoch-deltas, validation-pass,
+    //   rollback-count, mutation-total, mutation-success-rate-bp,
+    //   invariant-audits, invariant-pass-rate-bp, trail-writes,
+    //   stack-depth-lifetime-max, stack-depth-current-max, stack-depth-live,
+    //   aot-hotupdate-attempts, aot-hotupdate-ok, aot-hotupdate-fail,
+    //   aot-hotupdate-invariant-fail, audit-coverage-bp, schema, issue, active
     ObservabilityPrims::register_stats_impl(
         "query:self-evolution-loop-stats", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
-                return make_int(0);
+                return make_void();
+            using namespace aura::compiler::typed_audit;
             const std::uint64_t hygiene = ev->get_macro_introduced_skipped_in_query();
             const std::uint64_t dirty = ev->get_dirty_propagation_count();
             const std::uint64_t epoch = ev->get_guard_dirty_epoch_count();
             const std::uint64_t validation = ev->get_schema_validation_pass_count();
             const std::uint64_t rollback = ev->get_mutation_log_rollback_count();
-            return make_int(
-                static_cast<std::int64_t>(hygiene + dirty + epoch + validation + rollback));
+            const std::uint64_t total_legacy = hygiene + dirty + epoch + validation + rollback;
+            const std::uint64_t mut_total = ev->total_mutations();
+            const auto& ac = g_typed_mutation_audit_counters;
+            const std::uint64_t inv_aud = ac.invariant_audits.load(std::memory_order_relaxed);
+            const std::uint64_t inv_pass = ac.invariant_all_pass.load(std::memory_order_relaxed);
+            const std::uint64_t inv_fail =
+                ac.invariant_violations_caught.load(std::memory_order_relaxed);
+            const std::uint64_t trail = ac.trail_writes.load(std::memory_order_relaxed);
+            const std::uint64_t contextual = ac.contextual_total.load(std::memory_order_relaxed);
+            const std::uint64_t aot_att = ac.aot_hotupdate_attempts.load(std::memory_order_relaxed);
+            const std::uint64_t aot_ok = ac.aot_hotupdate_ok.load(std::memory_order_relaxed);
+            const std::uint64_t aot_fail = ac.aot_hotupdate_fail.load(std::memory_order_relaxed);
+            const std::uint64_t aot_inv =
+                ac.aot_hotupdate_invariant_fail_total.load(std::memory_order_relaxed);
+            const std::uint64_t aot_aud = ac.aot_hotupdate_audits.load(std::memory_order_relaxed);
+            // Success rate: mutations that did not roll back / (mutations + rollbacks)
+            // Use trail successes proxy when mutation log rollbacks available.
+            const std::uint64_t mut_den = mut_total + rollback;
+            const std::int64_t mut_success_bp =
+                mut_den == 0 ? 10000 : static_cast<std::int64_t>((mut_total * 10000ull) / mut_den);
+            const std::uint64_t inv_den = inv_aud == 0 ? 0 : inv_aud;
+            const std::int64_t inv_pass_bp =
+                inv_den == 0 ? 10000 : static_cast<std::int64_t>((inv_pass * 10000ull) / inv_den);
+            const std::int64_t aot_cov_bp =
+                aot_att == 0 ? 10000 : static_cast<std::int64_t>((aot_aud * 10000ull) / aot_att);
+            const std::int64_t stack_life =
+                static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_max());
+            const std::int64_t stack_cur =
+                static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_current_max());
+            const std::int64_t stack_live =
+                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+
+            auto& string_heap = ev->string_heap_mut();
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("total", static_cast<std::int64_t>(total_legacy)); // #595 back-compat
+            insert_kv("hygiene-skips", static_cast<std::int64_t>(hygiene));
+            insert_kv("dirty-propagated", static_cast<std::int64_t>(dirty));
+            insert_kv("epoch-deltas", static_cast<std::int64_t>(epoch));
+            insert_kv("validation-pass", static_cast<std::int64_t>(validation));
+            insert_kv("rollback-count", static_cast<std::int64_t>(rollback));
+            insert_kv("mutation-total", static_cast<std::int64_t>(mut_total));
+            insert_kv("mutation-success-rate-bp", mut_success_bp);
+            insert_kv("invariant-audits", static_cast<std::int64_t>(inv_aud));
+            insert_kv("invariant-pass", static_cast<std::int64_t>(inv_pass));
+            insert_kv("invariant-fail", static_cast<std::int64_t>(inv_fail));
+            insert_kv("invariant-pass-rate-bp", inv_pass_bp);
+            insert_kv("trail-writes", static_cast<std::int64_t>(trail));
+            insert_kv("contextual-total", static_cast<std::int64_t>(contextual));
+            insert_kv("stack-depth-lifetime-max", stack_life);
+            insert_kv("stack-depth-current-max", stack_cur);
+            insert_kv("stack-depth-live", stack_live);
+            // avg ≈ current-max when hist sparse; basis points of live/current
+            insert_kv("avg-stack-depth-x100",
+                      stack_cur > 0 ? (stack_live * 100) / (stack_cur > 0 ? stack_cur : 1)
+                                    : stack_live * 100);
+            insert_kv("aot-hotupdate-attempts", static_cast<std::int64_t>(aot_att));
+            insert_kv("aot-hotupdate-ok", static_cast<std::int64_t>(aot_ok));
+            insert_kv("aot-hotupdate-fail", static_cast<std::int64_t>(aot_fail));
+            insert_kv("aot-hotupdate-invariant-fail", static_cast<std::int64_t>(aot_inv));
+            insert_kv("audit-coverage-bp", aot_cov_bp);
+            insert_kv("schema", 1883);
+            insert_kv("issue", 1883);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #583: query:primitives-stats. Returns the sum of 6

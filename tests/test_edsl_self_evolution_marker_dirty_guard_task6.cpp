@@ -31,14 +31,23 @@ namespace aura_595_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 
+// #595 returned int sum; #1883 upgrades to hash with "total" == legacy sum.
 static std::int64_t loop_stats(CompilerService& cs) {
     auto r = cs.eval("(engine:metrics \"query:self-evolution-loop-stats\")");
-    if (!r || !is_int(*r))
+    if (!r)
         return 0;
-    return as_int(*r);
+    if (is_int(*r))
+        return as_int(*r);
+    if (is_hash(*r)) {
+        auto t = cs.eval("(hash-ref (engine:metrics \"query:self-evolution-loop-stats\") 'total)");
+        if (t && is_int(*t))
+            return as_int(*t);
+    }
+    return 0;
 }
 
 static bool setup_macro_workspace(CompilerService& cs) {
