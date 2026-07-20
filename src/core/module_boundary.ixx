@@ -116,6 +116,13 @@ enum class ModuleLayer : std::uint8_t {
 //
 // The rank comparison alone is the default; the table below encodes
 // explicit exceptions (Compiler consumers, Parser isolation).
+//
+// Purpose: compile-time / runtime check that layer From may import To
+// Pre: from/to are valid ModuleLayer enumerators
+// Post: true iff edge is allowed by the architecture DAG
+// Safety Class: P3 (layering aid; not a runtime memory fence)
+// Issue: #1885 / #1886
+// AI-Native Rationale: agents assess blast radius before cross-layer edits
 [[nodiscard]] inline constexpr bool layer_may_depend_on(ModuleLayer from, ModuleLayer to) noexcept {
     if (from == to)
         return true;

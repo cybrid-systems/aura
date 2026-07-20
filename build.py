@@ -1460,6 +1460,21 @@ def cmd_test_binding():
     return 0
 
 
+def cmd_naming_convention():
+    """Issue #1886: naming_convention.md sections + example template keys."""
+    print(f"{B}═══ Naming convention doc (#1886) ═══{N}")
+    script = ROOT / "scripts" / "check_naming_convention.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("naming convention check failed — see docs/naming_convention.md")
+        return 1
+    ok("naming convention doc OK")
+    return 0
+
+
 def cmd_dead_heap_push():
     """Issue #1488 / #1668: dead string_heap_ push pollution audit (strict)."""
     print(f"{B}═══ Dead string_heap push audit (#1668) ═══{N}")
@@ -1543,6 +1558,7 @@ def cmd_gate():
         or cmd_primitive_surface()
         or cmd_test_registry()
         or cmd_test_binding()
+        or cmd_naming_convention()
         or cmd_dead_heap_push()
         or cmd_catch_silent_swallow()
     )
@@ -1928,6 +1944,7 @@ def main():
         "lint": cmd_lint,
         "format": cmd_format,
         "test-registry": cmd_test_registry,
+        "naming-convention": cmd_naming_convention,
         "dead-heap-push": cmd_dead_heap_push,
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "test": lambda: cmd_test(args or ["all"]),

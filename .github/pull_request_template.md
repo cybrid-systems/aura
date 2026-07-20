@@ -18,6 +18,11 @@
 - [ ] Cross-layer stable refs use provenance / `StableNodeRefLike` (not raw NodeId alone)
 - [ ] `docs/architecture.md` still matches the DAG if rules changed
 
+## Naming & comments (#1886)
+
+- [ ] New public APIs follow [`docs/naming_convention.md`](../docs/naming_convention.md) (Purpose / Pre / Post / Safety Class / Issue / AI-Native Rationale where applicable)
+- [ ] Primitive names respect freeze prefixes; PrimMeta filled for Agent-visible adds
+
 ## Test plan
 
 - [ ] `./build.py gate`

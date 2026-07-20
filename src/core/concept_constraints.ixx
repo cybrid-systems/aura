@@ -55,6 +55,14 @@ export namespace aura::compiler {
 //
 // Issue #274: FlatAST mutation visitors follow a parallel fold pattern
 // via aura::ast::MutationVisitor (not this concept).
+//
+// Purpose: uniform pipeline entry for optimization / analysis units
+// Pre: P implements run(IRModule&) and has_error()
+// Post: pipeline may short-circuit when has_error() is true after run
+// Safety Class: P1 (incremental pipeline correctness)
+// Issue: #1577 / #1886
+// AI-Native Rationale: agents discover pass shape without reading each TU;
+//   DirtyAware/Incremental refinements enable partial re-run after mutate
 template <typename P>
 concept Pass = requires(P& p, aura::ir::IRModule& m) {
     { p.run(m) } -> std::same_as<void>;

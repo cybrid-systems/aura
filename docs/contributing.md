@@ -50,6 +50,14 @@ Hand-written docs stay thin. Generated catalogs live under `docs/generated/`
 (`./build.py gate` refreshes them). Prefer updating tests and code comments
 over long prose.
 
+## Naming & comments (#1886)
+
+Names, PrimMeta, and comment templates (Purpose / Pre / Post / Safety Class /
+Issue / AI-Native Rationale):
+
+- [`docs/naming_convention.md`](naming_convention.md) — authority
+- Check: `python3 scripts/check_naming_convention.py`
+
 ## Architecture / module boundaries (#1885)
 
 Dependency direction and cross-layer contracts:

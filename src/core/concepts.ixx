@@ -224,6 +224,14 @@ concept SymbolInterner = requires(S& s, std::string_view name) {
 // The concept locks the shape: any type that exposes
 // is_valid(ast) + id() can be used wherever a stable
 // ref is expected.
+//
+// Purpose: constrain cross-mutation handles to is_valid + id shape
+// Pre: C is an AST-like container; R is a candidate ref type
+// Post: concept true iff R can be validated against C and yields a node id
+// Safety Class: P0 (prevents use-after-mutation via generation checks)
+// Issue: #501 / #1886
+// AI-Native Rationale: agents must not pass raw NodeId across fiber/tenant;
+//   pair with provenance (module_boundary CrossLayerStableRef)
 export template <typename R, typename C>
 concept StableNodeRefLike = requires(const R& r, const C& ast) {
     { r.is_valid(ast) } -> std::convertible_to<bool>;
