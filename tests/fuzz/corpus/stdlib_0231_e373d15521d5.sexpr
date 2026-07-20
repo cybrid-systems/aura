@@ -1,0 +1,5 @@
+(define (string-suffix? s suffix)
+  (define slen (string-length s))
+  (define suflen (string-length suffix))
+  (if (> suflen slen) #f
+    (equal? (substring s (- slen suflen) slen) suffix)))

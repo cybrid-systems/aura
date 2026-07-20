@@ -1,0 +1,7 @@
+(define (llm-ask prompt)
+  (let* ((body (string-append
+          "{\"model\":\"" llm-model "\",\"messages\":["
+          "{\"role\":\"system\",\"content\":\"You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation.\"},"
+          "{\"role\":\"user\",\"content\":\"" prompt "\"}]}"))
+         (resp (http-post api-url body api-key)))
+    resp))

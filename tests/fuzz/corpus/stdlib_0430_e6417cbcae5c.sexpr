@@ -1,0 +1,3 @@
+(if (>= (* i i) n) #t
+;; hint:       (if (= (modulo n i) 0) #f
+;; hint:         (loop (+ i 1))))

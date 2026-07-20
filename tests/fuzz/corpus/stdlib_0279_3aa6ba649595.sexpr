@@ -1,0 +1,1 @@
+(define (vec:sum v) (vec:fold + 0 v))

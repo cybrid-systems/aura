@@ -1,0 +1,5 @@
+(define aura-llm-call
+  (lambda (body)
+    (let ((key (getenv "LLM_API_KEY")))
+      (if (or (not key) (= (string-length key) 0)) ""
+        (http-post "https://api.deepseek.com/v1/chat/completions" body key)))))

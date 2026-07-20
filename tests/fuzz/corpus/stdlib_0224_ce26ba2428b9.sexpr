@@ -1,0 +1,2 @@
+(define (string-drop s n)
+  (substring s (min n (string-length s)) (string-length s)))

@@ -1,0 +1,2 @@
+(define (string->chars s)
+  (string->list s))

@@ -1,0 +1,3 @@
+(define (timestamp->weekday t)
+  ; Jan 1, 1970 was Thursday (4)
+  (modulo (+ (quotient t 86400) 4) 7))

@@ -59,6 +59,19 @@ python3 tests/python/run_e2e.py --update-golden
 
 Details: [`tests/e2e/README.md`](../tests/e2e/README.md).
 
+## Fuzzing (#1935)
+
+Unified entrypoint:
+
+```bash
+./build.py fuzz --list
+./build.py fuzz --all --quick
+./build.py fuzz --only core,corpus,hygiene_prop --continue-on-error
+```
+
+Drivers live under `tests/fuzz/drivers/`; corpus under `tests/fuzz/corpus/`.
+See [`docs/fuzzing.md`](fuzzing.md).
+
 Thin entrypoints at `tests/*.py` forward into `tests/python/` or
 `tests/bench/` so path moves do not break scripts or docs.
 

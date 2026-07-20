@@ -1,0 +1,3 @@
+(define (string-repeat s n)
+  (if (<= n 1) (if (= n 1) s "")
+    (string-append s (string-repeat s (- n 1)))))

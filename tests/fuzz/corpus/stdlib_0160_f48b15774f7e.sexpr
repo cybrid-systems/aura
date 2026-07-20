@@ -1,0 +1,7 @@
+(define (merge-sorted a b)
+  (cond ((null? a) b)
+        ((null? b) a)
+        ((< (car a) (car b))
+         (cons (car a) (merge-sorted (cdr a) b)))
+        (else
+         (cons (car b) (merge-sorted a (cdr b))))))

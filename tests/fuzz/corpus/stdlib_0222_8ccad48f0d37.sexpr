@@ -1,0 +1,8 @@
+(define (string-contains? haystack needle)
+  (define hlen (string-length haystack))
+  (define nlen (string-length needle))
+  (if (> nlen hlen) #f
+    (let iter ((i 0))
+      (if (> i (- hlen nlen)) #f
+        (if (equal? (substring haystack i (+ i nlen)) needle) #t
+          (iter (+ i 1)))))))

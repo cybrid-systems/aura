@@ -1,0 +1,4 @@
+(define (intersperse sep lst)
+  (if (or (null? lst) (null? (cdr lst)))
+    lst
+    (cons (car lst) (cons sep (intersperse sep (cdr lst))))))

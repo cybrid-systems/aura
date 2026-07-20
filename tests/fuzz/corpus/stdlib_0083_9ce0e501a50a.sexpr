@@ -1,0 +1,4 @@
+(define (drop-while pred lst)
+  (if (or (null? lst) (not (pred (car lst))))
+    lst
+    (drop-while pred (cdr lst))))

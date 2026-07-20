@@ -1,0 +1,2 @@
+(define (const x)
+  (lambda (y) x))

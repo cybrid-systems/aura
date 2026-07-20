@@ -1,0 +1,5 @@
+(define (timestamp->iso-datetime t)
+  (string-append (timestamp->iso-date t) "T"
+    (pad2 (timestamp->hour t)) ":"
+    (pad2 (timestamp->minute t)) ":"
+    (pad2 (timestamp->second t)) "Z"))

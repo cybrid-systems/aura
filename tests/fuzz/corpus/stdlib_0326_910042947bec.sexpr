@@ -1,0 +1,6 @@
+(defmacro (test-suite name . body)
+  (let ((collect-name (string-append "test:" name)))
+    (list 'begin
+      (list 'define collect-name
+        (list 'cons name (list 'quote body)))
+      collect-name)))

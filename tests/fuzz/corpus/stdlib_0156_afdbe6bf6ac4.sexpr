@@ -1,0 +1,7 @@
+(define (median lst)
+  (let* ((s (sort lst))
+         (n (length s))
+         (mid (quotient n 2)))
+    (if (= (modulo n 2) 1)
+      (list-ref s mid)
+      (/ (+ (list-ref s (- mid 1)) (list-ref s mid)) 2))))

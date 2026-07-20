@@ -1,0 +1,1 @@
+(define (hash-set h k v) (hash-set! h k v) h)

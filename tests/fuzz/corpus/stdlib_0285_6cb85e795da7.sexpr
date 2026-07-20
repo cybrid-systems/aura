@@ -1,0 +1,4 @@
+(define (zip a b)
+  (if (or (null? a) (null? b))
+    (list)
+    (cons (list (car a) (car b)) (zip (cdr a) (cdr b)))))

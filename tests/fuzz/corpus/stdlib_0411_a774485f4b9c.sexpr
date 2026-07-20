@@ -1,0 +1,1 @@
+(for-each (lambda (c) (hash-set! h c (+ 1 (if (hash-has-key? h c) (hash-ref h c) 0)))) (string->list s))

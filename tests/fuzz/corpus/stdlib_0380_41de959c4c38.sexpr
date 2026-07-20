@@ -1,0 +1,24 @@
+(export
+  ; Constants
+  pi e phi tau
+
+  ; Basic
+  square cube abs clamp signum min max
+  avg mean median mode
+
+  ; Rounding
+  floor ceil round trunc
+
+  ; Trigonometry
+  sin cos tan asin acos atan atan2
+  degrees->radians radians->degrees
+
+  ; Number theory
+  odd? even? positive? negative? zero?
+  gcd lcm prime? factors fibonacci
+
+  ; Combinatorics
+  factorial expt nCr nPr
+
+  ; Statistics
+  sum product range variance stddev percentile normalize)

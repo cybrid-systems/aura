@@ -1,0 +1,2 @@
+(define (timestamp->second t)
+  (modulo (modulo (modulo t 86400) 3600) 60))

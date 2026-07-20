@@ -1,0 +1,4 @@
+(if (null? tree) 0
+;; hint:     (if (pair? tree)
+;; hint:       (+ (tree-sum (car tree)) (tree-sum (cdr tree)))
+;; hint:       tree))

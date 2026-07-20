@@ -1,0 +1,2 @@
+(define (json-obj-items h keys json-fn)
+  (if (null? keys) "" (string-append (c2s 34) (json-escape (car keys)) (c2s 34) (c2s 58) (json-fn (hash-ref h (car keys))) (if (null? (cdr keys)) "" (string-append (c2s 44) (json-obj-items h (cdr keys) json-fn))))))

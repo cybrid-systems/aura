@@ -1,0 +1,2 @@
+(define (csv-select cols rows)
+  (map (lambda (row) (map (lambda (c) (list-ref row c)) cols)) rows))

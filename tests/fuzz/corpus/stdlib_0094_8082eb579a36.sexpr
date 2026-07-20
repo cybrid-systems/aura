@@ -1,0 +1,2 @@
+(define (file->string path)
+  (read-file path))

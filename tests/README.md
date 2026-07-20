@@ -43,7 +43,7 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | **`python/`** | Harness + runners + gate unit tests (#1932) | New Python drivers; see `python/README.md` |
 | **`e2e/`** | Strengthened .aura E2E + commercial_readiness (#1934) | Machine-checkable PASS/FAIL + goldens |
 | **`bench/`** | Benchmarks (C++ + Python + baseline) | SLO / microbench drivers |
-| **`fuzz/`** | Fuzz campaigns / corpus | Long-run fuzz only (not default gate) |
+| **`fuzz/`** | Unified fuzz orchestrator + corpus (#1935) | `./build.py fuzz --list` / nightly |
 | **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
 | root `test_*_batch.cpp` | Intermediate family batches | Consolidating several related issue tests |

@@ -1,0 +1,4 @@
+(define (max-by lst key)
+  (if (null? lst) #f
+    (foldl (lambda (a b) (if (> (key a) (key b)) a b))
+           (car lst) (cdr lst))))

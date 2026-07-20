@@ -1,0 +1,8 @@
+(define output-contains-any?
+  (lambda (output expected-str)
+    (if (string=? expected-str "") #t
+      (let ((kws (string-split expected-str ",")))
+        (let check ((ks kws))
+          (if (null? ks) #f
+            (if (string-contains? output (string-trim (car ks)))
+              #t (check (cdr ks)))))))))

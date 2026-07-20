@@ -1,0 +1,6 @@
+(define (timestamp->date-string t)
+  (let ((weekday (list "Thu" "Fri" "Sat" "Sun" "Mon" "Tue" "Wed")))
+    (string-append
+      (list-ref weekday (timestamp->weekday t)) " "
+      (number->string (timestamp->day t)) " "
+      (number->string (timestamp->year t)))))

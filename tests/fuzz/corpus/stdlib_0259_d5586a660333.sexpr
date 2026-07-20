@@ -1,0 +1,3 @@
+(define (unfold p f g seed)
+  (if (p seed) (list)
+    (cons (f seed) (unfold p f g (g seed)))))

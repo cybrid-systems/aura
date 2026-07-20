@@ -1,0 +1,2 @@
+(define (maybe? v)
+  (not (null? v)))

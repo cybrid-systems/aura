@@ -1,0 +1,6 @@
+(define try-mutation
+  (lambda (src expected-str)
+    (let ((result (eval-current-output)))
+      (if (and (string? result) (output-contains-any? result expected-str))
+          (list #t result)
+          (list #f result)))))

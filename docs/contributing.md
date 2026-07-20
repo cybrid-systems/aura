@@ -10,6 +10,7 @@ changes with tests next to the subsystem they protect.
 ./build.py check    # gate + build + tests
 ./build.py bench --strict   # compiler benchmark SLO (#1569)
 ./build.py coverage --html  # LLVM source coverage report (#1933)
+./build.py fuzz --list      # unified fuzzers (#1935)
 
 # Unified Python runner (#1961)
 python3 tests/run.py list

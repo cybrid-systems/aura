@@ -1,0 +1,5 @@
+(define (vector-find pred v)
+  (let iter ((i 0))
+    (if (>= i (vector-length v)) -1
+      (if (pred (vector-ref v i)) i
+        (iter (+ i 1))))))

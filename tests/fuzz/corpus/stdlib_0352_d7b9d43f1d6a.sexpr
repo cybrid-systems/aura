@@ -1,0 +1,1 @@
+(display (file-size "/tmp/aura-size-test.txt"))

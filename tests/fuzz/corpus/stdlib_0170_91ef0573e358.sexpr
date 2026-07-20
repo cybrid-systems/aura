@@ -1,0 +1,2 @@
+(define (partition pred lst)
+  (list (filter pred lst) (filter (lambda (x) (not (pred x))) lst)))

@@ -1,0 +1,4 @@
+(define (last lst)
+  (if (null? lst) (list)
+    (if (null? (cdr lst)) (car lst)
+      (last (cdr lst)))))
