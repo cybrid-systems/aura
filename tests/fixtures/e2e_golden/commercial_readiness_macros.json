@@ -1,0 +1,13 @@
+{
+  "schema": 1934,
+  "issue": 1934,
+  "source": "tests/e2e/commercial_readiness/commercial_readiness_macros.aura",
+  "pass_labels": [
+    "quote-list",
+    "quote-nested",
+    "pair-quote",
+    "car-quote",
+    "cadr-quote"
+  ],
+  "min_passes": 5
+}

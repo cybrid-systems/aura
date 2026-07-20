@@ -1,0 +1,13 @@
+{
+  "schema": 1934,
+  "issue": 1934,
+  "source": "tests/e2e/commercial_readiness/commercial_readiness_io_json_persist.aura",
+  "pass_labels": [
+    "json-encode-42",
+    "json-parse-42",
+    "json-stringify-alias",
+    "str-append",
+    "str-len"
+  ],
+  "min_passes": 5
+}

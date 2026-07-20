@@ -41,6 +41,7 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | `fixtures/` | Shared case data (sharded JSON) + profiles | See [`fixtures/README.md`](fixtures/README.md) (#1962) |
 | `templates/` | Copy-paste starters (not built) | Scaffold a new domain suite |
 | **`python/`** | Harness + runners + gate unit tests (#1932) | New Python drivers; see `python/README.md` |
+| **`e2e/`** | Strengthened .aura E2E + commercial_readiness (#1934) | Machine-checkable PASS/FAIL + goldens |
 | **`bench/`** | Benchmarks (C++ + Python + baseline) | SLO / microbench drivers |
 | **`fuzz/`** | Fuzz campaigns / corpus | Long-run fuzz only (not default gate) |
 | **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |

@@ -1,0 +1,25 @@
+;; commercial_readiness_edsl.aura — Issue #1934
+;; set-code + eval-current + query (mutate:rebind after set-code currently
+;; SIGSEGV; rebind without set-code is a no-op on this build — pinned later).
+
+(define *e2e-fails* 0)
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (set! *e2e-fails* (+ *e2e-fails* 1))
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+(define (expect-true label actual)
+  (expect label (if actual #t #f) #t))
+
+(expect "set-code-add" (begin (set-code "(+ 10 32)") (eval-current)) 42)
+(expect-true "query-root" (not (null? (query:root))))
+(expect-true "query-children" (pair? (query:children (query:root))))
+(expect-true "query-node" (pair? (query:node (query:root))))
+
+(if (= *e2e-fails* 0)
+    (begin (display "E2E-PASS") (newline))
+    (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

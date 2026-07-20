@@ -38,6 +38,27 @@ python3 tests/run.py fixtures
 
 See [`docs/testing.md`](testing.md) for coverage details (preset, artifacts, CI).
 
+## Strengthened .aura E2E (#1934)
+
+Commercial readiness and high-value language paths live under
+`tests/e2e/commercial_readiness/` with **machine-checkable** PASS/FAIL
+lines and `E2E-PASS` markers. Python helpers:
+
+| API | Role |
+|-----|------|
+| `e2e_harness.run_aura_file` | `aura --load` + capture |
+| `check_e2e_pass` | zero FAIL, no crash, E2E-PASS |
+| `check_golden` / `check_pass_labels` | golden PASS labels |
+| `./build.py test e2e` | full suite + goldens |
+
+Goldens: `tests/fixtures/e2e_golden/*.json`. Update with:
+
+```bash
+python3 tests/python/run_e2e.py --update-golden
+```
+
+Details: [`tests/e2e/README.md`](../tests/e2e/README.md).
+
 Thin entrypoints at `tests/*.py` forward into `tests/python/` or
 `tests/bench/` so path moves do not break scripts or docs.
 

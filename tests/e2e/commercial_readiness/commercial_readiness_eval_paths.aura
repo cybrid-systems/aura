@@ -1,0 +1,27 @@
+;; commercial_readiness_eval_paths.aura — Issue #1934
+
+(define *e2e-fails* 0)
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (set! *e2e-fails* (+ *e2e-fails* 1))
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+(define (expect-true label actual)
+  (expect label (if actual #t #f) #t))
+
+(expect "if-t" (if #t 1 2) 1)
+(expect "if-f" (if #f 1 2) 2)
+(expect "begin" (begin 1 2 3) 3)
+(expect "let" (let ((a 2) (b 3)) (+ a b)) 5)
+(define (fact n) (if (<= n 1) 1 (* n (fact (- n 1)))))
+(expect "fact5" (fact 5) 120)
+(expect "fact0" (fact 0) 1)
+(expect "cond" (cond ((< 1 0) 0) ((> 1 0) 9) (else 1)) 9)
+
+(if (= *e2e-fails* 0)
+    (begin (display "E2E-PASS") (newline))
+    (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

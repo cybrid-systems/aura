@@ -6,7 +6,9 @@
 ./build.py gate          # static checks
 ./build.py check         # gate + build + CI test matrix
 ./build.py test smoke    # single suite
+./build.py test e2e      # commercial_readiness golden E2E (#1934)
 python3 tests/run.py list
+python3 tests/run.py e2e
 ```
 
 Layout / contribution policy: [`tests/README.md`](../tests/README.md),

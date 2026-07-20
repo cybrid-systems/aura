@@ -228,6 +228,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ba.add_argument("rest", nargs=argparse.REMAINDER)
     p_ba.set_defaults(func=_cmd_bash)
 
+    p_e2e = sub.add_parser("e2e", help="commercial_readiness E2E + golden (#1934)")
+    p_e2e.add_argument("rest", nargs=argparse.REMAINDER)
+    p_e2e.set_defaults(func=lambda a: _cmd_script(a, "run_e2e.py", "e2e"))
+
     return ap
 
 
