@@ -4,7 +4,7 @@
   "count": 1077,
   "count": 1076,
   "by_category": {
-    "integration": 482,
+    "integration": 481,
     "issue_specific": 7,
     "regression": 2,
     "unit": 236,
@@ -3919,13 +3919,7 @@
       "issue": null
     },
     {
-      "file": "tests/test_arena_auto_compact_policy_1621.cpp",
-      "category": "integration",
-      "reason": "Issue #1621 — Arena smart auto-compact policy + dirty/Shape",
-      "issue": null
-    },
-    {
-      "file": "tests/test_arena_compaction_orchestration_closed_loop_405.cpp",
+      "file": "tests/test_arena_batch.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
@@ -3934,24 +3928,6 @@
       "file": "tests/test_arena_defrag_concurrent.cpp",
       "category": "integration",
       "reason": "concurrent arena.create<T>() + request_defrag()/defrag()",
-      "issue": null
-    },
-    {
-      "file": "tests/test_arena_owner_dtor_clear_1662.cpp",
-      "category": "unit",
-      "reason": "Issue #1662 — ~Evaluator must clear arena_owner_ + compact",
-      "issue": null
-    },
-    {
-      "file": "tests/test_arena_panic_checkpoint_nested_fiber.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/test_arena_quota_wired.cpp",
-      "category": "unit",
-      "reason": "Issue #1546 / #1554 / #1594 — Arena::allocate_raw ↔ check_arena_quota wiring",
       "issue": null
     },
     {
