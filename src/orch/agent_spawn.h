@@ -1,4 +1,13 @@
 // agent_spawn.h — Issue #1588 / #1879 / #1880: unified agent spawn.
+//
+// STATUS: Advanced / Experimental (Issue #1945, 2026-07 through 2026-10).
+// See docs/agent-orchestration-status.md for the full MVP vs deferred
+// scope + re-enable path. The single-agent MVP path (spawn +
+// join + send/recv + AgentHandle/AgentSpec + OrchModuleStats) is
+// production-safe. The multi-agent coordination surface
+// (AgentRegistry + conduct_parallel) is // DEFERRED per #1965
+// cycle 1 (commit bcb68c7c); tracked by
+// scripts/check_orch_mvp_scope.py.
 // Header API under aura::orch; pairs with serve/parallel_orch and multi_fiber_mailbox.
 // Issue #1879: spawn body exit + join force StableNodeRef provenance refresh.
 // Issue #1880: ResourceQuota preflight (arena/mailbox/fibers) + try_acquire
