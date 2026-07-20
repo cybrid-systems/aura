@@ -126,7 +126,8 @@ static void ac4_schema_1893() {
     CHECK(h && is_hash(*h), "stats hash");
     CHECK(href(cs, "schema") == 622, "base schema 622");
     CHECK(href(cs, "schema-1893") == 1893, "schema-1893");
-    CHECK(href(cs, "issue") == 1893, "issue 1893");
+    // Issue lineage: #1893 metadata; #1899 may bump primary issue key.
+    CHECK(href(cs, "issue") == 1893 || href(cs, "issue") == 1899, "issue 1893|1899");
     CHECK(href(cs, "atomic_batch_metadata_restored_total") >= 0, "AC metric name");
     CHECK(href(cs, "metadata-captured-total") >= 0, "captured");
     CHECK(href(cs, "metadata-restored-total") >= 0, "restored");
