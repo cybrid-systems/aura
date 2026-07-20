@@ -201,6 +201,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:stable-ref-cross-cow-provenance-stats",
     "query:stable-ref-provenance-stats",
     // Issue #1565 — Capability Effects enforcement + provenance binding
+    // Issue #1876 — sandbox-status fields folded into capability-effect-stats
     "query:capability-effect-stats",
     // Issue #1566 — multi-tenant WorkspaceIsolationPolicy
     "query:tenant-isolation-stats",

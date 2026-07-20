@@ -10,6 +10,8 @@ module;
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
 #include "core/mutation_audit_wal.hh"
+#include "core/provenance_tracker.hh"
+#include "observability_metrics.h"
 
 module aura.compiler.evaluator;
 
@@ -94,13 +96,16 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     }
 }
 
-// Issue #1565: force side-effect paths through capability effect check.
+// Issue #1565 / #1876: force side-effect paths through capability effect check.
+// #1876: under sandbox, also validate/record StableNodeRef provenance and
+// bump sandbox_violations_total + capability_denials_by_effect metrics.
 bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                         std::uint16_t actual_effect_bits, std::string_view op,
                                         ast::NodeId target_node, std::uint64_t tenant_id,
                                         std::uint64_t provenance_mutation_id) noexcept {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
+    using namespace aura::core::provenance;
 
     // Keep sandbox.hh mode in sync with evaluator sandbox_mode_ + Strict.
     if (sandbox_mode_ && g_capability_registry().sandbox_mode == EffectSandboxMode::Off)
@@ -118,6 +123,27 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     const bool wildcard = has_capability(kCapWildcard);
     // When evaluator sandbox is off and effect mode is Off, still record.
     const bool sb_active = sandbox_mode_ || is_strict() || is_sandbox_active();
+
+    // Issue #1876: under sandbox, deny when explicit tenant arg mismatches
+    // the evaluator's capability_tenant_id_ (cross-tenant effect).
+    if (sb_active && !wildcard) {
+        const auto cur_tenant = capability_tenant_id_;
+        if (tenant_id != 0 && cur_tenant != 0 && tenant_id != cur_tenant) {
+            bump_capability_denial();
+            g_sandbox_state().effect_denials++;
+            g_sandbox_state().effect_checks++;
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                m->sandbox_violations_total.fetch_add(1, std::memory_order_relaxed);
+                m->sandbox_provenance_invalid_total.fetch_add(1, std::memory_order_relaxed);
+                m->capability_denials_by_effect.fetch_or(required_effect_bits,
+                                                         std::memory_order_relaxed);
+                using aura::compiler::security::kEffectMutate;
+                if (required_effect_bits & kEffectMutate)
+                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return false;
+        }
+    }
 
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
@@ -159,6 +185,24 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     if (!ok) {
         bump_capability_denial();
         g_sandbox_state().effect_denials++;
+        // Issue #1876: CompilerMetrics sandbox violation + per-effect denials.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            if (sb_active || is_strict() || is_sandbox_active())
+                m->sandbox_violations_total.fetch_add(1, std::memory_order_relaxed);
+            m->capability_denials_by_effect.fetch_or(required_effect_bits,
+                                                     std::memory_order_relaxed);
+            using aura::compiler::security::kEffectFfi;
+            using aura::compiler::security::kEffectMutate;
+            if (required_effect_bits & kEffectMutate)
+                m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+            if (required_effect_bits & kEffectFfi)
+                m->capability_denial_ffi_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (sb_active) {
+        // Issue #1876: all allowed effects under sandbox record provenance.
+        g_provenance_tracker().record_mutation();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->sandbox_provenance_records_total.fetch_add(1, std::memory_order_relaxed);
     }
     g_sandbox_state().effect_checks++;
     return ok;
