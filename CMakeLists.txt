@@ -5241,6 +5241,9 @@ aura_issue_test_link_llvm_jit(test_env_view_lifetime_1868)
 # Issue #1869: EnvView::lookup* share MAX_ENV_DEPTH (cyclic parent safe).
 aura_add_issue_test(test_env_view_lookup_depth_1869)
 aura_issue_test_link_llvm_jit(test_env_view_lookup_depth_1869)
+# Issue #1870: ClosureView zero-copy span/pointer lifetime (invalidate on mutate).
+aura_add_issue_test(test_closure_view_lifetime_1870)
+aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1870)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

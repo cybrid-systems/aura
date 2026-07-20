@@ -1910,6 +1910,10 @@ std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
     return parent ? parent->lookup_by_symid(s) : std::nullopt;
 }
 
+// Issue #1870: zero-copy ClosureView. params span + name string_view +
+// flat/pool/owner_arena raw pointers dangle if the Closure (or its
+// pointees) is mutated/freed. Same lifetime class as EnvView (#1868).
+// See ClosureView comment in evaluator.ixx.
 ClosureView make_closure_view(const Closure& cl) {
     ClosureView v;
     v.params = std::span<const aura::ast::SymId>(cl.params.data(), cl.params.size());
