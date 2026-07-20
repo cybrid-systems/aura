@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 521,
-  "frozen_count": 449,
+  "frozen_count": 450,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -347,6 +347,7 @@
     "query:scheduler-stealbudget-adaptive-stats",
     "query:security-stats",
     "query:self-evo-pipeline-stats",
+    "query:self-evo-stats",
     "query:self-evolution-chaos-stats",
     "query:self-evolution-hygiene-dirty-epoch-stats",
     "query:self-evolution-loop-stats",
@@ -987,7 +988,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 426,
+  "stats_count": 427,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1316,6 +1317,7 @@
     "query:scheduler-stealbudget-adaptive-stats",
     "query:security-stats",
     "query:self-evo-pipeline-stats",
+    "query:self-evo-stats",
     "query:self-evolution-chaos-stats",
     "query:self-evolution-hygiene-dirty-epoch-stats",
     "query:self-evolution-loop-stats",
