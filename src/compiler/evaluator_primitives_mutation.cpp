@@ -572,9 +572,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
                 active = ev.workspace_flat_->atomic_batch_active();
             }
-            // Issue #1878 / #1893 / #1899: capacity 32 for atomicity +
-            // metadata + data-driven dispatch inventory fields.
-            auto* ht = FlatHashTable::create(32);
+            // Issue #1878 / #1893 / #1899 / #1913: capacity 64 for atomicity +
+            // metadata + dispatch + index-sync inventory fields.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -647,7 +647,55 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("no-inter-op-yield", 1);
             insert_kv("lockless-ops-covered", 13);
             insert_kv("schema-1899", 1899);
-            insert_kv("issue", 1899);
+            // Issue #1913: atomic-batch ↔ tag_arity_index / query:pattern E2E.
+            // Prefer existing stats-hash (no new public primitive name).
+            std::int64_t idx_sync =
+                static_cast<std::int64_t>(ev.get_atomic_batch_index_sync_hits());
+            std::int64_t idx_skip =
+                static_cast<std::int64_t>(ev.get_atomic_batch_index_rebuild_skipped());
+            std::int64_t idx_full =
+                static_cast<std::int64_t>(ev.get_atomic_batch_index_full_rebuilds());
+            std::int64_t idx_calls =
+                static_cast<std::int64_t>(ev.get_atomic_batch_index_sync_calls());
+            std::int64_t pat_lat =
+                static_cast<std::int64_t>(ev.get_pattern_query_after_batch_latency_us_max());
+            std::int64_t pat_samples = 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                idx_sync = static_cast<std::int64_t>(
+                    std::max(static_cast<std::uint64_t>(idx_sync),
+                             m->atomic_batch_index_sync_hits.load(std::memory_order_relaxed)));
+                idx_skip = static_cast<std::int64_t>(std::max(
+                    static_cast<std::uint64_t>(idx_skip),
+                    m->atomic_batch_index_rebuild_skipped.load(std::memory_order_relaxed)));
+                idx_full = static_cast<std::int64_t>(
+                    std::max(static_cast<std::uint64_t>(idx_full),
+                             m->atomic_batch_index_full_rebuilds.load(std::memory_order_relaxed)));
+                idx_calls = static_cast<std::int64_t>(
+                    std::max(static_cast<std::uint64_t>(idx_calls),
+                             m->atomic_batch_index_sync_calls.load(std::memory_order_relaxed)));
+                pat_lat = static_cast<std::int64_t>(std::max(
+                    static_cast<std::uint64_t>(pat_lat),
+                    m->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed)));
+                pat_samples = static_cast<std::int64_t>(
+                    m->pattern_query_after_batch_samples.load(std::memory_order_relaxed));
+            }
+            insert_kv("atomic_batch_index_sync_hits", idx_sync);
+            insert_kv("atomic-batch-index-sync-hits", idx_sync);
+            insert_kv("atomic_batch_index_rebuild_skipped", idx_skip);
+            insert_kv("atomic-batch-index-rebuild-skipped", idx_skip);
+            insert_kv("atomic_batch_index_full_rebuilds", idx_full);
+            insert_kv("atomic-batch-index-full-rebuilds", idx_full);
+            insert_kv("atomic_batch_index_sync_calls", idx_calls);
+            insert_kv("pattern_query_after_batch_latency", pat_lat);
+            insert_kv("pattern-query-after-batch-latency", pat_lat);
+            insert_kv("pattern_query_after_batch_latency_us", pat_lat);
+            insert_kv("pattern-query-after-batch-samples", pat_samples);
+            insert_kv("sync-query-index-default",
+                      ev.atomic_batch_sync_query_index_default() ? 1 : 0);
+            insert_kv("index-sync-wired", 1);
+            insert_kv("dirty-fraction-policy-wired", 1);
+            insert_kv("schema-1913", 1913);
+            insert_kv("issue", 1913);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

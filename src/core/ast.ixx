@@ -7162,18 +7162,14 @@ public:
             if (size() >= max_live_nodes_warn_)
                 live_nodes_threshold_warn_count_.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #1371: after batch commit, refresh tag_arity
-        // index via delta when only appends occurred; otherwise
-        // leave dirty for ensure_tag_arity_index on next query.
-        if (tag_arity_index_dirty_.load(std::memory_order_acquire)) {
-            const std::size_t n = size();
-            if (!tag_arity_index_.empty() && n > tag_arity_index_built_size_) {
-                rebuild_tag_arity_index_delta(static_cast<NodeId>(tag_arity_index_built_size_),
-                                              static_cast<NodeId>(n));
-            }
-            // else: in-place mutates or empty index — keep dirty
-            // so ensure_tag_arity_index() full-rebuilds later.
-        }
+        // Issue #1371 / #1503 / #1913: after batch commit, refresh
+        // FlatAST tag_arity_index via dirty-fraction policy (delta
+        // append / incremental patch / threshold full rebuild).
+        // Evaluator::tag_arity_index_sync_after_atomic_batch also
+        // runs on mutate:atomic-batch commit (default) for the
+        // dual Evaluator index used by query:pattern.
+        mark_tag_arity_index_dirty();
+        ensure_tag_arity_index();
     }
 
     // Roll back the batch. No bump (the changes were never

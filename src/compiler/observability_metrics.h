@@ -942,6 +942,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> batch_refresh_latency_us_total{0};
     std::atomic<std::uint64_t> batch_refresh_latency_us_max{0};
     std::atomic<std::uint64_t> stable_refs_batch_health_queries_total{0};
+    // Issue #1913: atomic-batch ↔ tag_arity_index / query:pattern end-to-end.
+    // atomic_batch_index_sync_hits: incremental dirty-fraction syncs after commit.
+    // atomic_batch_index_rebuild_skipped: full rebuild avoided (dirty frac < thr).
+    // pattern_query_after_batch_latency_us_max: max query:pattern cost after batch.
+    std::atomic<std::uint64_t> atomic_batch_index_sync_hits{0};
+    std::atomic<std::uint64_t> atomic_batch_index_rebuild_skipped{0};
+    std::atomic<std::uint64_t> atomic_batch_index_full_rebuilds{0};
+    std::atomic<std::uint64_t> atomic_batch_index_sync_calls{0};
+    std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_total{0};
+    std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_max{0};
+    std::atomic<std::uint64_t> pattern_query_after_batch_samples{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};

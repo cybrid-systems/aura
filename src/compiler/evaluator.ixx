@@ -3733,6 +3733,12 @@ private:
     void tag_arity_index_append_nodes(const ast::FlatAST& flat, std::size_t from_id) const;
     void tag_arity_index_prune_stale_entries(const ast::FlatAST& flat) const;
     void tag_arity_index_sync_after_mutation(const ast::FlatAST& flat) const;
+    // Issue #1913: post-atomic-batch index sync with dirty-fraction policy.
+    // Prefer incremental patch when dirty_n/size < threshold; else full rebuild.
+    // sync_query_index=false is a no-op (caller opted out via :sync-query-index? #f).
+    // Records atomic_batch_index_sync_hits / rebuild_skipped / full_rebuilds.
+    // Arms pattern_query_after_batch latency capture for the next query:pattern.
+    void tag_arity_index_sync_after_atomic_batch(bool sync_query_index = true) const;
     // Drop the index (called on workspace changes).
     // Issue #371: take unique_lock on tag_arity_index_mtx_.
     // The helpers (build_tag_arity_index, insert/remove/
@@ -4446,6 +4452,21 @@ private:
     // Issue #1503: Lazy policy auto-syncs when index is already warm
     // (post first query:pattern) so mutate→query stays incremental.
     mutable std::atomic<std::uint64_t> pattern_index_auto_warm_syncs_{0};
+    // Issue #1913: atomic-batch post-commit tag_arity_index sync policy
+    // + metrics (mirrored to CompilerMetrics for engine:metrics dashboards).
+    // Default true = commit path always refreshes Evaluator index so
+    // subsequent query:pattern is incremental (dirty-fraction), not O(N).
+    mutable std::atomic<bool> atomic_batch_sync_query_index_default_{true};
+    mutable std::atomic<std::uint64_t> atomic_batch_index_sync_hits_{0};
+    mutable std::atomic<std::uint64_t> atomic_batch_index_rebuild_skipped_{0};
+    mutable std::atomic<std::uint64_t> atomic_batch_index_full_rebuilds_{0};
+    mutable std::atomic<std::uint64_t> atomic_batch_index_sync_calls_{0};
+    mutable std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_max_{0};
+    mutable std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_total_{0};
+    mutable std::atomic<std::uint64_t> pattern_query_after_batch_samples_{0};
+    // Armed after successful atomic-batch index sync; consumed by next
+    // snapshot_tag_arity_bucket (query:pattern) to record post-batch latency.
+    mutable std::atomic<bool> pattern_query_after_batch_armed_{false};
     // Issue #448: mutation coordination observability. Bumped
     // by the scheduler / fiber hooks when:
     //   - a work-steal attempt is deferred or skipped
@@ -5523,6 +5544,28 @@ public:
     }
     [[nodiscard]] std::uint64_t get_pattern_index_auto_warm_syncs() const noexcept {
         return pattern_index_auto_warm_syncs_.load(std::memory_order_relaxed);
+    }
+    // Issue #1913: atomic-batch index sync observability (mirrors CompilerMetrics).
+    [[nodiscard]] std::uint64_t get_atomic_batch_index_sync_hits() const noexcept {
+        return atomic_batch_index_sync_hits_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_atomic_batch_index_rebuild_skipped() const noexcept {
+        return atomic_batch_index_rebuild_skipped_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_atomic_batch_index_full_rebuilds() const noexcept {
+        return atomic_batch_index_full_rebuilds_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_atomic_batch_index_sync_calls() const noexcept {
+        return atomic_batch_index_sync_calls_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t get_pattern_query_after_batch_latency_us_max() const noexcept {
+        return pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool atomic_batch_sync_query_index_default() const noexcept {
+        return atomic_batch_sync_query_index_default_.load(std::memory_order_relaxed);
+    }
+    void set_atomic_batch_sync_query_index_default(bool on) noexcept {
+        atomic_batch_sync_query_index_default_.store(on, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t get_stale_ref_blocked_count() const noexcept {
         return stale_ref_blocked_count_.load(std::memory_order_relaxed);

@@ -3137,6 +3137,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   :snapshot? #t — capture pre-batch snapshot (Issue #737)
     //   :tenant-target N — under Strict sandbox, require workspace
     //     isolation grant for target tenant N (Issue #1878 multi-tenant).
+    //   :sync-query-index? #t — post-commit tag_arity_index dirty-fraction
+    //     sync so query:pattern is immediately consistent (Issue #1913;
+    //     default true via Evaluator::atomic_batch_sync_query_index_default).
     // Issue #213: MutationBoundaryGuard + batch rollback_since are
     // complementary (guard ok flag vs log rollback).
     add_mutate("mutate:atomic-batch", [&ev, mev, safe_str](const auto& a) -> EvalValue {
@@ -3145,11 +3148,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // also takes workspace_mtx_; nested acquire deadlocks).
         if (a.size() < 1) {
             return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
-                                  "[:snapshot? #t] [:tenant-target N])");
+                                  "[:snapshot? #t] [:tenant-target N] "
+                                  "[:sync-query-index? #t|#f])");
         }
         bool want_snapshot = false;
         std::uint64_t tenant_target = 0;
         bool have_tenant_target = false;
+        // Issue #1913: default true — commit always refreshes index.
+        bool sync_query_index = ev.atomic_batch_sync_query_index_default();
         for (std::size_t ai = 1; ai < a.size(); ++ai) {
             if (is_keyword(a[ai])) {
                 auto kidx = as_keyword_idx(a[ai]);
@@ -3172,6 +3178,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     tenant_target = static_cast<std::uint64_t>(as_int(a[ai + 1]));
                     have_tenant_target = true;
                     ++ai;
+                } else if (kw == ":sync-query-index?") {
+                    // Issue #1913: opt out of post-commit index sync.
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            sync_query_index = as_bool(a[ai + 1]);
+                        else
+                            sync_query_index = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    } else {
+                        sync_query_index = true;
+                    }
                 } else {
                     return mev("bad-arg",
                                std::string("unknown mutate:atomic-batch keyword: ") + kw);
@@ -3437,6 +3454,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         std::uint64_t saved = ev.workspace_flat_->atomic_batch_bumps_saved();
         ev.workspace_flat_->commit_atomic_batch();
         ev.sync_atomic_batch_metadata_metrics(); // #1893
+        // Issue #1913: incremental tag_arity_index sync so query:pattern
+        // immediately sees consistent buckets (dirty-fraction policy).
+        // Default on; opt out with :sync-query-index? #f.
+        ev.tag_arity_index_sync_after_atomic_batch(sync_query_index);
         ev.atomic_batch_domain_.count++;
         ev.atomic_batch_domain_.ops_total += op_count;
         ev.atomic_batch_domain_.bumps_saved_total += saved;
