@@ -212,6 +212,12 @@ option(AURA_ENABLE_TERMINAL
 # -DAURA_ENABLE_SEVA=OFF (see docs/seva.md).
 option(AURA_ENABLE_SEVA "Register seva:* domain primitives (commercial, #1972)" ON)
 
+# Issue #1974: synthesize:* synthesis commercial vertical (deferred).
+# Default ON for synthesize/PRNG/workspace-swap tests; slim:
+# -DAURA_ENABLE_SYNTHESIZE=OFF (see docs/synthesize.md).
+option(AURA_ENABLE_SYNTHESIZE
+       "Register synthesize:* domain primitives (commercial, #1974)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -227,7 +233,7 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967–#1972: per-source commercial/integration vertical flags (avoids
+# Issue #1967–#1974: per-source commercial/integration vertical flags (avoids
 # PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
@@ -259,6 +265,11 @@ if(AURA_ENABLE_SEVA)
 else()
     set(_AURA_ENABLE_SEVA_VAL 0)
 endif()
+if(AURA_ENABLE_SYNTHESIZE)
+    set(_AURA_ENABLE_SYNTHESIZE_VAL 1)
+else()
+    set(_AURA_ENABLE_SYNTHESIZE_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -271,12 +282,13 @@ set_source_files_properties(
     src/compiler/evaluator_primitives_compile.cpp
     PROPERTIES COMPILE_DEFINITIONS
                "AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL};AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL}")
-# auto-evolve-* lives in evaluator_primitives_agent.cpp (7 names only;
-# agent:/strategy: co-registered in the same function stay always on).
+# agent.cpp: auto-evolve-* (#1969) + synthesize:* (#1974).
+# agent:/strategy: co-registered stay always on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_agent.cpp
-    PROPERTIES COMPILE_DEFINITIONS
-               "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL}")
+    PROPERTIES
+        COMPILE_DEFINITIONS
+        "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL}")
 # git-* lives in register_git_primitives (evaluator_primitives_io.cpp).
 # Network/tcp/sys co-in same TU stay always on (separate deferred issues).
 set_source_files_properties(
@@ -295,6 +307,8 @@ message(STATUS "git-* domain: AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL} (#1970)")
 message(STATUS
         "terminal:* domain: AURA_ENABLE_TERMINAL=${_AURA_ENABLE_TERMINAL_VAL} (#1971)")
 message(STATUS "seva:* domain: AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL} (#1972)")
+message(STATUS
+        "synthesize:* domain: AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL} (#1974)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the

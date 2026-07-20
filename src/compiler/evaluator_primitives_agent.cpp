@@ -7,6 +7,9 @@
 // agent:tick and strategy:* co-registered in register_auto_evolve_primitives
 // stay available when the flag is OFF (agent:tick degrades to no-op when
 // auto-evolve-tick/once are unregistered). See docs/auto-evolve.md.
+// Issue #1974: synthesize:* (4 names) gated by AURA_ENABLE_SYNTHESIZE in
+// register_synthesize_primitives; query:templates stays always on.
+// See docs/synthesize.md.
 
 module;
 
@@ -36,6 +39,9 @@ module;
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_AUTO_EVOLVE
 #define AURA_ENABLE_AUTO_EVOLVE 1
+#endif
+#ifndef AURA_ENABLE_SYNTHESIZE
+#define AURA_ENABLE_SYNTHESIZE 1
 #endif
 
 module aura.compiler.evaluator;
@@ -608,6 +614,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     std::function<void()> destroy_defuse_index) {
     // Issue #1232 Phase 1: gate synthesis primitives with kCapSynthesize.
+    // Also wraps query:templates (always registered) for consistent cap checks.
     auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
         add_raw(std::move(name),
                 PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
@@ -623,8 +630,10 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                 }});
     };
 
+#if AURA_ENABLE_SYNTHESIZE
     // ═══════════════════════════════════════════════════════════════
     // P15: Synthesize Template Strategy (P0)
+    // Issue #1974: commercial synthesis vertical (AURA_ENABLE_SYNTHESIZE).
     // ═══════════════════════════════════════════════════════════════
 
     // (synthesize:register-template name pattern param-names...)
@@ -741,6 +750,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             return result;
         return make_bool(true);
     });
+#endif // AURA_ENABLE_SYNTHESIZE
 
     // Issue #561: (synthesize:list-templates) demoted to
     // stdlib (lib/std/synthesize.aura (synthesize:list-templates)
@@ -753,7 +763,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
     // Returns the list of registered synthesize template names.
     // Exposed so std/stats.aura / std/synthesize.aura can
     // enumerate without touching the static g_template_patterns
-    // map directly.
+    // map directly. Always registered (#1974 only gates synthesize:*).
     add("query:templates", [&ev](const auto&) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = g_template_patterns.rbegin(); it != g_template_patterns.rend(); ++it) {
@@ -766,10 +776,10 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
         return list;
     });
 
-    // ═══════════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════════
+#if AURA_ENABLE_SYNTHESIZE
     // ═══════════════════════════════════════════════════════════════
     // P16: Synthesize LLM Strategy — synthesize:define
+    // Issue #1974: commercial synthesis vertical (AURA_ENABLE_SYNTHESIZE).
     // ═══════════════════════════════════════════════════════════════
 
     // (synthesize:define name sig [key :val ...])
@@ -1430,6 +1440,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             ev.pairs_.push_back({make_string(gi), make_string(fi)});
             return make_pair(p1);
         });
+#else
+    (void)destroy_defuse_index;
+#endif // AURA_ENABLE_SYNTHESIZE
 }
 
 void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {

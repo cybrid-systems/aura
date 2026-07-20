@@ -101,8 +101,9 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 #                (Phase-A deprecated no-ops per #1351; real APIs are hyphenated).
 #   - seva:      service evaluation — KEEP deferred, #1972: gated by
 #                AURA_ENABLE_SEVA + COMMERCIAL_DOMAIN_BUDGETS["seva:"].
-#   - strategy:  strategy DSL (commercial vertical, defer).
-#   - synthesize: synthesis (commercial vertical, defer).
+#   - strategy:  strategy DSL (commercial vertical, defer) — #1973.
+#   - synthesize: synthesis — KEEP deferred, #1974: gated by
+#                AURA_ENABLE_SYNTHESIZE + COMMERCIAL_DOMAIN_BUDGETS["synthesize:"].
 #   - tcp-:      TCP networking (integration, defer).
 #   - m4-:       m4 macro processor (integration, defer).
 DOMAIN_STATUS: dict[str, str] = {
@@ -131,6 +132,7 @@ COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
     "terminal:": 7,  # #1971 — deprecated no-op terminal:*; AURA_ENABLE_TERMINAL
     "seva:": 5,  # #1972 — SEVA / OpenClaw goal primitives; AURA_ENABLE_SEVA
+    "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -333,8 +335,8 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
         b = breakdown[p]
         print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
 
-    # Issue #1967–#1972: commercial / integration vertical budgets.
-    print("  commercial domain budgets (Issue #1967–#1972):")
+    # Issue #1967–#1974: commercial / integration vertical budgets.
+    print("  commercial domain budgets (Issue #1967–#1974):")
     commercial_counts = commercial_domain_counts(all_names)
     for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
         budget = COMMERCIAL_DOMAIN_BUDGETS[p]
