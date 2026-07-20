@@ -196,8 +196,8 @@ static void run_1606_metrics_and_query() {
     CHECK(h && is_hash(*h), "hash");
     const auto schema = href(cs, "schema");
     // Lineage: #1659 bumps schema; accept 1659|1606|1596|1568.
-    CHECK(schema == 1659 || schema == 1606 || schema == 1596 || schema == 1568,
-          std::format("schema 1659|1606|1596|1568 (got {})", schema));
+    CHECK(schema == 1895 || schema == 1659 || schema == 1606 || schema == 1596 || schema == 1568,
+          std::format("schema 1895|1659|1606|1596|1568 (got {})", schema));
     CHECK(href(cs, "linear_live_closure_scans_total") >= 0, "scans key");
     CHECK(href(cs, "walk-active-closures-wired") == 1, "walk wired");
     CHECK(href(cs, "invalidate-scan-wired") == 1 || href(cs, "invalidate-scan-wired") < 0,

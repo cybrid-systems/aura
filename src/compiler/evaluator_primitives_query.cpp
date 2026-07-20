@@ -5580,16 +5580,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1568 / #1596 / #1606 / #1659: query:linear-boundary-consistency-stats —
-    // unified mutation/compact/JIT/fiber boundary enforce closed-loop
+    // Issue #1568 / #1596 / #1606 / #1659 / #1895: query:linear-boundary-consistency-stats —
+    // unified mutation/compact/JIT/fiber/GC boundary enforce closed-loop
     // (walk_active_closures + live-closure linear scan + force Drop + GC root).
-    // Schema **1659** (agents accept 1606|1596|1568 lineage).
+    // Schema **1895** (agents accept 1659|1606|1596|1568 lineage).
     // Metrics: linear_post_mutate_enforcements, linear_live_closure_scans_total,
     // linear_ownership_violation_prevented, linear_gc_root_audit_checks_total,
     // linear_live_closures_marked_invalid_total (#1606 AC).
-    // #1659 mandate: linear_ownership_state end-to-end + linear_heap_ /
-    // EnvFrame snapshot + invalidate tombstone + GC/Arena synergy +
-    // apply/JIT dual-path checks under mutate + hot-swap.
+    // #1895: NULL_ENV_ID force Drop + all 5+ boundary wire flags.
     ObservabilityPrims::register_stats_impl(
         "query:linear-boundary-consistency-stats",
         [&ev, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
@@ -5652,10 +5650,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                 }
             };
-            insert_kv("schema", make_int(1659)); // #1659 linear ownership mutation safety
-            insert_kv("issue", make_int(1659));
+            insert_kv("schema", make_int(1895)); // #1895 closed-loop; lineage 1659/1606/1568
+            insert_kv("issue", make_int(1895));
             insert_kv("active", make_int(1));
-            insert_kv("phase", make_int(4)); // production + mutation/Arena/GC mandate
+            insert_kv("phase", make_int(5)); // production + all-boundary mandate (#1895)
             insert_kv("linear-post-mutate-enforcements",
                       make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
             // #1596 AC5 alias (underscore form) + hyphen form for agents.
@@ -5697,6 +5695,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("linear-ownership-state-propagated-wired", make_int(1));
             insert_kv("apply-closure-linear-check-wired", make_int(1));
             insert_kv("jit-linear-post-mutate-enforce-wired", make_int(1));
+            // #1895: all boundary paths + NULL_ENV_ID linear body safety
+            insert_kv("fiber-steal-scan-wired", make_int(1));
+            insert_kv("gc-safepoint-scan-wired", make_int(1));
+            insert_kv("guard-exit-scan-wired", make_int(1));
+            insert_kv("materialize-null-env-wired", make_int(1));
+            insert_kv("null-env-force-drop-wired", make_int(1));
+            insert_kv("linear_null_env_force_drop_total",
+                      make_int(L(m ? &m->linear_null_env_force_drop_total : nullptr)));
+            insert_kv("linear_null_env_safe_fallback_total",
+                      make_int(L(m ? &m->linear_null_env_safe_fallback_total : nullptr)));
+            insert_kv("linear_post_mutate_null_env_id_total",
+                      make_int(L(m ? &m->linear_post_mutate_null_env_id_total : nullptr)));
+            insert_kv("schema-1659", make_int(1659)); // lineage sentinel for agents
             insert_kv("invalidate-tombstone-wired", make_int(1));
             insert_kv("gc-arena-linear-synergy-wired", make_int(1));
             insert_kv("guardshape-linear-unified-wired", make_int(1));

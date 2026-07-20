@@ -4640,6 +4640,10 @@ add_dependencies(all_test_issue_targets test_atomic_batch_metadata_1893)
 aura_add_issue_test(test_typed_mutation_audit_hotpath_1894)
 aura_issue_test_link_llvm_jit(test_typed_mutation_audit_hotpath_1894)
 add_dependencies(all_test_issue_targets test_typed_mutation_audit_hotpath_1894)
+# Issue #1895: walk_active_closures + force Drop on all linear boundaries.
+aura_add_issue_test(test_linear_live_closure_walk_1895)
+aura_issue_test_link_llvm_jit(test_linear_live_closure_walk_1895)
+add_dependencies(all_test_issue_targets test_linear_live_closure_walk_1895)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

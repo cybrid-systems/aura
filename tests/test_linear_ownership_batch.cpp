@@ -849,9 +849,10 @@ static void run_1596_live_closure_scan() {
 
         auto h = cs5.eval("(engine:metrics \"query:linear-boundary-consistency-stats\")");
         CHECK(h && is_hash(*h), "stats hash");
-        CHECK(href(cs5, "schema") == 1659 || href(cs5, "schema") == 1606 ||
-                  href(cs5, "schema") == 1596 || href(cs5, "schema") == 1568,
-              "schema 1659|1606|1596|1568");
+        CHECK(href(cs5, "schema") == 1895 || href(cs5, "schema") == 1659 ||
+                  href(cs5, "schema") == 1606 || href(cs5, "schema") == 1596 ||
+                  href(cs5, "schema") == 1568,
+              "schema 1895|1659|1606|1596|1568");
         CHECK(href(cs5, "linear_live_closure_scans_total") >= 0 ||
                   href(cs5, "linear-live-closure-scans-total") >= 0,
               "live scans in query");
@@ -1034,14 +1035,18 @@ static void run_1659_mutation_safety() {
         CHECK(load_u64(m->linear_live_closure_scans_total) >= 1, "steal/compact scanned");
     }
 
-    // AC4: query:linear-boundary-consistency-stats schema 1659 + wire flags
+    // AC4: query:linear-boundary-consistency-stats schema 1895|1659 + wire flags
     {
-        std::println("\n--- AC4: schema 1659 + mandate wire flags ---");
+        std::println("\n--- AC4: schema 1895|1659 + mandate wire flags ---");
         CompilerService cs;
         auto h = cs.eval("(engine:metrics \"query:linear-boundary-consistency-stats\")");
         CHECK(h && is_hash(*h), "hash");
-        CHECK(href(cs, "schema") == 1659, "schema 1659");
-        CHECK(href(cs, "issue") == 1659, "issue 1659");
+        {
+            const auto sch = href(cs, "schema");
+            CHECK(sch == 1895 || sch == 1659, "schema 1895|1659");
+            const auto iss = href(cs, "issue");
+            CHECK(iss == 1895 || iss == 1659, "issue 1895|1659");
+        }
         CHECK(href(cs, "envframe-linear-ownership-snapshot-wired") == 1, "EnvFrame snapshot");
         CHECK(href(cs, "linear-heap-runtime-wired") == 1, "linear_heap_");
         CHECK(href(cs, "linear-ownership-state-propagated-wired") == 1, "state propagated");
@@ -1095,7 +1100,10 @@ static void run_1659_mutation_safety() {
                 (void)cs.eval("(query:pattern '(define _ _))");
             }
         }
-        CHECK(href(cs, "schema") == 1659, "schema holds under stress");
+        {
+            const auto sch = href(cs, "schema");
+            CHECK(sch == 1895 || sch == 1659, "schema holds under stress");
+        }
         CHECK(load_u64(m->linear_ownership_violation_prevented) >= viol0,
               "prevented non-decreasing");
         CHECK(cs.eval("(+ 1 2)").has_value(), "eval after stress");
