@@ -9396,6 +9396,8 @@ private:
                             if (cl.bridge_epoch == 0 || cl.bridge_epoch == cur_epoch)
                                 return;
                             // Expire captured views (do NOT restamp epoch).
+                            // Issue #1916: next apply/materialize must not walk
+                            // dangling EnvFrame / free'd flat*/pool*.
                             cl.flat.reset();
                             cl.pool.reset();
                             cl.body_id = aura::ast::NULL_NODE;
@@ -9406,6 +9408,7 @@ private:
                                 1, std::memory_order_relaxed);
                             metrics_.jit_hotswap_epoch_mismatch_prevented_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                            metrics_.dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
                         });
                 }
             };

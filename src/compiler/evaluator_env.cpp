@@ -808,7 +808,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // contract as apply_closure (closure_is_epoch_or_env_stale). EnvFrame
     // SoA version_ / parent_id_ walks below still refresh or fall back;
     // this documents the unified gate for agents and CI.
-    (void)closure_is_epoch_or_env_stale(cl);
+    const bool epoch_or_env_stale = closure_is_epoch_or_env_stale(cl);
     // Issue #1638: explicit dual-path consistency gate at the frame
     // level (defense in depth — closure_is_epoch_or_env_stale covers
     // the closure-level bridge_epoch / defuse_version drift; this
@@ -825,6 +825,27 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.
     Env ne;
+    auto bump_dangling_env = [&](const char* /*site*/) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+            m->dangling_env_prevented_materialize.fetch_add(1, std::memory_order_relaxed);
+            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    // Issue #1916: bridge_epoch mismatch after invalidate_function /
+    // fiber steal / GC compact → NEVER walk captured EnvFrame bindings
+    // (may reference freed AST/pool). Empty Env keeps globals reachable;
+    // caller (apply_closure) re-dispatches via bridge / re-parse.
+    if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch())) {
+        ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        bump_dangling_env("materialize-bridge-stale");
+        bump_closure_epoch_mismatch_fallback();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
+            m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+        }
+        return ne;
+    }
     // Defensive: a closure with env_id == NULL_ENV_ID would
     // trip the env_frame() contract and crash. This can happen
     // when the closure was constructed via a path that
@@ -868,13 +889,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         return ne;
     }
     if (cl.env_id >= env_frames_.size()) {
-        // Issue #1510: post-compact cleared env_id or OOB → empty Env
+        // Issue #1510 / #1916: post-compact cleared env_id or OOB → empty Env
         // fallback (globals still reachable; no dangling frame walk).
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        bump_dangling_env("materialize-oob");
         return ne;
     }
-    // Issue #1542: linear post-mutate enforce at materialize entry
+    // Issue #1542 / #1916: linear post-mutate enforce at materialize entry
     // (parity with apply_closure → closure_needs_safe_fallback).
     // Covers TCO / eval_data_as_code sites that call materialize_call_env
     // without going through the apply_closure dual check.
@@ -889,10 +909,14 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // call sites never walk a frame with use-after-move tags.
     if (!linear_post_mutate_enforce(cl.env_id)) {
         ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
+        bump_dangling_env("materialize-linear");
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            m->linear_ownership_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
         return ne;
     }
+    // Issue #1916: env-only stale without bridge drift still materializes
+    // after restamp (below); epoch_or_env_stale is observed for dashboards.
+    (void)epoch_or_env_stale;
     // Issue #145 P0 follow-up: hold env_frames_mtx_ shared
     // lock for the duration of the frame read. The frame
     // reference must remain valid through .bindings(),
@@ -958,7 +982,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // _test.aura) uses default settings, so the warning no
     // longer appears in the suite output.
     if (fr.version_ == INVALID_VERSION) {
-        // Issue #356: post-rollback invalid frame. Do NOT
+        // Issue #356 / #1916: post-rollback invalid frame. Do NOT
         // refresh — the bindings may reference AST nodes / pool
         // strings that no longer exist. Emit a distinct
         // warning (gated behind AURA_VERBOSE_ENVFRAME, same as
@@ -977,9 +1001,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         // Still stamp the empty Env with the current version so
         // downstream callers see a consistent snapshot.
         ne.set_env_version(defuse_version_.load(std::memory_order_acquire));
-        // Issue #1510: post-rollback / invalid frame → fallback path.
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        // Issue #1510 / #1916: post-rollback / invalid frame → dangling env prevented.
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+            m->dangling_env_prevented_materialize.fetch_add(1, std::memory_order_relaxed);
+        }
         return ne;
     }
     if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {

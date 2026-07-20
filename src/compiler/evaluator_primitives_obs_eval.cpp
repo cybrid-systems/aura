@@ -8499,8 +8499,23 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("envframe-parent-id-walk-wired", 1);
             insert_kv("materialize-call-env-stale-wired", 1);
             insert_kv("apply-envframe-soa-mandate-active", 1);
+            // Issue #1916 AC metrics: dangling EnvFrame / bridge mismatch after invalidate
+            insert_kv("dangling_env_prevented", m ? L(&m->dangling_env_prevented) : 0);
+            insert_kv("dangling-env-prevented", m ? L(&m->dangling_env_prevented) : 0);
+            insert_kv("dangling_env_prevented_materialize",
+                      m ? L(&m->dangling_env_prevented_materialize) : 0);
+            insert_kv("dangling_env_prevented_apply", m ? L(&m->dangling_env_prevented_apply) : 0);
+            insert_kv("linear_ownership_safe_fallback_total",
+                      m ? L(&m->linear_ownership_safe_fallback_total) : 0);
+            // bridge_epoch_mismatch_fallback already inserted above (#1632)
+            insert_kv("materialize-bridge-stale-fallback-wired", 1);
+            insert_kv("invalidate-live-closure-expire-wired", 1);
+            insert_kv("gc-compact-env-oob-fallback-wired", 1);
+            insert_kv("fiber-steal-epoch-fence-wired", 1);
+            insert_kv("schema-1916", 1916);
+            insert_kv("issue-1916", 1916);
             insert_kv("issue", 1660);
-            insert_kv("schema", 1660); // lineage 1632 / 1627 / 1626 / 1607 / 1604 / 1598
+            insert_kv("schema", 1660); // lineage 1632 / 1627 / 1626 / 1607 / 1604 / 1598 → 1916
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

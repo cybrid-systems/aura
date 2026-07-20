@@ -4704,6 +4704,10 @@ add_dependencies(all_test_issue_targets test_query_hygiene_provenance_1914)
 aura_add_issue_test(test_fine_dirty_relower_1915)
 aura_issue_test_link_llvm_jit(test_fine_dirty_relower_1915)
 add_dependencies(all_test_issue_targets test_fine_dirty_relower_1915)
+# Issue #1916: EnvFrame/bridge_epoch/linear safety after invalidate.
+aura_add_issue_test(test_envframe_bridge_invalidate_1916)
+aura_issue_test_link_llvm_jit(test_envframe_bridge_invalidate_1916)
+add_dependencies(all_test_issue_targets test_envframe_bridge_invalidate_1916)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

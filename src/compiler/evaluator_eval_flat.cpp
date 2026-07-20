@@ -205,16 +205,24 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
                 m->envframe_invalid_vs_stale_distinguished_total.fetch_add(
                     1, std::memory_order_relaxed);
+                // Issue #1916 AC: dangling EnvFrame prevented at apply gate.
+                // invalid_id / terminal_invalid are hard dangling; version_stale
+                // is also treated as prevented-use-of-stale-env (safe fallback).
+                m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->dangling_env_prevented_apply.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        // Issue #1478 / #1626 / #1660: linear post-mutate third arm
+        // Issue #1478 / #1626 / #1660 / #1916: linear post-mutate third arm
         // (distinct metric from epoch/env — linear-stale-total).
         if (!ev.linear_post_mutate_enforce(cl.env_id)) {
             stale = true;
             if (m) {
                 m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->linear_ownership_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+                m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
+                m->dangling_env_prevented_apply.fetch_add(1, std::memory_order_relaxed);
             }
         }
     }
