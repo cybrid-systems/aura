@@ -2216,14 +2216,35 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
                             reg_.register_func({_a}, Bool), {_a});
 
     // std/datetime
+    // Core wall-clock decomposers: pure Aura in lib/std/datetime.aura.
+    // Keep type-checker registrations only for names that still need
+    // arity/return hints when the stdlib module is not yet loaded; pure
+    // calendar helpers that are fully implemented in Aura MUST NOT be
+    // registered here (Issue #1911 B8 — same class as #1906 B5).
     register_primitive("timestamp", {}, Int);
     register_primitive("timestamp->year", {Int}, Int);
     register_primitive("timestamp->month", {Int}, Int);
     register_primitive("timestamp->day", {Int}, Int);
     register_primitive("timestamp->hour", {Int}, Int);
     register_primitive("timestamp->minute", {Int}, Int);
-    register_primitive("leap-year?", {Int}, Bool);
-    register_primitive("days-in-month", {Int, Int}, Int);
+    // Issue #1911 B8: type-checker primitive registration for
+    // `leap-year?` and `days-in-month` shadows the std/datetime
+    // definitions at runtime for DIRECT application of the name.
+    // lib/std/datetime.aura implements both as pure Aura:
+    //   (define (leap-year? y) (and (= (modulo y 4) 0) …))
+    //   (define (days-in-month y m) (if (= m 2) (if (leap-year? y) 29 28) …))
+    // The engine treated the type-checker primitive as a runtime
+    // placeholder for some call sites, so `(days-in-month 2023 2)`
+    // returned 29 (leap branch) instead of 28, and `(leap-year? 2023)`
+    // returned Dyn `()` for some inputs. Let-binding captured the
+    // stdlib binding as a workaround.
+    // Root cause is the same as #1906 B5 (column-names): redundant
+    // register_primitive for a name whose sole implementation is a
+    // stdlib `define`. The type checker does not need these — after
+    // (require "std/datetime") the defines provide typed bindings.
+    // Drop both registrations; leave the remaining timestamp-* arity
+    // hints (still useful for free-standing typecheck before require).
+    // Related: B9a/B9d json-stringify/json-value (same family).
 
     // std/random
     register_primitive("make-random", {}, Dyn);

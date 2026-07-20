@@ -780,7 +780,7 @@ static std::uint32_t lower_flat_expr(
                     //   block0:
                     //     val = lower(e1)
                     //     branch val → block_ok1, block_nope1
-                    //   block_nope1: result = 0; jump block_done
+                    //   block_nope1: result = val (falsy); jump block_done
                     //   block_ok1:
                     //     val = lower(e2)
                     //     branch val → block_ok2, block_nope2
@@ -789,6 +789,15 @@ static std::uint32_t lower_flat_expr(
                     //     result = lower(en)
                     //     jump block_done
                     //   block_done: return result
+                    //
+                    // Issue #1911 B8: pre-fix used ConstVoid on the
+                    // short-circuit (nope) arm. Void is truthy under
+                    // is_truthy (only #f and int 0 are false), so
+                    // (and #f x) became truthy void — breaking
+                    // leap-year? / days-in-month for non-leap years
+                    // when the define was IR-lowered (direct call path).
+                    // Scheme semantics: return the falsy short-circuit
+                    // value (Local val), matching TW special-form and.
                     auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
                     auto result_slot = state.alloc_local();
                     auto done_blk = decltype(state.alloc_block()){};
@@ -800,9 +809,9 @@ static std::uint32_t lower_flat_expr(
                         auto ok_blk = state.alloc_block();
                         state.emit(IROpcode::Branch, val, ok_blk, nope_blk);
 
-                        // nope block: result = 0, jump done
+                        // nope block: result = falsy val, jump done
                         state.cur_block = nope_blk;
-                        state.emit(IROpcode::ConstVoid, result_slot);
+                        state.emit(IROpcode::Local, result_slot, val);
                         if (!done_blk)
                             done_blk = state.alloc_block();
                         state.emit(IROpcode::Jump, done_blk);
