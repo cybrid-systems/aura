@@ -5247,6 +5247,9 @@ aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1870)
 # Issue #1871: solve_delta locality pending_full_solve + adaptive reverify metrics.
 aura_add_issue_test(test_solve_delta_locality_1871)
 aura_issue_test_link_llvm_jit(test_solve_delta_locality_1871)
+# Issue #1872: predicate_memo_ partial LRU eviction + binding_gen exact compare.
+aura_add_issue_test(test_predicate_memo_partial_evict_1872)
+aura_issue_test_link_llvm_jit(test_predicate_memo_partial_evict_1872)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

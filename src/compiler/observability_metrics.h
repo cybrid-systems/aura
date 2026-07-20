@@ -679,6 +679,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> predicate_memo_hits_total{0};
     std::atomic<std::uint64_t> predicate_memo_misses_total{0};
     std::atomic<std::uint64_t> predicate_memo_evictions_total{0};
+    // Issue #1872: partial LRU overflow eviction events
+    // (subset of predicate_memo_evictions_total that are not
+    // epoch wholesale clears). Under high mutation, partial
+    // eviction preserves hot cond entries vs pre-#1872 clear.
+    std::atomic<std::uint64_t> predicate_memo_partial_evictions_total{0};
+    // Issue #1872: derived binding-gen cache hit rate (0–100).
+    // Updated at snapshot time from per_binding_gen_hits /
+    // (hits + stale). Mirrors incremental_locality_hit_rate.
+    std::atomic<std::uint64_t> per_binding_gen_hit_rate{0};
     // Issue #338: and/or precision observability.
     // 2 lifetime counters that measure how often the
     // new TypeRegistry::meet / TypeRegistry::join
