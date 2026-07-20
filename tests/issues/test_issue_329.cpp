@@ -29,7 +29,7 @@
 // the phase but the dump-on-fail handler is a follow-up.
 // AC #6 (nightly CI) is deferred.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 #include "serve/fiber.h"
 
 #include <atomic>

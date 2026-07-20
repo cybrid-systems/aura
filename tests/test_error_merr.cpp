@@ -5,12 +5,12 @@
 //   - Exact same CHECK harness pattern as other issue tests (e.g. test_issue_116/131).
 //   - Simple construction smoke (the make_merr member is now part of Evaluator).
 //   - The CMake addition pattern for future pilots (to be turned into common macro).
-//   - Now uses the common issue_test_harness.hpp (small 3.2 dedup pilot).
+//   - Now uses the common test_harness.hpp (small 3.2 dedup pilot).
 //
 // Full exercising of make_merr error paths will be covered by the main test_ir
 // and later pilots / full dedup.
 
-#include "issue_test_harness.hpp" // 3.2 dedup pilot (common CHECK + globals)
+#include "test_harness.hpp" // #1960 unified harness
 
 import std;
 namespace aura_issue_error_merr_detail {

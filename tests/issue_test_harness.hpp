@@ -1,138 +1,21 @@
-// Minimal common harness for issue/pilot test binaries (refactor 3.2 dedup pilot).
-// Reduces boilerplate in the 3 CMake pilots (test_error_merr, test_primitives_init,
-// test_harness_pilot). Usage: #include "issue_test_harness.hpp" then define your test_foo() funcs;
-// the main + CHECK are provided.
+// issue_test_harness.hpp — DEPRECATED thin shim (#1960)
+//
+// Prefer:  #include "test_harness.hpp"
+//
+// This header exists only so legacy pilots / issue TUs keep compiling.
+// New domain/ and batch tests must include test_harness.hpp directly.
+//
+// Everything (CHECK, g_passed, run_pilot_tests, StableNodeRef helpers,
+// k_int_env) lives in test_harness.hpp now.
+
 #ifndef AURA_ISSUE_TEST_HARNESS_HPP
 #define AURA_ISSUE_TEST_HARNESS_HPP
 
-#include <print>
+#include "test_harness.hpp"
 
-static int g_passed = 0;
-static int g_failed = 0;
-
-// Issue #226 follow-up: store _check_msg as an owning
-// std::string (by value, not as the bare msg expression
-// re-evaluated in each branch). The previous form passed
-// the message expression directly to std::println, which
-// stores the pointer in format_args; the underlying
-// temporary std::string is not bound to anything that
-// extends its lifetime, so by the time std::println
-// dereferences the stored pointer (via strlen inside
-// std::formatter<char const*, char>::format), the buffer
-// is freed and ASan flags a heap-use-after-free. Copying
-// into a local std::string makes the message own its data
-// for the duration of the macro body.
-#define CHECK(cond, msg)                                                                           \
-    do {                                                                                           \
-        const std::string _check_msg = (msg);                                                      \
-        if (!(cond)) {                                                                             \
-            std::println("  FAIL: {} (line {})", _check_msg, __LINE__);                            \
-            ++g_failed;                                                                            \
-        } else {                                                                                   \
-            std::println("  PASS: {}", _check_msg);                                                \
-            ++g_passed;                                                                            \
-        }                                                                                          \
-    } while (0)
-
-// Run the pilot's test_* functions (caller defines them) and report.
-// Usage in pilot .cpp:
-//   bool test_foo() { ... CHECK(...); return true; }  // etc.
-//   int main() { ... test_foo(); ... return run_pilot_tests(); }
-static int run_pilot_tests() {
-    // Pilots call their test_ funcs before this; we just report.
-    std::println("\n--- Results ---");
-    std::println("  PASSED: {}", g_passed);
-    std::println("  FAILED: {}", g_failed);
-    if (g_failed > 0) {
-        std::println("  OVERALL: FAIL");
-        return 1;
-    }
-    std::println("  OVERALL: PASS");
-    return 0;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Issue #329: StableNodeRef / generation_ white-box helpers
-// ═══════════════════════════════════════════════════════════════
-//
-// capture_stable_refs(flat, count) → returns a vector of
-// StableNodeRef (deduced via decltype, since the type isn't
-// exported). Callers can iterate and check is_valid_in() after
-// a mutation cycle to measure the dangling rate.
-//
-// validate_stable_refs(refs, flat) → returns {still_valid,
-// dangling}. Use after a mutate to gate against regressions
-// (e.g. REQUIRE dangling_pct > X to prove mutation invalidates).
-//
-// These helpers are header-only so any test binary can include
-// the harness without linking a separate .cpp.
-
-#include <cstddef>
-#include <vector>
-
-namespace aura_test_harness {
-
-// Capture count StableNodeRefs from the flat starting at
-// NodeId{0} .. NodeId{count-1}. Returns a vector of the
-// deduced StableNodeRef type (auto in the caller).
-template <typename FlatT> auto capture_stable_refs(FlatT& flat, int count) {
-    using RefT = decltype(flat.make_ref(typename FlatT::NodeId{0}));
-    std::vector<RefT> refs;
-    refs.reserve(static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        refs.push_back(flat.make_ref(typename FlatT::NodeId{static_cast<std::uint32_t>(i)}));
-    }
-    return refs;
-}
-
-struct RefStats {
-    std::size_t still_valid = 0;
-    std::size_t dangling = 0;
-    [[nodiscard]] std::size_t total() const noexcept { return still_valid + dangling; }
-    [[nodiscard]] double dangling_pct() const noexcept {
-        return total() == 0 ? 0.0
-                            : 100.0 * static_cast<double>(dangling) / static_cast<double>(total());
-    }
-};
-
-template <typename FlatT, typename RefsT> RefStats validate_stable_refs(RefsT& refs, FlatT& flat) {
-    RefStats stats;
-    for (auto& ref : refs) {
-        if (ref.is_valid_in(flat)) {
-            stats.still_valid++;
-        } else {
-            stats.dangling++;
-        }
-    }
-    return stats;
-}
-
-} // namespace aura_test_harness
-
-// ── Env-var knob helpers (Issue #371 follow-up) ───────────
-//
-// Mirrors the k_int_env helper in test_harness.hpp.
-// Issue-numbered env-var prefixes (AURA_NNN_*) are
-// deprecated; tests should use the 5 shared names:
-//
-//   AURA_STRESS_ITERS    main stress-loop iteration count
-//   AURA_STRESS_PARALLEL parallel-unit count (threads /
-//                        fibers / workers; default 4)
-//   AURA_RACE_ITERS      race-scenario iteration count
-//   AURA_FUZZ_ITERS      fuzz-scenario iteration count
-//   AURA_WARMUP_CALLS    JIT warmup call count
-//
-// Returns the env value as int, or `default_value` if the
-// env is unset / empty / unparseable / non-positive.
-[[nodiscard]] inline int k_int_env(const char* name, int default_value) noexcept {
-    if (const char* v = std::getenv(name); v != nullptr && *v != '\0') {
-        char* end = nullptr;
-        const long parsed = std::strtol(v, &end, 10);
-        if (end != v && parsed > 0 && parsed <= 1'000'000'000) {
-            return static_cast<int>(parsed);
-        }
-    }
-    return default_value;
-}
+// Bare counter names for TUs that wrote `g_passed` / `g_failed` without
+// the aura::test:: prefix (pilots). Maps to the unified counters.
+using ::aura::test::g_failed;
+using ::aura::test::g_passed;
 
 #endif // AURA_ISSUE_TEST_HARNESS_HPP

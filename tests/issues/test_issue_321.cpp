@@ -27,7 +27,7 @@
 //   - defuse_version_ monotonicity check
 //   - MutationBoundaryGuard depth check
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 #include "serve/fiber.h"
 
 #include <atomic>

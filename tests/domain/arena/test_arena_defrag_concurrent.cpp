@@ -1,3 +1,6 @@
+// tests/domain/arena/test_arena_defrag_concurrent.cpp — relocated for #1959 arena pilot
+// (was tests/test_arena_defrag_concurrent.cpp). Prefer this path; do not re-add under tests/ root.
+//
 // @category: integration
 // @reason: concurrent arena.create<T>() + request_defrag()/defrag()
 //          loop. Verifies no UB under concurrent workload, plus

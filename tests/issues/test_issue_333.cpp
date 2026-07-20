@@ -16,7 +16,7 @@
 // AC #3 (harness + CI light mode) is deferred — binary
 // is built + runnable; CI YAML is a separate issue.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>

@@ -1,3 +1,6 @@
+// tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
+// (was tests/test_compact_sweep_batch.cpp). Prefer this path; do not re-add under tests/ root.
+//
 // test_compact_sweep_batch.cpp — batch driver for compact_sweep family.
 // Consolidates 3 issue tests into 1 batch entry (Phase 4+ migration,
 // following the test_per_defuse_batch / test_env_lookup_batch /

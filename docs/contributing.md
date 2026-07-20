@@ -27,6 +27,8 @@ Full layout, naming, good/bad examples, and exceptions:
 
 - [`tests/README.md`](../tests/README.md) — policy & decision tree
 - [`tests/domain/README.md`](../tests/domain/README.md) — domain suite rules
+- [`tests/domain/arena/README.md`](../tests/domain/arena/README.md) — first theme pilot (#1959)
+- [`tests/test_harness.hpp`](../tests/test_harness.hpp) — unified harness (#1960)
 - [`tests/templates/test_domain_pattern.cpp`](../tests/templates/test_domain_pattern.cpp) — scaffold
 - [`tests/legacy_test_inventory.md`](../tests/legacy_test_inventory.md) — legacy inventory (#1957)
 

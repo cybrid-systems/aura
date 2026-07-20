@@ -23,7 +23,7 @@
 // foundation. The ref surface is now ready for fiber loops
 // to record provenance; the integration is a follow-up.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstdint>
 #include <print>
