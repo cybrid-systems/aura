@@ -1518,21 +1518,6 @@ aura_issue_test_link_llvm_jit_minimal(test_eda_guard_exception_safety)
 # + regression for #556 + #555 + #549.
 aura_add_issue_test(test_hardware_resource_linear_ownership)
 aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
-# Issue #610: linear ownership post-mutate validation + runtime
-aura_add_issue_test(test_linear_ownership_post_mutate_validation_runtime)
-aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate_validation_runtime)
-# Issue #638: Linear ownership + GuardShape runtime safety post-mutate.
-# 7 ACs: linear-ownership-safety-stats, leak violations, moved-linear
-# pass, mutate monotonicity, invalidate_shape + GuardShape refresh,
-# multi-round matrix + regression. Non-duplicative with #610/#575/#531.
-aura_add_issue_test(test_linear_ownership_guardshape_post_mutate)
-aura_issue_test_link_llvm_jit(test_linear_ownership_guardshape_post_mutate)
-# Issue #598: Runtime linear ownership enforcement + invalidate hook.
-# 7 ACs: linear-ownership-runtime-stats, moved-linear pass, invalidate
-# deopt/enforcement bumps, leak violations, gc-heap, multi-round monotonic
-# + regression. Non-duplicative with #638/#610/#575.
-aura_add_issue_test(test_linear_ownership_runtime_enforcement_post_mutate)
-aura_issue_test_link_llvm_jit(test_linear_ownership_runtime_enforcement_post_mutate)
 # Issue #599: Compiler root epoch/version + GC synergy post-invalidate_function.
 # 7 ACs: compiler-root-stats (schema 599), root-refresh on invalidate,
 # stale/env-mismatch/dangling counters, multi-round monotonic + regression.
@@ -1545,9 +1530,6 @@ aura_issue_test_link_llvm_jit(test_compiler_root_epoch_gc_safety_post_invalidate
 # multi-round monotonic + regression. Non-duplicative with #530/#429/#531.
 aura_add_issue_test(test_incremental_perblock_closure_bridge_safety)
 aura_issue_test_link_llvm_jit(test_incremental_perblock_closure_bridge_safety)
-# Issue #575: Task2 PerDefUse incremental linear ownership post-mutate.
-aura_add_issue_test(test_linear_ownership_incremental_post_mutate_task2)
-aura_issue_test_link_llvm_jit(test_linear_ownership_incremental_post_mutate_task2)
 # Issue #305: Propagate rich TypeId/TypeScheme from TypeChecker
 # to IR for hardware optimization & synthesis (P0 EDA track).
 # 9 scenarios validating: 4 new type_propagation counters +
@@ -5223,9 +5205,6 @@ aura_issue_test_link_llvm_jit(test_resource_quota_wired)
 # Issue #1595: join/mailbox/parallel linear ownership + StableNodeRef enforcement.
 aura_add_issue_test(test_fiber_join_linear)
 aura_issue_test_link_llvm_jit(test_fiber_join_linear)
-# Issue #1596: runtime linear ownership + live-closure scan refine.
-aura_add_issue_test(test_linear_ownership_post_mutate)
-aura_issue_test_link_llvm_jit(test_linear_ownership_post_mutate)
 # Issue #1597: orch metrics folded into ai-closedloop-readiness-stats.
 aura_add_issue_test(test_ai_closedloop_orch_readiness_1597)
 aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness_1597)
@@ -5251,9 +5230,6 @@ aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
 # Issue #1606: walk_active_closures + linear live scan on invalidate/compact/JIT.
 aura_add_issue_test(test_walk_active_closures_1606)
 aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)
-# Issue #1659: linear ownership + GC/Arena mutation safety mandate.
-aura_add_issue_test(test_linear_ownership_mutation_safety_1659)
-aura_issue_test_link_llvm_jit(test_linear_ownership_mutation_safety_1659)
 # Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
 aura_add_issue_test(test_unified_invalidation_1607)
 aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)

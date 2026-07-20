@@ -75,6 +75,15 @@ aura_add_issue_test(test_incremental_type_batch)
 aura_issue_test_link_llvm_jit(test_incremental_type_batch)
 set_target_properties(test_incremental_type_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #610 + #638 + #598 + #575 + #1596 + #1659: linear ownership family batch
+# (post-mutate validation + runtime + GuardShape + incremental per_defuse +
+# live-closure scan + GC/Arena mutation safety). EXCLUDE_FROM_ALL per
+# AuraDomainTests.cmake legacy batch convention. On-demand `ninja
+# test_linear_ownership_batch`.
+aura_add_issue_test(test_linear_ownership_batch)
+aura_issue_test_link_llvm_jit(test_linear_ownership_batch)
+set_target_properties(test_linear_ownership_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
