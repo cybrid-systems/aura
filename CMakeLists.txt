@@ -4616,6 +4616,12 @@ add_dependencies(all_test_issue_targets test_test_strategy_1887)
 aura_add_issue_test(test_closure_view_lifetime_1888)
 aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1888)
 add_dependencies(all_test_issue_targets test_closure_view_lifetime_1888)
+# Issue #1947: ClosureView lifetime safety under concurrent move/GC/compact
+# (P0 UAF — refine of #1926). Adds closure_view_invalid_access_total metric
+# + concurrent 4-thread make/invalidate/access stress test.
+aura_add_issue_test(test_closure_bridge_lifetime_safety)
+aura_issue_test_link_llvm_jit(test_closure_bridge_lifetime_safety)
+add_dependencies(all_test_issue_targets test_closure_bridge_lifetime_safety)
 # Issue #1889: truncate/compact dual-epoch + MutationBoundaryGuard consistency.
 aura_add_issue_test(test_envframe_truncate_epoch_1889)
 aura_issue_test_link_llvm_jit(test_envframe_truncate_epoch_1889)

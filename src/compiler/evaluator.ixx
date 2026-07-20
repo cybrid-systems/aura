@@ -968,6 +968,16 @@ export struct Closure {
 // (make_closure_view is Evaluator-free; declared early for Evaluator methods).
 export inline std::atomic<std::uint64_t> g_closure_view_dangling_prevented_total{0};
 
+// Issue #1947: process-wide counter for ClosureView invalid-access
+// (strong revalidation via is_closure_view_valid(view, cl) failed —
+// view's source_lifetime_version no longer matches Closure's lifetime_version,
+// indicating concurrent move/GC/compact between view creation and access).
+// Separate from g_closure_view_dangling_prevented_total which tracks
+// prevention at view-creation time; this tracks the runtime-revalidation
+// failure path. Bumped in is_closure_view_valid(view, cl) when it returns
+// false due to lifetime_version mismatch.
+export inline std::atomic<std::uint64_t> g_closure_view_invalid_access_total{0};
+
 // Legacy alias — kept for backward compatibility during the
 // P2 transition (Issue #127). New code should prefer
 // `aura::diag::Result<types::EvalValue>`. Both names refer
