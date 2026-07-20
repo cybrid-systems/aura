@@ -92,7 +92,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 700)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 500)
 
-    # ── Issue #1965 / #1967 / #1968 / #1969 domain status + commercial budgets ──
+    # ── Issue #1965 / #1967–#1970 domain status + commercial budgets ──
     def test_tui_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("tui:"), "deferred")
         self.assertEqual(self.m.domain_status("tui:init"), "deferred")
@@ -114,7 +114,14 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("auto-evolve-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"], 7)
 
-    def test_commercial_domain_counts_tui_eda_auto_evolve(self):
+    def test_git_domain_deferred_and_budgeted(self):
+        self.assertEqual(self.m.DOMAIN_STATUS.get("git-"), "deferred")
+        self.assertEqual(self.m.domain_status("git-status"), "deferred")
+        self.assertEqual(self.m.domain_status("git-commit"), "deferred")
+        self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 7)
+
+    def test_commercial_domain_counts_prefixes(self):
         names = [
             "tui:init",
             "tui:present",
@@ -125,11 +132,14 @@ class TestBlockedPatterns(unittest.TestCase):
             "eda:invoke-simulator",
             "auto-evolve-once",
             "auto-evolve-tick",
+            "git-status",
+            "git-diff",
         ]
         counts = self.m.commercial_domain_counts(names)
         self.assertEqual(counts.get("tui:"), 3)
         self.assertEqual(counts.get("eda:"), 3)
         self.assertEqual(counts.get("auto-evolve-"), 2)
+        self.assertEqual(counts.get("git-"), 2)
 
     def test_commercial_budget_overrun_fails_strict(self):
         # Synthetic list with one extra tui: name past the frozen budget.
@@ -148,6 +158,12 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_auto_evolve_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"]
         fake = [f"auto-evolve-synthetic-{i}" for i in range(budget + 1)]
+        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        self.assertEqual(rc, 1)
+
+    def test_git_commercial_budget_overrun_fails_strict(self):
+        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"]
+        fake = [f"git-synthetic-{i}" for i in range(budget + 1)]
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 

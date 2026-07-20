@@ -196,6 +196,11 @@ option(AURA_ENABLE_EDA "Register eda:* domain primitives (EDA vertical, #1968)" 
 option(AURA_ENABLE_AUTO_EVOLVE
        "Register auto-evolve-* domain primitives (self-evo vertical, #1969)" ON)
 
+# Issue #1970: git-* integration vertical (deferred). Default ON for
+# production-sweep / git tooling tests; slim builds: -DAURA_ENABLE_GIT=OFF
+# (see docs/git-integration.md). Independent of AURA_HAVE_LIBGIT2 (backend).
+option(AURA_ENABLE_GIT "Register git-* domain primitives (integration, #1970)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -211,7 +216,7 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967 / #1968 / #1969: per-source commercial vertical flags (avoids
+# Issue #1967–#1970: per-source commercial/integration vertical flags (avoids
 # PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
@@ -228,6 +233,11 @@ if(AURA_ENABLE_AUTO_EVOLVE)
 else()
     set(_AURA_ENABLE_AUTO_EVOLVE_VAL 0)
 endif()
+if(AURA_ENABLE_GIT)
+    set(_AURA_ENABLE_GIT_VAL 1)
+else()
+    set(_AURA_ENABLE_GIT_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -242,10 +252,16 @@ set_source_files_properties(
     src/compiler/evaluator_primitives_agent.cpp
     PROPERTIES COMPILE_DEFINITIONS
                "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL}")
+# git-* lives in register_git_primitives (evaluator_primitives_io.cpp).
+# Network/tcp/sys co-in same TU stay always on (separate deferred issues).
+set_source_files_properties(
+    src/compiler/evaluator_primitives_io.cpp
+    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL}")
 message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
 message(STATUS "eda:* domain: AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL} (#1968)")
 message(STATUS
         "auto-evolve-* domain: AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL} (#1969)")
+message(STATUS "git-* domain: AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL} (#1970)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the

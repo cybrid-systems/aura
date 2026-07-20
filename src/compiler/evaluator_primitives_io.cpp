@@ -1,5 +1,11 @@
 // evaluator_primitives_io.cpp — P0 step 17: git:* and network primitives
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+//
+// Issue #1970: git-* is a deferred integration vertical (DOMAIN_STATUS deferred).
+// Registration of the 7 git-* names is gated by AURA_ENABLE_GIT (CMake option,
+// default ON). Independent of AURA_HAVE_LIBGIT2 (in-process backend vs popen).
+// Network/tcp/sys primitives in this TU are not gated here (see #1975 etc.).
+// See docs/git-integration.md.
 
 module;
 
@@ -27,6 +33,11 @@ module;
 #include "renderer/render_primitives.hh"
 #include "terminal_buffer_registry.hh"
 #include "hash_meta.h"
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_GIT
+#define AURA_ENABLE_GIT 1
+#endif
 
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
@@ -179,11 +190,17 @@ namespace {
 
 
 void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
-
+#if !AURA_ENABLE_GIT
+    // Issue #1970: integration vertical disabled for this build.
+    (void)add;
+    (void)ev;
+    return;
+#else
     // ── Git integration (Issue #96) ─────────────────────────────
     // Backed by libgit2 (in-process) when available, with popen fallback
     // for systems without libgit2. Much faster than fork+exec per call,
     // and avoids shell escape issues for commit messages and paths.
+    // Issue #1970: commercial/integration vertical (AURA_ENABLE_GIT).
 
     // (git-status) → short status string (like "git status --short")
     add("git-status", [&ev](const auto&) -> EvalValue {
@@ -437,6 +454,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.string_heap_.push_back(std::move(result));
         return make_string(sid);
     });
+#endif // AURA_ENABLE_GIT
 }
 
 void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
