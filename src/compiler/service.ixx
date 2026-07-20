@@ -4190,6 +4190,63 @@ public:
             return n;
         }
 
+        // Issue #1915: true if any block dirty bit is set.
+        [[nodiscard]] bool any_block_dirty() const noexcept {
+            for (const auto& fb : block_dirty_per_func_) {
+                for (auto b : fb) {
+                    if (b)
+                        return true;
+                }
+            }
+            return dirty;
+        }
+
+        // Issue #1915: body-only dirty stamp (prefer partial re-lower).
+        // Dual-shape: irs[0]=__top__ (kept clean), irs[1]=body (all blocks dirty).
+        // Single-fn: body at irs[0]. Returns # of blocks marked.
+        std::size_t mark_body_only_dirty() {
+            if (irs.empty()) {
+                mark_all_blocks_dirty();
+                return dirty_block_count();
+            }
+            if (block_dirty_per_func_.size() < irs.size())
+                block_dirty_per_func_.resize(irs.size());
+            const std::size_t body_idx = irs.size() >= 2 ? 1 : 0;
+            if (body_idx >= block_dirty_per_func_.size() ||
+                block_dirty_per_func_[body_idx].empty()) {
+                // Resize body bitmask from irs layout.
+                if (body_idx < irs.size()) {
+                    if (block_dirty_per_func_.size() <= body_idx)
+                        block_dirty_per_func_.resize(body_idx + 1);
+                    block_dirty_per_func_[body_idx].assign(irs[body_idx].blocks.size(),
+                                                           std::uint8_t{0});
+                }
+            }
+            if (body_idx >= block_dirty_per_func_.size() ||
+                block_dirty_per_func_[body_idx].empty()) {
+                mark_all_blocks_dirty();
+                return dirty_block_count();
+            }
+            // Keep __top__ clean when dual-shape.
+            if (body_idx == 1 && !block_dirty_per_func_[0].empty()) {
+                for (auto& b : block_dirty_per_func_[0])
+                    b = 0;
+            }
+            std::size_t n = 0;
+            for (std::uint32_t bi = 0;
+                 bi < static_cast<std::uint32_t>(block_dirty_per_func_[body_idx].size()); ++bi) {
+                mark_block_dirty(body_idx, bi);
+                ++n;
+            }
+            dirty = true;
+            return n;
+        }
+
+        // Issue #1915: mark only the entry/body function of a *caller*
+        // (dependent) dirty — nested lambdas stay clean for partial re-lower.
+        // Returns # of blocks marked (0 → fallback full mark).
+        std::size_t mark_caller_body_dirty() { return mark_body_only_dirty(); }
+
         // Query: total instruction count for a single
         // function. Sum of all instructions across all
         // basic blocks in irs[func_idx]. Returns 0 for
@@ -4340,6 +4397,8 @@ public:
             metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
             return 1;
         }
+        // Issue #1915: clean hit with matching source_hash — no re-lower.
+        metrics_.invalidate_early_exit_clean_total.fetch_add(1, std::memory_order_relaxed);
         return 0; // hit
     }
 
@@ -4621,27 +4680,11 @@ public:
             //   - real lower bundle: only non-entry funcs → body at irs[0]
             // Nested (irs[2..N] or >1 with free-ref self): free-var scan.
             const bool nested_primary = primary.irs.size() > 2;
-            // body_idx: dual-shape uses 1; single-function bundle uses 0.
-            const std::size_t body_idx = primary.irs.size() >= 2 ? 1 : 0;
-            if (!primary.irs.empty() && primary.block_dirty_per_func_.size() > body_idx &&
-                !primary.block_dirty_per_func_[body_idx].empty()) {
-                if (primary.block_dirty_per_func_.size() < primary.irs.size())
-                    primary.block_dirty_per_func_.resize(primary.irs.size());
-                // Keep __top__ clean when dual-shape.
-                if (body_idx == 1) {
-                    for (auto& b : primary.block_dirty_per_func_[0])
-                        b = 0;
-                }
-                for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(
-                                                    primary.block_dirty_per_func_[body_idx].size());
-                     ++bi) {
-                    primary.mark_block_dirty(/*func_idx=*/body_idx, bi);
-                }
+            // Issue #1915: unified body-only dirty stamp (partial re-lower path).
+            const auto body_blocks = primary.mark_body_only_dirty();
+            if (body_blocks > 0 && !primary.irs.empty()) {
                 // Issue #1505 / #1625: free-var + per-block targeted dirty
                 // of nested lambdas for self (not whole nested fn).
-                // Always bump targeted once for nested primary shape —
-                // body-only + selective nested is still the targeted path
-                // (even when no nested free-refs self).
                 if (nested_primary) {
                     for (std::size_t fi = 2; fi < primary.irs.size(); ++fi)
                         (void)mark_nested_lambda_blocks_targeted(primary, fi, name);
@@ -4650,11 +4693,14 @@ public:
                 }
                 metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
                 metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                metrics_.dirty_propagation_block_marks.fetch_add(body_blocks,
+                                                                 std::memory_order_relaxed);
             } else {
                 primary.mark_all_blocks_dirty();
                 // Issue #946/#950 Phase 1: instruction dirty bitmask.
                 primary.mark_all_instruction_dirty();
                 metrics_.selfevo_instr_dirty_total.fetch_add(1, std::memory_order_relaxed);
+                metrics_.dirty_propagation_full_func_marks.fetch_add(1, std::memory_order_relaxed);
                 if (nested_primary) {
                     metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(
                         1, std::memory_order_relaxed);
@@ -5083,6 +5129,11 @@ public:
                     if (clean_funcs > 0) {
                         metrics_.relower_partial_funcs_saved_total.fetch_add(
                             clean_funcs, std::memory_order_relaxed);
+                        // Issue #1915: minimal recompile scope observability.
+                        metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                            clean_funcs, std::memory_order_relaxed);
+                        metrics_.minimal_recompile_scope_samples.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
                     // Issue #1639: hit-rate numerator bump on partial
                     // success (paired with the denominator bump in
@@ -5093,6 +5144,13 @@ public:
                     // + relower_skipped_entirely_count for full per-call
                     // observability of the partial vs full decision.
                     evaluator_.bump_relower_block_hit_rate(1, 1); // 1 hit, 1 total attempt
+                    // Issue #1915 AC: count blocks that took partial path.
+                    if (!dirty_ids.empty()) {
+                        metrics_.relower_block_count.fetch_add(dirty_ids.size(),
+                                                               std::memory_order_relaxed);
+                        metrics_.incremental_relower_blocks_total.fetch_add(
+                            dirty_ids.size(), std::memory_order_relaxed);
+                    }
                     // Issue #1495: stamp source after partial so
                     // lookup_define_v2 hits (hash match + clean dirty).
                     if (!source.empty()) {
@@ -9114,12 +9172,28 @@ private:
         // after post-mutate shape/ownership change.
         invalidate_shape(name);
 
-        // Issue #1286: per-block dirty on ir_cache_v2_ for the mutated
-        // function (and cascade dependents below). Enables partial re-lower
-        // consumers via is_block_dirty without full-module wipe.
+        // Issue #1286 / #1915: per-block dirty on ir_cache_v2_ for the
+        // mutated function. Prefer body-only stamp so partial re-lower
+        // wins (nested / __top__ stay clean) instead of always
+        // mark_all_blocks_dirty (full-function degradation).
         if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
-            vit->second.mark_all_blocks_dirty();
+            const auto n = vit->second.mark_body_only_dirty();
             metrics_.invalidate_per_block_dirty_total.fetch_add(1, std::memory_order_relaxed);
+            if (n > 0) {
+                // body-only path: n is blocks of body; precision = block marks
+                metrics_.dirty_propagation_block_marks.fetch_add(n, std::memory_order_relaxed);
+            } else {
+                vit->second.mark_all_blocks_dirty();
+                metrics_.dirty_propagation_full_func_marks.fetch_add(1, std::memory_order_relaxed);
+            }
+            // When body-only left other funcs clean, credit minimal scope.
+            const auto dirty_fns = vit->second.dirty_func_count();
+            const auto total_fns = vit->second.irs.size();
+            if (total_fns > dirty_fns) {
+                metrics_.minimal_recompile_clean_funcs_saved.fetch_add(total_fns - dirty_fns,
+                                                                       std::memory_order_relaxed);
+                metrics_.minimal_recompile_scope_samples.fetch_add(1, std::memory_order_relaxed);
+            }
         }
 
         // Issue #401: real BFS over called_by chain.
@@ -9215,11 +9289,29 @@ private:
             for (auto& dep_name : dependents) {
                 jit_cache_.erase(dep_name);
                 metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1286: cascade per-block dirty to dependents.
+                // Issue #1286 / #1915: cascade body-only dirty to dependents
+                // (callers re-lower body, not nested lambdas) — avoids
+                // full-function mark_all_blocks_dirty degradation.
                 if (auto dit = ir_cache_v2_.find(dep_name); dit != ir_cache_v2_.end()) {
-                    dit->second.mark_all_blocks_dirty();
+                    const auto n = dit->second.mark_caller_body_dirty();
                     metrics_.invalidate_per_block_dirty_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                    if (n > 0) {
+                        metrics_.dirty_propagation_block_marks.fetch_add(n,
+                                                                         std::memory_order_relaxed);
+                        const auto dirty_fns = dit->second.dirty_func_count();
+                        const auto total_fns = dit->second.irs.size();
+                        if (total_fns > dirty_fns) {
+                            metrics_.minimal_recompile_clean_funcs_saved.fetch_add(
+                                total_fns - dirty_fns, std::memory_order_relaxed);
+                            metrics_.minimal_recompile_scope_samples.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    } else {
+                        dit->second.mark_all_blocks_dirty();
+                        metrics_.dirty_propagation_full_func_marks.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
             }
             // Drop stale AuraJIT modules inside the same lock as erase.

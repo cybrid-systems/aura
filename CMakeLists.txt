@@ -4700,6 +4700,10 @@ add_dependencies(all_test_issue_targets test_atomic_batch_pattern_1913)
 aura_add_issue_test(test_query_hygiene_provenance_1914)
 aura_issue_test_link_llvm_jit(test_query_hygiene_provenance_1914)
 add_dependencies(all_test_issue_targets test_query_hygiene_provenance_1914)
+# Issue #1915: fine-grained ir_cache_v2 block dirty + minimal re-lower.
+aura_add_issue_test(test_fine_dirty_relower_1915)
+aura_issue_test_link_llvm_jit(test_fine_dirty_relower_1915)
+add_dependencies(all_test_issue_targets test_fine_dirty_relower_1915)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
