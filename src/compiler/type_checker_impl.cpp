@@ -35,6 +35,8 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "observability_metrics.h"
 // Issue #1872: shared LRU victim helper for predicate_memo_ overflow.
 #include "bounded_lru.h"
+// Issue #1877: last hygiene provenance stamp for truncated blame frames.
+#include "core/provenance_tracker.hh"
 
 namespace aura::compiler {
 
@@ -455,6 +457,30 @@ void ConstraintSystem::record_truncated_partial_blame(std::size_t scanned, std::
         last_blame_chain_.frames.push_back(af);
     }
 
+    // Issue #1877: if a recent MacroIntroduced hygiene→provenance stamp
+    // exists, append a hygiene frame so truncated reverify remains
+    // traceable across hygiene gates (AI self-modify multi-tenant).
+    // Prefer process-wide tracker; fall back to CompilerMetrics mirror
+    // (always shared via set_metrics pointer across module boundaries).
+    {
+        std::uint32_t hy_node = 0;
+        std::uint64_t hy_mut = 0;
+        const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+        if (hs.node_id != 0) {
+            hy_node = hs.node_id;
+            hy_mut = hs.source_mutation_id;
+        } else if (metrics_) {
+            auto* mm = static_cast<struct CompilerMetrics*>(metrics_);
+            hy_node = mm->last_hygiene_blame_node;
+            hy_mut = mm->last_hygiene_blame_mutation;
+        }
+        if (hy_node != 0) {
+            if (hy_mut == 0)
+                hy_mut = active_mutation_id_;
+            last_blame_chain_.append_hygiene_frame(hy_node, hy_mut);
+        }
+    }
+
     if (!metrics_)
         return;
     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
@@ -463,7 +489,25 @@ void ConstraintSystem::record_truncated_partial_blame(std::size_t scanned, std::
                                                      std::memory_order_relaxed);
     // Truncation is incomplete by definition for rich completeness rate.
     m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+    if (last_blame_chain_.hygiene_frame_count > 0)
+        m->blame_hygiene_frames_total.fetch_add(last_blame_chain_.hygiene_frame_count,
+                                                std::memory_order_relaxed);
     update_blame_chain_completeness_rate();
+}
+
+void ConstraintSystem::append_hygiene_blame_frame(std::uint32_t node_id,
+                                                  std::uint64_t mutation_id) {
+    // Issue #1877: explicit hygiene frame for mutate gate / tests.
+    if (mutation_id == 0)
+        mutation_id = active_mutation_id_;
+    if (last_blame_chain_.root_mutation_id == 0)
+        last_blame_chain_.root_mutation_id = mutation_id;
+    last_blame_chain_.append_hygiene_frame(node_id, mutation_id);
+    if (!metrics_)
+        return;
+    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    m->blame_hygiene_frames_total.fetch_add(1, std::memory_order_relaxed);
+    m->constraint_blame_chain_length_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {

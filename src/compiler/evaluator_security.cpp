@@ -269,6 +269,7 @@ void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
     using namespace aura::core::workspace_isolation;
+    using namespace aura::core::provenance;
     if (mode > 2)
         mode = 2;
     g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
@@ -277,6 +278,19 @@ void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
     sandbox_mode_ = (mode != 0);
     // #1566: Strict sandbox links isolation enforcement.
     g_workspace_isolation().set_strict_sandbox_linked(mode == 2);
+    // Issue #1877: under sandbox Strict, FailOnStale provenance policy —
+    // no silent restamp of gen-stale StableNodeRef (multi-tenant AI
+    // self-modify must fail closed rather than auto-refresh).
+    if (mode == 2) {
+        g_provenance_tracker().set_policy(AutoRefreshPolicy::FailOnStale);
+        set_stable_ref_auto_refresh_policy(false);
+        record_fail_on_stale_strict_sandbox();
+        record_policy_enforced();
+    } else if (g_provenance_tracker().get_policy() == AutoRefreshPolicy::FailOnStale) {
+        // Leaving Strict: restore production default AutoRefreshOnBoundary.
+        g_provenance_tracker().set_policy(AutoRefreshPolicy::AutoRefreshOnBoundary);
+        set_stable_ref_auto_refresh_policy(true);
+    }
 }
 
 std::uint8_t Evaluator::effect_sandbox_mode() const noexcept {

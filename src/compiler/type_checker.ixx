@@ -54,13 +54,17 @@ export struct Constraint {
     std::uint32_t affected_node = 0;       // NodeId in affected set
 };
 
+// Issue #1877: DeltaBlameFrame.kind for MacroIntroduced hygiene frames
+// (Constraint::Kind values are small; 0xFF is reserved for hygiene).
+export inline constexpr std::uint8_t kHygieneBlameKind = 0xFF;
+
 // Issue #1529: one frame of a cross-delta blame chain.
 export struct DeltaBlameFrame {
     std::uint64_t source_mutation_id = 0;
     std::uint32_t predicate_cond_node = 0;
     std::uint32_t affected_node = 0;
     std::uint32_t constraint_index = UINT32_MAX;
-    std::uint8_t kind = 0; // Constraint::Kind
+    std::uint8_t kind = 0; // Constraint::Kind, or kHygieneBlameKind (#1877)
 };
 
 // Issue #1529 / #1873: full blame chain persisted on CONFLICT
@@ -82,8 +86,23 @@ export struct DeltaBlameChain {
     bool truncated_reverify = false;
     std::size_t unscanned_constraint_count = 0;
     std::size_t missing_provenance_frames = 0;
+    // Issue #1877: count of hygiene frames appended (truncation + gate).
+    std::size_t hygiene_frame_count = 0;
     [[nodiscard]] bool is_complete() const noexcept {
         return complete && !partial && !truncated_reverify;
+    }
+    // Issue #1877: append MacroIntroduced hygiene provenance frame so
+    // AI self-modify can still trace blocked mutates under truncation.
+    void append_hygiene_frame(std::uint32_t node_id, std::uint64_t mutation_id = 0) {
+        DeltaBlameFrame f;
+        f.source_mutation_id = mutation_id != 0 ? mutation_id : root_mutation_id;
+        f.affected_node = node_id;
+        f.constraint_index = UINT32_MAX;
+        f.kind = kHygieneBlameKind;
+        frames.push_back(f);
+        ++hygiene_frame_count;
+        // Hygiene-only frames do not satisfy the rich triple.
+        partial = true;
     }
 };
 
@@ -286,6 +305,9 @@ public:
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return last_blame_chain_;
     }
+    // Issue #1877: append MacroIntroduced hygiene frame onto last blame chain
+    // (tests + mutate hygiene gate; also auto-pulled on truncation).
+    void append_hygiene_blame_frame(std::uint32_t node_id, std::uint64_t mutation_id = 0);
     // Issue #466: mark a type variable root as touched for the
     // post-delta clean-constraint re-verify scan.
     void mark_touched_on_delta(aura::core::TypeId var, bool occurrence_narrow = false);

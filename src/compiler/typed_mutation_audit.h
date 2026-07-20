@@ -5,6 +5,8 @@
 #ifndef AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 
+#include "core/provenance_tracker.hh"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -197,19 +199,27 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
 
 // Issue #1613: always-on macro hygiene audit (bypasses Sampled gate so
 // blocked macro mutates are never lost from the trail).
+// Issue #1877: on Error/Rollback also stamp provenance tracker with
+// tenant_id so MacroIntroduced hygiene blocks are visible to both audit
+// trail and StableNodeRef provenance / truncated blame chains.
 inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outcome,
-                                        std::uint32_t target_node = 0,
-                                        std::int64_t fiber_id = 0) noexcept {
+                                        std::uint32_t target_node = 0, std::int64_t fiber_id = 0,
+                                        std::uint64_t tenant_id = 0,
+                                        std::uint64_t mutation_id = 0) noexcept {
     g_typed_mutation_audit_counters.macro_hygiene_events.fetch_add(1, std::memory_order_relaxed);
-    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback)
+    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) {
         g_typed_mutation_audit_counters.macro_hygiene_blocked.fetch_add(1,
                                                                         std::memory_order_relaxed);
-    else
+        // Dual-record: audit trail (below) + provenance tracker (#1877).
+        aura::core::provenance::record_macro_hygiene_provenance(
+            target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
+    } else {
         g_typed_mutation_audit_counters.macro_hygiene_allowed.fetch_add(1,
                                                                         std::memory_order_relaxed);
+    }
     const auto prev = get_strategy();
     set_strategy(AuditStrategy::Full);
-    capture_audit_event(/*mutation_id=*/0, name, MutationKind::MacroHygiene,
+    capture_audit_event(mutation_id, name, MutationKind::MacroHygiene,
                         /*before_epoch=*/0, /*after_epoch=*/0, outcome, target_node,
                         /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
     set_strategy(prev);

@@ -780,6 +780,16 @@ struct CompilerMetrics {
     // Issue #1873: reverify hit scan cap and appended a partial blame
     // frame trail (conflict or success-under-truncation).
     std::atomic<std::uint64_t> reverify_truncation_partial_blame_total{0};
+    // Issue #1877: MacroIntroduced hygiene frames on blame chains
+    // (truncation auto-pull + explicit append_hygiene_blame_frame).
+    std::atomic<std::uint64_t> blame_hygiene_frames_total{0};
+    // Issue #1877: per-CompilerMetrics mirror of hygiene→provenance stamps.
+    std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
+    // Issue #1877: last hygiene stamp for truncation blame auto-pull
+    // (non-atomic last-writer; process-wide provenance stamp is primary,
+    // this is the metrics_-pointer path that is always TU-shared).
+    std::uint32_t last_hygiene_blame_node = 0;
+    std::uint64_t last_hygiene_blame_mutation = 0;
     // Issue #745: Occurrence-priority reverify in solve_delta.
     std::atomic<std::uint64_t> constraint_reverify_narrow_hits_total{0};
     std::atomic<std::uint64_t> constraint_reverify_timeout_prevented_total{0};
