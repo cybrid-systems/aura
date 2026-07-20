@@ -1,6 +1,21 @@
 // orch.h — Issue #1588: unified orchestration facade.
 // Aggregates agent_spawn, MultiFiberMailbox, parallel_orch under aura::orch.
 //
+// ════════════════════════════════════════════════════════════════════
+// STATUS: Advanced / Experimental (Issue #1945, 2026-07 through 2026-10)
+// ════════════════════════════════════════════════════════════════════
+//
+// This module is marked Advanced / Experimental for the next 2-3
+// months while the core mutation + hot-update MVP are being hardened.
+// New callers should prefer the MVP surface (spawn_agent_with_mailbox
+// + join_agent + agent_send + agent_recv + AgentHandle/AgentSpec).
+// The multi-agent coordination surface (AgentRegistry +
+// conduct_parallel) is // DEFERRED per #1965 cycle 1; see
+// docs/agent-orchestration-status.md for full status, deferred scope,
+// P0 stability guarantee, and re-enable path.
+//
+// ════════════════════════════════════════════════════════════════════
+//
 // Issue #1965 (Phase 3 scope deferral): MVP vs deferred scope.
 // MVP (single-agent primitives; safe to ship in production):
 //   - spawn_agent_with_mailbox  (orch/agent_spawn.h)
