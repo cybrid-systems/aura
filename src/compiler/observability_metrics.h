@@ -7325,23 +7325,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_region_filtered_skips{0};           // #1480
     std::atomic<std::uint64_t> aot_closure_bridge_refresh_total{0};    // #1480
 
-    // ── Issue #1952: actual LLVM re-emit success + stable func_id stub ──
-    // aot_incremental_reemit_success_total: bumped by aura_reemit_aot_for_dirty
-    //   when the host-wired aura_set_aot_emit_fn callback returns true (real
-    //   LLVM emit succeeded). Pairs with aot_incremental_reemit_count
-    //   (delta = failures). Issue #1952 AC: aura_reemit_aot_for_dirty returns
-    //   actual re-emit count (not "would re-emit"); this counter is the
-    //   per-call success metric that pairs with that return value.
-    // stable_func_id_preserved_total: MVP STUB. Bumps 1:1 with
-    //   aot_incremental_reemit_success_total. Full stable DefineId
-    //   persistence (cross-epoch func_id mapping that survives re-emit)
-    //   is deferred per #1952 Anqi comment — out-of-scope for MVP.
-    //   cycle 2 follow-up will replace this stub with a real
-    //   define_id → func_id mapping table. The 1:1 invariant is
-    //   checked by (query:aot-incremental-reemit-stats): if
-    //   stable != success the query returns -1 regression sentinel.
+    // ── Issue #1952 / #1930: LLVM re-emit success + stable func_id map ──
+    // aot_incremental_reemit_success_total: bumped when host-wired
+    //   aura_set_aot_emit_fn returns true. Pairs with
+    //   aot_incremental_reemit_count (delta ≈ failures when emit wired).
+    // stable_func_id_preserved_total: bumped when name already in the
+    //   process-stable name→func_id map (#1930 real map; re-emit reuse).
+    // stable_func_id_assigned_total: bumped when a new name first enters
+    //   the map (first emit / first skeleton would-reemit of that name).
     std::atomic<std::uint64_t> aot_incremental_reemit_success_total{0}; // #1952
-    std::atomic<std::uint64_t> stable_func_id_preserved_total{0};       // #1952 MVP stub
+    std::atomic<std::uint64_t> stable_func_id_preserved_total{0};       // #1930
+    std::atomic<std::uint64_t> stable_func_id_assigned_total{0};        // #1930
 
     // ── Issue #1630: mandate full StableNodeRef provenance ──
     // fiber_id mismatch fail-fast (unpinned); boundary_pinned auto-restamp

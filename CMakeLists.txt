@@ -4752,6 +4752,10 @@ add_dependencies(all_test_issue_targets test_linear_walk_active_closures_1928)
 aura_add_issue_test(test_closure_bridge_lifetime_1929)
 aura_issue_test_link_llvm_jit(test_closure_bridge_lifetime_1929)
 add_dependencies(all_test_issue_targets test_closure_bridge_lifetime_1929)
+# Issue #1930: aura_reemit_aot_for_dirty LLVM re-emit + stable func_id map.
+aura_add_issue_test(test_aot_incremental_reemit_1930)
+aura_issue_test_link_llvm_jit(test_aot_incremental_reemit_1930)
+add_dependencies(all_test_issue_targets test_aot_incremental_reemit_1930)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

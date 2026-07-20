@@ -50,10 +50,10 @@ documented as future work and have related open issues:
   for the systemic MutationBoundaryGuard enforcement work. Until those
   land, hot-update during agent orchestration is unsafe.
 
-- **Full incremental re-emit with stable `DefineId` persistence across
-  epochs** — `DefineId` is currently per-epoch; persisted across epochs
-  would require workspace migration. See [#1930], [#1952] for the
-  `aura_reemit_aot_for_dirty` LLVM pipeline work.
+- **Cross-workspace stable `DefineId` persistence / COW migration** —
+  single-workspace process-stable **name→func_id** map for
+  `aura_reemit_aot_for_dirty` landed in [#1930] / [#1952]. Persisting
+  DefineId across workspace migration / COW boundaries remains deferred.
 
 - **Hot-update of closures captured across COW workspace boundaries**
   (advanced scenarios) — see [#1916] for `EnvFrame` SoA + `bridge_epoch`
@@ -108,7 +108,7 @@ documented as future work and have related open issues:
 These remain open and are pre-requisites or extensions of the MVP:
 
 - [#1929] Fix `make_closure_view` raw pointer lifetime violation
-- [#1930] Complete `aura_reemit_aot_for_dirty` LLVM re-emit pipeline
+- [#1930] Complete `aura_reemit_aot_for_dirty` LLVM re-emit pipeline *(closed: single-workspace stable name→func_id + emit callback)*
 - [#1931] Systemic `MutationBoundaryGuard` enforcement
 - [#1947] `make_closure_view` copies Closure raw pointer
 - [#1950] `MutationBoundaryGuard` dtor 15+ atomic ops per call

@@ -63,6 +63,7 @@ bool aura_reload_aot_module(const char* path, std::uint64_t version);
 //   aura_set_aot_metrics — explicit host wire-up (overwrites)
 //   aura_ensure_aot_metrics — lazy bind only if currently null
 //   aura_get_aot_metrics — current pointer (may be null)
+// aura_set_aot_metrics is declared in runtime_shared.h (CompilerMetrics*).
 void aura_ensure_aot_metrics(void* metrics);
 void* aura_get_aot_metrics(void);
 std::uint64_t aura_aot_metrics_lazy_init_total(void);
@@ -134,28 +135,36 @@ typedef bool (*aura_reemit_candidate_fn_t)(void* userdata, const char** out_name
                                            bool* out_from_closure_capture);
 void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata);
 
-// Issue #1952: actual LLVM re-emit callback. The host (Evaluator /
-// CompilerService) wires a function that takes the dirty FlatFunction
-// name + region, looks up the function via ir_cache_v2_ or
+// Issue #1952 / #1930: actual LLVM re-emit callback. The host
+// (Evaluator / CompilerService) wires a function that takes the dirty
+// FlatFunction name + region, looks up via ir_cache_v2_ or
 // relower_define_function_minimal, calls emit_native_object_incremental
-// (or the existing emit_native_object for #1943 MVP scope), and returns
-// true on successful emit. aura_reemit_aot_for_dirty bumps
-// aot_incremental_reemit_success_total + the MVP stub
-// stable_func_id_preserved_total on true. Returns false to keep
-// skeleton behavior (count + commit_func_table_swap gate).
+// (or emit_native_object for #1943 MVP), and returns true on success.
+// On true, aura_reemit_aot_for_dirty bumps success metrics and
+// get_or_preserve_stable_func_id for the name. Returns false to skip
+// that candidate without advancing table epoch.
 //
 // userdata is the opaque pointer the host passed to the setter
-// (typically the CompilerService* so the callback can walk ir_cache_v2_
-// + dep_graph_ + emit_native_object without exposing the bridge to
-// the full CompilerService surface).
+// (typically the CompilerService*).
 typedef bool (*aura_aot_emit_fn_t)(const char* name, std::uint64_t region, void* userdata);
 void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata);
-// Last re-emit count (for tests + EDSL observability).
+
+// Issue #1930: process-stable Define-name → func_id map (single workspace).
+// get_or_preserve assigns on first sighting; subsequent re-emits reuse id.
+// out_preserved may be null; when non-null set to 1 if reused, 0 if assigned.
+std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
+std::uint32_t aura_lookup_stable_func_id(const char* name); // 0 if missing
+std::uint64_t aura_stable_func_id_map_size(void);
+void aura_clear_stable_func_id_map(void);
+
+// Last re-emit count (region-filtered candidates / would-reemit).
 std::uint64_t aura_reemit_dirty_count(void);
 // Last re-emit region-filtered skip count.
 std::uint64_t aura_reemit_region_filtered_skips(void);
 // Last re-emit closure-capture-dep count.
 std::uint64_t aura_reemit_closure_dep_count(void);
+// Last re-emit success count (emit callback true count; 0 if no emit fn).
+std::uint64_t aura_reemit_success_count(void);
 
 // Issue #708 — region isolation + func_table refcount tracking.
 // Global (default) APIs — equivalent to for_eval(nullptr, ...).

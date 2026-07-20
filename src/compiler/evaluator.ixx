@@ -1755,11 +1755,10 @@ public:
         return 0;
     }
 
-    // Issue #1952: AOT incremental re-emit stats (Issue #1480 re-emit
-    // pipeline + #1952 actual LLVM emit). Backed by CompilerMetrics
-    // atomic fields bumped from aura_jit_bridge.cpp
-    // (aura_reemit_aot_for_dirty). Exposed via
-    // (engine:metrics "query:aot-incremental-reemit-stats").
+    // Issue #1952 / #1930: AOT incremental re-emit stats (#1480 pipeline +
+    // real LLVM emit + stable name→func_id map). Backed by CompilerMetrics
+    // fields bumped from aura_jit_bridge.cpp (aura_reemit_aot_for_dirty).
+    // Exposed via (engine:metrics "query:aot-incremental-reemit-stats").
     [[nodiscard]] std::uint64_t get_aot_incremental_reemit_count() const noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             return m->aot_incremental_reemit_count.load(std::memory_order_relaxed);
@@ -1778,6 +1777,11 @@ public:
     [[nodiscard]] std::uint64_t get_stable_func_id_preserved_total() const noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             return m->stable_func_id_preserved_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_stable_func_id_assigned_total() const noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            return m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
         return 0;
     }
     void bump_aot_live_closure_refresh_on_mutation_total() const noexcept {
