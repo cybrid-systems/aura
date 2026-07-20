@@ -24,8 +24,8 @@
 
 namespace aura::serve::mf_mailbox {
 
-inline constexpr int kMultiFiberMailboxPhase = 2; // #1585 production
-inline constexpr int kMultiFiberMailboxIssue = 1585;
+inline constexpr int kMultiFiberMailboxPhase = 3; // #1881 observability
+inline constexpr int kMultiFiberMailboxIssue = 1881;
 
 enum class MailPriority : std::uint8_t { Low = 0, Normal = 1, High = 2, Critical = 3 };
 
@@ -127,6 +127,7 @@ public:
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.pushes.fetch_add(1, std::memory_order_relaxed);
+        local_stats_.pushes.fetch_add(1, std::memory_order_relaxed); // #1881: was dead
         if (msg.priority >= MailPriority::High)
             g_mf_mailbox_stats.priority_high.fetch_add(1, std::memory_order_relaxed);
         if (msg.to_fiber == 0)
@@ -152,6 +153,12 @@ public:
     // Fan-out: enqueue one message copy per attached fiber (to_fiber = fiber id).
     // Returns Backpressure if any push would overflow (none applied).
     [[nodiscard]] PushStatus broadcast_fanout(const MailMessage& proto) {
+        // Issue #1881: linear_checks on fanout (was only on push → dead on fanout path).
+        g_mf_mailbox_stats.linear_checks.fetch_add(1, std::memory_order_relaxed);
+        if (proto.payload.size() >= 12 && proto.payload.compare(0, 12, "linear-viol:") == 0) {
+            g_mf_mailbox_stats.linear_violations.fetch_add(1, std::memory_order_relaxed);
+            return PushStatus::Closed;
+        }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
@@ -162,6 +169,7 @@ public:
         }
         g_mf_mailbox_stats.broadcasts.fetch_add(1, std::memory_order_relaxed);
         g_mf_mailbox_stats.pushes.fetch_add(need, std::memory_order_relaxed);
+        local_stats_.pushes.fetch_add(need, std::memory_order_relaxed);
         if (proto.priority >= MailPriority::High)
             g_mf_mailbox_stats.priority_high.fetch_add(need, std::memory_order_relaxed);
 
@@ -252,6 +260,21 @@ public:
         broadcasts = g_mf_mailbox_stats.broadcasts.load(std::memory_order_relaxed);
         bp = g_mf_mailbox_stats.backpressure_rejects.load(std::memory_order_relaxed);
         attaches = g_mf_mailbox_stats.attaches.load(std::memory_order_relaxed);
+    }
+
+    // Issue #1881: full health snapshot (priority / waits / linear).
+    static void snapshot_global_full(std::uint64_t& pushes, std::uint64_t& pops,
+                                     std::uint64_t& broadcasts, std::uint64_t& bp,
+                                     std::uint64_t& attaches, std::uint64_t& priority_high,
+                                     std::uint64_t& recv_waits, std::uint64_t& recv_timeouts,
+                                     std::uint64_t& linear_checks,
+                                     std::uint64_t& linear_violations) noexcept {
+        snapshot_global(pushes, pops, broadcasts, bp, attaches);
+        priority_high = g_mf_mailbox_stats.priority_high.load(std::memory_order_relaxed);
+        recv_waits = g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
+        recv_timeouts = g_mf_mailbox_stats.recv_timeouts.load(std::memory_order_relaxed);
+        linear_checks = g_mf_mailbox_stats.linear_checks.load(std::memory_order_relaxed);
+        linear_violations = g_mf_mailbox_stats.linear_violations.load(std::memory_order_relaxed);
     }
 
 private:

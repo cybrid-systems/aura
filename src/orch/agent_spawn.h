@@ -35,8 +35,8 @@ extern "C" void aura_orch_agent_body_release_guard();
 
 namespace aura::orch {
 
-inline constexpr int kOrchModulePhase = 3; // #1880 ResourceQuota orch
-inline constexpr int kOrchModuleIssue = 1880;
+inline constexpr int kOrchModulePhase = 4; // #1881 orch health observability
+inline constexpr int kOrchModuleIssue = 1881;
 
 // Estimated per-agent arena footprint + mailbox high-water bytes (#1880).
 inline constexpr std::uint64_t kOrchAgentArenaBytes = 4096;
@@ -68,6 +68,14 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> resource_quota_rejects_total{0};
     std::atomic<std::uint64_t> agent_body_try_acquire_rejects_total{0};
     std::atomic<std::uint64_t> agent_body_try_acquire_ok_total{0};
+    // Issue #1881: observability — hot-path counters (no dead bumps).
+    std::atomic<std::uint64_t> agents_active{0}; // spawn - joined (approx live)
+    std::atomic<std::uint64_t> send_backpressure_total{0};
+    std::atomic<std::uint64_t> send_closed_total{0};
+    std::atomic<std::uint64_t> recv_empty_total{0};
+    std::atomic<std::uint64_t> join_wait_us_total{0};
+    std::atomic<std::uint64_t> join_ok_total{0};
+    std::atomic<std::uint64_t> join_fail_total{0};
 };
 
 inline OrchModuleStats g_orch_module_stats{};
@@ -223,6 +231,7 @@ struct AgentSpec {
     h.mailbox = std::move(mb);
     h.ok = true;
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
+    g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
     return h;
 }
 
@@ -245,6 +254,21 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
     }
     auto jr = serve::Fiber::join(h.fiber, timeout_ms);
     g_orch_module_stats.agents_joined.fetch_add(1, std::memory_order_relaxed);
+    g_orch_module_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
+    if (jr.status == serve::JoinStatus::Ok)
+        g_orch_module_stats.join_ok_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
+    // agents_active: best-effort (never go below 0).
+    {
+        auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+        for (;;) {
+            const auto next = cur > 0 ? cur - 1 : 0;
+            if (g_orch_module_stats.agents_active.compare_exchange_weak(
+                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
+                break;
+        }
+    }
     // Issue #1879: mandate join-path StableNodeRef / linear enforcement
     // even when Fiber::join skipped host refresh (nested fiber join).
     if (jr.status == serve::JoinStatus::Ok)
@@ -270,6 +294,21 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
     }
     auto jr = serve::Fiber::join(std::span<serve::Fiber* const>(fibers), timeout_ms);
     g_orch_module_stats.agents_joined.fetch_add(fibers.size(), std::memory_order_relaxed);
+    g_orch_module_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
+    if (jr.status == serve::JoinStatus::Ok)
+        g_orch_module_stats.join_ok_total.fetch_add(fibers.size(), std::memory_order_relaxed);
+    else
+        g_orch_module_stats.join_fail_total.fetch_add(1, std::memory_order_relaxed);
+    {
+        auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
+        const auto n = static_cast<std::uint64_t>(fibers.size());
+        for (;;) {
+            const auto next = cur > n ? cur - n : 0;
+            if (g_orch_module_stats.agents_active.compare_exchange_weak(
+                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
+                break;
+        }
+    }
     if (jr.status == serve::JoinStatus::Ok) {
         for (auto* f : fibers)
             orch_post_join_provenance(f);
@@ -281,25 +320,37 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
 }
 
 // Send a message to an agent's mailbox (if any).
+// Issue #1881: bump all outcomes (ok / backpressure / closed) — no dead path.
 [[nodiscard]] inline serve::mf_mailbox::PushStatus agent_send(AgentHandle& h,
                                                               serve::mf_mailbox::MailMessage msg) {
-    if (!h.ok || !h.mailbox)
+    if (!h.ok || !h.mailbox) {
+        g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
         return serve::mf_mailbox::PushStatus::Closed;
+    }
     msg.to_fiber = h.id;
     auto st = h.mailbox->push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Ok)
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
+    else if (st == serve::mf_mailbox::PushStatus::Backpressure)
+        g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     return st;
 }
 
 // Blocking/non-blocking recv on agent mailbox.
+// Issue #1881: bump empty/timeout path (recv_empty) as well as success.
 [[nodiscard]] inline std::optional<serve::mf_mailbox::MailMessage>
 agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
-    if (!h.ok || !h.mailbox)
+    if (!h.ok || !h.mailbox) {
+        g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
+    }
     auto m = h.mailbox->recv(wait, timeout_ms, h.id);
     if (m)
         g_orch_module_stats.agents_recv.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
     return m;
 }
 
