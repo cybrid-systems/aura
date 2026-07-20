@@ -1,6 +1,13 @@
 // src/core/error.ixx — Issue #474: Aura unified error type
 // (Phase 0 foundation, scope-limited close).
 //
+// Purpose: AuraError / AuraResult foundation for explicit failure paths
+// Layer: Core
+// Safety Class: P0 (error model; no silent exception across fibers)
+// Issue: #474 / #807 / #809 / #1886
+// AI-Native Rationale: agents need typed failures (kind + message) for
+//   self-mod control loops; exceptions break fiber / COW / generation chains
+//
 // POLICY (Issues #807/#809): Hot paths use AuraResult / EvalResult;
 // exceptions only for OOM / init / hard invariants. Authoritative
 // doc: docs/design/error-handling-policy.md

@@ -63,6 +63,7 @@ CMake module lists: [`cmake/AuraModules.cmake`](../cmake/AuraModules.cmake)
 ## Related
 
 - Issue **#1885** (this file + `module_boundary.ixx`)
+- Naming & comment templates: **#1886** — [`docs/naming_convention.md`](naming_convention.md)
 - Concepts foundation: **#501**
 - Pass concepts centralization: **#1577**
 - Contributing: [`docs/contributing.md`](contributing.md)

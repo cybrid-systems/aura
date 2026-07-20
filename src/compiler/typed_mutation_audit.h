@@ -349,7 +349,13 @@ inline void note_predicate_memo_eviction(std::uint64_t n) noexcept {
     }
 }
 
-// Correlate latest type-system pass snapshot with an invariant audit result.
+// Purpose: correlate last TypeProp/DCE/memo snapshot with one invariant audit
+// Pre: note_type_propagation_pass / note_dce_narrow_hits may have stamped last_*
+// Post: bumps correlation_total; may bump pass/fail-with-evidence and evidence_lost
+// Safety Class: P2 (observability; relaxed atomics; no throw)
+// Issue: #1884 / #1886
+// AI-Native Rationale: self-evo maps type_invariant_fail to narrow_evidence
+//   via query:type-propagation-invariant-stats without replaying the pipeline
 inline void correlate_invariant_with_type_system(const InvariantAuditResult& r) noexcept {
     auto& c = g_typed_mutation_audit_counters;
     c.type_prop_invariant_correlation_total.fetch_add(1, std::memory_order_relaxed);

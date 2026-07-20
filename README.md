@@ -17,4 +17,6 @@ Testing / layout policy: [`tests/README.md`](tests/README.md) · [`docs/contribu
 
 Module layering (Core ← Parser ← Compiler ← …): [`docs/architecture.md`](docs/architecture.md) · [`src/core/module_boundary.ixx`](src/core/module_boundary.ixx)
 
+Naming & comments: [`docs/naming_convention.md`](docs/naming_convention.md)
+
 License: Apache 2.0

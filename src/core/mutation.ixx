@@ -1,4 +1,12 @@
-// Issue #275: pure mutation / rollback helpers extracted from FlatAST.
+// mutation.ixx — Issue #275: pure mutation / rollback helpers extracted from FlatAST.
+//
+// Purpose: typed MutationRecord + rollback data independent of FlatAST layout
+// Layer: Core (aura.core.mutation); imported by ast / compiler mutation paths
+// See also: docs/naming_convention.md (#1886), typed_mutation_audit.h
+//
+// Safety Class: P0 (rollback correctness under AI structural mutate)
+// AI-Native Rationale: mutation_id + provenance fields let agents attribute
+//   and reverse workspace edits without parsing free-form logs
 module;
 
 #include <chrono>
