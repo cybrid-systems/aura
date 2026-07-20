@@ -171,63 +171,32 @@ inline int register_test(const char* name, TestFn fn) {
 #define EXPECT_GT(a, b) CHECK((a) > (b), #a " > " #b)
 #define EXPECT_GE(a, b) CHECK((a) >= (b), #a " >= " #b)
 
-// ── AURA_ISSUE_TEST() — Phase 4 macro for the new test pattern ──
+// ── AURA_ISSUE_TEST() — bundle entry-point helper ──
 //
-// Per Anqi 2026-07-20 "ship in order" directive (Phase 3), agents
-// should add NEW issue tests to the 5 domain files at tests/ root
-// (test_fiber.cpp / test_ir.cpp / test_observability.cpp /
-//  test_mutation.cpp / test_persist.cpp) instead of reflexively
-// creating new tests/issues/test_issue_NNN.cpp.
+// Prefer adding ACs to tests/domain/ suites (see tests/README.md, #1958).
+// This macro generates a bundle-callable `extern "C" int aura_issue_NNN_run()`
+// when a domain/batch file must expose a per-issue symbol for
+// tests/bundles/test_issues_*_main.cpp.
 //
-// AURA_ISSUE_TEST(NNN, DESC, BODY) generates the bundle-callable
-// `extern "C" int aura_issue_NNN_run()` function inside the
-// domain file, where the bundle driver
-// (tests/bundles/test_issues_*_main.cpp) declares
-// `extern int aura_issue_NNN_run();` and calls it.
-//
-// Usage inside tests/test_<domain>.cpp:
+// Usage (file scope, inside a domain or batch .cpp):
 //
 //   AURA_ISSUE_TEST(1401, "load_module ↔ compact_env_frames mutex", {
-//       // test body — uses CHECK(...) for assertions
-//       cs.evaluator().compact_env_frames();
-//       auto r = cs.evaluator().load_module_file("__nonexistent__");
-//       CHECK(r.kind() == EvalValue::Kind::Void, "load returns void");
+//       // body uses CHECK(...); CompilerService etc. as needed
 //   })
 //
-// Expands to (at file scope, NOT inside a function):
+// Expands to:
 //
 //   extern "C" int aura_issue_1401_run() {
-//       // test body
+//       // body
 //       return ::aura::test::g_failed > 0 ? 1 : 0;
 //   }
 //
-// Phase 4 migration steps (per per-issue file):
-//   1. extract test functions from the file's namespace
-//   2. wrap them in AURA_ISSUE_TEST body in the appropriate
-//      tests/test_<domain>.cpp
-//   3. update AURA_ISSUE_BUNDLE_*_MEMBERS in
-//      cmake/AuraIssueBundles.cmake to remove the per-issue entry
-//   4. add the domain file to the bundle's target_sources
-//   5. delete tests/issues/test_issue_NNN.cpp
+// Policy / migration:
+//   - New work: tests/domain/test_domain_*.cpp or cases/obs_schema_cases.hpp
+//   - Do not add tests/issues/test_issue_NNN.cpp for routine issues
+//   - Inventory: tests/legacy_test_inventory.md (#1957)
 //
-// Note: macro must be at FILE SCOPE (not inside a function) because
-// it expands to a function definition. Bundle driver extern
-// declarations remain unchanged.
-//
-// Why this macro:
-//   - The legacy per-issue file pattern (tests/issues/test_issue_NNN.cpp
-//     with its own int main()) created 635 separate compile units
-//     (~9m20s build time, mostly per-file overhead).
-//   - The new pattern: a single domain file at tests/ root contains
-//     many AURA_ISSUE_TEST(...) calls = one compile unit per domain =
-//     ~50x build speedup.
-//   - Issue tracking is via @category / @reason / @domain / @issue
-//     metadata + commit message (`fix(...): ... (#NNN)`) + git grep —
-//     NOT via filename.
-//
-// Reference: docs/classification/635-test-issues.md maps every
-// existing test_issue_*.cpp to one of the 5 domains. Use it to
-// decide which domain file to add the new test to.
+// Macro must be at FILE SCOPE (not inside a function).
 #define AURA_ISSUE_TEST(ISSUE_NUM, DESC, BODY)             \
     extern "C" int aura_issue_##ISSUE_NUM##_run() {     \
         BODY                                              \

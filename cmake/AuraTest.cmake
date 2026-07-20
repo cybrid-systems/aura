@@ -6,9 +6,8 @@
 # Wired into aura_add_issue_test() and the main test binaries
 # (test_ir, test_concurrent, aura_test_objects, aura).
 
-# Resolve test source: prefer tests/issues/<NAME>.cpp (per-issue tests, Phase 1
-# of the tests/ consolidation), then tests/domain/<NAME>.cpp (domain suites),
-# then tests/<NAME>.cpp (legacy / unit / issue standalones).
+# Resolve test source: tests/issues/ (legacy) → tests/domain/ (preferred for
+# new theme suites) → tests/ (batches / fallback). Policy: tests/README.md.
 function(aura_resolve_test_cpp NAME OUT_VAR)
     if(EXISTS "${CMAKE_SOURCE_DIR}/tests/issues/${NAME}.cpp")
         set(${OUT_VAR} "tests/issues/${NAME}.cpp" PARENT_SCOPE)
