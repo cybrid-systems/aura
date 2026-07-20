@@ -6116,13 +6116,14 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // algorithm + concurrency contract (caller must serialize
     // at the workspace level).
     //
-    // Issue #1842 / #1889 / #1897: wrap in try_acquire Guard + try/catch.
+    // Issue #1842 / #1889 / #1897 / #1955: wrap in try_acquire Guard + try/catch.
     // Pre-#1842 the primitive called compact_env_frames() raw —
     // a throw mid-remap left env_frames_ / Closure::env_id
     // partially consistent with no panic-checkpoint restore.
-    // #1889: all structural env compaction entry points from the
+    // #1889 / #1955: all structural env compaction entry points from the
     // public primitive surface must go through Guard (truncate is
-    // internal to panic restore, not a free primitive).
+    // internal to panic restore, not a free primitive — still Guard-
+    // wrapped when free-standing via #1927).
     // #1897: try_acquire (typed quota reject) via shared helper.
     add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
         return run_under_mutation_guard(

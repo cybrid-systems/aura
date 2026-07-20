@@ -93,6 +93,7 @@ static void ac2_schema() {
     CHECK(href(cs, "schema") == 1889, "lineage 1889");
     CHECK(href(cs, "schema-1927") == 1927, "schema-1927");
     CHECK(href(cs, "issue-1927") == 1927, "issue-1927");
+    CHECK(href(cs, "schema-1955") == 1955, "schema-1955 refine");
     CHECK(href(cs, "bridge_epoch_bump_on_truncate_total") >= 0, "AC metric");
     CHECK(href(cs, "mutation_boundary_violation_on_env_compact") >= 0, "compact viol");
     CHECK(href(cs, "mutation-boundary-violation-on-env-truncate") >= 0, "trunc viol");

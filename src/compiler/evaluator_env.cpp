@@ -1568,24 +1568,24 @@ void Evaluator::invalidate_post_rollback_env_frames() {
 // concurrent reader that raced before resize sees terminal
 // invalid, then bumps env_generation_ + truncate counters.
 //
-// Dual-epoch contract (#1485 / #1889 / #1927): after truncate we MUST
-// bump bridge_epoch + defuse_version_ so apply_closure's is_bridge_stale
-// / is_env_frame_stale reject closures stamped pre-truncate. Without
-// the bump, a Closure with env_id past the checkpoint can pass
+// Dual-epoch contract (#1485 / #1889 / #1927 / #1955): after truncate we
+// MUST bump bridge_epoch + defuse_version_ so apply_closure's
+// is_bridge_stale / is_env_frame_stale reject closures stamped pre-truncate.
+// Without the bump, a Closure with env_id past the checkpoint can pass
 // freshness and then materialize an OOB frame. Structural mutation of
 // env_frames_ is paired with this dual-epoch pair + doomed-closure
 // bridge_epoch=0 restamp (compact_env_frames has the same lockstep).
 std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
-    // Issue #1927: fast no-op BEFORE Guard acquire — avoids enter/exit
+    // Issue #1927 / #1955: fast no-op BEFORE Guard acquire — avoids enter/exit
     // defuse_version_ bumps (2 per boundary) when nothing is truncated.
     {
         std::shared_lock<std::shared_mutex> rlock(env_frames_lock());
         if (checkpoint_size >= env_frames_.size())
             return 0;
     }
-    // Issue #1927 / #1948: MutationBoundaryGuard wrap ONLY when not already
-    // inside a boundary. Panic restore / run_post_restore_lifecycle_close
+    // Issue #1927 / #1948 / #1955: MutationBoundaryGuard wrap ONLY when not
+    // already inside a boundary. Panic restore / run_post_restore_lifecycle_close
     // call truncate under an outer Guard (failure path); nested
     // try_acquire with success=true would fight outer rollback. Outer
     // path: dual-epoch + doomed restamp alone is the AC contract.
@@ -1628,11 +1628,11 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
-    // Issue #1927: dual-epoch lockstep with compact_env_frames —
+    // Issue #1927 / #1955: dual-epoch lockstep with compact_env_frames —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
     defuse_version_.fetch_add(1, std::memory_order_release);
     bump_envframe_truncate(dropped);
-    // Issue #1739 / #1889 / #1927: bump bridge_epoch so cross-COW /
+    // Issue #1739 / #1889 / #1927 / #1955: bump bridge_epoch so cross-COW /
     // cross-evaluator closure freshness checks (is_bridge_stale /
     // aura_closure_call) observe that post-checkpoint EnvIds are no
     // longer valid. Same hook used by compact_env_frames (#1510) and
