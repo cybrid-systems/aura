@@ -1558,29 +1558,41 @@ void Evaluator::invalidate_post_rollback_env_frames() {
 // concurrent reader that raced before resize sees terminal
 // invalid, then bumps env_generation_ + truncate counters.
 //
-// Dual-epoch contract (#1485 / #1889): after truncate we MUST bump
-// bridge_epoch (via bridge_epoch_bump_fn_) so apply_closure's
-// is_bridge_stale rejects closures stamped pre-truncate. Without the
-// bump, a Closure with env_id past the checkpoint can pass freshness
-// and then materialize an OOB frame. Structural mutation of env_frames_
-// is paired with this bump + doomed-closure bridge_epoch=0 restamp.
+// Dual-epoch contract (#1485 / #1889 / #1927): after truncate we MUST
+// bump bridge_epoch + defuse_version_ so apply_closure's is_bridge_stale
+// / is_env_frame_stale reject closures stamped pre-truncate. Without
+// the bump, a Closure with env_id past the checkpoint can pass
+// freshness and then materialize an OOB frame. Structural mutation of
+// env_frames_ is paired with this dual-epoch pair + doomed-closure
+// bridge_epoch=0 restamp (compact_env_frames has the same lockstep).
 std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
-    // Issue #1948: defensive Guard wrap on the truncate path. The
-    // panic-rollback path doesn't go through a primitive (no Guard),
-    // but record the violation metric if the Guard can't be acquired
-    // — the dual-epoch bump + doomed-closure restamp below still
-    // guarantee post-truncate state safety even without a Guard.
+    // Issue #1927: fast no-op BEFORE Guard acquire — avoids enter/exit
+    // defuse_version_ bumps (2 per boundary) when nothing is truncated.
+    {
+        std::shared_lock<std::shared_mutex> rlock(env_frames_lock());
+        if (checkpoint_size >= env_frames_.size())
+            return 0;
+    }
+    // Issue #1927 / #1948: MutationBoundaryGuard wrap ONLY when not already
+    // inside a boundary. Panic restore / run_post_restore_lifecycle_close
+    // call truncate under an outer Guard (failure path); nested
+    // try_acquire with success=true would fight outer rollback. Outer
+    // path: dual-epoch + doomed restamp alone is the AC contract.
+    // Free-standing truncate (tests / non-boundary callers): acquire Guard.
+    std::unique_ptr<MutationBoundaryGuard> held_guard;
     bool guard_ok = true;
-    auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, &guard_ok);
-    if (!gr) {
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->mutation_boundary_violation_on_env_truncate_total.fetch_add(
-                1, std::memory_order_relaxed);
-        // Continue with truncate anyway — the dual-epoch bump keeps
-        // post-truncate state safe (closure freshness check rejects
-        // pre-truncate stamps, doomed closures are restamped to
-        // bridge_epoch=0). See Issue #1889 dual-epoch contract.
+    const bool already_in_boundary = mutation_boundary_held() || mutation_boundary_depth() > 0;
+    if (!already_in_boundary) {
+        auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, &guard_ok);
+        if (!gr) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->mutation_boundary_violation_on_env_truncate_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            // Continue — dual-epoch bump still protects post-truncate state.
+        } else {
+            held_guard = std::move(*gr);
+        }
     }
     // Issue #1949: walk_active_closures pre-truncate scan — catches
     // any active closure with linear_ownership_state!=Fresh whose
@@ -1612,19 +1624,22 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
+    // Issue #1927: dual-epoch lockstep with compact_env_frames —
+    // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
+    defuse_version_.fetch_add(1, std::memory_order_release);
     bump_envframe_truncate(dropped);
-    // Issue #1739 / #1889: bump bridge_epoch so cross-COW / cross-evaluator
-    // closure freshness checks (is_bridge_stale / aura_closure_call)
-    // observe that post-checkpoint EnvIds are no longer valid.
-    // Same hook used by compact_env_frames (#1510) and
+    // Issue #1739 / #1889 / #1927: bump bridge_epoch so cross-COW /
+    // cross-evaluator closure freshness checks (is_bridge_stale /
+    // aura_closure_call) observe that post-checkpoint EnvIds are no
+    // longer valid. Same hook used by compact_env_frames (#1510) and
     // commit_panic_checkpoint (#1728). No-op when service not bound.
     if (bridge_epoch_bump_fn_ && compiler_service_) {
         bridge_epoch_bump_fn_(compiler_service_);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->bridge_epoch_bump_on_truncate_total.fetch_add(1, std::memory_order_relaxed);
     }
-    // Issue #1889: defense-in-depth — force dual-check stale for any
-    // Closure still holding an env_id past the checkpoint (OOB after
+    // Issue #1889 / #1927: defense-in-depth — force dual-check stale for
+    // any Closure still holding an env_id past the checkpoint (OOB after
     // resize). bridge_epoch=0 is STALE under active tracking (#1365).
     std::size_t doomed = 0;
     {
@@ -1632,6 +1647,9 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
         for (auto& kv : closures_) {
             const auto id = kv.second.env_id;
             if (id != NULL_ENV_ID && id >= checkpoint_size) {
+                // Force bridge_epoch=0 (STALE under active tracking #1365)
+                // without full tombstone_for_views — closure stays registered
+                // for diagnostics, apply_closure dual-check refuses it.
                 kv.second.bridge_epoch = 0;
                 // Leave env_id so resolve_env_frame_detailed reports OOB;
                 // safe_fallback path uses dual-check.

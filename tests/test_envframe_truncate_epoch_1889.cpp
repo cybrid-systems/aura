@@ -156,11 +156,18 @@ void ac5_compact_guard_source() {
             break;
     }
     CHECK(!src.empty(), "read compile prims");
-    auto pos = src.find("evaluator:compact-env-frames");
+    // Prefer add("...") site — a doc comment also names the primitive earlier.
+    auto pos = src.find("add(\"evaluator:compact-env-frames\"");
+    if (pos == std::string::npos)
+        pos = src.find("evaluator:compact-env-frames");
     CHECK(pos != std::string::npos, "found primitive");
-    auto win = src.substr(pos > 400 ? pos - 400 : 0, 1200);
-    CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "Guard present");
-    CHECK(win.find("#1842") != std::string::npos || win.find("#1889") != std::string::npos,
+    auto win = src.substr(pos, 800);
+    CHECK(win.find("MutationBoundaryGuard") != std::string::npos ||
+              win.find("run_under_mutation_guard") != std::string::npos,
+          "Guard present");
+    // Nearby comment cites #1842 / #1889 (search a bit earlier for the block).
+    auto cite = src.substr(pos > 600 ? pos - 600 : 0, 900);
+    CHECK(cite.find("#1842") != std::string::npos || cite.find("#1889") != std::string::npos,
           "cites Guard issue");
 }
 
