@@ -1743,17 +1743,6 @@ aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
 # Issue #527: StableNodeRef cross-COW/fiber closed-loop observability.
 aura_add_issue_test(test_stable_ref_cow_fiber_closed_loop_527)
 aura_issue_test_link_llvm_jit(test_stable_ref_cow_fiber_closed_loop_527)
-# Issue #548: MutationBoundaryGuard Panic Checkpoint +
-# Nested Mutation + Fiber Resume + Auto-Rollback Lifecycle
-# stress tests (P0). 11 scenarios complementing #546 with:
-# 4 panic-checkpoint lifecycle counters + new
-# (query:panic-checkpoint-lifecycle-stats) primitive +
-# per-fiber depth probe + 500-iter nested mutate + random
-# panic fuzz + (gc-heap) under panic + 8-thread concurrent
-# nested mutate + regression. Non-duplicative with #546
-# (single-threaded Guard) + #542 (multi-fiber yield).
-aura_add_issue_test(test_mutation_boundary_panic_rollback_fiber)
-aura_issue_test_link_llvm_jit(test_mutation_boundary_panic_rollback_fiber)
 # Issue #592: Panic checkpoint + arena auto-rollback lifecycle
 # with nested MutationBoundaryGuard + fiber yield/steal/resume
 # safety (P0 Task6 production review). 10 scenarios:
@@ -1905,12 +1894,6 @@ aura_issue_test_link_llvm_jit(test_generation_epoch_closed_loop_414)
 # Issue #416: AST column compaction closed loop.
 aura_add_issue_test(test_ast_column_compaction_closed_loop_416)
 aura_issue_test_link_llvm_jit(test_ast_column_compaction_closed_loop_416)
-# Issue #417: MutationBoundary cross-TU invariant closed loop.
-aura_add_issue_test(test_mutation_boundary_invariant_closed_loop_417)
-aura_issue_test_link_llvm_jit(test_mutation_boundary_invariant_closed_loop_417)
-# Issue #1444: MutationBoundary full coverage audit + new coverage primitive.
-aura_add_issue_test(test_mutation_boundary_full_coverage)
-aura_issue_test_link_llvm_jit(test_mutation_boundary_full_coverage)
 # Issue #1445: orchestration steal boost + new steal-stats primitive.
 aura_add_issue_test(test_orchestration_steal_boost)
 aura_issue_test_link_llvm_jit(test_orchestration_steal_boost)
@@ -4764,9 +4747,6 @@ aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
 # Issue #1590: ResourceQuota hot-path (arena + Guard + query schema 1590).
 aura_add_issue_test(test_resource_quota_hotpath)
 aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)
-# Issue #1591: mutation-boundary safe-yield + fairness stats (schema 1591).
-aura_add_issue_test(test_mutation_boundary_fairness_1591)
-aura_issue_test_link_llvm_jit(test_mutation_boundary_fairness_1591)
 # Issue #1635: first-class safe yield + per-fiber depth orchestration mandate
 aura_add_issue_test(test_safe_yield_orchestration_1635)
 aura_issue_test_link_llvm_jit(test_safe_yield_orchestration_1635)

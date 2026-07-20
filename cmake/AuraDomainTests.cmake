@@ -93,6 +93,15 @@ aura_add_issue_test(test_dead_coercion_batch)
 aura_issue_test_link_llvm_jit(test_dead_coercion_batch)
 set_target_properties(test_dead_coercion_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1591 + #1444 + #417 + #548: mutation_boundary family batch
+# (safe-yield fairness + full coverage audit + invariant closed loop +
+# panic rollback + fiber resume). EXCLUDE_FROM_ALL per
+# AuraDomainTests.cmake legacy batch convention. On-demand
+# `ninja test_mutation_boundary_batch`.
+aura_add_issue_test(test_mutation_boundary_batch)
+aura_issue_test_link_llvm_jit(test_mutation_boundary_batch)
+set_target_properties(test_mutation_boundary_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
