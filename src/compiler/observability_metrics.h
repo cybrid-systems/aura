@@ -324,6 +324,13 @@ struct CompilerMetrics {
     //     the checkpoint that were forced bridge_epoch=0 after truncate
     std::atomic<std::uint64_t> bridge_epoch_bump_on_truncate_total{0};
     std::atomic<std::uint64_t> envframe_truncate_doomed_closures_total{0};
+    // Issue #1890: EnvFrame invalid vs stale distinction + JIT closure table.
+    //   - envframe_invalid_vs_stale_distinguished_total: resolve_env_frame_detailed
+    //     / apply dual-path checks that separate OOB/NULL/INVALID from STALE
+    //   - closure_table_vector_desync_prevented: mirrored from
+    //     aura_closure_table_vector_desync_prevented_total (query surface)
+    std::atomic<std::uint64_t> envframe_invalid_vs_stale_distinguished_total{0};
+    std::atomic<std::uint64_t> closure_table_vector_desync_prevented{0};
     std::atomic<std::uint64_t> materialize_fallback_total{0};
     // Issue #1511: dual check on closure_bridge_ callback entry
     // (local-miss + local-stale recovery paths).

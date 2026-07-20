@@ -717,6 +717,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:closure-view-lifetime-stats",
     // Issue #1889 — truncate/compact dual-epoch + Guard surface
     "query:envframe-truncate-epoch-stats",
+    // Issue #1890 — invalid vs stale + closure table desync
+    "query:envframe-resolve-distinction-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats

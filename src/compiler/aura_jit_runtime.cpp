@@ -718,21 +718,30 @@ static void stamp_closure_provenance_locked(size_t cid) {
 // Issue #1709: func_ids is the canonical "slot allocated" length; envs
 // (and other parallel columns) must be in range for capture/set_name.
 static bool closure_slot_in_bounds(size_t cid) noexcept {
+    // Issue #1709 / #1890: canonical width is func_ids; envs must match.
     return cid < g_closure_func_ids.size() && cid < g_closure_envs.size();
+}
+
+// Issue #1890: process-wide desync prevention counter (release-safe).
+static std::atomic<std::uint64_t> g_closure_table_vector_desync_prevented{0};
+
+static bool closure_vectors_consistent_unlocked() noexcept {
+    const auto n = g_closure_func_ids.size();
+    return g_closure_envs.size() == n && g_closure_is_arena.size() == n &&
+           g_arena_closure_envs.size() == n && g_closure_names.size() == n &&
+           g_closure_freed.size() == n && g_closure_bridge_epochs.size() == n &&
+           g_closure_defuse_versions.size() == n;
 }
 
 #ifndef NDEBUG
 static void assert_closure_vectors_consistent() {
-    const auto n = g_closure_func_ids.size();
-    assert(g_closure_envs.size() == n);
-    assert(g_closure_is_arena.size() == n);
-    assert(g_arena_closure_envs.size() == n);
-    assert(g_closure_names.size() == n);
-    assert(g_closure_freed.size() == n);
-    assert(g_closure_bridge_epochs.size() == n);
-    assert(g_closure_defuse_versions.size() == n);
+    assert(closure_vectors_consistent_unlocked());
 }
 #endif
+
+extern "C" std::uint64_t aura_closure_table_vector_desync_prevented_total(void) {
+    return g_closure_table_vector_desync_prevented.load(std::memory_order_relaxed);
+}
 
 // Issue #1361: allocate or reuse a closure slot. Caller holds write lock.
 static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena) {
@@ -831,10 +840,14 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_defuse_versions[cid] = 0;
     if (cid >= g_closure_freed.size())
         g_closure_freed.resize(g_closure_func_ids.size(), 0);
-    // Issue #1708: push free_list FIRST, then mark freed=1.
+    // Issue #1708 / #1890: push free_list FIRST, then mark freed=1.
     // If push_back throws (e.g. bad_alloc), freed stays 0 → no permanent
     // "freed but not reusable" slot leak. Under unique table lock, no
     // concurrent alloc can pop a half-freed cid between these two stores.
+    if (!closure_vectors_consistent_unlocked()) {
+        g_closure_table_vector_desync_prevented.fetch_add(1, std::memory_order_relaxed);
+        // Still attempt free_list + freed mark for this cid when in bounds.
+    }
     g_closure_free_list.push_back(cid);
     g_closure_freed[cid] = 1;
     invalidate_closure_cache_for(closure_id);
@@ -901,7 +914,13 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         return;
     }
     size_t cid = static_cast<size_t>(closure_id);
-    // Issue #1709: check func_ids (canonical) AND envs — not envs alone.
+    // Issue #1709 / #1890: check func_ids (canonical) AND envs — not envs alone.
+    // Also refuse when parallel vectors desynced (partial resize failure).
+    if (!closure_vectors_consistent_unlocked()) {
+        g_closure_table_vector_desync_prevented.fetch_add(1, std::memory_order_relaxed);
+        aura_unlock_workspace_write();
+        return;
+    }
     if (!closure_slot_in_bounds(cid)) {
         aura_unlock_workspace_write();
         return;

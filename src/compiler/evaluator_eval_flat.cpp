@@ -191,12 +191,20 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
     }
     if (cl.env_id != NULL_ENV_ID) {
         // EnvFrame SoA half — version_ / invalid (parent_id_ walk uses same frames).
-        if (ev.is_env_frame_invalid(cl.env_id) || ev.is_env_frame_stale(cl.env_id)) {
+        // Issue #1890: distinguish invalid_id / INVALID_VERSION vs version-stale
+        // so metrics and fallbacks do not conflate OOB/truncated with refreshable stale.
+        const bool invalid_id = ev.is_env_frame_invalid_id(cl.env_id);
+        const bool terminal_invalid = !invalid_id && ev.is_env_frame_invalid(cl.env_id);
+        const bool version_stale =
+            !invalid_id && !terminal_invalid && ev.is_env_frame_stale(cl.env_id);
+        if (invalid_id || terminal_invalid || version_stale) {
             stale = true;
             if (m) {
                 m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
                 m->compiler_closure_envframe_stale_total.fetch_add(1, std::memory_order_relaxed);
                 m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+                m->envframe_invalid_vs_stale_distinguished_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
         }
         // Issue #1478 / #1626 / #1660: linear post-mutate third arm

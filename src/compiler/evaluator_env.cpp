@@ -1179,16 +1179,16 @@ std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
     return it->second;
 }
 
-// Issue #242 / #1754: is_env_frame_stale — true if the frame
+// Issue #242 / #1754 / #1890: is_env_frame_stale — true if the frame
 // exists AND its stamped version is older than the current
 // defuse_version_ (captured before a mutation that may have
 // invalidated the captured scope).
 //
-// Issue #1754: NULL / OOB ids return false (no frame exists —
+// Issue #1754 / #1890: NULL / OOB ids return false (no frame exists —
 // not "stale"). Callers that need the old defensive combined
 // check should use is_env_frame_invalid_id(id) ||
-// is_env_frame_invalid(id) || is_env_frame_stale(id), or the
-// existing dual patterns already used on apply_closure paths.
+// is_env_frame_invalid(id) || is_env_frame_stale(id), or
+// resolve_env_frame_detailed (returns STALE_VERSION vs OOB/NULL).
 bool Evaluator::is_env_frame_stale(EnvId id) const {
     if (is_env_frame_invalid_id(id))
         return false;
@@ -1524,30 +1524,67 @@ EnvFrame* Evaluator::resolve_env_frame_mut(EnvId id) noexcept {
     return &env_frames_[id];
 }
 
-// Issue #1756: distinguish NULL_ID / OOB / INVALID_VERSION / OK so
-// callers do not conflate "no env" with "truncated" with "terminal invalid".
-// frame is non-null only for OK (usable). INVALID_VERSION is reported
-// without exposing a poison pointer for materialize/GC-style callers.
+// Issue #1756 / #1890: distinguish NULL_ID / OOB / INVALID_VERSION /
+// STALE_VERSION / OK so callers do not conflate "no env" with "truncated"
+// with "terminal invalid" with "refreshable stale".
+// - frame non-null for OK and STALE_VERSION (refreshable live slot)
+// - frame null for NULL_ID / OOB / INVALID_VERSION (no usable walk)
+// Every call bumps envframe_invalid_vs_stale_distinguished_total (#1890).
 EnvFrameResolveResult Evaluator::resolve_env_frame_detailed(EnvId id) const noexcept {
-    if (id == NULL_ENV_ID)
+    auto note_distinguished = [this]() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->envframe_invalid_vs_stale_distinguished_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    };
+    if (id == NULL_ENV_ID) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::NULL_ID};
-    if (id >= env_frames_.size())
+    }
+    if (id >= env_frames_.size()) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::OOB};
+    }
     const EnvFrame& fr = env_frames_[id];
-    if (fr.version_ == INVALID_VERSION)
+    if (fr.version_ == INVALID_VERSION) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::INVALID_VERSION};
+    }
+    // Issue #1890: version drift is STALE (refreshable), not invalid.
+    const auto cur = defuse_version_.load(std::memory_order_acquire);
+    if (cur != 0 && fr.version_ < cur) {
+        note_distinguished();
+        return {&fr, EnvFrameResolveStatus::STALE_VERSION};
+    }
+    note_distinguished();
     // GENERATION_MISMATCH reserved for free-list reuse (#1360 follow-up).
     return {&fr, EnvFrameResolveStatus::OK};
 }
 
 EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noexcept {
-    if (id == NULL_ENV_ID)
+    auto note_distinguished = [this]() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->envframe_invalid_vs_stale_distinguished_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    };
+    if (id == NULL_ENV_ID) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::NULL_ID};
-    if (id >= env_frames_.size())
+    }
+    if (id >= env_frames_.size()) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::OOB};
+    }
     EnvFrame& fr = env_frames_[id];
-    if (fr.version_ == INVALID_VERSION)
+    if (fr.version_ == INVALID_VERSION) {
+        note_distinguished();
         return {nullptr, EnvFrameResolveStatus::INVALID_VERSION};
+    }
+    const auto cur = defuse_version_.load(std::memory_order_acquire);
+    if (cur != 0 && fr.version_ < cur) {
+        note_distinguished();
+        return {&fr, EnvFrameResolveStatus::STALE_VERSION};
+    }
+    note_distinguished();
     return {&fr, EnvFrameResolveStatus::OK};
 }
 
