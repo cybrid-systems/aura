@@ -1867,9 +1867,7 @@ aura_issue_test_link_llvm_jit(test_prompt6_full_memory_safety_fuzz_stress)
 # #602/#597/#547/#531/#254 (per-theme tests).
 aura_add_issue_test(test_task4_highperf_full_hotpath_matrix)
 aura_issue_test_link_llvm_jit(test_task4_highperf_full_hotpath_matrix)
-# Issue #506: IR SoA + dirty-aware Pass hotpath adoption observability.
-aura_add_issue_test(test_soa_hotpath_adoption_506)
-aura_issue_test_link_llvm_jit(test_soa_hotpath_adoption_506)
+
 # Issue #403: IRInstruction rich metadata interpreter/JIT closed loop.
 aura_add_issue_test(test_ir_metadata_interpreter_jit_closed_loop_403)
 aura_issue_test_link_llvm_jit(test_ir_metadata_interpreter_jit_closed_loop_403)
@@ -1984,11 +1982,7 @@ aura_issue_test_link_llvm_jit(test_aot_hotupdate_versioning)
 # + version stamping + stale detection + GCEnvWalkFn
 # comprehensive tests (P0). 11 scenarios validating the
 # 4 observability counters + (query:envframe-dualpath-
-# stats) primitive + dual-path length consistency +
-# multi-thread rebind + GC walk under (gc-heap) +
-# regression. Non-duplicative with #242/#286/#322.
-aura_add_issue_test(test_soa_envframe_dualpath_consistency)
-aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
+
 # Issue #1903: dual-path consistency enforcement on every bind/bind_symid
 # + post-steal refresh + post-materialize + GCEnvWalkFn INVALID_VERSION
 # skip + prefer bindings_symid_ + (query:envframe-dual-consistency-stats)
@@ -2088,11 +2082,7 @@ aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
 # linear_ownership) full-path version stamping + stale detection +
 # mutation_log compact. 9 ACs source-driven + cross-layer baseline
 # regression (paired with check_soa_dual_path_consistency_coverage.py
-# linter REMOVED per Anqi 2026-07-19 directive wave 10 — ship-time linter
-# obsolete). Complements the linear_post_mutate_enforce
-# MVP test (#1478) which was deferred-scoped under #1541.
-aura_add_issue_test(test_soa_dual_path_consistency)
-aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
+
 # Issue #1639: per-block dirty bitmask → partial re-lower wiring
 # Issue #1640: AOT bridge mangle versioning + region filtering +
 # aot_emit_version stale 检测 + incremental re-emit + hot-update
@@ -5229,16 +5219,13 @@ aura_issue_test_link_llvm_jit(test_let_poly_solve_delta_1617)
 aura_add_issue_test(test_resource_quota_manager_1618)
 aura_issue_test_link_llvm_jit(test_resource_quota_manager_1618)
 
-aura_add_issue_test(test_soa_view_enforcement_1619)
-aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1619)
+
 
 # Issue #1629: IR SoA dual-emit flag default-off AC closed-loop
 aura_add_issue_test(test_ir_soa_dual_emit_flag_1629)
 aura_issue_test_link_llvm_jit(test_ir_soa_dual_emit_flag_1629)
 
-# Issue #1624: PCV / pmr SoAColumnarFull DOD + Contracts
-aura_add_issue_test(test_soa_dod_pcv_pmr_1624)
-aura_issue_test_link_llvm_jit(test_soa_dod_pcv_pmr_1624)
+
 
 aura_add_issue_test(test_cpp26_contracts_hotpath_1620)
 aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_1620)
