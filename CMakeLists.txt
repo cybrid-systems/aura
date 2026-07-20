@@ -5535,6 +5535,12 @@ aura_issue_test_link_llvm_jit(test_scheduler_llm_bottleneck_adaptive_steal_gc)
 # Non-duplicative with #732/#731/#730/#674/#739.
 aura_add_issue_test(test_runtime_concurrent_full_cycle_chaos)
 aura_issue_test_link_llvm_jit(test_runtime_concurrent_full_cycle_chaos)
+# Issue #1943: Hot-Update MVP regression test (see docs/hot-update.md).
+# Validates the in-scope MVP path (function body replacement + simple
+# dirty propagation + closure refresh) and confirms deferred-path
+# primitives are observable but not under correctness contract.
+aura_add_issue_test(test_issue_1943)
+aura_issue_test_link_llvm_jit(test_issue_1943)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 # Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
 # Issue #488: post-mutate reflect validation + Guard impact snapshot.

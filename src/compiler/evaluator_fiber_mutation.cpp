@@ -1,5 +1,11 @@
 // evaluator_fiber_mutation.cpp — P1-l: per-fiber mutation stack + boundary hooks
 // aura.compiler.evaluator module partition.
+//
+// Hot-Update MVP scope (Issue #1943): MutationBoundaryGuard enforces
+// depth==0 for the **outermost** guard during function-body replacement
+// (in-scope). Nested-guard concurrent re-lower paths are **deferred** —
+// see docs/hot-update.md and #1931 / #1950 / #1953 for the systemic
+// MutationBoundaryGuard enforcement work that remains open.
 
 module;
 

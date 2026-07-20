@@ -1,5 +1,11 @@
 // aura_jit_bridge.cpp — C-linkage bridge for AOT native compilation
 // Routes compilation requests to the LLVM-based emit backend in aura_jit.cpp.
+//
+// Hot-Update MVP scope (Issue #1943): the single-define re-emit path
+// triggered by (compile:relower-strategy) on a single-workspace function
+// is **in scope**. Full incremental re-emit with stable DefineId
+// persistence across epochs (aura_reemit_aot_for_dirty) is **deferred**
+// — see docs/hot-update.md and #1930 / #1952 for the LLVM pipeline work.
 
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"

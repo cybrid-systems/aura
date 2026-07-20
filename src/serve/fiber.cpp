@@ -1,4 +1,10 @@
 // serve/fiber.cpp — Stackful fiber implementation
+//
+// Hot-Update MVP scope (Issue #1943): fiber steal + bridge_epoch
+// (g_bridge_epoch_ on Worker) is **out of scope** for the MVP —
+// hot-update during stolen-fiber / complex-agent-orchestration paths
+// are deferred. See docs/hot-update.md and #1929 / #1931 / #1947 /
+// #1950 / #1953 / #1954 for the deferred correctness work.
 #include "fiber.h"
 #include "scheduler.h"
 #include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
