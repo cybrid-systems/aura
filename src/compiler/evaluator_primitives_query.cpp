@@ -5274,8 +5274,37 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->solve_delta_worklist_size_peak.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; 13 keys need headroom (create(16) can drop).
-            auto* ht = FlatHashTable::create(32);
+            // Issue #1923 locality / memo metrics.
+            const std::int64_t reinfer_nodes =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_reinfer_nodes_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t recheck_affected =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_recheck_affected_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t recheck_ratio_bp =
+                m ? static_cast<std::int64_t>(
+                        m->incremental_recheck_ratio_bp.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t memo_hit_bp =
+                m ? static_cast<std::int64_t>(
+                        m->predicate_memo_hit_rate_bp.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t memo_targeted =
+                m ? static_cast<std::int64_t>(m->predicate_memo_targeted_invalidations_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t locality_hits =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_locality_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t locality_misses =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_locality_misses_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Power-of-2 capacity; #1923 adds ~10 keys (create(64) headroom).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5319,8 +5348,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("solve-delta-worklist-peak", worklist_peak);
             insert_kv("solve_delta_worklist_size", worklist_peak);
             insert_kv("let-poly-wired", 1);
+            // Issue #1923: minimal recheck locality AC keys
+            insert_kv("incremental-reinfer-nodes", reinfer_nodes);
+            insert_kv("recheck-affected-total", recheck_affected);
+            insert_kv("recheck-ratio-bp", recheck_ratio_bp);
+            insert_kv("predicate-memo-hit-rate-bp", memo_hit_bp);
+            insert_kv("predicate-memo-targeted-invalidations", memo_targeted);
+            insert_kv("solve-delta-locality-hits", locality_hits);
+            insert_kv("solve-delta-locality-misses", locality_misses);
+            insert_kv("minimal-recheck-wired", 1);
+            insert_kv("predicate-memo-partial-epoch-wired", 1);
+            insert_kv("leaf-affected-locality-wired", 1);
+            insert_kv("recheck-ratio-target-bp", 500);  // 5% of workspace
+            insert_kv("memo-hit-rate-target-bp", 8000); // 80%
+            insert_kv("schema-1923", 1923);
+            insert_kv("issue-1923", 1923);
             insert_kv("issue", 1617);
-            insert_kv("schema", 1617); // lineage 798
+            insert_kv("schema", 1617); // lineage 798 → 1617 + #1923
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
