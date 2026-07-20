@@ -407,6 +407,8 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
     if (active_mutation_id_ == 0) {
         m->constraint_stale_blame_invalidation_total.fetch_add(1, std::memory_order_relaxed);
         m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1924: conflict without mutation stamp is a propagation miss.
+        m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
         update_blame_chain_completeness_rate();
         return;
     }
@@ -419,8 +421,11 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
     // stamping.
     if (last_blame_chain_.is_complete()) {
         m->constraint_blame_chain_rich_complete_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1924: AC metric alias for end-to-end complete dumps.
+        m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
     } else {
         m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+        m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
     }
     (void)has_pred;
     (void)has_node;
@@ -2602,10 +2607,15 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                             std::uint32_t child_index, NodeId original_child,
                                             std::uint32_t type_tag, std::uint32_t type_id,
                                             std::uint32_t src_line, std::uint32_t src_col) {
+    // Issue #1924: prefer active CS mutation/blame context (typed_mutate
+    // path) over only the flat mutation log — prevents blame 断裂 when
+    // deferral happens mid-infer_flat_partial with empty log race.
     std::uint32_t cond_node = last_predicate_cond_id_;
-    std::uint64_t mutation_id = 0;
+    if (cond_node == 0)
+        cond_node = cs_.active_predicate_cond_node();
+    std::uint64_t mutation_id = cs_.active_mutation_id();
     std::uint32_t narrow_ev = last_if_narrowing_;
-    if (!flat.all_mutations().empty())
+    if (mutation_id == 0 && !flat.all_mutations().empty())
         mutation_id = flat.all_mutations().back().mutation_id;
     for (const auto& nr : flat.all_narrowings()) {
         if (cond_node != 0 && nr.cond_node != cond_node)
@@ -2617,6 +2627,15 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
         if (cond_node != 0)
             break;
     }
+    // Push coerced node into DeltaBlameChain affected sequence.
+    if (original_child != aura::ast::NULL_NODE)
+        cs_.push_blame_affected_node(static_cast<std::uint32_t>(original_child));
+    if (parent != aura::ast::NULL_NODE)
+        cs_.push_blame_affected_node(static_cast<std::uint32_t>(parent));
+    // Keep active affected on the coerced child when unset.
+    if (cs_.active_affected_node() == 0 && original_child != aura::ast::NULL_NODE)
+        cs_.set_active_blame_context(cond_node, static_cast<std::uint32_t>(original_child));
+
     if (narrow_ev != 0 || cond_node != 0 || mutation_id != 0) {
         coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col,
                        cond_node, mutation_id, narrow_ev);
@@ -2626,9 +2645,23 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                                                        std::memory_order_relaxed);
             if (cond_node != 0 && mutation_id != 0)
                 m->coercion_narrow_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1924: coercion path propagation metrics.
+            const bool stamped =
+                mutation_id != 0 && (cond_node != 0 || original_child != aura::ast::NULL_NODE);
+            if (stamped) {
+                m->blame_propagation_coercion_stamped_total.fetch_add(1, std::memory_order_relaxed);
+                m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+            } else if (mutation_id != 0 || !flat.all_mutations().empty()) {
+                m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     } else {
         coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col);
+        // Mutation context expected but no stamp → miss (AI audit signal).
+        if (cs_.metrics_ && (!flat.all_mutations().empty() || cs_.active_mutation_id() != 0)) {
+            static_cast<struct CompilerMetrics*>(cs_.metrics_)
+                ->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -2678,7 +2711,30 @@ void InferenceEngine::seed_mutation_touched_roots(const FlatAST& flat, const Str
             cs_.mark_touched_on_delta(occ->refined_type, true);
     }
     cs_.set_active_mutation_id(mutation_id);
+    // Issue #1924: never leave primary_affected zero when we have
+    // occurrence targets — fall back to first target if-node.
+    if (primary_affected == 0 && !occurrence_targets.empty()) {
+        for (auto if_id : occurrence_targets) {
+            if (if_id != NULL_NODE && if_id < flat.size()) {
+                primary_affected = static_cast<std::uint32_t>(if_id);
+                break;
+            }
+        }
+    }
     cs_.set_active_blame_context(primary_pred, primary_affected);
+    if (cs_.metrics_ && mutation_id != 0) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        if (primary_pred != 0 && primary_affected != 0) {
+            m->blame_propagation_narrow_stamped_total.fetch_add(1, std::memory_order_relaxed);
+            m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (primary_affected != 0) {
+            // Mutation + affected without pred is still a partial stamp
+            // (non-occurrence mutate) — count complete for non-if paths.
+            m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 }
 
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, bool preserve_cs) {
@@ -3992,10 +4048,14 @@ static void record_refreshed_narrowing_provenance(FlatAST& flat, StringPool& poo
             (occ.source_cond_id != 0 || cond_id != 0)) {
             m->occurrence_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
             m->provenance_completeness_hits_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1924: narrowing record with full triple.
+            m->blame_propagation_narrow_stamped_total.fetch_add(1, std::memory_order_relaxed);
+            m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
         } else if (metrics && rec.source_mutation_id == 0) {
             // Partial / degraded refresh — still countable as incomplete
             // provenance for the #1873 rate denominator.
             m->blame_provenance_missing_warning_total.fetch_add(1, std::memory_order_relaxed);
+            m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (!occ.predicate_name.empty() && (occ.source_cond_id != 0 || cond_id != 0)) {
             m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
@@ -4399,7 +4459,33 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
         last_if_narrowing_ = 0;
     }
 
-    last_predicate_cond_id_ = occ && occ->source_cond_id != 0 ? occ->source_cond_id : 0;
+    // Issue #1924: never drop cond_id — source_cond_id preferred, else
+    // the if's cond child. Zero here is a classic blame 断裂 source for
+    // add_deferred_coercion / CoercionMap provenance.
+    {
+        std::uint32_t pred = 0;
+        if (occ && occ->source_cond_id != 0)
+            pred = occ->source_cond_id;
+        else if (cond_id != NULL_NODE)
+            pred = static_cast<std::uint32_t>(cond_id);
+        last_predicate_cond_id_ = pred;
+        // Keep ConstraintSystem blame context aligned with this if.
+        if (cs_.active_mutation_id() != 0 && if_id != NULL_NODE) {
+            const auto aff = static_cast<std::uint32_t>(if_id);
+            cs_.set_active_blame_context(pred, aff);
+            cs_.push_blame_affected_node(aff);
+            if (cs_.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                if (pred != 0) {
+                    m->blame_propagation_narrow_stamped_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
     out.occ = occ;
     return out;
 }
@@ -6131,6 +6217,21 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
                                                on_cross_delta_conflict_);
     engine.set_active_mutation_id(rec.mutation_id);
+    // Issue #1924: stamp blame context from mutation primary BEFORE
+    // occurrence reanalyze / coercion defer so mid-pass add_delta and
+    // add_deferred_coercion never see a zero mutation_id.
+    {
+        std::uint32_t primary_aff = 0;
+        if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
+            primary_aff = static_cast<std::uint32_t>(rec.target_node);
+        else if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
+            primary_aff = static_cast<std::uint32_t>(rec.parent_id);
+        engine.set_active_blame_context(/*predicate_cond_node=*/0, primary_aff);
+        if (metrics_ && rec.mutation_id != 0 && primary_aff == 0) {
+            static_cast<struct CompilerMetrics*>(metrics_)->blame_propagation_miss_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     // Issue #1923: targeted predicate_memo invalidation for affected
     // / occurrence if-nodes only (not epoch wholesale clear).
     {
@@ -6142,11 +6243,14 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             memo_targets.push_back(id);
         engine.invalidate_predicate_memo_for_nodes(memo_targets, &flat);
     }
-    // Issue #1529: pre-seed blame affected sequence from the
+    // Issue #1529 / #1924: pre-seed blame affected sequence from the
     // mutation primary + a bounded prefix of the affected set
     // (full dump is O(delta), not O(workspace)).
     if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
         engine.push_blame_affected_node(static_cast<std::uint32_t>(rec.target_node));
+    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size() &&
+        rec.parent_id != rec.target_node)
+        engine.push_blame_affected_node(static_cast<std::uint32_t>(rec.parent_id));
     constexpr std::size_t kBlameAffectedCap = 32;
     for (std::size_t i = 0; i < affected.size() && i < kBlameAffectedCap; ++i) {
         auto id = affected[i];

@@ -464,6 +464,15 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             m->typed_mutation_linear_ok_total.fetch_add(1, std::memory_order_relaxed);
         if (r.provenance_ok)
             m->typed_mutation_prov_ok_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1924: mirror TypedMutationAudit blame completeness into
+        // CompilerMetrics (AI multi-round self-modify audit surface).
+        if (mutation_id != 0) {
+            if (r.all_ok())
+                m->blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+            else
+                m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        m->blame_propagation_wired.store(1, std::memory_order_relaxed);
         // Issue #1884: mirror process-wide correlation into CompilerMetrics.
         const auto& ac = typed_audit::g_typed_mutation_audit_counters;
         m->type_propagation_invariant_correlation_total.store(
