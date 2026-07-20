@@ -7906,6 +7906,30 @@ public:
         return out;
     }
 
+    // Issue #1912: children_stable with boundary_pinned=true on each ref.
+    // FlatAST-only: marks the flag; Evaluator::children_stable_batch also
+    // registry-pins for steal/Guard survival. Prefer the Evaluator API in
+    // AI multi-round loops that cross COW / fiber boundaries.
+    [[nodiscard]] std::vector<StableNodeRef> children_stable_batch(NodeId id) const {
+        auto out = children_stable(id);
+        for (auto& r : out)
+            r.pin_for_cow();
+        return out;
+    }
+
+    // Issue #1912: batch refresh_if_stale over an arbitrary span of refs.
+    // Returns count of successfully validated/refreshed refs. Does not
+    // touch Evaluator pin registries — use Evaluator::refresh_stable_refs_batch
+    // when auto_pin / metrics / COW-boundary registry are required.
+    std::size_t refresh_stable_refs_batch(std::span<StableNodeRef> refs) noexcept {
+        std::size_t n = 0;
+        for (auto& r : refs) {
+            if (r.refresh_if_stale(*this))
+                ++n;
+        }
+        return n;
+    }
+
     // Issue #1651: zero-copy span-return variant of children_stable (Task1 review 建议 #4).
     // Returns std::span<const StableNodeRef> over a thread-local pinned buffer of StableNodeRef
     // instead of std::vector<StableNodeRef>. Bumps children_stable_span_calls_total_ on every

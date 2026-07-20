@@ -1250,6 +1250,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:self-evo-pipeline-stats",
     // Issue #1909: unified self-evolution loop health (IR+pattern+audit+latency)
     "query:self-evo-stats",
+    // Issue #1912: StableNodeRef batch refresh/pin health across COW layers
+    "query:stable-refs-batch-health",
     "query:bugfix-941-967-stats",
     // Issues #985–#1013: production hardening
     "query:production-hardening-985-1013-stats",
