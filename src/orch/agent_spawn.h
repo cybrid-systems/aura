@@ -355,6 +355,10 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
 }
 
 // Thin alias: parallel batch via serve::parallel_orch (counts as orch parallel).
+// DEFERRED (Issue #1965 cycle 1 — beyond MVP scope). New callers should use
+// serve::parallel_orch::parallel_intend directly. This alias exists only
+// for the legacy single-consumer in evaluator_primitives_agent.cpp; see
+// the orch-mvp-scope linter for the grandfather list.
 [[nodiscard]] inline serve::parallel_orch::BatchResult
 conduct_parallel(serve::Scheduler& sched, std::span<const serve::parallel_orch::TaskSpec> tasks,
                  serve::parallel_orch::ParallelPolicy policy = {},
@@ -364,6 +368,10 @@ conduct_parallel(serve::Scheduler& sched, std::span<const serve::parallel_orch::
 }
 
 // Named agent registry (process-local, for multi-agent coordination tests).
+// DEFERRED (Issue #1965 cycle 1 — beyond MVP scope). Single production
+// consumer in src/compiler/evaluator_primitives_agent.cpp (lines 2674,
+// 2713) is grandfathered. New callers should use serve::Fiber +
+// MultiFiberMailbox directly. See orch-mvp-scope linter for the list.
 class AgentRegistry {
 public:
     AgentHandle& put(AgentHandle h) {
