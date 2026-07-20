@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 4.3)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
     "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
 project(aura LANGUAGES CXX C)
+include(${CMAKE_SOURCE_DIR}/cmake/AuraCoverage.cmake) # Issue #1933 llvm-cov
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)

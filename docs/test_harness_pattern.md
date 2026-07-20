@@ -32,7 +32,11 @@ python3 tests/run.py fixtures
 ./build.py test issues-fast
 ./build.py gate
 ./build.py check
+./build.py coverage --html          # LLVM source coverage (#1933)
+./build.py coverage --check-tools
 ```
+
+See [`docs/testing.md`](testing.md) for coverage details (preset, artifacts, CI).
 
 Thin entrypoints at `tests/*.py` forward into `tests/python/` or
 `tests/bench/` so path moves do not break scripts or docs.

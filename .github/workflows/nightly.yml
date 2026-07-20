@@ -1,4 +1,5 @@
 # Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
+# Issue #1933: LLVM source-based coverage artifact job.
 name: Nightly
 
 on:
@@ -50,3 +51,28 @@ jobs:
       run: |
         python3 build.py --sanitizer=tsan test concurrent
         echo "✓ concurrent tests clean under TSAN"
+
+  coverage:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.4
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Tooling smoke
+      run: python3 build.py coverage --check-tools
+
+    - name: Instrumented coverage report
+      run: python3 build.py coverage --html --suite smoke
+      continue-on-error: true
+
+    - name: Upload coverage HTML/JSON
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: llvm-coverage
+        path: build_coverage/coverage/
+        if-no-files-found: warn

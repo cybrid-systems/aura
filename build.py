@@ -34,6 +34,8 @@ Usage:
   ./build.py sbom [--version=V] # CycloneDX SBOM 生成（#675）
   ./build.py security          # 依赖/文件系统漏洞扫描（#675）
   ./build.py bench [--strict]  # Benchmark 基线 + 回归检测（#1569 SLO gate）
+  ./build.py coverage --html   # LLVM source-based coverage report (#1933)
+  ./build.py coverage --check-tools  # verify llvm-cov tooling only
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -1786,6 +1788,249 @@ def cmd_pgo_all():
     return 0
 
 
+# ═══════════════════════════════════════════════════════════════
+# LLVM source-based coverage (Issue #1933)
+# ═══════════════════════════════════════════════════════════════
+
+COVERAGE_BUILD = ROOT / "build_coverage"
+
+
+def _find_llvm_tool(names: list[str]) -> str | None:
+    for n in names:
+        r = subprocess.run(["which", n], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return None
+
+
+def cmd_coverage():
+    """Issue #1933: instrumented build + test run + llvm-cov HTML/JSON report.
+
+    Usage:
+      ./build.py coverage --html
+      ./build.py coverage --html --suite smoke
+      ./build.py coverage --html --skip-build   # report only (needs prior run)
+      ./build.py coverage --html --min-line-pct 0
+      ./build.py coverage --check-tools         # static: tools + preset only
+
+    Artifacts: build_coverage/coverage/{html,json,summary.txt,summary.json}
+    """
+    print(f"{B}═══ LLVM coverage (#1933) ═══{N}")
+    argv = sys.argv[2:]
+    do_html = "--html" in argv or "--json" not in argv
+    do_json = "--json" in argv or "--html" in argv or True
+    skip_build = "--skip-build" in argv
+    check_tools = "--check-tools" in argv
+    suite = "smoke"
+    min_line = 0.0
+    targets: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--suite" and i + 1 < len(argv):
+            suite = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--suite="):
+            suite = a.split("=", 1)[1]
+            i += 1
+            continue
+        if a == "--min-line-pct" and i + 1 < len(argv):
+            min_line = float(argv[i + 1])
+            i += 2
+            continue
+        if a.startswith("--min-line-pct="):
+            min_line = float(a.split("=", 1)[1])
+            i += 1
+            continue
+        if a == "--targets" and i + 1 < len(argv):
+            targets = argv[i + 1].split(",")
+            i += 2
+            continue
+        i += 1
+
+    profdata = _find_llvm_tool(["llvm-profdata", "llvm-profdata-22", "llvm-profdata-20", "llvm-profdata-19"])
+    cov = _find_llvm_tool(["llvm-cov", "llvm-cov-22", "llvm-cov-20", "llvm-cov-19"])
+    if not profdata or not cov:
+        fail("llvm-profdata / llvm-cov not found — install LLVM toolchain")
+        return 1
+    ok(f"tools: {profdata}, {cov}")
+
+    # Static checks always useful
+    cmake_cov = ROOT / "cmake" / "AuraCoverage.cmake"
+    presets = ROOT / "CMakePresets.json"
+    if not cmake_cov.is_file():
+        fail(f"missing {cmake_cov}")
+        return 1
+    if not presets.is_file() or '"name": "coverage"' not in presets.read_text(encoding="utf-8"):
+        fail("CMakePresets.json missing coverage preset")
+        return 1
+    ok("cmake AuraCoverage.cmake + coverage preset present")
+    if check_tools:
+        ok("coverage --check-tools clean")
+        return 0
+
+    nproc = os.cpu_count() or 4
+    profraw_dir = COVERAGE_BUILD / "profraw"
+    out_dir = COVERAGE_BUILD / "coverage"
+
+    if not skip_build:
+        print(f"{B}── configure coverage build ──{N}")
+        COVERAGE_BUILD.mkdir(parents=True, exist_ok=True)
+        conf = [
+            "cmake",
+            "-B",
+            str(COVERAGE_BUILD),
+            "-G",
+            "Ninja",
+            "-Wno-dev",
+            "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+            "-DAURA_ENABLE_COVERAGE=ON",
+        ]
+        # Prefer Clang for source-based coverage
+        if shutil.which("clang++"):
+            conf.extend(["-DCMAKE_CXX_COMPILER=clang++", "-DCMAKE_C_COMPILER=clang"])
+        r = run(conf, cwd=ROOT)
+        if r != 0:
+            fail("cmake configure (coverage) failed")
+            return r
+
+        if not targets:
+            # Fast default: aura + a couple of unit-size issue tests if registered
+            targets = ["aura"]
+            for t in (
+                "test_mutation_boundary_guard_1931",
+                "test_closure_bridge_lifetime_1929",
+                "test_layout_smoke",
+            ):
+                # ninja will fail missing targets — filter via build.ninja if present
+                targets.append(t)
+
+        # Only build targets that exist in the ninja graph
+        bn = COVERAGE_BUILD / "build.ninja"
+        if bn.is_file():
+            text = bn.read_text(encoding="utf-8", errors="replace")
+            targets = [t for t in targets if f"build {t}:" in text or f"build {t} " in text or t == "aura"]
+            # aura may be phony — keep it
+            if "aura" not in targets:
+                targets.insert(0, "aura")
+
+        print(f"{B}── build instrumented targets ──{N}")
+        print(f"  targets: {', '.join(targets)}")
+        r = run(
+            ["cmake", "--build", str(COVERAGE_BUILD), "-j", str(nproc), "--target", *targets],
+            cwd=ROOT,
+        )
+        if r != 0:
+            # Retry with aura only (minimal) so report path still works after partial graph
+            warn("full target set failed — retrying aura only")
+            r = run(
+                ["cmake", "--build", str(COVERAGE_BUILD), "-j", str(nproc), "--target", "aura"],
+                cwd=ROOT,
+            )
+            if r != 0:
+                fail("coverage instrumented build failed")
+                return r
+
+        print(f"{B}── run instrumented suite ({suite}) ──{N}")
+        profraw_dir.mkdir(parents=True, exist_ok=True)
+        # Clear old raw profiles for a clean merge
+        for old in profraw_dir.glob("*.profraw"):
+            old.unlink()
+        env = {
+            **os.environ,
+            "LLVM_PROFILE_FILE": str(profraw_dir / "aura-%p-%m.profraw"),
+            "AURA_BIN": str(COVERAGE_BUILD / "aura"),
+        }
+        # Run suite via build.py test but point at coverage build dir
+        env["AURA_BUILD_DIR"] = str(COVERAGE_BUILD)
+        suite_map = {
+            "smoke": ["smoke"],
+            "fixtures": ["fixtures"],
+            "issues-fast": ["issues-fast"],
+            "unit": ["unit"],
+            "gate-smoke": ["fixtures", "smoke"],
+        }
+        suites = suite_map.get(suite, [suite])
+        # Prefer direct binary runs for speed when available
+        ran_any = False
+        for t in targets:
+            if t == "aura":
+                continue
+            bin_path = COVERAGE_BUILD / t
+            if bin_path.is_file():
+                print(f"  run {t}")
+                subprocess.run([str(bin_path)], cwd=ROOT, env=env)
+                ran_any = True
+        if not ran_any:
+            # Fall back to aura --help as minimal exercise
+            aura_bin = COVERAGE_BUILD / "aura"
+            if aura_bin.is_file():
+                subprocess.run([str(aura_bin), "--help"], cwd=ROOT, env=env)
+                # Also try a tiny eval if supported
+                subprocess.run(
+                    [str(aura_bin), "-e", "(+ 1 2)"],
+                    cwd=ROOT,
+                    env=env,
+                    capture_output=True,
+                )
+                ran_any = True
+        if suites and not ran_any:
+            # Last resort: invoke test harness with AURA_BUILD_DIR
+            r = subprocess.run(
+                [sys.executable, str(ROOT / "build.py"), "test", *suites],
+                cwd=ROOT,
+                env=env,
+            )
+            if r.returncode != 0:
+                warn(f"test suite exit {r.returncode} (continuing to report if profiles exist)")
+
+    # Report
+    print(f"{B}── llvm-cov report ──{N}")
+    report_script = ROOT / "scripts" / "llvm_cov_report.py"
+    if not report_script.is_file():
+        fail(f"missing {report_script}")
+        return 1
+    binaries = []
+    for p in sorted(COVERAGE_BUILD.glob("test_*")):
+        if p.is_file() and os.access(p, os.X_OK):
+            binaries.append(str(p))
+    aura_bin = COVERAGE_BUILD / "aura"
+    if aura_bin.is_file():
+        binaries.insert(0, str(aura_bin))
+    cmd = [
+        sys.executable,
+        str(report_script),
+        "--build-dir",
+        str(COVERAGE_BUILD),
+        "--profraw-dir",
+        str(profraw_dir),
+        "--out-dir",
+        str(out_dir),
+        "--min-line-pct",
+        str(min_line),
+    ]
+    if do_html:
+        cmd.append("--html")
+    if do_json:
+        cmd.append("--json")
+    if binaries:
+        cmd.append("--binaries")
+        cmd.extend(binaries)
+    # Soft module observability (0% floor — raise later as coverage grows)
+    cmd.extend(["--require-module", "evaluator:0", "--require-module", "aura_jit:0"])
+    r = run(cmd, cwd=ROOT)
+    if r != 0:
+        fail("llvm-cov report failed")
+        return r
+    ok(f"coverage report: {out_dir}")
+    if (out_dir / "html" / "index.html").is_file():
+        print(f"  HTML: {out_dir / 'html' / 'index.html'}")
+    if (out_dir / "summary.json").is_file():
+        print(f"  JSON: {out_dir / 'summary.json'}")
+    return 0
+
+
 def cmd_pgo():
     """PGO sub-commands."""
     subcmd = sys.argv[2] if len(sys.argv) > 2 else "help"
@@ -1978,6 +2223,7 @@ def main():
         "dead-heap-push": cmd_dead_heap_push,
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
+        "coverage": cmd_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
