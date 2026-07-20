@@ -6739,6 +6739,232 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #1909: query:self-evo-stats — unified self-evolution loop
+    // health dashboard for AI Agents. Aggregates IR hygiene (#1891),
+    // pattern hygiene (#1892), TypedMutationAudit (#1894), Guard hold
+    // latency, and closed-loop rollback into one hash (schema **1909**).
+    // AC keys (basis points 0..10000 unless noted):
+    //   macro-introduced-ratio-bp, hygiene-violation-rate-bp,
+    //   ir-macro-propagated-pct-bp, avg-mutation-boundary-depth-x100,
+    //   rollback-success-rate-bp, self-evo-loop-latency-p99-us,
+    //   recommendation (0=ok,1=review,2=alert), health-score-bp
+    ObservabilityPrims::register_stats_impl(
+        "query:self-evo-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            using namespace aura::compiler::typed_audit;
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            auto load_m =
+                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
+                return m ? (m->*field).load(std::memory_order_relaxed) : 0;
+            };
+
+            // ── Macro / pattern hygiene ──
+            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
+            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t hygiene_viol = ev->get_hygiene_violation_count();
+            const std::uint64_t pattern_leak = ev->get_pattern_macro_filter_violations();
+            const std::uint64_t boundary_hygiene =
+                load_m(&CompilerMetrics::hygiene_violation_prevented_on_boundary_total) +
+                load_m(&CompilerMetrics::mutation_boundary_hygiene_violation_total);
+            std::uint64_t ws_nodes = 0;
+            if (auto* ws = ev->workspace_flat())
+                ws_nodes = static_cast<std::uint64_t>(ws->size());
+            const std::uint64_t macro_ratio_den = ws_nodes > 0 ? ws_nodes : 1;
+            const std::int64_t macro_introduced_ratio_bp =
+                static_cast<std::int64_t>((markers * 10000ull) / macro_ratio_den);
+            const std::uint64_t hygiene_events =
+                root_skips + recursive_skips + hygiene_viol + pattern_leak + boundary_hygiene;
+            const std::uint64_t hygiene_den =
+                hygiene_events > 0 ? hygiene_events : (root_skips + recursive_skips + 1);
+            const std::int64_t hygiene_violation_rate_bp =
+                static_cast<std::int64_t>(((hygiene_viol + pattern_leak) * 10000ull) / hygiene_den);
+
+            // ── IR hygiene / propagation ──
+            std::uint64_t ir_instr_total = 0, ir_instr_macro = 0, ir_macro_zero_prov = 0;
+            std::int64_t ir_module_walked = 0;
+            if (ev->compiler_service()) {
+                auto* svc = static_cast<aura::compiler::CompilerService*>(ev->compiler_service());
+                if (const auto& mod_opt = svc->last_ir_module(); mod_opt.has_value()) {
+                    ir_module_walked = 1;
+                    for (const auto& fn : mod_opt->functions) {
+                        for (const auto& blk : fn.blocks) {
+                            for (const auto& instr : blk.instructions) {
+                                ++ir_instr_total;
+                                if (instr.source_marker == 1) {
+                                    ++ir_instr_macro;
+                                    if (instr.provenance == 0)
+                                        ++ir_macro_zero_prov;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            const std::uint64_t ir_den = ir_instr_total > 0 ? ir_instr_total : 1;
+            const std::int64_t ir_macro_propagated_pct_bp =
+                static_cast<std::int64_t>((ir_instr_macro * 10000ull) / ir_den);
+            const std::uint64_t lowering_prop =
+                load_m(&CompilerMetrics::lowering_marker_propagated_total);
+            const std::uint64_t hygiene_leakage =
+                load_m(&CompilerMetrics::macro_introduced_ignored_in_ir_total) + ir_macro_zero_prov;
+
+            // ── Boundary depth ──
+            const std::int64_t depth_live =
+                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+            const std::int64_t depth_max =
+                static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_current_max());
+            const std::int64_t avg_depth_x100 =
+                depth_max > 0 ? (depth_live * 100) / depth_max : depth_live * 100;
+
+            // ── Rollback success ──
+            const std::uint64_t rollback_ok =
+                load_m(&CompilerMetrics::closed_loop_rollback_success_total);
+            const std::uint64_t rollback_log = ev->get_mutation_log_rollback_count();
+            const std::uint64_t guard_exc =
+                load_m(&CompilerMetrics::mutation_guard_exception_total) +
+                load_m(&CompilerMetrics::mutation_boundary_exception_rollback_total);
+            const std::uint64_t rollback_attempts = rollback_ok + rollback_log + guard_exc;
+            const std::int64_t rollback_success_rate_bp =
+                rollback_attempts == 0
+                    ? 10000
+                    : static_cast<std::int64_t>((rollback_ok * 10000ull) /
+                                                (rollback_attempts > 0 ? rollback_attempts : 1));
+
+            // ── Latency p99 proxy: max hold duration (us); hist top bucket ──
+            const std::uint64_t hold_max_us =
+                load_m(&CompilerMetrics::mutation_hold_duration_us_max);
+            const std::uint64_t hold_total =
+                load_m(&CompilerMetrics::mutation_hold_duration_us_total);
+            const std::uint64_t hold_samples = load_m(&CompilerMetrics::mutation_hold_samples);
+            const std::int64_t hold_avg_us =
+                hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
+            // p99 ≈ max when sample count small; else use max as conservative p99.
+            const std::int64_t latency_p99_us = static_cast<std::int64_t>(hold_max_us);
+
+            // ── TypedMutationAudit ──
+            const auto& ac = g_typed_mutation_audit_counters;
+            const std::uint64_t inv_aud = ac.invariant_audits.load(std::memory_order_relaxed);
+            const std::uint64_t inv_pass = ac.invariant_all_pass.load(std::memory_order_relaxed);
+            const std::uint64_t inv_fail =
+                ac.invariant_violations_caught.load(std::memory_order_relaxed);
+            const std::int64_t inv_pass_bp =
+                inv_aud == 0 ? 10000 : static_cast<std::int64_t>((inv_pass * 10000ull) / inv_aud);
+
+            // ── SV closed-loop rounds (self-evo signal) ──
+            const std::uint64_t sv_rounds =
+                load_m(&CompilerMetrics::sv_self_evo_closed_loop_rounds_total);
+            const std::uint64_t sv_hits =
+                load_m(&CompilerMetrics::sv_self_evo_convergence_hits_total);
+
+            // ── Recommendation + composite health ──
+            // 0=ok, 1=review (elevated skips/latency), 2=alert (leakage/violations)
+            std::int64_t recommendation = 0;
+            if (hygiene_viol > 0 || pattern_leak > 0 || hygiene_leakage > 0 || inv_fail > 0)
+                recommendation = 2;
+            else if (hygiene_violation_rate_bp > 500 || hold_avg_us > 10000 ||
+                     macro_introduced_ratio_bp > 5000)
+                recommendation = 1;
+            // health-score: average of inverted risk signals (higher better)
+            const std::int64_t hygiene_health =
+                10000 - std::min<std::int64_t>(hygiene_violation_rate_bp, 10000);
+            const std::int64_t inv_health = inv_pass_bp;
+            const std::int64_t rb_health = rollback_success_rate_bp;
+            const std::int64_t ir_health =
+                hygiene_leakage == 0
+                    ? 10000
+                    : std::max<std::int64_t>(
+                          0, 10000 - static_cast<std::int64_t>(hygiene_leakage * 1000));
+            const std::int64_t health_score_bp =
+                (hygiene_health + inv_health + rb_health + ir_health) / 4;
+
+            if (m)
+                m->self_evo_unified_health_queries_total.fetch_add(1, std::memory_order_relaxed);
+
+            auto& string_heap = ev->string_heap_mut();
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            // Issue #1909 AC names (exact + kebab aliases)
+            insert_kv("macro-introduced-ratio-bp", macro_introduced_ratio_bp);
+            insert_kv("macro_introduced_ratio", macro_introduced_ratio_bp);
+            insert_kv("hygiene-violation-rate-bp", hygiene_violation_rate_bp);
+            insert_kv("hygiene_violation_rate", hygiene_violation_rate_bp);
+            insert_kv("ir-macro-propagated-pct-bp", ir_macro_propagated_pct_bp);
+            insert_kv("ir_macro_propagated_pct", ir_macro_propagated_pct_bp);
+            insert_kv("avg-mutation-boundary-depth-x100", avg_depth_x100);
+            insert_kv("avg_mutation_boundary_depth", avg_depth_x100);
+            insert_kv("rollback-success-rate-bp", rollback_success_rate_bp);
+            insert_kv("rollback_success_rate", rollback_success_rate_bp);
+            insert_kv("self-evo-loop-latency-p99-us", latency_p99_us);
+            insert_kv("self_evo_loop_latency_p99", latency_p99_us);
+            // Supporting counters for dashboards
+            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+            insert_kv("workspace-nodes", static_cast<std::int64_t>(ws_nodes));
+            insert_kv("hygiene-skips", static_cast<std::int64_t>(root_skips + recursive_skips));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(hygiene_viol));
+            insert_kv("pattern-hygiene-leakage", static_cast<std::int64_t>(pattern_leak));
+            insert_kv("boundary-hygiene-prevented", static_cast<std::int64_t>(boundary_hygiene));
+            insert_kv("ir-module-walked", ir_module_walked);
+            insert_kv("ir-instr-total", static_cast<std::int64_t>(ir_instr_total));
+            insert_kv("ir-instr-macro-introduced", static_cast<std::int64_t>(ir_instr_macro));
+            insert_kv("ir-macro-zero-provenance", static_cast<std::int64_t>(ir_macro_zero_prov));
+            insert_kv("hygiene-leakage", static_cast<std::int64_t>(hygiene_leakage));
+            insert_kv("lowering-marker-propagated", static_cast<std::int64_t>(lowering_prop));
+            insert_kv("mutation-boundary-depth-live", depth_live);
+            insert_kv("mutation-boundary-depth-max", depth_max);
+            insert_kv("mutation-hold-avg-us", hold_avg_us);
+            insert_kv("mutation-hold-max-us", static_cast<std::int64_t>(hold_max_us));
+            insert_kv("rollback-success-total", static_cast<std::int64_t>(rollback_ok));
+            insert_kv("rollback-log-total", static_cast<std::int64_t>(rollback_log));
+            insert_kv("invariant-audits", static_cast<std::int64_t>(inv_aud));
+            insert_kv("invariant-pass-rate-bp", inv_pass_bp);
+            insert_kv("invariant-fail", static_cast<std::int64_t>(inv_fail));
+            insert_kv("sv-closed-loop-rounds", static_cast<std::int64_t>(sv_rounds));
+            insert_kv("sv-convergence-hits", static_cast<std::int64_t>(sv_hits));
+            insert_kv("health-score-bp", health_score_bp);
+            insert_kv("recommendation", recommendation);
+            insert_kv("unified-dashboard-wired", 1);
+            insert_kv("ir-hygiene-lineage", 1891);
+            insert_kv("pattern-hygiene-lineage", 1892);
+            insert_kv("typed-audit-lineage", 1894);
+            insert_kv("loop-stats-lineage", 1883);
+            insert_kv("schema", 1909);
+            insert_kv("issue", 1909);
+            insert_kv("active", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #583: query:primitives-stats. Returns the sum of 6
     // primitives registry + core hot-path observability counters
     // spanning evaluator_primitives_registry.cpp registration

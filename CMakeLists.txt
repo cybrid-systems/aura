@@ -4660,6 +4660,10 @@ add_dependencies(all_test_issue_targets test_raw_pointer_safety_1898)
 aura_add_issue_test(test_atomic_batch_dispatch_1899)
 aura_issue_test_link_llvm_jit(test_atomic_batch_dispatch_1899)
 add_dependencies(all_test_issue_targets test_atomic_batch_dispatch_1899)
+# Issue #1909: unified query:self-evo-stats self-evolution loop health.
+aura_add_issue_test(test_self_evo_stats_1909)
+aura_issue_test_link_llvm_jit(test_self_evo_stats_1909)
+add_dependencies(all_test_issue_targets test_self_evo_stats_1909)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

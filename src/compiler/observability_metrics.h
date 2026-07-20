@@ -914,6 +914,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compiler_service_pin_reject_total{0};
     std::atomic<std::uint64_t> type_registry_pin_reject_total{0};
     std::atomic<std::uint64_t> workspace_flat_pin_total{0};
+    // Issue #1909: (query:self-evo-stats) unified health dashboard hits.
+    std::atomic<std::uint64_t> self_evo_unified_health_queries_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
