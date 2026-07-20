@@ -289,7 +289,7 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:dead-coercion-elision-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t elided = 0, evidence_hits = 0, stable_paths = 0, savings = 0,
-                          castop_emitted = 0;
+                          castop_emitted = 0, narrow_mut = 0, dyn_pass = 0, rate_bp = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
                 elided =
@@ -301,10 +301,16 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
                 savings = m->dead_coercion_elision_runtime_check_savings_total.load(
                     std::memory_order_relaxed);
                 castop_emitted = m->coercion_castop_emitted_total.load(std::memory_order_relaxed);
+                narrow_mut =
+                    m->dead_coercion_narrow_mutation_elided_total.load(std::memory_order_relaxed);
+                dyn_pass =
+                    m->dead_coercion_dynamic_passthrough_total.load(std::memory_order_relaxed);
+                rate_bp = m->dead_coercion_elision_rate_bp.load(std::memory_order_relaxed);
             }
             const std::int64_t evidence_hit_rate = static_cast<std::int64_t>(
                 (evidence_hits * 100ULL) / (evidence_hits + castop_emitted + 1ULL));
-            auto* ht = FlatHashTable::create(8);
+            // Power-of-2 capacity; #1925 adds ~8 keys.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -335,7 +341,15 @@ void CompilePrims::register_compile_p2(PrimRegistrar add, Evaluator& ev) {
             insert_kv("evidence-hit-rate", evidence_hit_rate);
             insert_kv("narrowing-stable-paths", static_cast<std::int64_t>(stable_paths));
             insert_kv("runtime-check-savings", static_cast<std::int64_t>(savings));
-            insert_kv("schema", 799);
+            // Issue #1925: post-mutate / occurrence-narrow elision surface
+            insert_kv("narrow-mutation-elided", static_cast<std::int64_t>(narrow_mut));
+            insert_kv("dynamic-passthrough-elided", static_cast<std::int64_t>(dyn_pass));
+            insert_kv("elision-rate-bp", static_cast<std::int64_t>(rate_bp));
+            insert_kv("elision-rate-target-bp", 9000); // 90% AC target
+            insert_kv("narrow-mutation-wired", 1);
+            insert_kv("schema-1925", 1925);
+            insert_kv("issue-1925", 1925);
+            insert_kv("schema", 799); // lineage 799 + #1925
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -8607,6 +8607,8 @@ private:
             if (denom > 0) {
                 const auto bp = (eliminated * 10000ull) / denom;
                 metrics_.cast_elision_win_rate_bp.store(bp, std::memory_order_relaxed);
+                // Issue #1925: alias elision-rate-bp for narrow/mutation AC.
+                metrics_.dead_coercion_elision_rate_bp.store(bp, std::memory_order_relaxed);
             }
             if (eliminated > 0) {
                 metrics_.dce_cast_elision_total.fetch_add(eliminated, std::memory_order_relaxed);
@@ -8616,6 +8618,16 @@ private:
                                                                      std::memory_order_relaxed);
             }
         }
+        // Issue #1925: narrow-mutation + Dynamic passthrough counters.
+        if (dce.narrow_evidence_hits() > 0) {
+            metrics_.dead_coercion_narrow_mutation_elided_total.fetch_add(
+                dce.narrow_evidence_hits(), std::memory_order_relaxed);
+        }
+        if (dce.dynamic_hits() > 0) {
+            metrics_.dead_coercion_dynamic_passthrough_total.fetch_add(dce.dynamic_hits(),
+                                                                       std::memory_order_relaxed);
+        }
+        metrics_.dead_coercion_narrow_mutation_wired.store(1, std::memory_order_relaxed);
     }
 
     // Issue #538: TypeSpecialization + DCE on one function after

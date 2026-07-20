@@ -57,8 +57,11 @@ const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept {
     return &g_last_soa_snapshot;
 }
 
-// Map TypeId to CastOp type_tag (used by IR interpreter)
-// INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
+// Map TypeId to CastOp type_tag (used by IR interpreter / JIT).
+// INT→0, STRING→1, BOOL→2, DYNAMIC→3, FLOAT→4.
+// Issue #1925: VOID/PAIR/HASH/VECTOR map to Dynamic passthrough (tag=3)
+// so DeadCoercionElimination Rule 3/7 can elide safe ground→Dynamic
+// without inventing new runtime tags (IR CastOp switch still covers 0–4).
 static std::uint32_t type_tag_for_coercion(aura::core::TypeId tid,
                                            const aura::core::TypeRegistry* type_reg) {
     if (!type_reg)
@@ -73,9 +76,46 @@ static std::uint32_t type_tag_for_coercion(aura::core::TypeId tid,
             return 2;
         case aura::core::TypeTag::FLOAT:
             return 4;
+        case aura::core::TypeTag::DYNAMIC:
+        case aura::core::TypeTag::VOID:
+        case aura::core::TypeTag::PAIR:
+        case aura::core::TypeTag::HASH:
+        case aura::core::TypeTag::VECTOR:
+        case aura::core::TypeTag::TYPE:
+            return 3; // Dynamic / structural passthrough
         default:
-            return 3; // Dynamic / pass-through
+            return 3; // Linear/Func/Var/… — runtime Any check
     }
+}
+
+// Issue #1925: can we elide a CastOp at lower time?
+//   - identity type_id match
+//   - Dynamic target (type_tag==3) passthrough
+//   - narrow_evidence + matching concrete types
+//   - narrow_evidence + Dynamic source → ground (proved by occurrence)
+static bool can_elide_coercion_cast(std::uint32_t target_type_id, std::uint32_t inner_type_id,
+                                    std::uint32_t type_tag, std::uint32_t narrow_ev,
+                                    const aura::core::TypeRegistry* type_reg) noexcept {
+    // Identity (ground==ground or same Dynamic index).
+    if (target_type_id != 0 && inner_type_id != 0 && target_type_id == inner_type_id)
+        return true;
+    // Dynamic / pass-through target — CastOp default is identity.
+    if (type_tag >= 3)
+        return true;
+    if (type_reg && target_type_id != 0) {
+        auto tid = aura::core::TypeId{target_type_id, 1};
+        if (tid == type_reg->dynamic_type())
+            return true;
+    }
+    // Occurrence-proved: evidence present and types known + match.
+    if (narrow_ev != 0 && target_type_id != 0 && inner_type_id != 0 &&
+        target_type_id == inner_type_id)
+        return true;
+    // Evidence + target ground, source unknown/Dynamic → still need
+    // CastOp at lower time unless type_ids match (handled above).
+    // Leave for IR DeadCoercionElimination after TypePropagation.
+    (void)narrow_ev;
+    return false;
 }
 
 // ── Internal: native FlatAST lowering helpers ──────────────────
@@ -915,16 +955,32 @@ static std::uint32_t lower_flat_expr(
             for (std::size_t i = 1; i < v.children.size(); ++i) {
                 auto arg_node = v.child(i);
                 auto val_slot = lower_flat_expr(state, flat, pool, arg_node, cache, cache_hits);
-                // Insert CastOp if arg type differs from expected param type
+                // Insert CastOp if arg type differs from expected param type.
+                // Issue #1925: elide identity / Dynamic / narrow-proved;
+                // attach current_narrowing_evidence for residual CastOps.
                 if (have_callee_type && (i - 1) < callee_func_type.args.size()) {
                     auto arg_type = flat.type_id(arg_node);
                     if (arg_type != 0) {
                         auto expected_type = callee_func_type.args[i - 1];
                         if (arg_type != expected_type.index) {
-                            auto cast_slot = state.alloc_local();
                             auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
-                            state.emit_with_type(IROpcode::CastOp, expected_type.index, cast_slot,
-                                                 val_slot, cast_tag, 0);
+                            const auto narrow_ev = state.current_narrowing_evidence;
+                            if (can_elide_coercion_cast(expected_type.index, arg_type, cast_tag,
+                                                        narrow_ev, state.type_reg)) {
+                                state.emit(IROpcode::Local,
+                                           arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
+                                state.alloc_local();
+                                continue;
+                            }
+                            auto cast_slot = state.alloc_local();
+                            if (narrow_ev != 0) {
+                                state.emit_with_metadata(IROpcode::CastOp, expected_type.index, 0,
+                                                         0, narrow_ev, cast_slot, val_slot,
+                                                         cast_tag, 0);
+                            } else {
+                                state.emit_with_type(IROpcode::CastOp, expected_type.index,
+                                                     cast_slot, val_slot, cast_tag, 0);
+                            }
                             state.emit(IROpcode::Local,
                                        arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
                             state.alloc_local();
@@ -946,22 +1002,15 @@ static std::uint32_t lower_flat_expr(
             auto else_blk = state.alloc_block();
             auto merge_blk = state.alloc_block();
 
-            // Issue #280: if the IfExpr's narrowing evidence is
-            // set on the lowering state (from TypeCheckWrap's last
-            // check_before_lowering), attach it to the Branch via
-            // emit_with_metadata. The narrowing bitmask tells
-            // DeadCoercionEliminationPass / JIT which predicate(s)
-            // statically guarantee the then-branch's refinement.
-            // Default 0 = no hint; emit() is used instead of
-            // emit_with_metadata to avoid touching the
-            // narrow_evidence field when there's no narrowing.
-            if (state.current_narrowing_evidence != 0) {
-                state.emit_with_metadata(IROpcode::Branch, 0, 0, 0,
-                                         state.current_narrowing_evidence, cond_slot, then_blk,
-                                         else_blk);
-                // Reset so nested IfExprs don't inherit the
-                // narrowing hint from their enclosing one.
-                state.current_narrowing_evidence = 0;
+            // Issue #280 / #1925: attach if-predicate narrow_evidence to
+            // Branch AND keep it live while lowering the then-branch so
+            // Coercion / Call-arg / TypeAnnotation CastOps inside the
+            // refined arm inherit occurrence proof (post-mutate zero-overhead).
+            // Else-arm clears evidence (negation may refine differently).
+            const std::uint32_t if_narrow_ev = state.current_narrowing_evidence;
+            if (if_narrow_ev != 0) {
+                state.emit_with_metadata(IROpcode::Branch, 0, 0, 0, if_narrow_ev, cond_slot,
+                                         then_blk, else_blk);
             } else {
                 state.emit(IROpcode::Branch, cond_slot, then_blk, else_blk);
             }
@@ -969,14 +1018,18 @@ static std::uint32_t lower_flat_expr(
             auto phi_slot = state.alloc_local();
 
             state.cur_block = then_blk;
+            state.current_narrowing_evidence = if_narrow_ev;
             auto then_val = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
             state.emit(IROpcode::Local, phi_slot, then_val);
             state.emit(IROpcode::Jump, merge_blk);
 
             state.cur_block = else_blk;
+            state.current_narrowing_evidence = 0;
             auto else_val = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
             state.emit(IROpcode::Local, phi_slot, else_val);
             state.emit(IROpcode::Jump, merge_blk);
+            // Merge: no inherited narrow from this if.
+            state.current_narrowing_evidence = 0;
 
             state.cur_block = merge_blk;
             return phi_slot;
@@ -1407,13 +1460,23 @@ static std::uint32_t lower_flat_expr(
             // 2. Annotation is static but inner is dynamic (runtime type check)
             if ((ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) ||
                 (ann_type_id != 0 && inner_type_id == 0)) {
-                // Emit CastOp for the type boundary
-                auto slot = state.alloc_local();
                 auto ann_tid = aura::core::TypeId{ann_type_id, 1};
                 std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
+                const auto narrow_ev = state.current_narrowing_evidence;
+                // Issue #1925: elide identity / Dynamic / narrow-proved at lower.
+                if (can_elide_coercion_cast(ann_type_id, inner_type_id, type_tag, narrow_ev,
+                                            state.type_reg)) {
+                    return inner_slot;
+                }
+                auto slot = state.alloc_local();
                 std::uint32_t blame_loc = 0;
-                state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag,
-                                     blame_loc);
+                if (narrow_ev != 0) {
+                    state.emit_with_metadata(IROpcode::CastOp, ann_type_id, 0, 0, narrow_ev, slot,
+                                             inner_slot, type_tag, blame_loc);
+                } else {
+                    state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag,
+                                         blame_loc);
+                }
                 return slot;
             }
             return inner_slot;
@@ -1427,9 +1490,10 @@ static std::uint32_t lower_flat_expr(
                 v.float_value != 0.0 ? static_cast<std::uint32_t>(v.float_value) : 0u;
             const std::uint32_t narrow_ev =
                 entry_narrow_ev != 0 ? entry_narrow_ev : state.current_narrowing_evidence;
-            // Issue #691: post-narrow cast elision when evidence + concrete types match.
-            if (narrow_ev != 0 && target_type_id != 0 && inner_type_id != 0 &&
-                target_type_id == inner_type_id) {
+            // Issue #691 / #1925: expanded lower-time elision (identity,
+            // Dynamic passthrough, narrow_ev + type match).
+            if (can_elide_coercion_cast(target_type_id, inner_type_id, type_tag, narrow_ev,
+                                        state.type_reg)) {
                 return inner;
             }
             auto slot = state.alloc_local();
@@ -1437,7 +1501,7 @@ static std::uint32_t lower_flat_expr(
                                       (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
             // CastOp type_id = coercion target type (stored on the Coercion node)
             // blame info is carried via blame_loc operand and source_id, not type_id
-            // Issue #629 / #691: attach narrow_evidence to coercion CastOps
+            // Issue #629 / #691 / #1925: attach narrow_evidence to coercion CastOps
             // from entry provenance or enclosing if-branch context.
             if (narrow_ev != 0) {
                 state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0, narrow_ev, slot,

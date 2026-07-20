@@ -181,10 +181,20 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         if (e.source_mutation_id == 0 && !flat.all_mutations().empty())
             e.source_mutation_id = flat.all_mutations().back().mutation_id;
 
-        // Issue #1425: identity coercion — child already has the
+        // Issue #1425 / #1925: identity coercion — child already has the
         // target type stamped (post-infer). Do not insert a
         // CoercionNode; the IR path would only produce a dead CastOp.
+        // Also elide Dynamic-target tags (type_tag==3): CastOp default
+        // is passthrough; narrow_evidence-only identity when types match.
         if (e.type_id != 0 && flat.type_id(e.original_child) == e.type_id) {
+            ++s.eliminated;
+            if (map_mut)
+                map_mut->mark_eliminated();
+            continue;
+        }
+        // Issue #1925: Dynamic passthrough tag (3) with no meaningful
+        // runtime check — skip CoercionNode insertion.
+        if (e.type_tag == 3) {
             ++s.eliminated;
             if (map_mut)
                 map_mut->mark_eliminated();
