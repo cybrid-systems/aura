@@ -49,3 +49,14 @@ Changes under certain production primitives may require a paired test
 Hand-written docs stay thin. Generated catalogs live under `docs/generated/`
 (`./build.py gate` refreshes them). Prefer updating tests and code comments
 over long prose.
+
+## Architecture / module boundaries (#1885)
+
+Dependency direction and cross-layer contracts:
+
+- [`src/core/module_boundary.ixx`](../src/core/module_boundary.ixx) — authority
+- [`docs/architecture.md`](architecture.md) — overview
+
+**Rule of thumb:** Core ← Parser ← Compiler ← Serve/Exec/…. Core never imports
+Compiler. When you add a new cross-layer edge, update `module_boundary.ixx`
+(and tick the PR template checkbox).

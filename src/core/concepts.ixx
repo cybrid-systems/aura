@@ -1,6 +1,12 @@
 // src/core/concepts.ixx — Issue #501: Aura core Concepts
 // (foundation slice, scope-limited close).
 //
+// Issue #1885: module layering / dependency direction live in
+//   src/core/module_boundary.ixx  (import aura.core.module_boundary)
+// This file defines *type shapes* (NodeHandle, StableNodeRefLike, …);
+// module_boundary.ixx defines *which layer may depend on which* and
+// cross-layer contracts that wrap these concepts.
+//
 // The Aura codebase has many template / generic functions
 // that operate on AST nodes, mutations, allocators, and
 // queries. Currently they use tag dispatch + manual

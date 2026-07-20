@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**67** `export module` declarations in `src/**/*.ixx`.
+**68** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -52,6 +52,7 @@
 | `aura.core.cxx26_invariants` | `src/core/cxx26_invariants.ixx` |
 | `aura.core.error` | `src/core/error.ixx` |
 | `aura.core.lifetime_pin` | `src/core/lifetime_pin.ixx` |
+| `aura.core.module_boundary` | `src/core/module_boundary.ixx` |
 | `aura.core.mutation` | `src/core/mutation.ixx` |
 | `aura.core.mutators` | `src/core/mutators.ixx` |
 | `aura.core.panic_checkpoint_raii` | `src/core/panic_checkpoint_raii.ixx` |

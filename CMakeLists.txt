@@ -4632,6 +4632,9 @@ aura_issue_test_link_llvm_jit(test_optimization_passes_contracts)
 # Issue #1577: centralized Pass concepts (concept_constraints.ixx).
 aura_add_issue_test(test_concept_constraints)
 aura_issue_test_link_llvm_jit(test_concept_constraints)
+# Issue #1885: module_boundary.ixx layering + dependency DAG + contracts.
+aura_add_issue_test(test_module_boundary_1885)
+add_dependencies(all_test_issue_targets test_module_boundary_1885)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
