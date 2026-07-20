@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 523,
-  "frozen_count": 455,
+  "frozen_count": 456,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -59,6 +59,7 @@
     "query:aot-reload-stats",
     "query:aot-safe-swap-boundary-stats",
     "query:aot-stats",
+    "query:architectural-simplification-stats",
     "query:arena-auto-compact-defrag-fiber-stats",
     "query:arena-auto-compact-defrag-stats",
     "query:arena-auto-compact-stats",
@@ -995,7 +996,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 432,
+  "stats_count": 433,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1036,6 +1037,7 @@
     "query:aot-reload-stats",
     "query:aot-safe-swap-boundary-stats",
     "query:aot-stats",
+    "query:architectural-simplification-stats",
     "query:arena-auto-compact-defrag-fiber-stats",
     "query:arena-auto-compact-defrag-stats",
     "query:arena-auto-compact-stats",

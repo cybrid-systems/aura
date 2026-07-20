@@ -56,8 +56,8 @@ than removal.
   typed `ResourceQuotaExceeded` on reject (never panic).
 - **PanicCheckpointRAII** (panic_checkpoint_raii.ixx) — RAII panic
   guard with dtor atomic ops. Issue #1950 / #1953 lineage.
-- **Pending consolidation**: cycle 3 of #1964 — consolidate these
-  into a single transaction layer.
+- **Unified API**: `TransactionGuard` (#1964 cycle 3) — production
+  still uses MBG + PCR until call-site migration completes.
 
 ### 4. Closure lifetime / linear ownership
 
@@ -82,26 +82,33 @@ Concrete consolidation proposals with measurable reduction:
 |---|---|---|
 | Provenance dual-track collapse | `eb007a4c` (#1964 cycle 1) | 80 lines (deleted dead module) + 0 dual-record paths |
 | WorkspaceEpoch type foundation | `f624af81` (#1964 cycle 2a) | 1 new type, 1 linter; 847-ref migration path formalized |
-| orch/ MVP boundary + linter | `bcb68c7c` (#1965 cycle 1) | 470 lines / 1 orch facade; `// DEFERRED` markers + 8,535-byte linter |
-| commercial_readiness core vs deferred | `eb935139` (#1965 cycle 2) | 75 deferred primitives tracked via `DOMAIN_STATUS` dict |
-| orch/ Experimental status | `07c14d67` (#1945) | 6,412-byte status doc + 4-step re-enable path |
-| 11 follow-up issues | (#1966-#1976, #1965 cycle 3) | Deferred features tracked (75 primitives + orch/) |
+| mutation_epoch API migration | `779eea77` (#1964 cycle 2b) | `current_mutation_epoch` / `bump_mutation_epoch` |
+| bridge_epoch accessors | `c05a6b3e` (#1964 cycle 2c) | process-global Bridge kind API |
+| per-AST epoch design note | `18dc5ff7` (#1964 cycle 2d) | design for subtree/wrap/generation |
+| TransactionGuard API | `27969acf` (#1964 cycle 3) | unified TG surface + metrics |
+| mutate_dispatch API | `71b2d4a3` (#1964 cycle 4) | MutateKind + single dispatch + metrics |
+| Architectural dashboard | `query:architectural-simplification-stats` | schema-1964 observability |
+| orch/ MVP boundary + linter | `bcb68c7c` (#1965 cycle 1) | 470 lines / 1 orch facade; `// DEFERRED` markers |
+| commercial_readiness core vs deferred | `eb935139` (#1965 cycle 2) | 75 deferred primitives via `DOMAIN_STATUS` |
+| orch/ Experimental status | `07c14d67` (#1945) | status doc + 4-step re-enable path |
+| 11 follow-up issues | (#1966-#1976, #1965 cycle 3) | Deferred features tracked |
 
-## Consolidation pending
+## Consolidation follow-ups (call-site migration)
 
-- **#1964 cycle 2b**: migrate `mutation_epoch` (101 refs,
-  simplest — FlatAST global). Alias + shim pattern.
-- **#1964 cycle 2c**: migrate `bridge_epoch` (602 refs,
-  hot path — most subtle, careful concurrency analysis).
-- **#1964 cycle 2d**: consolidate `subtree_generation_` +
-  `wrap_epoch_` + `generation_` (144 refs — per-node + wrap +
-  AST workspace epoch).
-- **#1964 cycle 3**: consolidate `MutationBoundaryGuard` +
-  `PanicCheckpointRAII` into a single transaction layer.
-- **#1964 cycle 4**: consolidate `mutate:*` entry points into a
-  single dispatch (Issue #1439 / #1950 / #1953 prerequisite).
-- **#1965 follow-ups** (#1966-#1976): 11 deferred-feature
-  tracking issues.
+Phase 2 **API surfaces** for cycles 1–4 are shipped. Remaining work is
+mechanical call-site migration (not re-design):
+
+- **Epoch leftovers**: `scripts/check_workspace_epoch_migration.py`
+  still reports ~197 non-strict violations (legacy field uses).
+  `--strict` not yet in gate.
+- **TransactionGuard**: migrate agent/orch paths from raw
+  `MutationBoundaryGuard` + `PanicCheckpointRAII` to `TransactionGuard`
+  (or make MBG wrap TG).
+- **mutate_dispatch**: migrate remaining `add("mutate:*")` bodies to
+  thin wrappers; `mutate:set-body` already bookkeeps via
+  `mutate_dispatch(SetBody, …)`.
+- **#1965 follow-ups** (#1966-#1976): 11 deferred-feature tracking
+  issues.
 
 ## Prototype implementation on hot-update / mutation path
 
@@ -159,11 +166,11 @@ form) + enforced across `StableNodeRef` consumers in
 
 ### Guard scope
 ```
-MutationBoundaryGuard::try_acquire is the only mutation boundary.
+MutationBoundaryGuard::try_acquire remains the production boundary.
 PanicCheckpointRAII is exception-only (Issue #1950/#1953).
+TransactionGuard (#1964 cycle 3) is the unified API surface —
+call-site migration is follow-up.
 ```
-Pending consolidation in #1964 cycle 3 (single transaction
-layer).
 
 ### Closure lifetime / linear ownership
 ```
@@ -186,24 +193,26 @@ No consolidation yet — separate cleanup pending.
 ## Refs
 
 - Parent: #1942 (Simplification Roadmap)
-- #1964 (Phase 2: architectural simplification) — cycles 1 + 2a
-  shipped; cycles 2b/2c/2d + 3 + 4 pending
+- #1964 (Phase 2: architectural simplification) — cycles 1–4 **API
+  surfaces shipped**; call-site migration is follow-up
 - #1965 (Phase 3: scope deferral + governance + 11 follow-up issues)
 - #1945 (orch/ Advanced / Experimental + status doc)
 - SlimSurface: #1432, #1448, #1449 (primitive freeze + budget)
 - MVP pattern: #1943 (Hot-Update MVP)
+- Dashboard: `(engine:metrics "query:architectural-simplification-stats")`
 
 ## Cross-cutting mechanism surface area (today)
 
-After #1964 cycles 1 + 2a + #1965 cycles 1+2+3:
+After #1964 cycles 1–4 API surfaces + #1965 cycles 1+2+3:
 
-| Surface | Files | Refs | Status |
-|---|---|---|---|
-| Provenance (single canonical) | 1 (.hh) + ast.ixx StableNodeRef | 7 prod + 3 tests | ✓ ship |
-| Epoch (unified type) | 1 (.hh) | 1 linter tracks 847 | type foundation ✓; migration pending |
-| Guard (unified transaction) | 2 (MBG + PCR) | n/a | pending cycle 3 |
-| Closure lifetime + linear | 1 (mutation.cpp) | per-eval | ✓ existing |
-| Defuse (closure table) | n/a | n/a | tracked separately |
+| Surface | Files | Status |
+|---|---|---|
+| Provenance (single canonical) | `provenance_tracker.hh` + `StableNodeRef` | ✓ ship |
+| Epoch (unified type + APIs) | `workspace_epoch.hh` | ✓ type+API; field migration ~197 left |
+| Guard (unified transaction API) | `transaction_guard.hh` + MBG + PCR | ✓ API; migrate callers |
+| Mutate dispatch | `mutate_dispatch.hh` | ✓ API; set-body bookkeeps |
+| Closure lifetime + linear | evaluator fiber/mutation | ✓ existing |
+| Defuse (closure table) | n/a | tracked separately |
 
 Per-mechanism LOC/cyclomatic complexity is tracked via the
 build's clang-tidy + complexity reports; current count down vs
