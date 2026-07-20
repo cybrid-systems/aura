@@ -9,6 +9,11 @@ changes with tests next to the subsystem they protect.
 ./build.py gate     # docs / lint / format / fixtures / surfaces / registry
 ./build.py check    # gate + build + tests
 ./build.py bench --strict   # compiler benchmark SLO (#1569)
+
+# Unified Python runner (#1961)
+python3 tests/run.py list
+python3 tests/run.py issues-fast
+python3 tests/run.py fixtures
 ```
 
 Commit style matches history: `fix(scope): summary (#issue)` (see `git log`).

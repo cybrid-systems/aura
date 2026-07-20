@@ -247,13 +247,17 @@ def cmd_lint():
 
 
 def cmd_fixtures():
-    """Validate tests/fixtures/*.json schema and baseline sync."""
+    """Validate tests/fixtures/*.json schema and baseline sync (#1961 → run.py)."""
     print(f"{B}═══ Fixtures (check) ═══{N}")
-    script = ROOT / "tests" / "fixture_check.py"
-    if not script.exists():
+    script = ROOT / "tests" / "run.py"
+    legacy = ROOT / "tests" / "fixture_check.py"
+    if script.exists():
+        r = run([sys.executable, str(script), "fixtures"], cwd=ROOT)
+    elif legacy.exists():
+        r = run([sys.executable, str(legacy)], cwd=ROOT)
+    else:
         fail(f"missing {script}")
         return 1
-    r = run([sys.executable, str(script)], cwd=ROOT)
     if r == 0:
         ok("fixtures OK")
     else:
@@ -908,17 +912,17 @@ def test_ai_agent_demo():
 
 
 def test_gradual():
-    """Gradual Guarantee verification"""
-    gradual_script = ROOT / "tests" / "check_gradual.py"
-    if not gradual_script.exists():
-        print(f"  {gradual_script} not found")
+    """Gradual Guarantee verification (#1961 → tests/run.py gradual)."""
+    runner = ROOT / "tests" / "run.py"
+    legacy = ROOT / "tests" / "check_gradual.py"
+    if runner.exists():
+        cmd = [sys.executable, str(runner), "gradual"]
+    elif legacy.exists():
+        cmd = [sys.executable, str(legacy)]
+    else:
+        print(f"  {legacy} not found")
         return 1
-    r = subprocess.run(
-        [sys.executable, str(gradual_script)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     print(r.stdout)
     if r.returncode != 0:
         fail("gradual guarantee failed")
@@ -928,19 +932,29 @@ def test_gradual():
 
 
 def test_bash():
-    """Bash 回归测试"""
+    """Bash regression (#1961 → tests/run.py bash)."""
     print(f"{B}═══ Bash regression tests ═══{N}")
-    runner = ROOT / "tests" / "run-tests.sh"
-    if not runner.exists():
-        fail(f"{runner} not found")
+    runner = ROOT / "tests" / "run.py"
+    shell = ROOT / "tests" / "run-tests.sh"
+    if runner.exists():
+        r = subprocess.run(
+            [sys.executable, str(runner), "bash"],
+            env={**os.environ, "AURA": str(AURA)},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    elif shell.exists():
+        r = subprocess.run(
+            ["bash", str(shell)],
+            env={**os.environ, "AURA": str(AURA)},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    else:
+        fail(f"{shell} not found")
         return 1
-    r = subprocess.run(
-        ["bash", str(runner)],
-        env={**os.environ, "AURA": str(AURA)},
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
     print(r.stdout)
     if r.stderr:
         print(r.stderr)
@@ -1054,7 +1068,7 @@ def test_issue_146():
 
 
 def test_issues():
-    """Run test_issue_* binaries (Issue #226 unified runner).
+    """Run issue/domain/bundle C++ binaries via tests/run.py (#1961).
 
     Tier controlled by AURA_ISSUES_TIER: full = all binaries,
     fast = issues_fast.json subset + git-changed issue tests.
@@ -1076,12 +1090,16 @@ def test_issues():
             tier = "fast"
             os.environ["AURA_ISSUES_TIER"] = "fast"
     print(f"{B}═══ Issue Tests (tier={tier}, jobs={jobs}{', --changed' if '--changed' in sys.argv else ''}) ═══{N}")
+    # Prefer unified CLI; falls through to run_issue_tests implementation.
+    cmd_name = "issues-fast" if tier == "fast" else "issues"
     r = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "tests" / "run_issue_tests.py"),
+            str(ROOT / "tests" / "run.py"),
+            cmd_name,
             "--tier",
             tier,
+            "--",
             "--jobs",
             jobs,
             *extra_args,

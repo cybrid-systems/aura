@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Validate tests/fixtures/*.json schema and cross-file invariants."""
+"""Validate tests/fixtures/*.json schema and cross-file invariants.
+
+Prefer: python3 tests/run.py fixtures  (#1961)
+Direct invocation of this script remains supported.
+"""
 
 from __future__ import annotations
 
@@ -60,6 +64,10 @@ def check_issues_fast(errors: list[str]) -> None:
             or target.startswith("test_primitives_")
             or target.startswith("test_aura_pets_")  # #1454 pets TUI smoke
             or target.startswith("test_cyber_cat_")  # #1358 / #1454
+            # domain/arena pilot batches (#1959)
+            or target.startswith("test_arena_")
+            or target.startswith("test_compact_")
+            or target == "test_gc_batch"
         ):
             _fail(
                 errors,

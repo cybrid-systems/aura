@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Gradual Guarantee verifier — annotated code produces same result as erased code."""
+"""Gradual Guarantee verifier — annotated code produces same result as erased code.
+
+Prefer: python3 tests/run.py gradual  (#1961)
+"""
 
 import os
 import subprocess
