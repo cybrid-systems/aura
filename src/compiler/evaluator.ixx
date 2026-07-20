@@ -1470,16 +1470,21 @@ public:
             aura_set_aot_metrics(static_cast<CompilerMetrics*>(m));
     }
     [[nodiscard]] void* compiler_metrics() const noexcept { return compiler_metrics_; }
-    // Issue #1839: compiler_service_ is a non-owning raw back-pointer
-    // to the owning CompilerService (wired once in the service ctor
-    // via set_compiler_service(this)). The service outlives its
-    // embedded Evaluator; concurrent rebind/free of this pointer
-    // while compile:ir-stats (or other service-backed primitives)
-    // run is unsupported — same quiescence class as #1835
-    // (compiler_metrics_) and #1837 (type_registry_). Hot paths
-    // keep raw loads (no shared_ptr tax on every stats / bridge
-    // epoch / GC-root callback).
-    void set_compiler_service(void* svc) { compiler_service_ = svc; }
+    // Issue #1839 / #1898: compiler_service_ is a non-owning raw
+    // back-pointer to the owning CompilerService (wired once in the
+    // service ctor via set_compiler_service(this)). The service
+    // outlives its embedded Evaluator under the production
+    // ownership contract. Concurrent rebind is detected via
+    // generation stamps (RawPointerPin) without shared_ptr tax on
+    // every stats / bridge epoch / GC-root callback (#1835/#1837 class).
+    //
+    // Issue #1898: prefer pin_compiler_service() + pin_valid() for
+    // multi-step readers; WorkspaceFlatPin for workspace_flat_ reads
+    // that must not race set_workspace_flat (#1729).
+    void set_compiler_service(void* svc) noexcept {
+        compiler_service_ = svc;
+        compiler_service_gen_.fetch_add(1, std::memory_order_release);
+    }
     // Issue #612: optional post-mutate ADT registry sync (wired by CompilerService).
     using WorkspaceAdtSyncFn = void (*)(void* compiler_service);
     void set_workspace_adt_sync_fn(WorkspaceAdtSyncFn fn) { workspace_adt_sync_fn_ = fn; }
@@ -1490,6 +1495,82 @@ public:
     // void*). The (query:compiler-cache-stats) primitive
     // uses it to call CompilerService::dirty_block_count().
     [[nodiscard]] void* compiler_service() const noexcept { return compiler_service_; }
+
+    // Issue #1898: seqlock-style pin for non-owning back-pointers.
+    // Detects concurrent set_compiler_service / set_type_registry /
+    // set_workspace_flat rebind mid multi-step use (TOCTOU soft-fail).
+    struct RawPointerPin {
+        void* ptr = nullptr;
+        std::uint64_t gen = 0;
+        [[nodiscard]] explicit operator bool() const noexcept { return ptr != nullptr; }
+    };
+    [[nodiscard]] RawPointerPin pin_compiler_service() const noexcept {
+        for (int i = 0; i < 4; ++i) {
+            const auto g1 = compiler_service_gen_.load(std::memory_order_acquire);
+            void* p = compiler_service_;
+            const auto g2 = compiler_service_gen_.load(std::memory_order_acquire);
+            if (g1 == g2)
+                return RawPointerPin{p, g1};
+        }
+        return RawPointerPin{};
+    }
+    [[nodiscard]] bool compiler_service_pin_valid(const RawPointerPin& pin) const noexcept {
+        if (!pin.ptr)
+            return false;
+        return pin.ptr == compiler_service_ &&
+               pin.gen == compiler_service_gen_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] RawPointerPin pin_type_registry() const noexcept {
+        for (int i = 0; i < 4; ++i) {
+            const auto g1 = type_registry_gen_.load(std::memory_order_acquire);
+            void* p = type_registry_;
+            const auto g2 = type_registry_gen_.load(std::memory_order_acquire);
+            if (g1 == g2)
+                return RawPointerPin{p, g1};
+        }
+        return RawPointerPin{};
+    }
+    [[nodiscard]] bool type_registry_pin_valid(const RawPointerPin& pin) const noexcept {
+        if (!pin.ptr)
+            return false;
+        return pin.ptr == type_registry_ &&
+               pin.gen == type_registry_gen_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t compiler_service_generation() const noexcept {
+        return compiler_service_gen_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t type_registry_generation() const noexcept {
+        return type_registry_gen_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t workspace_flat_generation() const noexcept {
+        return workspace_flat_gen_.load(std::memory_order_acquire);
+    }
+
+    // Issue #1898: RAII shared pin for workspace_flat_ — holds
+    // shared_lock(workspace_mtx_) so set_workspace_flat (#1729 unique)
+    // cannot free/swap the pointer while the pin is live. Prefer this
+    // over raw workspace_flat() for multi-step readers.
+    class WorkspaceFlatPin {
+        std::shared_lock<std::shared_mutex> lock_;
+        ast::FlatAST* ptr_ = nullptr;
+        std::uint64_t gen_ = 0;
+
+    public:
+        explicit WorkspaceFlatPin(Evaluator& ev)
+            : lock_(ev.workspace_mtx_)
+            , ptr_(ev.workspace_flat_)
+            , gen_(ev.workspace_flat_gen_.load(std::memory_order_acquire)) {}
+        WorkspaceFlatPin(const WorkspaceFlatPin&) = delete;
+        WorkspaceFlatPin& operator=(const WorkspaceFlatPin&) = delete;
+        WorkspaceFlatPin(WorkspaceFlatPin&&) noexcept = default;
+        WorkspaceFlatPin& operator=(WorkspaceFlatPin&&) noexcept = default;
+        [[nodiscard]] ast::FlatAST* get() const noexcept { return ptr_; }
+        [[nodiscard]] ast::FlatAST* operator->() const noexcept { return ptr_; }
+        [[nodiscard]] ast::FlatAST& operator*() const noexcept { return *ptr_; }
+        [[nodiscard]] explicit operator bool() const noexcept { return ptr_ != nullptr; }
+        [[nodiscard]] std::uint64_t generation() const noexcept { return gen_; }
+    };
+    [[nodiscard]] WorkspaceFlatPin pin_workspace_flat() { return WorkspaceFlatPin(*this); }
     // Issue #223: returns the current bridge_epoch from the
     // service (or 0 if no service is bound). Closure-construction
     // sites capture this at construction time; apply_closure
@@ -2572,9 +2653,12 @@ public:
         // concurrent set/get races cannot tear the pointer mid-rebuild;
         // roll back workspace_flat_ if eager index rebuild throws so we
         // never leave new flat + empty index half-committed.
+        // Issue #1898: bump workspace_flat_gen_ so pin revalidation
+        // detects mid-flight rebind (paired with WorkspaceFlatPin).
         std::unique_lock<std::shared_mutex> lk(workspace_mtx_);
         ast::FlatAST* const saved = workspace_flat_;
         workspace_flat_ = f;
+        workspace_flat_gen_.fetch_add(1, std::memory_order_release);
         // Issue #1419: re-stamp agent fingerprint onto the new
         // workspace so subsequent mutations inherit the author.
         if (f) {
@@ -2602,6 +2686,7 @@ public:
             // silent swallow. catch(...) restores workspace_flat_ + index so a
             // throwing rebuild never leaves half-committed state, then rethrows.
             workspace_flat_ = saved;
+            workspace_flat_gen_.fetch_add(1, std::memory_order_release); // #1898
             invalidate_tag_arity_index();
             throw;
         }
@@ -3902,6 +3987,12 @@ private:
     std::atomic<bool> inline_respect_macro_hygiene_{true};
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr; // CompilerService*
+    // Issue #1898: generation stamps for raw non-owning back-pointers.
+    // Bumped on set_* rebind; pin/revalidate soft-fails TOCTOU without
+    // shared_ptr on every hot load.
+    std::atomic<std::uint64_t> compiler_service_gen_{0};
+    std::atomic<std::uint64_t> type_registry_gen_{0};
+    std::atomic<std::uint64_t> workspace_flat_gen_{0};
     WorkspaceAdtSyncFn workspace_adt_sync_fn_ = nullptr;
     // Issue #223: function pointer that returns the service's
     // current bridge epoch. Set by CompilerService on

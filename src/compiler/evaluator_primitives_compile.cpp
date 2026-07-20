@@ -116,6 +116,27 @@ template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&&
     return run_under_mutation_guard(ev, std::forward<F>(body), make_bool(false));
 }
 
+// Issue #1898: pin compiler_service_ for multi-step stats readers.
+// Seqlock-style pin at enter; revalidate after body. On rebind mid-flight
+// bump raw_pointer_uaf_prevented_total + compiler_service_pin_reject_total
+// and return on_miss (no false-clean partial hash).
+template <typename F>
+EvalValue with_compiler_service_pin(Evaluator& ev, F&& body, EvalValue on_miss = make_void()) {
+    auto pin = ev.pin_compiler_service();
+    if (!pin)
+        return on_miss;
+    auto* svc = static_cast<class CompilerService*>(pin.ptr);
+    auto result = std::forward<F>(body)(*svc);
+    if (!ev.compiler_service_pin_valid(pin)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->raw_pointer_uaf_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            m->compiler_service_pin_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return on_miss;
+    }
+    return result;
+}
+
 // Issue #909 compile part 0 (orig 72-123)
 void CompilePrims::register_compile_p0(PrimRegistrar add, Evaluator& ev) {
 
@@ -505,15 +526,17 @@ void CompilePrims::register_compile_p4(PrimRegistrar add, Evaluator& ev) {
                 return make_hash(hidx);
             };
             std::uint64_t bumps = 0, checks = 0, inits = 0, commits = 0;
-            // Issue #1851: hold shared_lock for pointer load + counter
-            // snapshot (vs #1729 set_workspace_flat unique_lock).
+            // Issue #1851 / #1898: WorkspaceFlatPin holds shared_lock for
+            // pointer load + counter snapshot (vs #1729 unique_lock swap).
             {
-                std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-                if (auto* ws_flat = ev.workspace_flat()) {
-                    bumps = ws_flat->bump_generation_count();
-                    checks = ws_flat->is_valid_check_count();
-                    inits = ws_flat->stable_ref_invalidations();
-                    commits = ws_flat->atomic_batch_commits_v();
+                auto pin = ev.pin_workspace_flat();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->workspace_flat_pin_total.fetch_add(1, std::memory_order_relaxed);
+                if (pin) {
+                    bumps = pin->bump_generation_count();
+                    checks = pin->is_valid_check_count();
+                    inits = pin->stable_ref_invalidations();
+                    commits = pin->atomic_batch_commits_v();
                 }
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -616,17 +639,18 @@ void CompilePrims::register_compile_p5(PrimRegistrar add, Evaluator& ev) {
             // fixed-point early-exit counter so callers can
             // benchmark the optimization.
             std::uint64_t fast_hits = 0;
-            // Issue #1852: one shared_lock covers pointer load +
-            // all counter reads (vs #1729 set_workspace_flat
-            // unique_lock). Single load of workspace_flat().
+            // Issue #1852 / #1898: WorkspaceFlatPin covers pointer load +
+            // all counter reads (vs #1729 set_workspace_flat unique_lock).
             {
-                std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-                if (auto* ws_flat = ev.workspace_flat()) {
-                    children_calls = ws_flat->children_call_count();
-                    parent_calls = ws_flat->parent_of_call_count();
-                    dirty_calls = ws_flat->mark_dirty_upward_call_count();
-                    dirty_nodes = ws_flat->mark_dirty_total_nodes();
-                    fast_hits = ws_flat->dirty_upward_fast_fixed_point_count();
+                auto pin = ev.pin_workspace_flat();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->workspace_flat_pin_total.fetch_add(1, std::memory_order_relaxed);
+                if (pin) {
+                    children_calls = pin->children_call_count();
+                    parent_calls = pin->parent_of_call_count();
+                    dirty_calls = pin->mark_dirty_upward_call_count();
+                    dirty_nodes = pin->mark_dirty_total_nodes();
+                    fast_hits = pin->dirty_upward_fast_fixed_point_count();
                 }
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -889,25 +913,25 @@ void CompilePrims::register_compile_p8(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
-            if (!ev.compiler_service_)
-                return make_int(0);
-            auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
-            // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
-            auto snap_opt = svc->try_snapshot();
-            if (!snap_opt)
-                return make_void();
-            const auto& snap = *snap_opt;
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"applied-total",
-                 make_int(static_cast<std::int64_t>(snap.narrowing_applied_total))},
-                {"skipped-total",
-                 make_int(static_cast<std::int64_t>(snap.narrowing_skipped_total))},
-                {"reanalyzed-total",
-                 make_int(static_cast<std::int64_t>(snap.narrowing_reanalyzed_total))},
-                {"applied-ratio-bp",
-                 make_int(static_cast<std::int64_t>(snap.narrowing_applied_ratio_bp))},
-            };
-            return build_hash(kv);
+            // Issue #1898: pin + revalidate (vs raw compiler_service_ TOCTOU).
+            return with_compiler_service_pin(ev, [&](CompilerService& svc) -> EvalValue {
+                // Issue #1856: try_snapshot — no throw; void on fail (not false-clean zeros).
+                auto snap_opt = svc.try_snapshot();
+                if (!snap_opt)
+                    return make_void();
+                const auto& snap = *snap_opt;
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"applied-total",
+                     make_int(static_cast<std::int64_t>(snap.narrowing_applied_total))},
+                    {"skipped-total",
+                     make_int(static_cast<std::int64_t>(snap.narrowing_skipped_total))},
+                    {"reanalyzed-total",
+                     make_int(static_cast<std::int64_t>(snap.narrowing_reanalyzed_total))},
+                    {"applied-ratio-bp",
+                     make_int(static_cast<std::int64_t>(snap.narrowing_applied_ratio_bp))},
+                };
+                return build_hash(kv);
+            });
         });
 }
 
@@ -2677,6 +2701,75 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1898: query:raw-pointer-safety-stats — pin/generation TOCTOU
+    // soft-fail observability for non-owning compiler_service_ /
+    // type_registry_ / workspace_flat_ back-pointers. Schema **1898**.
+    ObservabilityPrims::register_stats_impl(
+        "query:raw-pointer-safety-stats", [&ev](const auto&) -> EvalValue {
+            std::int64_t uaf = 0, svc_rej = 0, reg_rej = 0, ws_pin = 0;
+            std::int64_t svc_gen = 0, reg_gen = 0, ws_gen = 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                uaf = static_cast<std::int64_t>(
+                    m->raw_pointer_uaf_prevented_total.load(std::memory_order_relaxed));
+                svc_rej = static_cast<std::int64_t>(
+                    m->compiler_service_pin_reject_total.load(std::memory_order_relaxed));
+                reg_rej = static_cast<std::int64_t>(
+                    m->type_registry_pin_reject_total.load(std::memory_order_relaxed));
+                ws_pin = static_cast<std::int64_t>(
+                    m->workspace_flat_pin_total.load(std::memory_order_relaxed));
+            }
+            svc_gen = static_cast<std::int64_t>(ev.compiler_service_generation());
+            reg_gen = static_cast<std::int64_t>(ev.type_registry_generation());
+            ws_gen = static_cast<std::int64_t>(ev.workspace_flat_generation());
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("raw-pointer-uaf-prevented", uaf);
+            insert_kv("raw_pointer_uaf_prevented_total", uaf);
+            insert_kv("service-pin-reject", svc_rej);
+            insert_kv("compiler_service_pin_reject_total", svc_rej);
+            insert_kv("type-registry-pin-reject", reg_rej);
+            insert_kv("type_registry_pin_reject_total", reg_rej);
+            insert_kv("workspace-flat-pin-total", ws_pin);
+            insert_kv("workspace_flat_pin_total", ws_pin);
+            insert_kv("compiler-service-generation", svc_gen);
+            insert_kv("type-registry-generation", reg_gen);
+            insert_kv("workspace-flat-generation", ws_gen);
+            insert_kv("pin-api-wired", 1);
+            insert_kv("workspace-flat-pin-raii", 1);
+            insert_kv("service-pin-wired", 1);
+            insert_kv("type-registry-pin-wired", 1);
+            insert_kv("schema", 1898);
+            insert_kv("issue", 1898);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 compile part 28 (orig 2132-2233)
@@ -2698,21 +2791,25 @@ void CompilePrims::register_compile_p28(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:compiler-cache-stats", [&ev](const auto& a) -> EvalValue {
             (void)a;
-            auto* svc_void = ev.compiler_service();
-            if (!svc_void)
-                return make_int(0);
-            auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
-            // Build 3-tuple as nested pair-of-pairs:
-            // ((dirty-blocks . dirty-functions) . incremental-candidates)
-            std::int64_t dirty_blocks = static_cast<std::int64_t>(svc->total_dirty_block_count());
-            std::int64_t dirty_funcs = static_cast<std::int64_t>(svc->total_dirty_func_count());
-            std::int64_t incr_cands =
-                static_cast<std::int64_t>(svc->total_incremental_candidates());
-            auto p1 = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
-            auto outer = ev.pairs_.size();
-            ev.pairs_.push_back({make_pair(p1), make_int(incr_cands)});
-            return make_pair(outer);
+            // Issue #1898: pin + revalidate multi-step dirty counter reads.
+            return with_compiler_service_pin(
+                ev,
+                [&](CompilerService& svc) -> EvalValue {
+                    // Build 3-tuple as nested pair-of-pairs:
+                    // ((dirty-blocks . dirty-functions) . incremental-candidates)
+                    std::int64_t dirty_blocks =
+                        static_cast<std::int64_t>(svc.total_dirty_block_count());
+                    std::int64_t dirty_funcs =
+                        static_cast<std::int64_t>(svc.total_dirty_func_count());
+                    std::int64_t incr_cands =
+                        static_cast<std::int64_t>(svc.total_incremental_candidates());
+                    auto p1 = ev.pairs_.size();
+                    ev.pairs_.push_back({make_int(dirty_blocks), make_int(dirty_funcs)});
+                    auto outer = ev.pairs_.size();
+                    ev.pairs_.push_back({make_pair(p1), make_int(incr_cands)});
+                    return make_pair(outer);
+                },
+                make_int(0));
         });
 
     // Issue #298: (query:incremental-effectiveness) — return a
@@ -2825,32 +2922,31 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
-        // Issue #1839 / #1855: raw back-pointer; service lives
-        // for eval lifetime under quiescence contract.
-        auto* svc_void = ev.compiler_service();
-        if (!svc_void)
-            return make_bool(false);
-        auto* svc = static_cast<aura::compiler::CompilerService*>(svc_void);
-        const std::string& fname = ev.string_heap_[idx];
-        // Issue #1855: locked snapshot (not ir_cache_v2_find pointer).
-        auto dirty_opt = svc->ir_cache_v2_dirty_block_count(fname);
-        if (!dirty_opt) {
-            // Function not in cache — return 'unknown symbol
-            auto sym_idx = ev.keyword_table_.size();
-            ev.keyword_table_.push_back("unknown");
-            return make_keyword(sym_idx);
-        }
-        const std::size_t dirty = *dirty_opt;
-        const char* tag = nullptr;
-        if (dirty == 0)
-            tag = "none";
-        else if (dirty < 8)
-            tag = "incremental";
-        else
-            tag = "full";
-        auto sym_idx = ev.keyword_table_.size();
-        ev.keyword_table_.push_back(tag);
-        return make_keyword(sym_idx);
+        // Issue #1839 / #1855 / #1898: pin compiler_service_ (rebind-safe).
+        const std::string fname = ev.string_heap_[idx];
+        return with_compiler_service_pin(
+            ev,
+            [&](CompilerService& svc) -> EvalValue {
+                // Issue #1855: locked snapshot (not ir_cache_v2_find pointer).
+                auto dirty_opt = svc.ir_cache_v2_dirty_block_count(fname);
+                if (!dirty_opt) {
+                    auto sym_idx = ev.keyword_table_.size();
+                    ev.keyword_table_.push_back("unknown");
+                    return make_keyword(sym_idx);
+                }
+                const std::size_t dirty = *dirty_opt;
+                const char* tag = nullptr;
+                if (dirty == 0)
+                    tag = "none";
+                else if (dirty < 8)
+                    tag = "incremental";
+                else
+                    tag = "full";
+                auto sym_idx = ev.keyword_table_.size();
+                ev.keyword_table_.push_back(tag);
+                return make_keyword(sym_idx);
+            },
+            make_bool(false));
     });
 
     // Issue #459: (query:atomic-batch-stats) — return
@@ -5275,12 +5371,14 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
             name = ev.string_heap_[sidx];
         else
             return ev.make_merr("bad-arg", "type name string index out of range");
-        // Issue #1837 / #1850: ensure under eval quiescence; raw
-        // pointee lives for service lifetime (or owned until
-        // set_type_registry replaces it under quiescence).
+        // Issue #1837 / #1850 / #1898: ensure + pin type_registry_ so a
+        // concurrent set_type_registry rebind is soft-failed post-mutation.
         auto* reg_ptr = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
         if (!reg_ptr)
             return ev.make_merr("no-registry", "type registry unavailable");
+        auto reg_pin = ev.pin_type_registry();
+        if (!reg_pin || reg_pin.ptr != reg_ptr)
+            return ev.make_merr("no-registry", "type registry pin failed");
         auto& reg = *reg_ptr;
         const auto width = static_cast<std::uint32_t>(as_int(a[1]));
         const bool is_signed = as_int(a[2]) != 0;
@@ -5297,6 +5395,13 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
                     tid = reg.register_type(aura::core::TypeTag::INT, name);
                 }
                 reg.register_hw_bitvec(tid, width, is_signed);
+                if (!ev.type_registry_pin_valid(reg_pin)) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                        m->raw_pointer_uaf_prevented_total.fetch_add(1, std::memory_order_relaxed);
+                        m->type_registry_pin_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    return make_int(-1);
+                }
                 return make_int(1);
             },
             make_int(-1));
@@ -5618,62 +5723,61 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
     // fresh stats from the last compiled module (set by
     // CompilerService::last_ir_module()).
     ObservabilityPrims::register_stats_impl("compile:ir-stats", [&ev](const auto&) -> EvalValue {
-        if (!ev.compiler_service_) {
-            return make_void();
-        }
-        auto* svc = static_cast<class aura::compiler::CompilerService*>(ev.compiler_service_);
-        // Read the snapshot, not last_ir_module(). The snapshot
-        // was computed when last_ir_mod_ was last assigned, so
-        // it reflects the WORKLOAD's IR, not the IR of the
-        // current stats-call expression (which would clobber
-        // last_ir_mod_ on its own lowering).
-        const auto& s = svc->last_ir_stats();
-        if (s.total_instructions == 0 && s.total_functions == 0) {
-            // No module compiled yet — return void.
-            return make_void();
-        }
-        // Issue #1844: build_kv_hash shared helper (#1787).
-        // Opcode histogram (nested hash, only non-zero opcodes).
-        std::vector<std::pair<std::string, EvalValue>> op_kv;
-        for (std::size_t i = 0; i < s.opcode_histogram.size(); ++i) {
-            if (s.opcode_histogram[i] == 0)
-                continue;
-            std::string name =
-                (i < 54) ? std::string(aura::ir::kOpcodeInfo[i].name) : std::string("?");
-            op_kv.emplace_back(std::move(name),
-                               make_int(static_cast<std::int64_t>(s.opcode_histogram[i])));
-        }
-        EvalValue opcode_hist_ev = build_kv_hash(ev, op_kv);
-        // Operand-count distribution (nested hash, 0..4).
-        std::vector<std::pair<std::string, EvalValue>> dist_kv;
-        for (std::size_t i = 0; i < 5; ++i) {
-            dist_kv.emplace_back(
-                std::string(1, static_cast<char>('0' + i)),
-                make_int(static_cast<std::int64_t>(s.operand_count_distribution[i])));
-        }
-        EvalValue dist_ev = build_kv_hash(ev, dist_kv);
-        // Top-level hash with all scalar fields + the 2 nested hashes.
-        const std::uint64_t avg_ops_x100 =
-            s.total_instructions ? (s.operands_used_sum * 100u / s.total_instructions) : 0;
-        std::vector<std::pair<std::string, EvalValue>> top_kv = {
-            {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
-            {"total-functions", make_int(static_cast<std::int64_t>(s.total_functions))},
-            {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
-            {"avg-instructions-per-block-x100",
-             make_int(static_cast<std::int64_t>(
-                 s.total_blocks ? (s.total_instructions * 100u / s.total_blocks) : 0))},
-            {"avg-operands-used-x100", make_int(static_cast<std::int64_t>(avg_ops_x100))},
-            {"aos-bytes-total", make_int(static_cast<std::int64_t>(s.aos_bytes_total))},
-            {"padding-bytes-total", make_int(static_cast<std::int64_t>(s.padding_bytes_total))},
-            {"unused-operand-bytes-total",
-             make_int(static_cast<std::int64_t>(s.unused_operand_bytes_total))},
-            {"compact-bytes-projection",
-             make_int(static_cast<std::int64_t>(s.compact_bytes_projection))},
-            {"compact-ratio-bp", make_int(static_cast<std::int64_t>(s.compact_ratio_bp))},
-            {"opcode-histogram", opcode_hist_ev},
-            {"operand-count-distribution", dist_ev},
-        };
-        return build_kv_hash(ev, top_kv);
+        // Issue #1898: pin compiler_service_ for multi-step last_ir_stats read.
+        return with_compiler_service_pin(ev, [&](CompilerService& svc) -> EvalValue {
+            // Read the snapshot, not last_ir_module(). The snapshot
+            // was computed when last_ir_mod_ was last assigned, so
+            // it reflects the WORKLOAD's IR, not the IR of the
+            // current stats-call expression (which would clobber
+            // last_ir_mod_ on its own lowering).
+            const auto& s = svc.last_ir_stats();
+            if (s.total_instructions == 0 && s.total_functions == 0) {
+                // No module compiled yet — return void.
+                return make_void();
+            }
+            // Issue #1844: build_kv_hash shared helper (#1787).
+            // Opcode histogram (nested hash, only non-zero opcodes).
+            std::vector<std::pair<std::string, EvalValue>> op_kv;
+            for (std::size_t i = 0; i < s.opcode_histogram.size(); ++i) {
+                if (s.opcode_histogram[i] == 0)
+                    continue;
+                std::string name =
+                    (i < 54) ? std::string(aura::ir::kOpcodeInfo[i].name) : std::string("?");
+                op_kv.emplace_back(std::move(name),
+                                   make_int(static_cast<std::int64_t>(s.opcode_histogram[i])));
+            }
+            EvalValue opcode_hist_ev = build_kv_hash(ev, op_kv);
+            // Operand-count distribution (nested hash, 0..4).
+            std::vector<std::pair<std::string, EvalValue>> dist_kv;
+            for (std::size_t i = 0; i < 5; ++i) {
+                dist_kv.emplace_back(
+                    std::string(1, static_cast<char>('0' + i)),
+                    make_int(static_cast<std::int64_t>(s.operand_count_distribution[i])));
+            }
+            EvalValue dist_ev = build_kv_hash(ev, dist_kv);
+            // Top-level hash with all scalar fields + the 2 nested hashes.
+            const std::uint64_t avg_ops_x100 =
+                s.total_instructions ? (s.operands_used_sum * 100u / s.total_instructions) : 0;
+            std::vector<std::pair<std::string, EvalValue>> top_kv = {
+                {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
+                {"total-functions", make_int(static_cast<std::int64_t>(s.total_functions))},
+                {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
+                {"avg-instructions-per-block-x100",
+                 make_int(static_cast<std::int64_t>(
+                     s.total_blocks ? (s.total_instructions * 100u / s.total_blocks) : 0))},
+                {"avg-operands-used-x100", make_int(static_cast<std::int64_t>(avg_ops_x100))},
+                {"aos-bytes-total", make_int(static_cast<std::int64_t>(s.aos_bytes_total))},
+                {"padding-bytes-total", make_int(static_cast<std::int64_t>(s.padding_bytes_total))},
+                {"unused-operand-bytes-total",
+                 make_int(static_cast<std::int64_t>(s.unused_operand_bytes_total))},
+                {"compact-bytes-projection",
+                 make_int(static_cast<std::int64_t>(s.compact_bytes_projection))},
+                {"compact-ratio-bp", make_int(static_cast<std::int64_t>(s.compact_ratio_bp))},
+                {"opcode-histogram", opcode_hist_ev},
+                {"operand-count-distribution", dist_ev},
+            };
+            return build_kv_hash(ev, top_kv);
+        }); // with_compiler_service_pin
     });
 }
 

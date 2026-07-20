@@ -908,6 +908,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_guard_exception_total{0};
     // Issue #1897: Guard dtor auto-flipped success_flag via uncaught_exceptions.
     std::atomic<std::uint64_t> mutation_guard_uncaught_auto_rollback_total{0};
+    // Issue #1898: raw back-pointer pin revalidation rejected a mid-flight
+    // rebind (compiler_service_ / type_registry_ / workspace_flat_ gen mismatch).
+    std::atomic<std::uint64_t> raw_pointer_uaf_prevented_total{0};
+    std::atomic<std::uint64_t> compiler_service_pin_reject_total{0};
+    std::atomic<std::uint64_t> type_registry_pin_reject_total{0};
+    std::atomic<std::uint64_t> workspace_flat_pin_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
