@@ -71,6 +71,43 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+// Issue #1896: run a compile dirty-bit mutator under MutationBoundaryGuard::
+// try_acquire + try/catch so exceptions restore panic checkpoint and never
+// leave partial IR dirty state. On quota/guard failure bumps
+// compile_primitive_stale_ir_prevented_total; on throw bumps
+// mutation_guard_exception_total (+ lineage eda_guard_* counters).
+template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
+    bool guard_ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
+    if (!gr) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return make_bool(false);
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->compile_primitive_guard_captures_total.fetch_add(1, std::memory_order_relaxed);
+    try {
+        return std::forward<F>(body)();
+    } catch (const std::exception&) {
+        guard_ok = false;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
+            m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(false);
+    } catch (...) {
+        // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics; dtor restores.
+        guard_ok = false;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
+            m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return make_bool(false);
+    }
+}
+
 // Issue #909 compile part 0 (orig 72-123)
 void CompilePrims::register_compile_p0(PrimRegistrar add, Evaluator& ev) {
 
@@ -2304,6 +2341,9 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     // hook is not installed. Use case: the smarter
     // re-lower (Phase 5 follow-up) marks only the affected
     // blocks rather than the whole entry.
+    //
+    // Issue #1896: MutationBoundaryGuard::try_acquire + try/catch so
+    // exception mid-hook cannot leave partial IR dirty bits committed.
     add("compile:mark-block-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (prefer C++ Service / no user write).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2333,9 +2373,11 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.mark_block_dirty_fn_)
             return make_bool(false);
-        return make_bool(ev.mark_block_dirty_fn_(ev.string_heap_[idx].c_str(),
-                                                 static_cast<std::size_t>(fidx),
-                                                 static_cast<std::uint32_t>(bidx)));
+        const auto* name = ev.string_heap_[idx].c_str();
+        const auto fi = static_cast<std::size_t>(fidx);
+        const auto bi = static_cast<std::uint32_t>(bidx);
+        return run_compile_dirty_under_guard(
+            ev, [&]() { return make_bool(ev.mark_block_dirty_fn_(name, fi, bi)); });
     });
 
     // (compile:clear-block-dirty! name func-idx block-idx) —
@@ -2344,6 +2386,9 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     // success, #f if the entry doesn't exist or the hook is
     // not installed. Use case: the smarter re-lower clears
     // the dirty bit after re-lowering a block.
+    //
+    // Issue #1896: Guard + try/catch (subtractive clear is high-risk
+    // for stale IR if a throw leaves partial clear).
     add("compile:clear-block-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path.
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2373,9 +2418,11 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.clear_block_dirty_fn_)
             return make_bool(false);
-        return make_bool(ev.clear_block_dirty_fn_(ev.string_heap_[idx].c_str(),
-                                                  static_cast<std::size_t>(fidx),
-                                                  static_cast<std::uint32_t>(bidx)));
+        const auto* name = ev.string_heap_[idx].c_str();
+        const auto fi = static_cast<std::size_t>(fidx);
+        const auto bi = static_cast<std::uint32_t>(bidx);
+        return run_compile_dirty_under_guard(
+            ev, [&]() { return make_bool(ev.clear_block_dirty_fn_(name, fi, bi)); });
     });
 }
 
@@ -2403,6 +2450,8 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // Issue #460: (compile:mark-instruction-dirty! name
     // func-idx block-idx instr-idx) — per-instruction dirty
     // marker. Returns #t on success, #f if no hook.
+    //
+    // Issue #1896: try_acquire Guard + try/catch (parity with clear).
     add("compile:mark-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (JIT deopt DoS vector).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2427,21 +2476,22 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         if (!ev.mark_instruction_dirty_fn_)
             return make_bool(false);
-        return make_bool(ev.mark_instruction_dirty_fn_(
-            ev.string_heap_[idx].c_str(), static_cast<std::size_t>(as_int(a[1])),
-            static_cast<std::uint32_t>(as_int(a[2])), static_cast<std::uint32_t>(as_int(a[3]))));
+        const auto* name = ev.string_heap_[idx].c_str();
+        const auto fi = static_cast<std::size_t>(as_int(a[1]));
+        const auto bi = static_cast<std::uint32_t>(as_int(a[2]));
+        const auto ii = static_cast<std::uint32_t>(as_int(a[3]));
+        return run_compile_dirty_under_guard(
+            ev, [&]() { return make_bool(ev.mark_instruction_dirty_fn_(name, fi, bi, ii)); });
     });
 
     // Issue #460: (compile:clear-instruction-dirty! name
     // func-idx block-idx instr-idx) — per-instruction clear.
     //
-    // Issue #1853: wrap clear_instruction_dirty_fn_ in
-    // MutationBoundaryGuard + try/catch. Pre-#1853 capability
-    // gate only controlled *who* may call; a throw mid-clear
-    // left IR dirty bits partially cleared (subtractive —
-    // worse than mark-instruction-dirty!) with no panic
-    // checkpoint restore. Exception → #f + metrics; dtor
-    // restores (#184/#236 outermost-only).
+    // Issue #1853 / #1896: try_acquire Guard + try/catch. Pre-#1853
+    // capability gate only controlled *who* may call; a throw mid-clear
+    // left IR dirty bits partially cleared (subtractive — worse than
+    // mark-instruction-dirty!) with no panic checkpoint restore.
+    // Exception → #f + metrics; dtor restores (#184/#236 outermost-only).
     add("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1395: capability gate — require kCapWildcard.
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
@@ -2465,28 +2515,10 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
         const auto func_idx = static_cast<std::size_t>(as_int(a[1]));
         const auto block_idx = static_cast<std::uint32_t>(as_int(a[2]));
         const auto instr_idx = static_cast<std::uint32_t>(as_int(a[3]));
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
+        return run_compile_dirty_under_guard(ev, [&]() {
             return make_bool(ev.clear_instruction_dirty_fn_(name, func_idx, block_idx, instr_idx));
-        } catch (const std::exception&) {
-            guard_ok = false; // Issue #1853: restore panic checkpoint
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_bool(false);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_bool(false);
-        }
+        });
     });
-
     // Issue #460: (query:compiler-incremental-stats) — return
     // the current partial-relower / impact-scope counters.
     // P0 ship: returns the partial_relower_count as an int.
@@ -2496,6 +2528,70 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
         "query:compiler-incremental-stats", [&ev](const auto& a) -> EvalValue {
             (void)a;
             return make_int(static_cast<std::int64_t>(ev.get_partial_relower_count()));
+        });
+
+    // Issue #1896: query:compile-primitive-guard-stats — Agent-discoverable
+    // counters for compile dirty-bit mutators under MutationBoundaryGuard::
+    // try_acquire + exception → stale-IR prevention.
+    // Schema **1896**. Keys:
+    //   guard-captures / compile_primitive_guard_captures_total
+    //   stale-ir-prevented / compile_primitive_stale_ir_prevented_total
+    //   guard-exceptions / mutation_guard_exception_total
+    //   dirty-mutators-guarded (1 = mark/clear block+instruction + feedback)
+    //   try-acquire-wired (1)
+    ObservabilityPrims::register_stats_impl(
+        "query:compile-primitive-guard-stats", [&ev](const auto&) -> EvalValue {
+            std::int64_t captures = 0, stale = 0, exceptions = 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                captures = static_cast<std::int64_t>(
+                    m->compile_primitive_guard_captures_total.load(std::memory_order_relaxed));
+                stale = static_cast<std::int64_t>(
+                    m->compile_primitive_stale_ir_prevented_total.load(std::memory_order_relaxed));
+                exceptions = static_cast<std::int64_t>(
+                    m->mutation_guard_exception_total.load(std::memory_order_relaxed));
+            }
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("guard-captures", captures);
+            insert_kv("compile_primitive_guard_captures_total", captures);
+            insert_kv("stale-ir-prevented", stale);
+            insert_kv("compile_primitive_stale_ir_prevented_total", stale);
+            insert_kv("guard-exceptions", exceptions);
+            insert_kv("mutation_guard_exception_total", exceptions);
+            insert_kv("dirty-mutators-guarded", 1);
+            insert_kv("try-acquire-wired", 1);
+            insert_kv("from-verification-feedback-guarded", 1);
+            insert_kv("commercial-stub-guarded", 1);
+            insert_kv("schema", 1896);
+            insert_kv("issue", 1896);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 }
 
@@ -2985,6 +3081,10 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // — strategy-driven structured SV mutate under Guard with StableNodeRef
     // capture. Delegates to existing eda:weaken-property / eda:add-coverpoint-bin /
     // eda:update-constraint primitives.
+    //
+    // Issue #1896: wrap delegation under try_acquire Guard so a throw from
+    // nested eda:* cannot leave partial structured mutate state without
+    // panic-checkpoint restore (NodeId validated before Guard).
     add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
             return make_bool(false);
@@ -3012,27 +3112,29 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
                 m->mutate_from_feedback_invalid_node_total.fetch_add(1, std::memory_order_relaxed);
             return make_bool(false);
         }
-        auto delegate = [&](const char* name) -> bool {
-            auto fn = ev.primitives_.lookup(name);
-            if (!fn)
-                return false;
-            auto r = (*fn)({make_int(node_id), make_string(payload_idx)});
-            return is_bool(r) && as_bool(r);
-        };
-        bool ok = false;
-        if (strategy == "weaken-property" || strategy == "assert-fail")
-            ok = delegate("eda:weaken-property");
-        else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
-            ok = delegate("eda:add-coverpoint-bin");
-        else if (strategy == "relax-constraint" || strategy == "structural-fix")
-            ok = delegate("eda:update-constraint");
-        if (!ok)
-            return make_bool(false);
-        ev.bump_sv_self_evo_structured_mutate();
-        ev.bump_sv_self_evo_closed_loop_rounds();
-        ev.bump_sv_self_evo_convergence_hits();
-        ev.bump_closed_loop_feedback_mutate_round();
-        return make_bool(true);
+        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
+            auto delegate = [&](const char* name) -> bool {
+                auto fn = ev.primitives_.lookup(name);
+                if (!fn)
+                    return false;
+                auto r = (*fn)({make_int(node_id), make_string(payload_idx)});
+                return is_bool(r) && as_bool(r);
+            };
+            bool ok = false;
+            if (strategy == "weaken-property" || strategy == "assert-fail")
+                ok = delegate("eda:weaken-property");
+            else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
+                ok = delegate("eda:add-coverpoint-bin");
+            else if (strategy == "relax-constraint" || strategy == "structural-fix")
+                ok = delegate("eda:update-constraint");
+            if (!ok)
+                return make_bool(false);
+            ev.bump_sv_self_evo_structured_mutate();
+            ev.bump_sv_self_evo_closed_loop_rounds();
+            ev.bump_sv_self_evo_convergence_hits();
+            ev.bump_closed_loop_feedback_mutate_round();
+            return make_bool(true);
+        });
     });
 
     // Issue #693: (eda:run-verification-feedback report-kind report-text)
@@ -3182,6 +3284,11 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #698: (eda:run-commercial-simulator-stub simulator node-id)
     // — re-emit SV for node, validate emit, return commercial do-file stub.
+    //
+    // Issue #1902 / #1821 / #1896: NodeId range-checked before Guard;
+    // throwable body (reemit_sv_node + on_structural_mutation) under
+    // MutationBoundaryGuard::try_acquire + try/catch via
+    // run_compile_dirty_under_guard (stale-IR prevention metrics).
     add("eda:run-commercial-simulator-stub", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_bool(false);
@@ -3192,25 +3299,14 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
         const auto sim_idx = as_string_idx(a[0]);
         if (sim_idx >= ev.string_heap_.size())
             return make_bool(false);
-        const auto& simulator = ev.string_heap_[sim_idx];
+        // Copy simulator name before Guard (string_heap may grow under body).
+        const std::string simulator = ev.string_heap_[sim_idx];
         const auto nid = static_cast<aura::ast::NodeId>(as_int(a[1]));
         if (nid >= ws->size())
             return make_bool(false);
         if (!aura::compiler::hardware::is_sv_structural_node(*ws, nid))
             return make_bool(false);
-        // Issue #1902 sibling (#1821): this primitive had NO
-        // MutationBoundaryGuard at all — the throwable calls
-        // (reemit_sv_node + on_structural_mutation) ran raw,
-        // so any throw (bad_alloc, hardware hook fault, etc.)
-        // would unwind past the (absent) Guard dtor and leave
-        // the workspace in a partially-mutated state with no
-        // panic-checkpoint restore. New contract: wrap the
-        // throwable body in Guard + try/catch. On exception,
-        // flip guard_ok=false so dtor restores panic checkpoint,
-        // bump the same 3 metrics as #1902 fix.
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
+        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
             const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, nid, simulator);
             const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
             if (!validation.ok)
@@ -3235,22 +3331,7 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
             ev.record_sv_commercial_emit_fidelity(validation.ok, false,
                                                   !reemit.commercial_do_stub.empty());
             return make_bool(true);
-        } catch (const std::exception& e) {
-            guard_ok = false; // Issue #1902/#1821: notify Guard dtor to restore.
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_bool(false);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_bool(false);
-        }
+        });
     });
 
     // Issue #695: (eda:demo-sv-self-evolution example cycles)

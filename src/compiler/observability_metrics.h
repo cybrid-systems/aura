@@ -902,6 +902,10 @@ struct CompilerMetrics {
     // itself firing (sanity check: rollback_success should
     // track exception_total modulo dtor silent no-op cases).
     std::atomic<std::uint64_t> eda_guard_exception_handled_total{0};
+    // Issue #1896: compile:* dirty mutators under MutationBoundaryGuard.
+    std::atomic<std::uint64_t> compile_primitive_guard_captures_total{0};
+    std::atomic<std::uint64_t> compile_primitive_stale_ir_prevented_total{0};
+    std::atomic<std::uint64_t> mutation_guard_exception_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
