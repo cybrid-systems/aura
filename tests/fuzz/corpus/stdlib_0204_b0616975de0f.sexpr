@@ -1,0 +1,3 @@
+(define (set-intersect a b)
+  (let ((r (hash)))
+    (for-each (lambda (k) (if (not (null? (hash-ref b k))) (hash-set! r k #t))) (hash-keys a)) r))

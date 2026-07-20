@@ -1,0 +1,2 @@
+(define (clamp x lo hi)
+  (min (max x lo) hi))

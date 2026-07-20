@@ -1,0 +1,3 @@
+(export sort-stable sort-by binary-search merge-sorted
+        merge sorted? unique min-by max-by
+        permutations combinations)

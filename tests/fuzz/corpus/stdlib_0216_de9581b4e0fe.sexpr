@@ -1,0 +1,3 @@
+(define (stack-pop s)
+  (if (null? s) (list () (list))
+    (list (car s) (cdr s))))

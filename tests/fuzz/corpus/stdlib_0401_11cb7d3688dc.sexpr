@@ -1,0 +1,5 @@
+(export string-split string-split-words string-join string-trim
+        string-upcase string-downcase
+        string-contains? string-prefix? string-suffix? string-replace
+        string-pad-left string-pad-right string-reverse string-repeat
+        string->chars chars->string string-take string-drop)

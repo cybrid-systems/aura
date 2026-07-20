@@ -36,6 +36,8 @@ Usage:
   ./build.py bench [--strict]  # Benchmark 基线 + 回归检测（#1569 SLO gate）
   ./build.py coverage --html   # LLVM source-based coverage report (#1933)
   ./build.py coverage --check-tools  # verify llvm-cov tooling only
+  ./build.py fuzz --list       # list registered fuzzers (#1935)
+  ./build.py fuzz --all --quick  # run fuzz orchestrator
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -1813,6 +1815,25 @@ def _find_llvm_tool(names: list[str]) -> str | None:
     return None
 
 
+def cmd_fuzz():
+    """Issue #1935: unified fuzz orchestrator.
+
+    Usage:
+      ./build.py fuzz --list
+      ./build.py fuzz --all --quick
+      ./build.py fuzz --only core,corpus,hygiene_prop --iters 50
+    """
+    script = ROOT / "tests" / "fuzz" / "run_all.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    # Forward argv after 'fuzz'
+    fwd = sys.argv[2:]
+    if not fwd:
+        fwd = ["--list"]
+    return run([sys.executable, str(script), *fwd], cwd=ROOT)
+
+
 def cmd_coverage():
     """Issue #1933: instrumented build + test run + llvm-cov HTML/JSON report.
 
@@ -2234,6 +2255,7 @@ def main():
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
         "coverage": cmd_coverage,
+        "fuzz": cmd_fuzz,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

@@ -1,0 +1,1 @@
+(list->string (reverse (string->list s)))

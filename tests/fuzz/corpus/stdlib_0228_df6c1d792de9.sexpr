@@ -1,0 +1,4 @@
+(define (string-prefix? s prefix)
+  (define plen (string-length prefix))
+  (if (> plen (string-length s)) #f
+    (equal? (substring s 0 plen) prefix)))

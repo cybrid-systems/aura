@@ -1,0 +1,3 @@
+(define (max-list lst)
+  (if (null? lst) #f
+    (foldl max (car lst) (cdr lst))))

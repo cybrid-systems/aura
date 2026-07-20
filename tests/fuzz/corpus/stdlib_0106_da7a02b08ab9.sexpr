@@ -1,0 +1,8 @@
+(define (frequencies lst)
+  (let ((h (hash)))
+    (for-each (lambda (x)
+      (let ((v (hash-ref h x)))
+        (if v
+          (hash-set h x (+ v 1))
+          (hash-set h x 1)))) lst)
+    h))

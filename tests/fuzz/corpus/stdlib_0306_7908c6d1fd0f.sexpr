@@ -1,0 +1,7 @@
+(define find-missing
+  (lambda (output expected-list)
+    (if (null? expected-list) ()
+        (let ((kw (car expected-list)))
+          (if (string-contains? output kw)
+              (find-missing output (cdr expected-list))
+              (cons kw (find-missing output (cdr expected-list))))))))

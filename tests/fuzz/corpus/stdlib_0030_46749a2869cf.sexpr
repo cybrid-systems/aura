@@ -1,0 +1,2 @@
+(and (deep-equal? (car a) (car b))
+;; hint:               (deep-equal? (cdr a) (cdr b)))

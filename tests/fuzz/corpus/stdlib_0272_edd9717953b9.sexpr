@@ -1,0 +1,2 @@
+(define (vec:norm v)
+  (sqrt (vec:dot v v)))

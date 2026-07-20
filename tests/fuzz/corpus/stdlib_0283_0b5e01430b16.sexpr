@@ -1,0 +1,7 @@
+(define (vector-reverse v)
+  (let ((len (vector-length v))
+        (result (make-vector len)))
+    (let iter ((i 0))
+      (if (>= i len) result
+        (begin (vector-set! result i (vector-ref v (- (- len 1) i)))
+               (iter (+ i 1)))))))

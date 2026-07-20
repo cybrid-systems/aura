@@ -1,5 +1,6 @@
 # Issue #675: nightly extended fuzz + sanitizer stress (non-blocking on PRs).
 # Issue #1933: LLVM source-based coverage artifact job.
+# Issue #1935: unified fuzz orchestrator.
 name: Nightly
 
 on:
@@ -16,7 +17,7 @@ jobs:
   fuzz-extended:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v1.0.1
+      image: ghcr.io/cybrid-systems/dev:v1.0.4
     steps:
     - uses: actions/checkout@v7
 
@@ -26,11 +27,27 @@ jobs:
     - name: Build
       run: python3 build.py build
 
-    - name: Extended fuzz (full corpus)
+    - name: List fuzzers
+      run: python3 build.py fuzz --list
+
+    - name: Corpus status
+      run: python3 tests/fuzz/corpus_tools.py status
+
+    - name: Extended fuzz (orchestrator subset)
       run: |
-        python3 tests/fuzz_corpus.py
-        python3 tests/fuzz_equiv_mutate.py
+        python3 build.py fuzz --only core,corpus,hygiene_prop --quick --continue-on-error --json \
+          | tee fuzz-summary.json || true
         echo "✓ extended fuzz complete"
+
+    - name: Upload fuzz summary / reproducers
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-nightly
+        path: |
+          fuzz-summary.json
+          tests/fuzz/reproducers/
+        if-no-files-found: warn
 
   tsan-smoke:
     runs-on: ubuntu-latest

@@ -1,0 +1,7 @@
+(define (day-of-week y m d)
+  ; Zeller-like: 0=Sun, 6=Sat
+  ; Tomohiko Sakamoto's algorithm
+  (let ((t (list 0 3 2 5 0 3 5 1 4 6 2 4)))
+    (let ((y (if (< m 3) (- y 1) y)))
+      (modulo (+ y (quotient y 4) (- (quotient y 100))
+                 (quotient y 400) (list-ref t (- m 1)) d) 7))))

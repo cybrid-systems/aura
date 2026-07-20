@@ -1,0 +1,2 @@
+(define (maybe-ref m)
+  (if (null? m) (error "maybe-ref: nothing") m))

@@ -1,0 +1,4 @@
+(define (vector->list-rev v)
+  (let iter ((i 0) (acc (list)))
+    (if (>= i (vector-length v)) acc
+      (iter (+ i 1) (cons (vector-ref v i) acc)))))

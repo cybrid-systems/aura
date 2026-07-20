@@ -1,0 +1,4 @@
+(export
+  hash-set hash-ref hash-get hash-remove
+  hash-keys hash-values hash-length hash->list
+  hash-merge hash-empty? alist->hash frequencies)

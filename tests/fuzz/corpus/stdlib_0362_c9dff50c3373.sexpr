@@ -1,0 +1,1 @@
+(display (query:node-type "Define"))

@@ -1,0 +1,2 @@
+(define (csv-parse text)
+  (map csv-split-line (split-lines text)))

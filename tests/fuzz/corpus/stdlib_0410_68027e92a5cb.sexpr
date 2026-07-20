@@ -1,0 +1,1 @@
+(for-each (lambda (c) (hash-set! counts c (+ 1 (if (hash-has-key? counts c) (hash-ref counts c) 0)))) chars)

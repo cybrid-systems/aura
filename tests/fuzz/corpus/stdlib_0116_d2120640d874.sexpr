@@ -1,0 +1,5 @@
+(define (hash-merge a b)
+  (let ((result (hash)))
+    (for-each (lambda (k) (hash-set result k (hash-ref a k))) (hash-keys a))
+    (for-each (lambda (k) (hash-set result k (hash-ref b k))) (hash-keys b))
+    result))

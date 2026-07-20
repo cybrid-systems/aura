@@ -1,0 +1,1 @@
+(define (vec:prod v) (vec:fold * 1 v))

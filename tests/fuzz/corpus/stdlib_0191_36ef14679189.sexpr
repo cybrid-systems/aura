@@ -1,0 +1,7 @@
+(define (random-next gen)
+  (define a 1103515245)
+  (define c 12345)
+  (define m 2147483648)    ; 2^31
+  (define seed (car gen))
+  (define next (modulo (+ (* a seed) c) m))
+  (list next (cons next 0)))

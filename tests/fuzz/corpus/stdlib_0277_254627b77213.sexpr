@@ -1,0 +1,1 @@
+(define (vec:sq v) (vec:map square v))

@@ -1,0 +1,7 @@
+(define (hash-filter pred h)
+  (let ((result (hash)))
+    (hash-keys-filter
+      (lambda (k) (if (pred (hash-ref h k))
+                     (hash-set! result k (hash-ref h k)) ()))
+      h)
+    result))

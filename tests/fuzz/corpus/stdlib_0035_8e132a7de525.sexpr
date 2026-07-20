@@ -1,0 +1,1 @@
+(avoids cross-module if-in-begin bug)

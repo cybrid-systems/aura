@@ -1,27 +1,17 @@
-# tests/fuzz/
+# tests/fuzz/ — unified fuzzing (Issue #1935)
 
-Fuzz campaigns, seed corpora, and crash reproducers (Issue #1932).
-
-## Layout
-
-```
-tests/fuzz/
-├── README.md          # this file
-├── corpus/            # seed inputs (optional)
-└── reproducers/       # minimized crashing inputs
-```
-
-Python fuzz drivers that used to live at `tests/fuzz_*.py` belong here.
-C++ stress tests that are not pure fuzzers stay as normal issue/domain
-binaries under `tests/` / `tests/domain/`.
-
-## Running
-
-Prefer dedicated CI jobs or:
+See **[docs/fuzzing.md](../../docs/fuzzing.md)** for full documentation.
 
 ```bash
-# when a driver exists:
-python3 tests/fuzz/<driver>.py
+./build.py fuzz --list
+./build.py fuzz --all --quick
+python3 tests/fuzz/corpus_tools.py status
 ```
 
-Do not put long-running fuzz loops in the default `./build.py check` path.
+| Path | Role |
+|------|------|
+| `run_all.py` | Orchestrator |
+| `common.py` | Shared paths / FuzzResult |
+| `drivers/` | Individual fuzzers |
+| `corpus/` | Seed inputs (`.sexpr`) |
+| `reproducers/` | Crash artifacts |

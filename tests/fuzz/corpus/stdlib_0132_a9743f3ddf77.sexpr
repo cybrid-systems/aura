@@ -1,0 +1,5 @@
+(define (json-type v)
+  (cond ((null? v) "null") ((boolean? v) "boolean")
+        ((integer? v) "integer") ((float? v) "number")
+        ((string? v) "string") ((pair? v) "array")
+        ((hash? v) "object") (else "unknown")))

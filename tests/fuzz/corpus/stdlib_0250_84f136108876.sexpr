@@ -1,0 +1,2 @@
+(define (timestamp->hour t)
+  (quotient (modulo t 86400) 3600))
