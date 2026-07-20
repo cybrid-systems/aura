@@ -40,9 +40,17 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | `regression/` | Curated regression fixtures | Known-bad programs, redlines |
 | `fixtures/` | Shared case data (sharded JSON) + profiles | See [`fixtures/README.md`](fixtures/README.md) (#1962) |
 | `templates/` | Copy-paste starters (not built) | Scaffold a new domain suite |
+| **`python/`** | Harness + runners + gate unit tests (#1932) | New Python drivers; see `python/README.md` |
+| **`bench/`** | Benchmarks (C++ + Python + baseline) | SLO / microbench drivers |
+| **`fuzz/`** | Fuzz campaigns / corpus | Long-run fuzz only (not default gate) |
+| **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
 | root `test_*_batch.cpp` | Intermediate family batches | Consolidating several related issue tests |
 | root `test_*.cpp` | Older focused binaries | Only when no domain suite fits (justify) |
+| root `*.py` thin entry | Stable CLI shims → `python/` / `bench/` | Do not put new drivers at root |
+
+Layout authority + migration: [`docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) (#1932).
+Idempotent mover: `python3 tests/migrate_test_layout.py --dry-run`.
 
 CMake resolves sources in order (`aura_resolve_test_cpp`):
 
@@ -247,16 +255,19 @@ ninja -C build test_arena_batch           # domain/arena (#1959)
 
 ### Legacy scripts (still work; prefer `tests/run.py`)
 
-| Script | Equivalent |
-|--------|------------|
-| `tests/run_issue_tests.py` | `tests/run.py issues` |
-| `tests/fixture_check.py` | `tests/run.py fixtures` |
-| `tests/check_gradual.py` | `tests/run.py gradual` |
-| `tests/benchmark.py` | `tests/run.py bench` / `./build.py bench` |
-| `tests/mutation_loop.py` | `tests/run.py mutation` |
-| `tests/run-tests.sh` | `tests/run.py bash` |
+Thin entrypoints at `tests/*.py` forward into `tests/python/` or `tests/bench/`
+(#1932). Prefer the unified CLI:
 
-Shared colors/paths/report helpers: `tests/_aura_harness.py`.
+| Script (entrypoint) | Prefer / implementation |
+|---------------------|-------------------------|
+| `tests/run_issue_tests.py` | `tests/run.py issues` → `python/run_issue_tests.py` |
+| `tests/fixture_check.py` | `tests/run.py fixtures` → `python/fixture_check.py` |
+| `tests/check_gradual.py` | `tests/run.py gradual` → `python/check_gradual.py` |
+| `tests/benchmark.py` | `tests/run.py bench` → `bench/benchmark.py` |
+| `tests/python/mutation_loop.py` | `tests/run.py mutation` |
+| `tests/run-tests.sh` | `tests/run.py bash` → `python/run-tests.sh` |
+
+Shared colors/paths/report helpers: `tests/python/_aura_harness.py`.
 
 ### Fixtures (#1962)
 

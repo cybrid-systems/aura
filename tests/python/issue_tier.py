@@ -19,10 +19,13 @@ import re
 import subprocess
 from pathlib import Path
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-ROOT = _SCRIPT_DIR.parent
-FAST_FIXTURE = _SCRIPT_DIR / "fixtures" / "issues_fast.json"
-PROFILES_FIXTURE = _SCRIPT_DIR / "fixtures" / "issue_link_profiles.json"
+# Issue #1932: lives under tests/python/
+# parents[0]=tests/python's parent=tests, parents[1]=repo root
+_SCRIPT_DIR = Path(__file__).resolve().parent  # tests/python
+ROOT = _SCRIPT_DIR.parents[1]
+_TESTS = _SCRIPT_DIR.parent  # tests/
+FAST_FIXTURE = _TESTS / "fixtures" / "issues_fast.json"
+PROFILES_FIXTURE = _TESTS / "fixtures" / "issue_link_profiles.json"
 # Match tests/test_*.cpp, tests/domain/test_*.cpp, tests/domain/<theme>/test_*.cpp.
 ISSUE_CPP_RE = re.compile(r"^tests/(?:domain/(?:[\w]+/)?)?(test_[\w]+)\.cpp$")
 

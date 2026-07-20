@@ -11,7 +11,7 @@ from pathlib import Path
 from _aura_harness import AURA_BIN as AURA
 from regression_cases import load_regression_cases
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 
 
 def run(code, timeout=10):

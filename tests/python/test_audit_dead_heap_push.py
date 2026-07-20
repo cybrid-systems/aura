@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # #1932: tests/python → repo
 SCRIPT = ROOT / "scripts" / "audit_dead_heap_push.py"
 
 

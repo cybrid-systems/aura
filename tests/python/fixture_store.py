@@ -17,7 +17,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures"
+# Issue #1932: this file is under tests/python/; fixtures stay at tests/fixtures/.
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def shard_dir(kind: str) -> Path:
