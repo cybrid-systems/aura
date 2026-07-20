@@ -5715,6 +5715,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_join_enforcement_total{0};
     std::atomic<std::uint64_t> mailbox_linear_violation_count{0};
     std::atomic<std::uint64_t> stable_ref_post_join_repin_total{0};
+    // Issue #1879: orch-path StableNodeRef / steal / linear counters
+    // (also mirrored on OrchModuleStats for process-wide orch dashboards).
+    std::atomic<std::uint64_t> orch_stable_ref_auto_refresh_total{0};
+    std::atomic<std::uint64_t> orch_fiber_steal_provenance_enforced_total{0};
+    std::atomic<std::uint64_t> orch_linear_violation_prevented_total{0};
     // Issue #740: linear ownership safety in JIT L2 hot paths
     // post-invalidate (Arena/DropOp/GC root re-sync).
     // Exposed via (query:linear-jit-safety-stats).

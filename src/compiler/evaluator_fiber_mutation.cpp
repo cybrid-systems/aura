@@ -1362,8 +1362,12 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
 // main path — mandated on every Fiber::resume (pre-swap migration +
 // post-swap validate + post_resume hook).
 void Evaluator::complete_post_resume_steal_refresh(void* fiber_void) noexcept {
-    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->resume_forced_refresh_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1879: orch/steal provenance enforcement on every resume.
+        m->orch_fiber_steal_provenance_enforced_total.fetch_add(1, std::memory_order_relaxed);
+        m->orch_stable_ref_auto_refresh_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     std::uint64_t hint_env = 0;
     std::uint64_t expected_epoch = 0;
@@ -1450,6 +1454,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         // ensure at least +1 liveness tick when zero pins restamped.
         if (repinned == 0)
             m->stable_ref_post_join_repin_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1879: orch join-path StableNodeRef + linear counters.
+        m->orch_stable_ref_auto_refresh_total.fetch_add(1, std::memory_order_relaxed);
+        m->orch_linear_violation_prevented_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
