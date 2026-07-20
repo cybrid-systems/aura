@@ -18,6 +18,7 @@ module;
 #include "serve/metrics.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "typed_mutation_audit.h" // Issue #1883: AOT hot-update audit aggregation
 
 module aura.compiler.evaluator;
 
@@ -928,7 +929,21 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->aot_hotupdate_multi_agent_reload_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            // Issue #1883: TypedMutationAudit AOT hot-update counters
+            // (attempts/success/fail/invariant_fail) + #590 isolation fields.
+            using namespace aura::compiler::typed_audit;
+            const auto& ac = g_typed_mutation_audit_counters;
+            const std::int64_t hu_att = static_cast<std::int64_t>(
+                ac.aot_hotupdate_attempts.load(std::memory_order_relaxed));
+            const std::int64_t hu_ok =
+                static_cast<std::int64_t>(ac.aot_hotupdate_ok.load(std::memory_order_relaxed));
+            const std::int64_t hu_fail =
+                static_cast<std::int64_t>(ac.aot_hotupdate_fail.load(std::memory_order_relaxed));
+            const std::int64_t hu_inv = static_cast<std::int64_t>(
+                ac.aot_hotupdate_invariant_fail_total.load(std::memory_order_relaxed));
+            const std::int64_t hu_aud =
+                static_cast<std::int64_t>(ac.aot_hotupdate_audits.load(std::memory_order_relaxed));
+            auto* ht = FlatHashTable::create(24);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -955,10 +970,16 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
             };
-            insert_kv("region-isolation", static_cast<std::int64_t>(region_isolation));
-            insert_kv("dispatch-stale", static_cast<std::int64_t>(dispatch_stale));
-            insert_kv("multi-agent-reload", static_cast<std::int64_t>(multi_agent_reload));
-            insert_kv("schema", 590);
+            insert_kv("region-isolation", region_isolation);
+            insert_kv("dispatch-stale", dispatch_stale);
+            insert_kv("multi-agent-reload", multi_agent_reload);
+            insert_kv("hotupdate-attempts", hu_att);
+            insert_kv("hotupdate-success", hu_ok);
+            insert_kv("hotupdate-fail", hu_fail);
+            insert_kv("hotupdate-invariant-fail", hu_inv);
+            insert_kv("hotupdate-audits", hu_aud);
+            insert_kv("schema", 590); // keep #590 schema; #1883 extends fields
+            insert_kv("issue-1883-extended", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

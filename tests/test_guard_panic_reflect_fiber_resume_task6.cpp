@@ -119,7 +119,8 @@ static void run_matrix(CompilerService& cs) {
     auto sel = cs.eval("(engine:metrics \"query:self-evolution-loop-stats\")");
     auto pcl = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
     CHECK(rsm && is_int(*rsm), "reflection-selfmod-stats regression");
-    CHECK(sel && is_int(*sel), "self-evolution-loop-stats regression");
+    // #1883: self-evolution-loop-stats is a structured hash (legacy int sum in "total").
+    CHECK(sel && (is_int(*sel) || is_hash(*sel)), "self-evolution-loop-stats regression");
     CHECK(pcl && is_int(*pcl), "panic-checkpoint-lifecycle-stats regression");
 }
 
