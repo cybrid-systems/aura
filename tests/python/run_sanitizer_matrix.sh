@@ -43,7 +43,7 @@
 # compat but are slated for deprecation once
 # downstream CI migrates).
 
-set -e
+set -euo pipefail
 
 SANITIZER="${1:-thread}"
 TARGETS="${2:-test_issue_180 test_issue_218 test_issue_226 test_issue_321}"
@@ -132,19 +132,21 @@ for san in "${SANITIZERS[@]}"; do
     fi
     for target in $TARGETS; do
         echo "--- $target under $san ---"
-        if ninja "$target" > /tmp/ninja_$target_$san.log 2>&1; then
-            if ./$target > /tmp/run_$target_$san.log 2>&1; then
+        ninja_log="/tmp/ninja_${target}_${san}.log"
+        run_log="/tmp/run_${target}_${san}.log"
+        if ninja "$target" > "$ninja_log" 2>&1; then
+            if ./"$target" > "$run_log" 2>&1; then
                 echo "  ✓ $target passed under $san"
                 pass_count=$((pass_count + 1))
             else
                 echo "  ✗ $target FAILED under $san (rc=$?); tail of log:"
-                tail -20 /tmp/run_$target_$san.log | sed 's/^/    /'
+                tail -20 "$run_log" | sed 's/^/    /'
                 fail_count=$((fail_count + 1))
                 failed_targets="$failed_targets $target-$san "
             fi
         else
             echo "  ✗ $target BUILD failed under $san; tail of log:"
-            tail -10 /tmp/ninja_$target_$san.log | sed 's/^/    /'
+            tail -10 "$ninja_log" | sed 's/^/    /'
             fail_count=$((fail_count + 1))
             failed_targets="$failed_targets $target-$san-build "
         fi

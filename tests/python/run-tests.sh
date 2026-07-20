@@ -7,6 +7,14 @@ AURA="${AURA:-./build/aura}"
 PASS=0
 FAIL=0
 
+# Fail fast if the aura binary is missing — otherwise every test silently
+# compares empty output and produces a confusing all-failure report.
+if [ ! -x "$AURA" ]; then
+    echo "aura binary not found at: $AURA" >&2
+    echo "build it first (./build.py build) or set AURA=/path/to/aura" >&2
+    exit 127
+fi
+
 green() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 red()   { printf "  \033[31m✗\033[0m %s\n" "$1"; }
 
