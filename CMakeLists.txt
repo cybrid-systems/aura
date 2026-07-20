@@ -178,6 +178,12 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
  
 
 
+# Issue #1967: tui:* domain is a commercial UI vertical (deferred from
+# SlimSurface core budget per #1965). Default ON so existing tests +
+# lib/std/tui keep working; slim/core-only builds can set
+# -DAURA_ENABLE_TUI=OFF to skip registration (see docs/tui.md).
+option(AURA_ENABLE_TUI "Register tui:* domain primitives (UI vertical, #1967)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -192,6 +198,19 @@ endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
+
+# Issue #1967: per-source AURA_ENABLE_TUI (avoids PUBLIC recompile of the
+# entire aura_test_objects graph when the flag flips). Value is 1 or 0 so
+# #if AURA_ENABLE_TUI works in evaluator_primitives_tui.cpp.
+if(AURA_ENABLE_TUI)
+    set(_AURA_ENABLE_TUI_VAL 1)
+else()
+    set(_AURA_ENABLE_TUI_VAL 0)
+endif()
+set_source_files_properties(
+    src/compiler/evaluator_primitives_tui.cpp
+    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
+message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the
