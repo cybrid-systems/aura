@@ -106,9 +106,12 @@ static void ac3_query_schema() {
     (void)cs.evaluator().run_typed_mutation_invariant_audit(7, "query-test", 0, 0, 1);
     auto h = cs.eval("(engine:metrics \"query:typed-mutation-audit-trail\")");
     CHECK(h && is_hash(*h), "trail hash");
-    CHECK(href(cs, "schema") == 1614 || href(cs, "schema") == 1589, "schema 1614|1589");
-    CHECK(href(cs, "issue") == 1614 || href(cs, "issue") == 1589 || href(cs, "issue") < 0,
-          "issue lineage");
+    {
+        const auto sch = href(cs, "schema");
+        CHECK(sch == 1894 || sch == 1614 || sch == 1589, "schema 1894|1614|1589");
+        const auto iss = href(cs, "issue");
+        CHECK(iss == 1894 || iss == 1614 || iss == 1589 || iss < 0, "issue lineage");
+    }
     CHECK(href(cs, "phase") >= 3 || href(cs, "phase") >= 2, "phase >= 2");
     CHECK(href(cs, "invariant-enforcement-wired") == 1 ||
               href(cs, "invariant-enforcement-wired") < 0,

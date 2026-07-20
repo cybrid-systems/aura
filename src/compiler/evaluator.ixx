@@ -11421,16 +11421,53 @@ public:
             }
             emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                                 static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
-            // Issue #1589 / #1614: TypedMutationAudit trail + real invariant suite.
+            // Issue #1589 / #1614 / #1894: TypedMutationAudit trail + real
+            // invariant suite on mutation boundary hot path. Contextual
+            // sampling (#1894) forces audit for large dirty scopes / linear.
+            // Under Full strategy, invariant failure converts this success
+            // path into a structural rollback (do not silently continue).
             {
                 const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-                // #1614: when should_audit, run type + linear + provenance checks
-                // and record a single trail event with pass/fail outcome.
-                if (nodes_changed > 0 && typed_audit::should_audit(mid)) {
-                    (void)run_typed_mutation_invariant_audit(
+                const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
+                                         (audit_op.find("move") != std::string_view::npos) ||
+                                         (audit_op.find("inline") != std::string_view::npos);
+                if (nodes_changed > 0 &&
+                    typed_audit::should_audit_contextual(mid, nodes_changed, linear_hint)) {
+                    const bool inv_ok = run_typed_mutation_invariant_audit(
                         mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
                         epoch_after);
+                    // #1894: Full strategy → force rollback on any invariant fail.
+                    if (!inv_ok &&
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                        typed_audit::g_typed_mutation_audit_counters
+                            .full_strategy_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->typed_mutation_full_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        // Structural undo (same as failure path below).
+                        BoundaryRollbackStats stats;
+                        stats.field_records_rolled =
+                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                        if (stats.field_records_rolled > 0)
+                            bump_mutation_log_rollback_count();
+                        workspace_flat_->restore_children(std::move(cp.children_snapshot));
+                        stats.children_column_restored = true;
+                        if (cp.fine_rollback) {
+                            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                            stats.sym_id_column_restored = true;
+                            stats.param_columns_restored = true;
+                        }
+                        last_boundary_rollback_stats_ = stats;
+                        defuse_index_ = nullptr;
+                        typed_audit::record_boundary_outcome(
+                            mid, "invariant-force-rollback", cp.version, epoch_after,
+                            /*success=*/false, static_cast<std::uint32_t>(audit_target), 0, fid);
+                        // Skip success-path reflect; failure path already recorded.
+                        return cp;
+                    }
                 } else {
                     typed_audit::record_boundary_outcome(
                         mid, audit_op, cp.version, epoch_after, /*success=*/true,

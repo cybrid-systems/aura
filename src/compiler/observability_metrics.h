@@ -2392,6 +2392,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typed_mutation_type_ok_total{0};
     std::atomic<std::uint64_t> typed_mutation_linear_ok_total{0};
     std::atomic<std::uint64_t> typed_mutation_prov_ok_total{0};
+    // Issue #1894 AC metric names (hotpath audit + blame).
+    std::atomic<std::uint64_t> typed_mutation_audit_triggered_total{0};
+    std::atomic<std::uint64_t> typed_mutation_violations_caught_total{0};
+    std::atomic<std::uint64_t> provenance_blame_chain_hits_total{0};
+    std::atomic<std::uint64_t> typed_mutation_full_force_rollback_total{0};
 
     // Issue #1615: linear ownership + coercion synergy.
     std::atomic<std::uint64_t> linear_coercion_reval_count{0};
