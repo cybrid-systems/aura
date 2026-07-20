@@ -72,6 +72,16 @@ Unified entrypoint:
 Drivers live under `tests/fuzz/drivers/`; corpus under `tests/fuzz/corpus/`.
 See [`docs/fuzzing.md`](fuzzing.md).
 
+## Benchmark SLO (#1569 / #1936)
+
+```bash
+./build.py bench --strict
+./build.py bench --strict --tolerance 5 --statistical
+python3 tests/bench/benchmark.py --update --rationale "why"
+```
+
+Relative + median-of-N comparison; see [`docs/benchmark.md`](benchmark.md).
+
 Thin entrypoints at `tests/*.py` forward into `tests/python/` or
 `tests/bench/` so path moves do not break scripts or docs.
 

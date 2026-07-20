@@ -8,7 +8,10 @@ changes with tests next to the subsystem they protect.
 ```bash
 ./build.py gate     # docs / lint / format / fixtures / surfaces / registry
 ./build.py check    # gate + build + tests
-./build.py bench --strict   # compiler benchmark SLO (#1569)
+./build.py bench --strict   # compiler benchmark SLO (#1569 / #1936)
+./build.py bench --strict --tolerance 5 --statistical
+# baseline update requires rationale:
+# python3 tests/bench/benchmark.py --update --rationale "…"
 ./build.py coverage --html  # LLVM source coverage report (#1933)
 ./build.py fuzz --list      # unified fuzzers (#1935)
 
