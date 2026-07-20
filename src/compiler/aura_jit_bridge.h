@@ -133,6 +133,23 @@ typedef bool (*aura_reemit_candidate_fn_t)(void* userdata, const char** out_name
                                            std::uint64_t* out_region,
                                            bool* out_from_closure_capture);
 void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata);
+
+// Issue #1952: actual LLVM re-emit callback. The host (Evaluator /
+// CompilerService) wires a function that takes the dirty FlatFunction
+// name + region, looks up the function via ir_cache_v2_ or
+// relower_define_function_minimal, calls emit_native_object_incremental
+// (or the existing emit_native_object for #1943 MVP scope), and returns
+// true on successful emit. aura_reemit_aot_for_dirty bumps
+// aot_incremental_reemit_success_total + the MVP stub
+// stable_func_id_preserved_total on true. Returns false to keep
+// skeleton behavior (count + commit_func_table_swap gate).
+//
+// userdata is the opaque pointer the host passed to the setter
+// (typically the CompilerService* so the callback can walk ir_cache_v2_
+// + dep_graph_ + emit_native_object without exposing the bridge to
+// the full CompilerService surface).
+typedef bool (*aura_aot_emit_fn_t)(const char* name, std::uint64_t region, void* userdata);
+void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata);
 // Last re-emit count (for tests + EDSL observability).
 std::uint64_t aura_reemit_dirty_count(void);
 // Last re-emit region-filtered skip count.

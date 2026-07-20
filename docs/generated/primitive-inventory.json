@@ -466,7 +466,7 @@
     "vector-ref",
     "vector-set!"
   ],
-  "interim_hard_ceiling": 521,
+  "interim_hard_ceiling": 523,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",

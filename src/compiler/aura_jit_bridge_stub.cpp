@@ -242,6 +242,8 @@ extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::ui
 }
 extern "C" __attribute__((weak)) void
 aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t /*fn*/, void* /*userdata*/) {}
+extern "C" __attribute__((weak)) void aura_set_aot_emit_fn(aura_aot_emit_fn_t /*fn*/,
+                                                           void* /*userdata*/) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_dirty_count(void) {
     return 0;
 }
