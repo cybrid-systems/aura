@@ -6935,10 +6935,22 @@ struct CompilerMetrics {
     //     touched / occurrence-priority roots
     //   - type_dep_graph_affected_expand_total: extra nodes pulled into
     //     the affected set via type_dep_graph_ dependents
+    // Issue #1871: solve_delta locality + adaptive reverify.
+    //   - solve_delta_locality_hits_total: local-root solves with
+    //     zero pruned dirty (full O(delta) coverage of dirty set)
+    //   - solve_delta_locality_misses_total: local-root solves that
+    //     deferred non-local dirty into pending_full_solve_roots_
+    //   - incremental_locality_hit_rate: hits*100/(hits+misses) (0–100)
+    //   - reverify_adaptive_adjustments_total: clean reverify scans
+    //     whose effective_reverify_limit exceeded the base 256 cap
     std::atomic<std::uint64_t> incremental_reinfer_nodes_total{0};
     std::atomic<std::uint64_t> solve_delta_cache_hit_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_pruned_total{0};
     std::atomic<std::uint64_t> type_dep_graph_affected_expand_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
+    std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
+    std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};
     // #1338 Type → IR + DeadCoercionElimination parent-type stamp
     std::atomic<std::uint64_t> ir_parent_type_stamp_active{1};
     std::atomic<std::uint64_t> ir_parent_type_stamped_total{0};

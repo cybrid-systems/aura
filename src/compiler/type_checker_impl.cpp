@@ -290,9 +290,13 @@ std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
     // Issue #1617: Let-Poly roots inflate the budget so
     // generalization/instantiation sites are less likely to be
     // dropped by bounded reverify under high-churn mutate.
-    const std::size_t impact = dirty_count_ * 8 + touched_roots_.size() * 4 +
-                               occurrence_priority_roots_.size() * 16 +
-                               let_poly_dirty_roots_.size() * 12;
+    // Issue #1871: pending full-solve backlog + adaptive scale also
+    // inflate the cap so high-frequency mutate does not starve
+    // clean-constraint reverify (reverify_adaptive_adjustments_total
+    // is bumped by the caller when the returned limit exceeds base).
+    const std::size_t impact =
+        dirty_count_ * 8 + touched_roots_.size() * 4 + occurrence_priority_roots_.size() * 16 +
+        let_poly_dirty_roots_.size() * 12 + pending_full_solve_roots_.size() * 8;
     const std::size_t scaled = std::max(kReverifyCleanScanLimit, impact);
     return std::min(scaled, kReverifyCleanScanMax);
 }
@@ -476,6 +480,11 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_conflict_reverify_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1871: count adaptive budget growth above the base
+        // kReverifyCleanScanLimit (dirty/touched/pending-driven).
+        if (scan_limit > kReverifyCleanScanLimit) {
+            m->reverify_adaptive_adjustments_total.fetch_add(1, std::memory_order_relaxed);
+        }
         if (truncated) {
             m->reverify_truncated_total.fetch_add(1, std::memory_order_relaxed);
             if (aura_evaluator_mutation_boundary_depth() > 0) {
@@ -1139,11 +1148,14 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     };
 
     const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty() ||
-                                  !let_poly_dirty_roots_.empty();
+                                  !let_poly_dirty_roots_.empty() ||
+                                  !pending_full_solve_roots_.empty();
 
     if (have_local_roots && !var_to_constraints_.empty()) {
         // Issue #1528 / #1617: primary worklist = dirty constraints on
         // occurrence-priority + Let-Poly roots first, then touched roots.
+        // Issue #1871: also drain pending_full_solve_roots_ from prior
+        // local prunes so residual dirty is not starved indefinitely.
         auto collect_for_root = [&](std::uint32_t root) {
             auto it = var_to_constraints_.find(root);
             if (it == var_to_constraints_.end())
@@ -1157,6 +1169,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             collect_for_root(root);
         for (auto root : touched_roots_)
             collect_for_root(root);
+        for (auto root : pending_full_solve_roots_)
+            collect_for_root(root);
+        // Pending roots have been offered a collection pass; clear so
+        // the next prune can re-queue only what remains non-local.
+        pending_full_solve_roots_.clear();
         // Also accept dirty constraints that still reference a
         // touched root after Union-Find normalize (covers reps
         // that shifted during a prior unify).
@@ -1181,10 +1198,22 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             };
             check_pri(constraints_[i].lhs);
             check_pri(constraints_[i].rhs);
-            if (priority)
+            if (priority) {
                 push_dirty(i);
-            else
+            } else {
                 ++pruned; // dirty but not local to this delta
+                // Issue #1871: remember roots so a later solve_delta
+                // drains residual dirty without an immediate mark_clean.
+                auto note_pending = [&](TypeId id) {
+                    if (!id.valid() || !reg_.is_var(id))
+                        return;
+                    const auto rep = union_find_rep_index(id);
+                    if (rep != UINT32_MAX)
+                        pending_full_solve_roots_.insert(rep);
+                };
+                note_pending(constraints_[i].lhs);
+                note_pending(constraints_[i].rhs);
+            }
         }
     } else if (var_to_constraints_.empty()) {
         // Legacy path: process all dirty constraints.
@@ -1230,6 +1259,23 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
         if (pruned > 0) {
             m->solve_delta_worklist_pruned_total.fetch_add(pruned, std::memory_order_relaxed);
+            // Issue #1871: locality miss — some dirty deferred.
+            m->solve_delta_locality_misses_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (have_local_roots) {
+            // Full local coverage of dirty set under root filter.
+            m->solve_delta_locality_hits_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #1871: hit rate as percent of local solves (0–100).
+        // Updated on each filtered solve for Agent dashboards.
+        if (have_local_roots) {
+            const auto hits = m->solve_delta_locality_hits_total.load(std::memory_order_relaxed);
+            const auto misses =
+                m->solve_delta_locality_misses_total.load(std::memory_order_relaxed);
+            const auto denom = hits + misses;
+            if (denom > 0) {
+                m->incremental_locality_hit_rate.store((hits * 100) / denom,
+                                                       std::memory_order_relaxed);
+            }
         }
         // Issue #1617: track peak worklist size for mutation-load tuning.
         const auto wl = static_cast<std::uint64_t>(worklist.size());
@@ -1447,6 +1493,8 @@ void ConstraintSystem::clear() {
     touched_roots_.clear();
     occurrence_priority_roots_.clear();
     let_poly_dirty_roots_.clear();
+    // Issue #1871: reset pending full-solve backlog.
+    pending_full_solve_roots_.clear();
     // Issue #1529: reset blame provenance context (keep last dump
     // readable until next conflict — only clear active stamps).
     active_predicate_cond_node_ = 0;
