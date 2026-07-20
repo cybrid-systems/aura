@@ -975,6 +975,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> minimal_recompile_clean_funcs_saved{0};
     std::atomic<std::uint64_t> minimal_recompile_scope_samples{0};
     std::atomic<std::uint64_t> invalidate_early_exit_clean_total{0};
+    // Issue #1916: EnvFrame/bridge_epoch/linear safety after invalidate.
+    // dangling_env_prevented: refused to walk OOB/INVALID/bridge-stale EnvFrame.
+    // bridge_epoch_mismatch_fallback is the AC alias of closure_epoch_mismatch_fallback
+    // (bumped on apply/materialize/JIT when bridge or dual-check forces safe path).
+    std::atomic<std::uint64_t> dangling_env_prevented{0};
+    std::atomic<std::uint64_t> dangling_env_prevented_materialize{0};
+    std::atomic<std::uint64_t> dangling_env_prevented_apply{0};
+    std::atomic<std::uint64_t> linear_ownership_safe_fallback_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
