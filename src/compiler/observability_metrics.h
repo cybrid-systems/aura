@@ -3848,6 +3848,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dead_coercion_elision_evidence_hits_total{0};
     std::atomic<std::uint64_t> dead_coercion_elision_narrowing_stable_paths_total{0};
     std::atomic<std::uint64_t> dead_coercion_elision_runtime_check_savings_total{0};
+    // Issue #1925: expanded DCE + lower-time elision for occurrence /
+    // post-mutate Coercion (90%+ target when types/narrow_ev match).
+    //   - dead_coercion_narrow_mutation_elided_total: Rule 6b/6c + lower
+    //     can_elide under narrow_evidence (post-mutate if-arm path)
+    //   - dead_coercion_dynamic_passthrough_total: Dynamic target elisions
+    //     (type_tag≥3) at lower + IR DCE Rule 3/7
+    //   - dead_coercion_elision_rate_bp: last-sample elided*10000/(elided+kept)
+    //   - dead_coercion_narrow_mutation_wired: feature flag
+    std::atomic<std::uint64_t> dead_coercion_narrow_mutation_elided_total{0};
+    std::atomic<std::uint64_t> dead_coercion_dynamic_passthrough_total{0};
+    std::atomic<std::uint64_t> dead_coercion_elision_rate_bp{0};
+    std::atomic<std::uint64_t> dead_coercion_narrow_mutation_wired{1};
     // Issue #765: Full DepEntry quote/lambda tracking + impact_scope
     // propagation to bridge_epoch bump, EnvFrame version re-stamp
     // and linear state refresh in LoweringState/invalidate

@@ -1341,8 +1341,9 @@ public:
         }
     }
 
-    // Map TypeId to CastOp type_tag (used by IR interpreter)
-    // INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
+    // Map TypeId to CastOp type_tag (used by IR interpreter / JIT).
+    // INT→0, STRING→1, BOOL→2, DYNAMIC→3, FLOAT→4.
+    // Issue #1925: structural tags → Dynamic passthrough (same as lowering).
     std::uint32_t type_tag_for_coercion(aura::core::TypeId tid) const {
         if (!type_reg_)
             return 3;
@@ -1356,8 +1357,15 @@ public:
                 return 2;
             case aura::core::TypeTag::FLOAT:
                 return 4;
+            case aura::core::TypeTag::DYNAMIC:
+            case aura::core::TypeTag::VOID:
+            case aura::core::TypeTag::PAIR:
+            case aura::core::TypeTag::HASH:
+            case aura::core::TypeTag::VECTOR:
+            case aura::core::TypeTag::TYPE:
+                return 3;
             default:
-                return 3; // Dynamic / pass-through
+                return 3; // Linear/Func/Var/… — Dynamic passthrough
         }
     }
 
@@ -1509,6 +1517,10 @@ export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
 //   5. (cast <ground-typed> Dynamic) where source already carries
 //      the ground type_id → Local, since the CastOp default path
 //      is a passthrough anyway.
+//   6. narrow_evidence-proved identity (occurrence typing / #629)
+//   7. Issue #1925: narrow_evidence + Dynamic target; narrow_evidence
+//      with matching source evidence (post-mutate if-arm casts);
+//      Dynamic target with narrow_evidence only (no type_id yet).
 //
 // Operates on IRModule after lowering + TypeSpecializationWrap.
 // CastOp semantics in IR: operands = {result_slot, source_slot, type_tag, blame}
@@ -1635,24 +1647,46 @@ public:
                     return &block.instructions[it->second];
                 };
 
-                // Rule 6 (#629): narrow_evidence-proved identity.
-                // When occurrence-narrowing has statically
-                // proved the cast target, elide the CastOp
-                // when source type_id matches.
-                if (instr.narrow_evidence != 0 && instr.type_id != 0) {
+                // Rule 6 (#629 / #1925): narrow_evidence-proved elision.
+                // When occurrence-narrowing has statically proved the
+                // cast target (post-mutate if-arm, Call-arg under narrow):
+                //   6a type_id match
+                //   6b source shares overlapping narrow_evidence bits
+                //   6c Dynamic target (tag≥3) with any narrow_evidence
+                if (instr.narrow_evidence != 0) {
+                    auto elide_local = [&](std::uint32_t tid) {
+                        block.instructions[i] = aura::ir::IRInstruction{
+                            .opcode = aura::ir::IROpcode::Local,
+                            .operands = {ops[0], ops[1], 0, 0},
+                            .type_id = tid,
+                            .narrow_evidence = instr.narrow_evidence,
+                        };
+                        ++eliminated_;
+                        ++narrow_evidence_hits_;
+                        changed = true;
+                    };
                     if (auto* src = find_source(ops[1])) {
-                        if (src->type_id != 0 && src->type_id == instr.type_id) {
-                            block.instructions[i] = aura::ir::IRInstruction{
-                                .opcode = aura::ir::IROpcode::Local,
-                                .operands = {ops[0], ops[1], 0, 0},
-                                .type_id = instr.type_id,
-                                .narrow_evidence = instr.narrow_evidence,
-                            };
-                            ++eliminated_;
-                            ++narrow_evidence_hits_;
-                            changed = true;
+                        // 6a: concrete type_id identity under evidence
+                        if (instr.type_id != 0 && src->type_id != 0 &&
+                            src->type_id == instr.type_id) {
+                            elide_local(instr.type_id);
                             continue;
                         }
+                        // 6b: overlapping evidence bits (same if-arm proof)
+                        if (src->narrow_evidence != 0 &&
+                            (src->narrow_evidence & instr.narrow_evidence) != 0) {
+                            const bool types_ok = src->type_id == 0 || instr.type_id == 0 ||
+                                                  src->type_id == instr.type_id;
+                            if (types_ok) {
+                                elide_local(instr.type_id != 0 ? instr.type_id : src->type_id);
+                                continue;
+                            }
+                        }
+                    }
+                    // 6c: Dynamic target + narrow_evidence → passthrough
+                    if (target_tag >= 3) {
+                        elide_local(instr.type_id);
+                        continue;
                     }
                 }
 
@@ -1680,6 +1714,10 @@ public:
                     if (src->opcode == aura::ir::IROpcode::CastOp) {
                         // Skip the intermediate cast: ops[1] = src->ops[1]
                         ops[1] = src->operands[1];
+                        // Issue #1925: inherit narrow_evidence from inner cast
+                        // so subsequent Rule 6 can fire after collapse.
+                        if (instr.narrow_evidence == 0 && src->narrow_evidence != 0)
+                            instr.narrow_evidence = src->narrow_evidence;
                         ++eliminated_;
                         ++nested_hits_;
                         changed = true;
@@ -1687,7 +1725,7 @@ public:
                     }
                 }
 
-                // Issue #508 Rule 3: safe Dynamic passthrough.
+                // Issue #508 / #1925 Rule 3: safe Dynamic passthrough.
                 // When the target type_tag is Dynamic (≥3,
                 // the default case in the IR interpreter
                 // is `locals[ops[0]] = val`), the CastOp
@@ -1701,6 +1739,8 @@ public:
                 // lowering pass may have inserted it
                 // for a reason (e.g. a function-call
                 // arg with no type info yet).
+                // #1925: also elide when source carries narrow_evidence
+                // (occurrence-proved value is always Dynamic-safe).
                 if (target_tag >= 3) {
                     if (auto* src = find_source(ops[1])) {
                         auto src_tid = src->type_id;
@@ -1718,6 +1758,8 @@ public:
                                 src_is_ground_known = true;
                             }
                         }
+                        if (!src_is_ground_known && src->narrow_evidence != 0)
+                            src_is_ground_known = true; // #1925 evidence-backed
                         if (src_is_ground_known) {
                             // Copy source's type_id onto
                             // the new Local so chained
@@ -1729,7 +1771,10 @@ public:
                             block.instructions[i] = aura::ir::IRInstruction{
                                 .opcode = aura::ir::IROpcode::Local,
                                 .operands = {ops[0], ops[1], 0, 0},
-                                .type_id = src_tid,
+                                .type_id = src_tid != 0 ? src_tid : instr.type_id,
+                                .narrow_evidence = src->narrow_evidence != 0
+                                                       ? src->narrow_evidence
+                                                       : instr.narrow_evidence,
                             };
                             ++eliminated_;
                             ++dynamic_hits_;
@@ -2768,6 +2813,9 @@ private:
                     case aura::ir::IROpcode::CastOp: {
                         // Stamp CastOp result from its type_id so DCE
                         // Rule 1/6 can match source.type_id == cast.type_id.
+                        // Issue #1925: also inherit source type_id when cast
+                        // has none (Dynamic passthrough) and push
+                        // narrow_evidence onto result for DCE Rule 6b/6c.
                         if (instr.type_id != 0) {
                             auto it = slot_type_id.find(slot);
                             if (it == slot_type_id.end() || it->second != instr.type_id) {
@@ -2779,6 +2827,14 @@ private:
                         const auto src = instr.operands[1];
                         auto sit = slot_type_id.find(src);
                         auto snit = slot_narrow.find(src);
+                        // Inherit source type onto cast result when target
+                        // type_id is unset (identity / Dynamic elision path).
+                        if (instr.type_id == 0 && sit != slot_type_id.end() && sit->second != 0) {
+                            instr.type_id = sit->second;
+                            slot_type_id[slot] = sit->second;
+                            ++cast_result_stamped_;
+                            ++progress;
+                        }
                         if (instr.type_id != 0 && sit != slot_type_id.end() &&
                             sit->second == instr.type_id) {
                             if (instr.narrow_evidence == 0 && snit != slot_narrow.end() &&
@@ -2788,6 +2844,20 @@ private:
                                 ++narrow_propagated_;
                                 ++progress;
                             }
+                        }
+                        // #1925: always stamp result narrow from cast or src.
+                        if (instr.narrow_evidence != 0) {
+                            auto nit = slot_narrow.find(slot);
+                            if (nit == slot_narrow.end() || nit->second != instr.narrow_evidence) {
+                                slot_narrow[slot] = instr.narrow_evidence;
+                                ++narrow_propagated_;
+                                ++progress;
+                            }
+                        } else if (snit != slot_narrow.end() && snit->second != 0) {
+                            instr.narrow_evidence = snit->second;
+                            slot_narrow[slot] = snit->second;
+                            ++narrow_propagated_;
+                            ++progress;
                         }
                         break;
                     }
