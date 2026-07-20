@@ -506,6 +506,17 @@ export struct LinearEscapeAnalysisResult {
     std::size_t escape_after_move = 0;
 };
 
+// Issue #1875: compact escape summary for IR consumers after
+// post-mutation OwnershipEnv validation (dirty + full paths).
+export struct OwnershipEscapeSummary {
+    std::size_t dirty_bindings = 0;
+    std::size_t escape_sites = 0;
+    std::size_t violations = 0;
+    bool full_pass_ran = false;
+    bool dirty_pass_ran = false;
+    LinearEscapeAnalysisResult escape;
+};
+
 // Walk dirty linear bindings and report escape-related ownership
 // violations into notes_out (kinds: "escape-while-borrowed",
 // "escape-after-move"). Returns false if any violation found.

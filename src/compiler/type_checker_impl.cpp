@@ -7310,6 +7310,12 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
                                                          const aura::ast::MutationRecord& rec,
                                                          std::vector<OwnershipNote>& notes_out,
                                                          void* metrics) {
+    // Issue #1875: always count the check for hit-rate denominator.
+    if (metrics) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics);
+        m->linear_post_mutation_checks_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Pick a root to walk. For target_node mutations we use the
     // target subtree plus the dirty-upward chain (mark_dirty_upward
     // marked every ancestor of target_node). For subtree-level
@@ -7323,6 +7329,14 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
         walk_root = rec.target_node;
 
     if (walk_root == NULL_NODE || walk_root >= flat.size()) {
+        if (metrics) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics);
+            const auto checks =
+                m->linear_post_mutation_checks_total.load(std::memory_order_relaxed);
+            const auto hits = m->linear_post_mutation_hits_total.load(std::memory_order_relaxed);
+            m->linear_post_mutation_validation_hit_rate.store(
+                checks > 0 ? (hits * 100u) / checks : 0, std::memory_order_relaxed);
+        }
         return aura::ast::InvariantStatus::NotChecked;
     }
 
@@ -7342,13 +7356,28 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
     }
 
     if (dirty_nodes.empty()) {
+        if (metrics) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics);
+            const auto checks =
+                m->linear_post_mutation_checks_total.load(std::memory_order_relaxed);
+            const auto hits = m->linear_post_mutation_hits_total.load(std::memory_order_relaxed);
+            m->linear_post_mutation_validation_hit_rate.store(
+                checks > 0 ? (hits * 100u) / checks : 0, std::memory_order_relaxed);
+        }
         return aura::ast::InvariantStatus::NotChecked;
     }
 
     // ── Ownership re-validation on dirty linear bindings ─────────
+    // Issue #1875: dirty-path + full re-sim so mutation-after linear
+    // violations are not missed when dirty discovery is incomplete.
     std::unordered_set<std::string> linear_bindings;
     discover_linear_bindings(flat, pool, dirty_nodes, linear_bindings);
+    OwnershipEscapeSummary esc_summary;
+    bool ran_linear_validation = false;
     if (!linear_bindings.empty() && flat.root != NULL_NODE && flat.root < flat.size()) {
+        ran_linear_validation = true;
+        esc_summary.dirty_pass_ran = true;
+        esc_summary.dirty_bindings = linear_bindings.size();
         const auto notes_before = notes_out.size();
         const bool ownership_pass =
             OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes_out);
@@ -7358,7 +7387,51 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
                                    notes_out.end());
         }
         record_linear_ownership_mutation_metrics(metrics, true, ownership_notes, ownership_pass);
+        esc_summary.violations += ownership_notes.size();
+        if (metrics) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics);
+            m->linear_escape_reanalysis_total.fetch_add(1, std::memory_order_relaxed);
+            m->ownership_dirty_revalidate_hits.fetch_add(linear_bindings.size(),
+                                                         std::memory_order_relaxed);
+        }
     }
+    // Full re-sim (type-driven linear discovery) — closes the miss
+    // window when dirty set omits a linear binding (#1875 AC: no miss).
+    if (flat.root != NULL_NODE && flat.root < flat.size()) {
+        const auto notes_before_full = notes_out.size();
+        const bool full_pass =
+            OwnershipEnv::validate_ownership_full(flat, pool, reg, flat.root, notes_out);
+        if (notes_out.size() > notes_before_full || !linear_bindings.empty())
+            ran_linear_validation = true;
+        esc_summary.full_pass_ran = true;
+        std::vector<OwnershipNote> full_notes;
+        if (notes_out.size() > notes_before_full) {
+            full_notes.assign(notes_out.begin() + static_cast<std::ptrdiff_t>(notes_before_full),
+                              notes_out.end());
+            esc_summary.violations += full_notes.size();
+            record_linear_ownership_mutation_metrics(metrics, true, full_notes, full_pass);
+        }
+        if (metrics) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics);
+            m->linear_post_mutation_full_validate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        (void)full_pass;
+    }
+    if (metrics && ran_linear_validation) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics);
+        m->linear_post_mutation_hits_total.fetch_add(1, std::memory_order_relaxed);
+        const auto checks = m->linear_post_mutation_checks_total.load(std::memory_order_relaxed);
+        const auto hits = m->linear_post_mutation_hits_total.load(std::memory_order_relaxed);
+        m->linear_post_mutation_validation_hit_rate.store(checks > 0 ? (hits * 100u) / checks : 0,
+                                                          std::memory_order_relaxed);
+    } else if (metrics) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics);
+        const auto checks = m->linear_post_mutation_checks_total.load(std::memory_order_relaxed);
+        const auto hits = m->linear_post_mutation_hits_total.load(std::memory_order_relaxed);
+        m->linear_post_mutation_validation_hit_rate.store(checks > 0 ? (hits * 100u) / checks : 0,
+                                                          std::memory_order_relaxed);
+    }
+    (void)esc_summary;
 
     // Issue #1615: dirty Coercion nodes → post-coercion linear reval +
     // narrow_evidence accounting (closes linear/coercion blind spot).

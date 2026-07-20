@@ -2309,10 +2309,26 @@ public:
         ir_escape.run(ir_mod);
         LinearOwnershipPass linear_own;
         linear_own.run(ir_mod);
+        // Issue #1875: also run LinearOwnershipWrap for lifetime metrics
+        // shared with the type-check post-mutate path.
+        LinearOwnershipWrap linear_wrap;
+        linear_wrap.run(ir_mod);
         metrics_.ir_escape_analysis_runs_total.fetch_add(1, std::memory_order_relaxed);
         if (ir_escape.escaped_slots_total() > 0) {
             metrics_.ir_escape_slots_marked_total.fetch_add(ir_escape.escaped_slots_total(),
                                                             std::memory_order_relaxed);
+        }
+        if (ir_escape.dirty_reruns() > 0) {
+            metrics_.escape_analysis_dirty_reruns_total.fetch_add(ir_escape.dirty_reruns(),
+                                                                  std::memory_order_relaxed);
+        }
+        if (linear_wrap.use_after_move_count() > 0) {
+            metrics_.linear_ir_use_after_move_total.fetch_add(linear_wrap.use_after_move_count(),
+                                                              std::memory_order_relaxed);
+        }
+        if (linear_wrap.double_consume_count() > 0) {
+            metrics_.linear_ir_double_consume_total.fetch_add(linear_wrap.double_consume_count(),
+                                                              std::memory_order_relaxed);
         }
         metrics_.linear_ownership_escape_check_total.fetch_add(1, std::memory_order_relaxed);
 
