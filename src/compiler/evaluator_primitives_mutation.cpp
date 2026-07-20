@@ -572,8 +572,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
                 active = ev.workspace_flat_->atomic_batch_active();
             }
-            // Issue #1878: capacity 16 (was 8) for atomicity/tenant fields.
-            auto* ht = FlatHashTable::create(16);
+            // Issue #1878 / #1893 / #1899: capacity 32 for atomicity +
+            // metadata + data-driven dispatch inventory fields.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -603,7 +604,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("active", active ? 1 : 0);
             insert_kv("commits-total", static_cast<std::int64_t>(commits));
             insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
-            insert_kv("schema", 622); // #622 base; #1878/#1893 extend via schema-* keys
+            insert_kv("schema", 622); // #622 base; #1878/#1893/#1899 extend via schema-* keys
             // Issue #1878: fold atomicity-mode into existing stats-hash
             // (no new query:* name — primitive freeze). 1 = strong default.
             insert_kv("atomicity-mode", 1);
@@ -636,7 +637,17 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("metadata-snapshot-wired", 1);
             insert_kv("flatast-copy-metadata-wired", 1);
             insert_kv("schema-1893", 1893);
-            insert_kv("issue", 1893);
+            // Issue #1899 Option A close-out: data-driven lockless table
+            // (13 ops) + STRONG default + no inter-op yield in batch loop.
+            // Keep atomicity-mode=1 (strong). Append-only table size is the
+            // extensibility contract (was brittle if/else).
+            insert_kv("dispatch-table-size", 13);
+            insert_kv("dispatch-table-data-driven", 1);
+            insert_kv("strong-atomicity-default", 1);
+            insert_kv("no-inter-op-yield", 1);
+            insert_kv("lockless-ops-covered", 13);
+            insert_kv("schema-1899", 1899);
+            insert_kv("issue", 1899);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

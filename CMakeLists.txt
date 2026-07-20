@@ -4656,6 +4656,10 @@ add_dependencies(all_test_issue_targets test_mutation_systemic_guard_1897)
 aura_add_issue_test(test_raw_pointer_safety_1898)
 aura_issue_test_link_llvm_jit(test_raw_pointer_safety_1898)
 add_dependencies(all_test_issue_targets test_raw_pointer_safety_1898)
+# Issue #1899: atomic-batch data-driven lockless dispatch + STRONG Option A.
+aura_add_issue_test(test_atomic_batch_dispatch_1899)
+aura_issue_test_link_llvm_jit(test_atomic_batch_dispatch_1899)
+add_dependencies(all_test_issue_targets test_atomic_batch_dispatch_1899)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

@@ -3108,7 +3108,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.pairs_.push_back({make_string(cap_idx), result});
         return make_pair(wrap);
     });
-    // (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878:
+    // (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878 / #1899:
     // apply a list of mutate operations atomically (all-or-nothing).
     // The list is a sequence of sub-lists, each (op-name arg1 arg2 ...)
     // — same shape as the individual (mutate:rebind ...) primitives.
@@ -3122,13 +3122,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
     //      "double rebind")
     //
-    // Atomicity mode (Issue #1878, supersedes historical "weak" note):
-    //   STRONG (default): outer MutationBoundaryGuard holds
-    //   workspace_mtx_ unique_lock for the entire batch; all 14
-    //   lockless helpers run under that lock so concurrent tenants/
-    //   fibers cannot interleave mutations into the batch log
-    //   (#1900). Weak atomicity is not used on this path —
+    // Atomicity mode (Issue #1878 / #1899 Option A — STRONG default):
+    //   outer MutationBoundaryGuard holds workspace_mtx_ unique_lock
+    //   for the entire batch; all supported lockless helpers run under
+    //   that lock so concurrent tenants/fibers cannot interleave
+    //   mutations into the batch log (#1900). No inter-op fiber yield
+    //   inside the sub-op loop. Weak atomicity is not used —
     //   atomic_batch_weak_atomicity_used stays 0.
+    //
+    // Issue #1899: sub-op dispatch is a data-driven table
+    // (kAtomicBatchLocklessOps) — append one row to support a new
+    // lockless helper (no if/else chain growth).
     // Keywords:
     //   :snapshot? #t — capture pre-batch snapshot (Issue #737)
     //   :tenant-target N — under Strict sandbox, require workspace
@@ -3289,49 +3293,51 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // non-recursive shared_mutex — the batch already
             // holds the lock via its outer guard.
             //
-            // Issue #1900: dispatch expanded from 5 → 14 ops.
-            // All 14 lockless helpers in evaluator_eval_flat.cpp
-            // are extracted from the wrapper primitives and
-            // stripped of MutationBoundaryGuard + fiber-yield +
-            // read-only + lazy COW + typecheck + ownership +
-            // defuse_version_ bumps + dep-graph propagation
-            // (those are outer-batch responsibilities). The
-            // outer MutationBoundaryGuard already holds
-            // workspace_mtx_ unique_lock for the entire batch
-            // lifetime (only outermost Guard acquires, per
-            // #236 nesting rule), so all 14 sub-ops run under
-            // strong atomicity against concurrent mutators.
-            //
-            // Sub-op name mapping (14 ops):
-            //   "mutate:rebind"             -> eval_flat_apply_mutate_rebind
-            //   "mutate:replace-value"      -> eval_flat_apply_mutate_replace_value
-            //   "mutate:tweak-literal"       -> eval_flat_apply_mutate_tweak_literal
-            //   "mutate:remove-node"         -> eval_flat_apply_mutate_remove_node  (Issue #396
-            //   Phase 2) "mutate:insert-child"        -> eval_flat_apply_mutate_insert_child (Issue
-            //   #396 Phase 2) "mutate:set-body"            -> eval_flat_apply_mutate_set_body
-            //   (Issue #1900) "mutate:replace-pattern"     ->
-            //   eval_flat_apply_mutate_replace_pattern (Issue #1900) "mutate:replace-subtree" ->
-            //   eval_flat_apply_mutate_replace_subtree (Issue #1900) "mutate:splice" ->
-            //   eval_flat_apply_mutate_splice (Issue #1900) "mutate:wrap"                ->
-            //   eval_flat_apply_mutate_wrap (Issue #1900) "mutate:rename-symbol"       ->
-            //   eval_flat_apply_mutate_rename_symbol (Issue #1900) "mutate:move-node"           ->
-            //   eval_flat_apply_mutate_move_node (Issue #1900) "mutate:inline-call"         ->
-            //   eval_flat_apply_mutate_inline_call (Issue #1900)
-            // Anything else: unsupported (bump unsupported_op metric + abort).
+            // Issue #1900 / #1899: dispatch expanded from 5 → 14 ops
+            // via data-driven table kAtomicBatchLocklessOps (append
+            // a row to extend; no if/else growth). Helpers in
+            // evaluator_eval_flat.cpp are stripped of Guard / yield /
+            // COW / typecheck / defuse / dep-graph (outer batch owns
+            // those). Outer Guard holds workspace_mtx_ unique for
+            // the entire batch → STRONG atomicity (#1878/#1899).
+            using AtomicBatchOpFn = EvalResult (Evaluator::*)(std::span<const types::EvalValue>);
+            struct AtomicBatchOpEntry {
+                const char* name;
+                AtomicBatchOpFn fn;
+            };
+            // Issue #1899: single source of truth for supported batch ops.
+            static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
+                {"mutate:rebind", &Evaluator::eval_flat_apply_mutate_rebind},
+                {"mutate:replace-value", &Evaluator::eval_flat_apply_mutate_replace_value},
+                {"mutate:tweak-literal", &Evaluator::eval_flat_apply_mutate_tweak_literal},
+                {"mutate:remove-node", &Evaluator::eval_flat_apply_mutate_remove_node},
+                {"mutate:insert-child", &Evaluator::eval_flat_apply_mutate_insert_child},
+                {"mutate:set-body", &Evaluator::eval_flat_apply_mutate_set_body},
+                {"mutate:replace-pattern", &Evaluator::eval_flat_apply_mutate_replace_pattern},
+                {"mutate:replace-subtree", &Evaluator::eval_flat_apply_mutate_replace_subtree},
+                {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice},
+                {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap},
+                {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol},
+                {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node},
+                {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call},
+            };
+            static constexpr std::size_t kAtomicBatchLocklessOpCount =
+                sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
+            static_assert(kAtomicBatchLocklessOpCount == 13,
+                          "atomic-batch lockless table size drift");
+
+            AtomicBatchOpFn op_fn = nullptr;
+            for (const auto& e : kAtomicBatchLocklessOps) {
+                if (op_name == e.name) {
+                    op_fn = e.fn;
+                    break;
+                }
+            }
             EvalResult sub_result{types::make_void()};
-            if (op_name != "mutate:rebind" && op_name != "mutate:replace-value" &&
-                op_name != "mutate:tweak-literal" && op_name != "mutate:remove-node" &&
-                op_name != "mutate:insert-child" && op_name != "mutate:set-body" &&
-                op_name != "mutate:replace-pattern" && op_name != "mutate:replace-subtree" &&
-                op_name != "mutate:splice" && op_name != "mutate:wrap" &&
-                op_name != "mutate:rename-symbol" && op_name != "mutate:move-node" &&
-                op_name != "mutate:inline-call") {
-                // Unsupported sub-op name. This path should now
-                // only fire for future-version primitives that
-                // land before their lockless helper ships, or for
-                // an EDSL caller that mistypes a name. Bump the
-                // #1900 AC3 metric, abort the batch, and surface
-                // a helpful error listing the 14 supported names.
+            if (!op_fn) {
+                // Unsupported sub-op name. Future primitives without a
+                // lockless helper, or mistyped EDSL names. Bump #1900
+                // AC3 metric, abort the batch, list supported names.
                 ev.bump_atomic_batch_unsupported_op();
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
@@ -3355,39 +3361,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             // Issue #1686: lockless sub-ops must not throw past the
             // outer Guard (would commit a partial multi-step batch).
+            // Issue #1899: no inter-op yield here — batch stays
+            // exclusive under the outer Guard for STRONG atomicity.
             {
                 std::string threw;
-                if (!guard.run_or_rollback(
-                        [&] {
-                            if (op_name == "mutate:rebind") {
-                                sub_result = ev.eval_flat_apply_mutate_rebind(op_args);
-                            } else if (op_name == "mutate:replace-value") {
-                                sub_result = ev.eval_flat_apply_mutate_replace_value(op_args);
-                            } else if (op_name == "mutate:tweak-literal") {
-                                sub_result = ev.eval_flat_apply_mutate_tweak_literal(op_args);
-                            } else if (op_name == "mutate:remove-node") {
-                                sub_result = ev.eval_flat_apply_mutate_remove_node(op_args);
-                            } else if (op_name == "mutate:insert-child") {
-                                sub_result = ev.eval_flat_apply_mutate_insert_child(op_args);
-                            } else if (op_name == "mutate:set-body") {
-                                sub_result = ev.eval_flat_apply_mutate_set_body(op_args);
-                            } else if (op_name == "mutate:replace-pattern") {
-                                sub_result = ev.eval_flat_apply_mutate_replace_pattern(op_args);
-                            } else if (op_name == "mutate:replace-subtree") {
-                                sub_result = ev.eval_flat_apply_mutate_replace_subtree(op_args);
-                            } else if (op_name == "mutate:splice") {
-                                sub_result = ev.eval_flat_apply_mutate_splice(op_args);
-                            } else if (op_name == "mutate:wrap") {
-                                sub_result = ev.eval_flat_apply_mutate_wrap(op_args);
-                            } else if (op_name == "mutate:rename-symbol") {
-                                sub_result = ev.eval_flat_apply_mutate_rename_symbol(op_args);
-                            } else if (op_name == "mutate:move-node") {
-                                sub_result = ev.eval_flat_apply_mutate_move_node(op_args);
-                            } else { // mutate:inline-call
-                                sub_result = ev.eval_flat_apply_mutate_inline_call(op_args);
-                            }
-                        },
-                        &threw)) {
+                if (!guard.run_or_rollback([&] { sub_result = (ev.*op_fn)(op_args); }, &threw)) {
                     ok = false;
                     guard_ok = false;
                     ev.workspace_flat_->rollback_since(initial_log_size);
