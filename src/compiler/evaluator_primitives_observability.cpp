@@ -105,6 +105,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #490 — lazy vs eager pattern-index rebuild observability
     "query:pattern-index-rebuild-stats",
     "query:pattern-hygiene-stats",
+    // Issue #1914 — unified hygiene + provenance diagnostics dashboard
+    "query:hygiene-provenance-stats",
     // Issue #486 — MacroIntroduced hygiene decision hash
     "query:macro-hygiene-stats",
     // Issue #548 — Panic-checkpoint lifecycle
@@ -435,6 +437,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:epoch-stats",
     "query:macro-introduced",
     "query:by-marker",
+    // Issue #1914 — node / last-mutation provenance diagnostic hashes
+    "query:node-provenance",
+    "query:last-mutation-provenance",
     // Compile / query stats (Issue #560 + #1672 name alignment to impls)
     "query:compiler-cache-stats",          // was compile:compiler-cache-stats
     "query:compiler-incremental-stats",    // was compile:compiler-incremental-stats
