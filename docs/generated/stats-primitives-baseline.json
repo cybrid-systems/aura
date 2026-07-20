@@ -1,5 +1,5 @@
 {
-  "count": 445,
+  "count": 446,
   "names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -407,6 +407,7 @@
     "query:test-harness-module-stats",
     "query:test-json-report-stats",
     "query:test-profile-flag-stats",
+    "query:test-strategy-stats",
     "query:top5-commercial-coverage-stats",
     "query:type-incremental-fidelity-stats",
     "query:type-incremental-stats",
@@ -449,5 +450,5 @@
   ],
   "note": "Frozen set of blocked-pattern primitive names (Issue #1432 / P0b / #1448). No new *-stats, string-*/json-*/math-*/vector-*/path-*/time-* (or : forms), or ast:ref-* without --update-baseline + PR justification. Prefer stdlib (lib/std/surface) and (engine:metrics). SlimSurface target public budget: 420.",
   "schema": 2,
-  "stats_count": 422
+  "stats_count": 423
 }

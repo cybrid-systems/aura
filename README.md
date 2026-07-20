@@ -19,4 +19,6 @@ Module layering (Core ← Parser ← Compiler ← …): [`docs/architecture.md`]
 
 Naming & comments: [`docs/naming_convention.md`](docs/naming_convention.md)
 
+Test strategy (hot path / self-mod): [`tests/STRATEGY.md`](tests/STRATEGY.md)
+
 License: Apache 2.0

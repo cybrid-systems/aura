@@ -3,7 +3,7 @@
 // Single recommended header for domain/, batch, pilot, and issue tests.
 // Legacy alias: issue_test_harness.hpp (thin shim; prefer this file).
 //
-// Policy: tests/README.md · tests/domain/README.md
+// Policy: tests/README.md · tests/domain/README.md · tests/STRATEGY.md (#1887)
 //
 // Features:
 //   CHECK / EXPECT_*     — pass/fail counters (ASan-safe owned message string)
@@ -14,11 +14,14 @@
 //   aura_call_expr()     — engine:metrics / stats:get routing for demoted names
 //   k_int_env()          — shared stress/fuzz env knobs
 //   capture_stable_refs / validate_stable_refs — FlatAST white-box helpers
+//   note_strategy_*      — hot-path / AI self-mod strategy stamps (#1887)
 //
 // Intentionally lightweight: no Google Test / Catch2.
 
 #ifndef AURA_TEST_HARNESS_HPP
 #define AURA_TEST_HARNESS_HPP
+
+#include "test/test_strategy.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +38,17 @@ namespace aura::test {
 // Global pass/fail counters (legacy CHECK pattern). Initialized to 0.
 inline int g_passed = 0;
 inline int g_failed = 0;
+
+// Issue #1887: strategy-driven hot-path / self-mod stamps (see tests/STRATEGY.md).
+inline void note_strategy_scenario(strategy::HotPathScenario s, bool pass = true) noexcept {
+    strategy::note_hotpath_scenario(s, pass);
+}
+inline void note_strategy_self_mod_loop(bool ok = true) noexcept {
+    strategy::note_self_mod_loop(ok);
+}
+inline void note_strategy_profile(strategy::StrategyProfile p) noexcept {
+    strategy::select_profile(p);
+}
 
 // Issue #1439 / #1449: build an Aura expression that evaluates a primitive or
 // facade-only stats name. Mirrors ObservabilityPrims::is_legacy_stats_name —

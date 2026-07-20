@@ -5670,6 +5670,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_propagation_invariant_fail_with_evidence_total{0};
     std::atomic<std::uint64_t> type_propagation_evidence_lost_total{0};
     std::atomic<std::uint64_t> predicate_memo_evict_invariant_correlation_total{0};
+    // Issue #1887: test strategy hot-path coverage (mirrored from test_strategy.h).
+    std::atomic<std::uint64_t> test_strategy_total_hits{0};
+    std::atomic<std::uint64_t> test_strategy_coverage_hit_rate_bp{0};
+    std::atomic<std::uint64_t> test_strategy_self_mod_loops{0};
     // Issue #306: hardware resource linear-ownership
     // observability counters (EDA track — wire/reg/mem/port
     // borrow + double-drive detection). Exposed via the

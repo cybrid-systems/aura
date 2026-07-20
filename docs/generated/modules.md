@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**68** `export module` declarations in `src/**/*.ixx`.
+**69** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -74,3 +74,4 @@
 | `aura.serve.multi_fiber_mailbox` | `src/serve/multi_fiber_mailbox.ixx` |
 | `aura.serve.parallel_orch` | `src/serve/parallel_orch.ixx` |
 | `aura.stdlib.render_ffi` | `src/stdlib/render_ffi.ixx` |
+| `aura.test.strategy` | `src/test/test_strategy.ixx` |
