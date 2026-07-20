@@ -168,7 +168,19 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
     auto& s = stats_out ? *stats_out : local_stats;
     s = {};
 
-    for (const auto& e : map.entries()) {
+    for (const auto& e_in : map.entries()) {
+        // Issue #1873: strengthen provenance propagation — fill missing
+        // predicate/mutation from child provenance column or latest
+        // mutation log so truncation/cross-delta chains stay traceable.
+        CoercionEntry e = e_in;
+        if (e.predicate_cond_node == 0 && e.original_child < flat.size()) {
+            const auto child_prov = flat.provenance(e.original_child);
+            if (child_prov != 0)
+                e.predicate_cond_node = child_prov;
+        }
+        if (e.source_mutation_id == 0 && !flat.all_mutations().empty())
+            e.source_mutation_id = flat.all_mutations().back().mutation_id;
+
         // Issue #1425: identity coercion — child already has the
         // target type stamped (post-infer). Do not insert a
         // CoercionNode; the IR path would only produce a dead CastOp.
@@ -195,6 +207,8 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             flat.set_loc(coercion_id, e.src_line, e.src_col);
             if (e.narrow_evidence != 0)
                 flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
+            // Issue #1873: prefer predicate; fall back to mutation;
+            // always try to leave a non-zero provenance stamp.
             if (e.predicate_cond_node != 0)
                 flat.set_provenance(coercion_id, e.predicate_cond_node);
             else if (e.source_mutation_id != 0)
@@ -220,8 +234,8 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Build the CoercionNode wrapping the original child.
         auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
         flat.set_loc(coercion_id, e.src_line, e.src_col);
-        // Issue #691: stamp narrowing evidence + predicate/mutation
-        // provenance on the coercion node for lowering elision.
+        // Issue #691 / #1873: stamp narrowing evidence + predicate/mutation
+        // provenance on the coercion node for lowering elision + blame.
         if (e.narrow_evidence != 0)
             flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
         if (e.predicate_cond_node != 0)

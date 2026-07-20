@@ -63,14 +63,28 @@ export struct DeltaBlameFrame {
     std::uint8_t kind = 0; // Constraint::Kind
 };
 
-// Issue #1529: full blame chain persisted on CONFLICT.
+// Issue #1529 / #1873: full blame chain persisted on CONFLICT
+// (and on truncated reverify for partial observability).
 // complete == true when root_mutation_id + at least one frame
 // carries predicate_cond_node AND at least one carries affected_node
 // (the AC triple for AI-debuggable narrow/delta conflicts).
+// Issue #1873: partial / truncated_reverify mark chains that
+// remain dumpable but missing fields or produced under a
+// reverify scan cap — AI self-repair still gets a trail.
 export struct DeltaBlameChain {
     std::vector<DeltaBlameFrame> frames;
     std::uint64_t root_mutation_id = 0;
     bool complete = false;
+    // Issue #1873: is_complete is the strict view (rich triple
+    // AND not partial AND not truncated). `complete` remains
+    // the rich-triple flag used by #1529 metrics.
+    bool partial = false;
+    bool truncated_reverify = false;
+    std::size_t unscanned_constraint_count = 0;
+    std::size_t missing_provenance_frames = 0;
+    [[nodiscard]] bool is_complete() const noexcept {
+        return complete && !partial && !truncated_reverify;
+    }
 };
 
 // Issue #118: explicit solve result. The previous `bool solve()`
@@ -169,12 +183,20 @@ export class ConstraintSystem {
     std::uint32_t active_affected_node_ = 0;
     std::vector<std::uint32_t> blame_affected_nodes_;
     DeltaBlameChain last_blame_chain_;
+    // Issue #1873: set by reverify_clean_constraints_for_touched
+    // so record_cross_delta_blame_hit can mark truncated chains.
+    bool last_reverify_truncated_ = false;
+    std::size_t last_reverify_unscanned_ = 0;
     void note_touched_var(aura::core::TypeId id);
     [[nodiscard]] std::uint32_t union_find_rep_index(aura::core::TypeId id) const;
     [[nodiscard]] int constraint_reverify_priority(std::size_t idx) const;
     bool constraint_references_touched(const Constraint& c) const;
     [[nodiscard]] std::size_t effective_reverify_limit() const noexcept;
     void record_cross_delta_blame_hit();
+    // Issue #1873: append a partial blame trail when reverify hit
+    // the scan cap without a hard CONFLICT (still dumpable).
+    void record_truncated_partial_blame(std::size_t scanned, std::size_t candidates);
+    void update_blame_chain_completeness_rate() noexcept;
     bool reverify_clean_constraints_for_touched();
     void clear_touched_roots() { touched_roots_.clear(); }
     // Issue #466: when true, consistent_unify records constraints
