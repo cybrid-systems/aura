@@ -144,6 +144,37 @@ inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
     fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
 }
 
+// ── Issue #1964 cycle 2c: bridge_epoch migration accessors ─────
+//
+// Two distinct scopes for bridge_epoch:
+//  1. **Process-global** (aura_jit_bridge.cpp::g_current_bridge_epoch,
+//     aura_get_current_bridge_epoch / aura_jit_get_current_bridge_epoch):
+//     a single counter shared across the whole compiler instance.
+//     Migrated to WorkspaceEpoch::Bridge via the accessors below.
+//  2. **Per-Worker** (service.ixx::CompilerService::bridge_epoch_):
+//     each Worker instance has its own counter, used for closure
+//     cache invalidation. Architectural intent is per-worker (each
+//     Worker's closure cache should track its own invalidation
+//     state). Cycle 2c ships the process-global migration; the
+//     per-worker migration is deferred to a follow-up that adds a
+//     per-worker WorkspaceEpoch variant (or keeps the local field
+//     + exposes via a typed accessor).
+//
+// The function-pointer indirection via
+// `shape_jit_pass::g_mutation_epoch_fn` (which actually returns
+// bridge_epoch — pre-existing misnomer, see #1964 cycle 2b commit
+// message) is left in place for now; cycle 2d cleanup removes it
+// once both process-global and per-worker bridge epochs are
+// migrated.
+
+[[nodiscard]] inline std::uint64_t current_bridge_epoch() noexcept {
+    return load_workspace_epoch(WorkspaceEpochKind::Bridge);
+}
+
+inline void bump_bridge_epoch(std::uint64_t delta = 1) noexcept {
+    fetch_add_workspace_epoch(WorkspaceEpochKind::Bridge, delta);
+}
+
 } // namespace aura::core
 
 #endif // AURA_CORE_WORKSPACE_EPOCH_HH
