@@ -55,10 +55,8 @@ def main() -> int:
     if "HotPassDodCompliant" not in cc:
         failures.append("AC2: HotPassDodCompliant missing")
 
-    for _wrap in ("ComputeKindWrap", "ArityWrap", "ConstantFoldingWrap", "TypeSpecializationWrap"):
-        if "uses_soa_view" not in pm:
-            failures.append("AC3: uses_soa_view missing entirely")
-            break
+    if "uses_soa_view" not in pm:
+        failures.append("AC3: uses_soa_view missing entirely")
     if pm.count("uses_soa_view") < 6:
         failures.append("AC3: too few uses_soa_view declarations")
 

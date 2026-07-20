@@ -12,12 +12,15 @@ For each of the ~368 calls, produce:
 Output: stdout report + writes /tmp/standalone_audit.json
 """
 
+from __future__ import annotations
+
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-REPO = Path("/home/dev/code/aura")
+REPO = Path(__file__).resolve().parents[1]
 CMAKE = REPO / "CMakeLists.txt"
 BUNDLES_CMAKE = REPO / "cmake" / "AuraIssueBundles.cmake"
 
@@ -100,14 +103,14 @@ def bundle_for(name, bundle_members):
     return hits
 
 
-def main():
+def main() -> int:
     adds, lines = parse_cmakelists_adds()
     bundle_members = parse_bundle_members()
 
     # Adjust: lines is 0-indexed; parse_cmakelists_adds returns 1-indexed line_no
     records = []
     for line_no, name, third in adds:
-        link = link_for(name, lines, line_no - 1 + 1)  # pass 1-indexed start
+        link = link_for(name, lines, line_no)  # pass 1-indexed start
         prof = profile_from_link(link)
         pattern = classify_name(name)
         src = resolve_source(name)
@@ -201,4 +204,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
