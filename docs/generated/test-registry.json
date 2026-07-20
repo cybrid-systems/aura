@@ -4,7 +4,7 @@
   "count": 1077,
   "count": 1076,
   "by_category": {
-    "integration": 478,
+    "integration": 477,
     "issue_specific": 7,
     "regression": 2,
     "unit": 236,
@@ -4915,123 +4915,15 @@
       "issue": null
     },
     {
-      "file": "tests/test_mutate_cross_thread_migration.cpp",
+      "file": "tests/test_mutate_batch.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/test_mutate_dead_heap_define_str_1691.cpp",
-      "category": "unit",
-      "reason": "Issue #1691 — mutate:refactor/extract must not intern the",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_dispatch.cpp",
-      "category": "integration",
-      "reason": "Issue #1436 (mutate :op) unified dispatcher",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_extract_stale_parent_1701.cpp",
-      "category": "unit",
-      "reason": "Issue #1701 — mutate:extract-function re-validates",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_from_feedback_node_id_1772.cpp",
-      "category": "unit",
-      "reason": "Issue #1772 — mutate:from-verification-feedback must reject",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_guard_exception_safety_1684.cpp",
-      "category": "unit",
-      "reason": "Issue #1684 — MutationBoundaryGuard::run_or_rollback marks ok=false",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_inline_stale_parent_1702.cpp",
-      "category": "unit",
-      "reason": "Issue #1702 — mutate:inline-call re-validates call_parent after",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_insert_child_stale_parent_1690.cpp",
-      "category": "unit",
-      "reason": "Issue #1690 — mutate:insert-child re-validates parent NodeId",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_multi_node_log_null_1696.cpp",
-      "category": "unit",
-      "reason": "Issue #1696 — multi-node mutators log under NULL_NODE, not",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_rebind_stale_define_1685.cpp",
-      "category": "unit",
-      "reason": "Issue #1685 — re-resolve Define after parse_to_flat so rebind /",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_refactor_extract_stale_parent_1703.cpp",
-      "category": "unit",
-      "reason": "Issue #1703 — mutate:refactor/extract re-validates",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_remove_node_all_parents_1688.cpp",
-      "category": "unit",
-      "reason": "Issue #1688 — mutate:remove-node must detach target from ALL",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_remove_node_parent_index_1689.cpp",
-      "category": "unit",
-      "reason": "Issue #1689 — inverted parent-edge index makes remove-node",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_replace_pattern_stale_parent_1694.cpp",
-      "category": "unit",
-      "reason": "Issue #1694 — mutate:replace-pattern re-validates parent_id after",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_replace_subtree_stale_parent_1697.cpp",
-      "category": "unit",
-      "reason": "Issue #1697 — mutate:replace-subtree re-validates parent_id /",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_set_body_exception_safety_1686.cpp",
-      "category": "unit",
-      "reason": "Issue #1686 — mutate:set-body (and sibling mutates) use",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_set_body_stale_ids_1687.cpp",
-      "category": "unit",
-      "reason": "Issue #1687 — mutate:set-body re-resolves BOTH Define id and",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_splice_stale_parent_1699.cpp",
-      "category": "unit",
-      "reason": "Issue #1699 — mutate:splice re-validates parent after EACH",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_sv_guard_1704.cpp",
-      "category": "unit",
-      "reason": "Issue #1704 / #1705 — mutate:sv-add-coverpoint and",
-      "issue": null
-    },
-    {
-      "file": "tests/test_mutate_wrap_stale_parent_1700.cpp",
-      "category": "unit",
-      "reason": "Issue #1700 — mutate:wrap re-validates parent_of_target after",
+      "file": "tests/test_mutate_cross_thread_migration.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {

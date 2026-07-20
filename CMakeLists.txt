@@ -4440,8 +4440,6 @@ aura_issue_test_link_llvm_jit(test_stats_facade_bench)
 aura_add_issue_test(test_query_dispatch)
 aura_issue_test_link_llvm_jit(test_query_dispatch)
 # Issue #1436: (mutate :op) unified dispatcher for core mutate ops.
-aura_add_issue_test(test_mutate_dispatch)
-aura_issue_test_link_llvm_jit(test_mutate_dispatch)
 # Issue #1437: (workspace :op) unified dispatcher.
 aura_add_issue_test(test_workspace_dispatch)
 aura_issue_test_link_llvm_jit(test_workspace_dispatch)
@@ -4782,29 +4780,13 @@ aura_issue_test_link_llvm_jit(test_occurrence_dirty_cycle_guard_1682)
 aura_add_issue_test(test_sv_closedloop_workspace_lock_1683)
 aura_issue_test_link_llvm_jit(test_sv_closedloop_workspace_lock_1683)
 # Issue #1684: MutationBoundaryGuard::run_or_rollback exception safety.
-aura_add_issue_test(test_mutate_guard_exception_safety_1684)
-aura_issue_test_link_llvm_jit(test_mutate_guard_exception_safety_1684)
 # Issue #1685: re-resolve Define after parse_to_flat (rebind/set-body).
-aura_add_issue_test(test_mutate_rebind_stale_define_1685)
-aura_issue_test_link_llvm_jit(test_mutate_rebind_stale_define_1685)
 # Issue #1686: set-body / sibling run_or_rollback exception safety.
-aura_add_issue_test(test_mutate_set_body_exception_safety_1686)
-aura_issue_test_link_llvm_jit(test_mutate_set_body_exception_safety_1686)
 # Issue #1687: set-body double-stale Define+Lambda after parse_to_flat.
-aura_add_issue_test(test_mutate_set_body_stale_ids_1687)
-aura_issue_test_link_llvm_jit(test_mutate_set_body_stale_ids_1687)
 # Issue #1688: remove-node detaches from ALL parents (DAG).
-aura_add_issue_test(test_mutate_remove_node_all_parents_1688)
-aura_issue_test_link_llvm_jit(test_mutate_remove_node_all_parents_1688)
 # Issue #1689: inverted parent-edge index for O(deg) remove-node.
-aura_add_issue_test(test_mutate_remove_node_parent_index_1689)
-aura_issue_test_link_llvm_jit(test_mutate_remove_node_parent_index_1689)
 # Issue #1690: insert-child re-validate parent after parse_to_flat.
-aura_add_issue_test(test_mutate_insert_child_stale_parent_1690)
-aura_issue_test_link_llvm_jit(test_mutate_insert_child_stale_parent_1690)
 # Issue #1691: no dead define_str string_heap_ push in refactor/extract.
-aura_add_issue_test(test_mutate_dead_heap_define_str_1691)
-aura_issue_test_link_llvm_jit(test_mutate_dead_heap_define_str_1691)
 # Issue #1692: no dead circular-dep string_heap_ push in module loader.
 aura_add_issue_test(test_module_loader_dead_heap_circular_1692)
 aura_issue_test_link_llvm_jit(test_module_loader_dead_heap_circular_1692)
@@ -4812,35 +4794,17 @@ aura_issue_test_link_llvm_jit(test_module_loader_dead_heap_circular_1692)
 aura_add_issue_test(test_module_prefix_dead_heap_1693)
 aura_issue_test_link_llvm_jit(test_module_prefix_dead_heap_1693)
 # Issue #1694: replace-pattern re-validate parent after each parse_to_flat.
-aura_add_issue_test(test_mutate_replace_pattern_stale_parent_1694)
-aura_issue_test_link_llvm_jit(test_mutate_replace_pattern_stale_parent_1694)
 # Issue #1695: QueryMatcher captures are StableNodeRef (not raw NodeId).
 aura_add_issue_test(test_matcher_stable_captures_1695)
 aura_issue_test_link_llvm_jit(test_matcher_stable_captures_1695)
 # Issue #1696: multi-node mutators log under NULL_NODE, not NodeId 0.
-aura_add_issue_test(test_mutate_multi_node_log_null_1696)
-aura_issue_test_link_llvm_jit(test_mutate_multi_node_log_null_1696)
 # Issue #1697: replace-subtree re-validate/re-derive parent after parse_to_flat.
-aura_add_issue_test(test_mutate_replace_subtree_stale_parent_1697)
-aura_issue_test_link_llvm_jit(test_mutate_replace_subtree_stale_parent_1697)
 # Issue #1699: splice re-validate parent after each multi-arg parse_to_flat.
-aura_add_issue_test(test_mutate_splice_stale_parent_1699)
-aura_issue_test_link_llvm_jit(test_mutate_splice_stale_parent_1699)
 # Issue #1700: wrap re-validate parent_of_target after parse_to_flat.
-aura_add_issue_test(test_mutate_wrap_stale_parent_1700)
-aura_issue_test_link_llvm_jit(test_mutate_wrap_stale_parent_1700)
 # Issue #1701: extract-function re-validate parent after multi add_*.
-aura_add_issue_test(test_mutate_extract_stale_parent_1701)
-aura_issue_test_link_llvm_jit(test_mutate_extract_stale_parent_1701)
 # Issue #1702: inline-call re-validate call_parent after DFS clone add_*.
-aura_add_issue_test(test_mutate_inline_stale_parent_1702)
-aura_issue_test_link_llvm_jit(test_mutate_inline_stale_parent_1702)
 # Issue #1703: refactor/extract re-validate parent after parse_to_flat.
-aura_add_issue_test(test_mutate_refactor_extract_stale_parent_1703)
-aura_issue_test_link_llvm_jit(test_mutate_refactor_extract_stale_parent_1703)
 # Issue #1704: sv-add-coverpoint / sv-weaken-property MutationBoundaryGuard.
-aura_add_issue_test(test_mutate_sv_guard_1704)
-aura_issue_test_link_llvm_jit(test_mutate_sv_guard_1704)
 # Issue #1707: closure cache generation seqlock (torn-read safety).
 aura_add_issue_test(test_jit_closure_cache_race_1707)
 aura_issue_test_link_llvm_jit(test_jit_closure_cache_race_1707)
@@ -4947,8 +4911,6 @@ aura_issue_test_link_llvm_jit(test_workspace_delete_child_1770)
 aura_add_issue_test(test_verify_parse_shared_helper_1771)
 aura_issue_test_link_llvm_jit(test_verify_parse_shared_helper_1771)
 # Issue #1772: mutate:from-verification-feedback validates NodeId upfront.
-aura_add_issue_test(test_mutate_from_feedback_node_id_1772)
-aura_issue_test_link_llvm_jit(test_mutate_from_feedback_node_id_1772)
 # Issue #1774: demo-sv-self-evolution nested Guard (no unique_lock deadlock).
 aura_add_issue_test(test_demo_sv_nested_guard_1774)
 aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard_1774)
