@@ -1168,6 +1168,9 @@ private:
         // Consume signals only when we act (avoid lost wakeups).
         (void)aura::core::arena_policy::consume_dirty_cascade();
         (void)aura::core::arena_policy::consume_shape_churn();
+        // Issue #1919: clear AI/JIT pressure after acting so thresholds re-settle.
+        (void)aura::core::arena_policy::consume_mutation_pressure();
+        (void)aura::core::arena_policy::consume_jit_deopt_pressure();
 
         if (fiber) {
             stats_.compaction_yield_checks++;
@@ -1198,6 +1201,8 @@ private:
         stats_.auto_alloc_trigger_count++;
         aura::core::arena_policy::record_auto_compact_trigger();
         aura::gc_hooks::notify_auto_compact_trigger();
+        // Issue #1919: false-positive gate — reclaimed 0 bytes ⇒ FP sample.
+        aura::core::arena_policy::record_auto_compact_outcome(saved > 0);
         const double frag_after = stats().fragmentation_ratio();
         aura::core::arena_policy::record_fragmentation_post_mutate(frag_after);
         if (frag_before > frag_after) {
@@ -1205,7 +1210,7 @@ private:
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
         (void)decision.reason;
-        (void)saved;
+        (void)decision.frag_threshold_used;
     }
 
     void invoke_compact_hook_() {
