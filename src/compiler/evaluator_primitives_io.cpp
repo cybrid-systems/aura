@@ -4,8 +4,8 @@
 // Issue #1970: git-* is a deferred integration vertical (DOMAIN_STATUS deferred).
 // Registration of the 7 git-* names is gated by AURA_ENABLE_GIT (CMake option,
 // default ON). Independent of AURA_HAVE_LIBGIT2 (in-process backend vs popen).
-// Network/tcp/sys primitives in this TU are not gated here (see #1975 etc.).
-// See docs/git-integration.md.
+// Issue #1975: tcp-* (4 names) gated by AURA_ENABLE_TCP in register_network_primitives.
+// getenv/http/terminal-buffer/sys stay always on. See docs/git-integration.md + docs/tcp.md.
 
 module;
 
@@ -37,6 +37,9 @@ module;
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_GIT
 #define AURA_ENABLE_GIT 1
+#endif
+#ifndef AURA_ENABLE_TCP
+#define AURA_ENABLE_TCP 1
 #endif
 
 #if __has_include(<curl/curl.h>)
@@ -664,7 +667,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_string(sidx);
     });
 
+#if AURA_ENABLE_TCP
     // ── TCP socket primitives ────────────────────────────────
+    // Issue #1975: integration vertical (AURA_ENABLE_TCP).
     add("tcp-connect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
             return make_void();
@@ -754,6 +759,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         ::close(static_cast<int>(types::as_int(a[0])));
         return make_void();
     });
+#endif // AURA_ENABLE_TCP
 
     // ── Issues #1313/#1314/#1316/#1317/#1349/#1350/#1352: terminal buffer ──
     // #1350: TermCell = Unicode + RGB/palette. #1352: lifecycle + per-buffer shared_mutex.

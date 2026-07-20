@@ -218,6 +218,11 @@ option(AURA_ENABLE_SEVA "Register seva:* domain primitives (commercial, #1972)" 
 option(AURA_ENABLE_SYNTHESIZE
        "Register synthesize:* domain primitives (commercial, #1974)" ON)
 
+# Issue #1975: tcp-* TCP networking integration vertical (deferred).
+# Default ON; slim: -DAURA_ENABLE_TCP=OFF (see docs/tcp.md).
+# Independent of http-get/http-post/getenv in the same register_network_primitives.
+option(AURA_ENABLE_TCP "Register tcp-* domain primitives (integration, #1975)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -233,7 +238,7 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967–#1974: per-source commercial/integration vertical flags (avoids
+# Issue #1967–#1975: per-source commercial/integration vertical flags (avoids
 # PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
@@ -270,6 +275,11 @@ if(AURA_ENABLE_SYNTHESIZE)
 else()
     set(_AURA_ENABLE_SYNTHESIZE_VAL 0)
 endif()
+if(AURA_ENABLE_TCP)
+    set(_AURA_ENABLE_TCP_VAL 1)
+else()
+    set(_AURA_ENABLE_TCP_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -289,11 +299,11 @@ set_source_files_properties(
     PROPERTIES
         COMPILE_DEFINITIONS
         "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL};AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL}")
-# git-* lives in register_git_primitives (evaluator_primitives_io.cpp).
-# Network/tcp/sys co-in same TU stay always on (separate deferred issues).
+# io.cpp: git-* (#1970) + tcp-* (#1975). getenv/http/terminal-buffer stay on.
 set_source_files_properties(
     src/compiler/evaluator_primitives_io.cpp
-    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL}")
+    PROPERTIES COMPILE_DEFINITIONS
+               "AURA_ENABLE_GIT=${_AURA_ENABLE_GIT_VAL};AURA_ENABLE_TCP=${_AURA_ENABLE_TCP_VAL}")
 # terminal:* deprecated no-ops live in obs_jit register_jit_p59 + p113.
 set_source_files_properties(
     src/compiler/evaluator_primitives_obs_jit.cpp
@@ -309,6 +319,7 @@ message(STATUS
 message(STATUS "seva:* domain: AURA_ENABLE_SEVA=${_AURA_ENABLE_SEVA_VAL} (#1972)")
 message(STATUS
         "synthesize:* domain: AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL} (#1974)")
+message(STATUS "tcp-* domain: AURA_ENABLE_TCP=${_AURA_ENABLE_TCP_VAL} (#1975)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the
