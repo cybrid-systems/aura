@@ -449,63 +449,23 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # Test build architecture (Anqi 2026-07-20 "ship in order" + 07:04 directives)
 # ─────────────────────────────────────────────────────────────────
 #
-# As of #77406 (Anqi 07:04 "看看cmake，里面的测试好像还是带编号的啊"),
-# the 502+ per-test aura_add_issue_test() calls (numbered test_issue_NNN)
-# were REMOVED. The legacy "per-test executable" layer is gone — only
-# the new convention remains:
+# Test layout policy (#1958): tests/README.md · tests/domain/README.md
+# Legacy inventory / migration waves (#1957): tests/legacy_test_inventory.md
 #
-#   1. 5 DOMAIN executables (unnumbered, named by domain):
-#      - tests/test_ir.cpp           (pre-existing, the main IR test)
-#      - tests/test_fiber.cpp        (Phase 2 stub, Phase 4 will populate)
-#      - tests/test_observability.cpp (Phase 2 stub, Phase 4)
-#      - tests/test_mutation.cpp     (Phase 2 stub, Phase 4)
-#      - tests/test_persist.cpp      (Phase 2 stub, Phase 4)
-#      Each is a standalone binary for domain-level testing. Source:
-#      tests/<domain>.cpp (resolved by add_executable at line 851+).
+# Preferred new ACs live under tests/domain/ (and cases/*.hpp tables).
+# Do not grow tests/issues/test_issue_*.cpp for routine work.
 #
-#   2. 12 BUNDLE executables (one per profile):
-#      tests/bundles/test_issues_<profile>_main.cpp + all member files
-#      (declared in AURA_ISSUE_BUNDLE_<PROFILE>_MEMBERS). Bundle driver
-#      forks each member test (tests/issues/test_issue_NNN.cpp extern
-#      `aura_issue_NNN_run()` symbols). Profiles: light / jit / jit_minimal /
-#      jit_contract / jit_tests / fiber / jit_late1..5 / light_late.
-#      Source: tests/issues/test_issue_NNN.cpp (per AURA_ISSUE_BUNDLE_*_MEMBERS).
+# Layers still present:
+#   1. Domain suites — tests/domain/test_domain_*.cpp, test_obs_schema_matrix
+#      (cmake/AuraDomainTests.cmake; resolved via aura_resolve_test_cpp).
+#   2. Bundle executables — tests/bundles/test_issues_<profile>_main.cpp
+#      + members from tests/issues/ (link profiles in fixtures/).
+#   3. Family batch drivers — tests/test_*_batch.cpp (EXCLUDE_FROM_ALL
+#      intermediate consolidation; same CMake file).
+#   4. aura_test_objects — shared static lib for test link units.
 #
-#   3. aura_test_objects (line ~478)     — shared static lib
-#      Compiles each .cpp ONCE, links the resulting libaura_test_objects.a
-#      into every test_issue_* binary. Eliminates per-test-*.o duplication.
-#
-# EXCEPTIONS to the "no per-test executables" rule:
-#
-#   1. test_issue_178 (add_executable at line 1224) — special split TU
-#      that compiles BOTH tests/issues/test_issue_178.cpp + the reflect
-#      companion. Bundle can't do this (bundles only see the main .cpp).
-#
-#   2. 4 aura_add_issue_test_reflect_standalone (214/215/216/217) —
-#      minimal reflect linking. Not in any bundle (no JIT, just minimal
-#      P2996 reflection).
-#
-# 635 per-issue files in tests/issues/ compile ONLY as part of bundle
-# targets (NOT as separate test executables). Future migration
-# (Phase 4 multi-ship) moves per-issue bodies into domain files via
-# AURA_ISSUE_TEST, reducing compile time further (635 separate TUs
-# in bundles → fewer TU boundaries).
-#
-# Domain file convention (Phase 4 framework, 2026-07-20):
-#
-#   AURA_ISSUE_TEST(NNN, DESC, BODY) macro (defined in tests/test_harness.hpp)
-#   generates `extern "C" int aura_issue_NNN_run()` in a domain file,
-#   replacing the legacy per-issue `int main()` in tests/issues/.
-#   See tests/templates/test_issue_pattern.cpp BEFORE CREATING block for
-#   the new convention + tests/domain_classification.md for the migration
-#   map of existing 635 issues to 5 domains.
-#
-# Pre-commit hook habit change (Phase 3, 2026-07-20):
-#
-#   .githooks/pre-commit soft-nudges newly added tests/test_issue_*.cpp
-#   files (detected via `git diff --cached --diff-filter=A`). Not a hard
-#   block — informational warning that suggests adding to existing
-#   tests/test_<domain>.cpp via AURA_ISSUE_TEST instead.
+# Source resolution (aura_resolve_test_cpp): issues/ → domain/ → tests/.
+# Pre-commit soft-nudges new test_issue_*.cpp toward domain/ suites.
 # ─────────────────────────────────────────────────────────────────
 
 # Shared object library for test_issue_* binaries.
@@ -661,16 +621,12 @@ endif()
 # only wires modules + the per-test sources a few callers still need
 # (observability headers; JIT is aura_jit_test_objects).
 function(aura_add_issue_test NAME)
-    # Source resolution order (Anqi 2026-07-20 directive "ship in order"):
-    #   1. tests/issues/<NAME>.cpp    (legacy per-issue file pattern)
-    #   2. tests/domain/<NAME>.cpp     (preferred for new domain files)
-    #   3. tests/<NAME>.cpp           (fallback)
-    # NEW ISSUES (Anqi 2026-07-20): prefer adding to one of the 5 domain files
-    # at tests/ root (test_fiber / test_ir / test_observability / test_mutation
-    # / test_persist) instead of creating new tests/issues/test_issue_NNN.cpp.
-    # The pre-commit hook nudges this; see tests/templates/test_issue_pattern.cpp
-    # header for the full convention + tests/domain_classification.md for the
-    # migration map.
+    # Source resolution order:
+    #   1. tests/issues/<NAME>.cpp    (legacy per-issue — do not grow)
+    #   2. tests/domain/<NAME>.cpp    (preferred for new theme suites)
+    #   3. tests/<NAME>.cpp           (fallback / batch drivers)
+    # Policy: tests/README.md · tests/domain/README.md (#1958)
+    # Inventory: tests/legacy_test_inventory.md (#1957)
     aura_resolve_test_cpp(${NAME} _aura_test_src)
     add_executable(${NAME} ${_aura_test_src})
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)

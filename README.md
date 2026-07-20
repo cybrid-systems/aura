@@ -13,4 +13,6 @@ echo '(+ 1 2)' | ./build/aura   # → 3
 ./build.py bench --strict  # compiler benchmark SLO gate (#1569)
 ```
 
+Testing / layout policy: [`tests/README.md`](tests/README.md) · [`docs/contributing.md`](docs/contributing.md)
+
 License: Apache 2.0
