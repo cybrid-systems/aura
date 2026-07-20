@@ -439,6 +439,34 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1926: refuse tombstoned snapshots (move/free/GC raced
+        // after map copy). Lifetime_version==0 ⇒ pointees may dangle.
+        if (!cl_copy.lifetime_valid_for_views()) {
+            g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics) {
+                metrics->closure_view_dangling_prevented_total.store(
+                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+            }
+            bump_compiler_root_dangling_prevented();
+            return std::nullopt;
+        }
+        // Issue #1926: revalidate under lock before materialize — map entry
+        // may have been erased/tombstoned after the snapshot copy.
+        if (!revalidate_closure_snapshot(cid, cl_copy)) {
+            if (metrics) {
+                metrics->closure_view_dangling_prevented_total.store(
+                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics->closure_view_invalid_access_total.store(
+                    g_closure_view_invalid_access_total.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+            }
+            bump_compiler_root_dangling_prevented();
+            return std::nullopt;
+        }
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
         if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {
@@ -523,6 +551,23 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 const bool env_stale =
                     cl_copy.env_id != NULL_ENV_ID &&
                     (is_env_frame_invalid(cl_copy.env_id) || is_env_frame_stale(cl_copy.env_id));
+                // Issue #1926: second revalidate after materialize (GC/erase race).
+                if (!revalidate_closure_snapshot(cid, cl_copy)) {
+                    if (metrics) {
+                        metrics->compiler_closure_safe_fallbacks.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->closure_view_dangling_prevented_total.store(
+                            g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                            std::memory_order_relaxed);
+                        metrics->closure_stale_apply_count_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        metrics->closure_race_caught_count_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    bump_stale_closure_prevented();
+                    bump_compiler_root_dangling_prevented();
+                    return std::nullopt;
+                }
                 if (closure_is_epoch_stale(*this, cl_copy)) {
                     if (metrics) {
                         metrics->compiler_closure_safe_fallbacks.fetch_add(

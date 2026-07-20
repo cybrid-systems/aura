@@ -4736,6 +4736,10 @@ add_dependencies(all_test_issue_targets test_blame_tracking_typed_mutate_1924)
 aura_add_issue_test(test_dead_coercion_elision_narrow_mutation_1925)
 aura_issue_test_link_llvm_jit(test_dead_coercion_elision_narrow_mutation_1925)
 add_dependencies(all_test_issue_targets test_dead_coercion_elision_narrow_mutation_1925)
+# Issue #1926: ClosureView UAF / lifetime revalidate after free/GC/compact.
+aura_add_issue_test(test_closure_view_uaf_guard_1926)
+aura_issue_test_link_llvm_jit(test_closure_view_uaf_guard_1926)
+add_dependencies(all_test_issue_targets test_closure_view_uaf_guard_1926)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

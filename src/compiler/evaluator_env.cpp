@@ -1241,7 +1241,52 @@ std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
     auto it = closures_.find(id);
     if (it == closures_.end())
         return std::nullopt;
+    // Issue #1926: do not hand out tombstoned / moved-from snapshots.
+    if (!it->second.lifetime_valid_for_views()) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
     return it->second;
+}
+
+bool Evaluator::revalidate_closure_snapshot(ClosureId id, const Closure& snap) const noexcept {
+    // Issue #1926: under lock, ensure map entry still live with matching
+    // lifetime_version (and bridge_epoch when both stamped). Prevents UAF
+    // when apply_closure holds a copy while GC/erase races.
+    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+    auto it = closures_.find(id);
+    if (it == closures_.end()) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->closure_view_dangling_prevented_total.store(
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->closure_view_invalid_access_total.store(
+                g_closure_view_invalid_access_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+        return false;
+    }
+    const auto& live = it->second;
+    if (!live.lifetime_valid_for_views()) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (snap.lifetime_version != 0 && live.lifetime_version != snap.lifetime_version) {
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Dual-epoch: if both stamped, bridge_epoch mismatch ⇒ compact/inval raced.
+    if (snap.bridge_epoch != 0 && live.bridge_epoch != 0 &&
+        live.bridge_epoch != snap.bridge_epoch) {
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
 }
 
 // Issue #242 / #1754 / #1890: is_env_frame_stale — true if the frame
@@ -2120,11 +2165,26 @@ bool is_closure_view_valid(const ClosureView& v) noexcept {
 bool is_closure_view_valid(const ClosureView& v, const Closure& cl) noexcept {
     if (!v.live || v.source_lifetime_version == 0)
         return false;
-    if (!cl.lifetime_valid_for_views())
+    if (!cl.lifetime_valid_for_views()) {
+        // Issue #1926: live map entry tombstoned after view creation.
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
         return false;
+    }
     if (v.source_lifetime_version != cl.lifetime_version) {
-        // Issue #1947: lifetime_version mismatch → concurrent move/GC/compact
+        // Issue #1947 / #1926: lifetime_version mismatch → concurrent move/GC/compact
         // between view creation and access. Bump invalid-access counter.
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Issue #1926: dual-epoch — bridge_epoch drift under compact/inval.
+    if (v.source_bridge_epoch != 0 && cl.bridge_epoch != 0 &&
+        v.source_bridge_epoch != cl.bridge_epoch) {
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Pointees nulled on tombstone — refuse if view still carries them but
+    // source no longer does (should already fail lifetime_version).
+    if (cl.flat == nullptr && v.flat != nullptr) {
         g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -2156,8 +2216,10 @@ const aura::ast::ASTArena* closure_view_owner_arena(const ClosureView& v) noexce
 }
 
 ClosureView make_closure_view(const Closure& cl) {
-    // Issue #1888: no raw pointer view from a tombstoned / moved-from Closure.
-    if (!cl.lifetime_valid_for_views()) {
+    // Issue #1888 / #1926: no raw pointer view from a tombstoned / moved-from
+    // Closure. Also refuse lifetime_version==0 even if pointers non-null
+    // (defensive against partial init).
+    if (!cl.lifetime_valid_for_views() || cl.lifetime_version == 0) {
         g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         return make_invalid_closure_view();
     }
@@ -2172,6 +2234,7 @@ ClosureView make_closure_view(const Closure& cl) {
     v.owner_arena = cl.owner_arena;
     v.name = cl.name;
     v.source_lifetime_version = cl.lifetime_version;
+    v.source_bridge_epoch = cl.bridge_epoch; // Issue #1926 dual-epoch
     v.live = true;
     return v;
 }

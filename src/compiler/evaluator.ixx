@@ -3053,8 +3053,14 @@ public:
     // Distinct from aura_free_closure (JIT g_closure_freed table).
     // Returns true if an entry was removed.
     bool erase_active_closure(ClosureId id) noexcept;
-    // Test/helper: snapshot a live Closure by id (nullopt if missing).
+    // Test/helper: snapshot a live Closure by id (nullopt if missing/tombstoned).
     [[nodiscard]] std::optional<Closure> find_active_closure(ClosureId id) const;
+    // Issue #1926: revalidate a snapshotted Closure (apply_closure copy)
+    // against the live map entry under closures_mtx_. Fails if free/GC/
+    // compact raced after the snapshot (lifetime_version mismatch or gone).
+    // Bumps g_closure_view_dangling_prevented_total / invalid_access on reject.
+    [[nodiscard]] bool revalidate_closure_snapshot(ClosureId id,
+                                                   const Closure& snap) const noexcept;
     // Issue #1543: linear GC root registration consistency audit.
     // Path ids match docs/design/linear-gc-roots.md §mutation paths.
     static constexpr std::uint8_t kLinearGcRootAuditTypedMutate = 0;
@@ -6547,13 +6553,17 @@ public:
             m->dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1888: mirror process-wide ClosureView dangling prevented counter.
+    // Issue #1888 / #1926: mirror process-wide ClosureView lifetime counters.
     void sync_closure_view_dangling_metrics() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->closure_view_dangling_prevented_total.store(
                 g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
+            m->closure_view_invalid_access_total.store(
+                g_closure_view_invalid_access_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            m->closure_view_lifetime_wired.store(1, std::memory_order_relaxed);
         }
     }
     // Issue #720: JIT/Interpreter parity counters backing the
@@ -13553,8 +13563,11 @@ export struct ClosureView {
     EnvId env_id = NULL_ENV_ID;
     const aura::ast::ASTArena* owner_arena = nullptr;
     std::string_view name;
-    // Issue #1888: snapshot of Closure::lifetime_version at view creation.
+    // Issue #1888 / #1926: snapshot of Closure::lifetime_version at view creation.
     std::uint64_t source_lifetime_version = 0;
+    // Issue #1926: dual-epoch stamp (bridge_epoch at view creation) so
+    // consumers can revalidate against service epoch drift after compact.
+    std::uint64_t source_bridge_epoch = 0;
     // False for make_invalid_closure_view / rejected make_closure_view.
     bool live = false;
 

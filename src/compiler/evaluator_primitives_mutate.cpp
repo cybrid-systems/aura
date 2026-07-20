@@ -5730,7 +5730,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // ClosureView lifetime stamp / dangling-prevented surface.
     ObservabilityPrims::register_stats_impl(
         "query:closure-view-lifetime-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            // Power-of-2 capacity; #1926 adds AC keys (create(32) headroom).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5759,14 +5760,27 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             };
             const auto prevented =
                 g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed);
-            insert_kv("schema", 1888);
+            const auto invalid =
+                g_closure_view_invalid_access_total.load(std::memory_order_relaxed);
+            insert_kv("schema", 1888); // lineage 1888
             insert_kv("issue", 1888);
             insert_kv("active", 1);
             insert_kv("dangling-prevented", static_cast<std::int64_t>(prevented));
+            insert_kv("closure_view_dangling_prevented_total",
+                      static_cast<std::int64_t>(prevented));
+            // Issue #1926 AC metrics
+            insert_kv("invalid-access", static_cast<std::int64_t>(invalid));
+            insert_kv("closure_view_invalid_access_total", static_cast<std::int64_t>(invalid));
             insert_kv("lifetime-guard", 1);
+            insert_kv("snapshot-revalidate-wired", 1);
+            insert_kv("dual-epoch-wired", 1);
+            insert_kv("schema-1926", 1926);
+            insert_kv("issue-1926", 1926);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->closure_view_dangling_prevented_total.store(prevented,
                                                                std::memory_order_relaxed);
+                m->closure_view_invalid_access_total.store(invalid, std::memory_order_relaxed);
+                m->closure_view_lifetime_wired.store(1, std::memory_order_relaxed);
                 insert_kv("metrics-mirror", 1);
             }
             auto hidx = g_hash_tables.size();
