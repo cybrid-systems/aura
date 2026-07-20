@@ -1528,6 +1528,18 @@ public:
     // detection), is_valid() (stale access), and
     // StableNodeRef validation (invalidation).
     // Exposed via the (query:stable-ref-stats) primitive.
+    //
+    // Issue #1964 cycle 2d: generation_ + wrap_epoch_ +
+    // subtree_gen_ are per-AST fields (each FlatAST instance
+    // has its own). They do NOT migrate to the global
+    // WorkspaceEpoch::Generation / Wrap / Subtree atomics
+    // (those are process-global and architecturally distinct).
+    // Per-AST semantics are intentional — each FlatAST tracks
+    // its own reference stability state. The WorkspaceEpoch
+    // type (src/core/workspace_epoch.hh) provides the
+    // vocabulary for cycle 2b-style migrations; per-AST fields
+    // remain. See docs/agent-safety-mechanisms-simplification.md
+    // for the full invariant table.
     mutable std::atomic<std::uint64_t> generation_wrap_count_{0};
     mutable std::atomic<std::uint64_t> node_gen_stale_access_count_{0};
     mutable std::atomic<std::uint64_t> atomic_batch_commits_{0};
