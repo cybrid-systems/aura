@@ -4,7 +4,7 @@
 // (the make_merr member etc. are now part of normal initialization).
 // Demonstrates repeated harness + CMake pattern. Now uses common header.
 
-#include "issue_test_harness.hpp" // 3.2 dedup pilot (common CHECK + globals)
+#include "test_harness.hpp" // #1960 unified harness
 
 import std;
 namespace aura_issue_primitives_init_detail {

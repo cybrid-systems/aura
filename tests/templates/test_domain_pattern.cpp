@@ -25,7 +25,7 @@
 //  [ ] ninja -C build test_domain_<theme>_<aspect> && ./build/test_domain_<theme>_<aspect>
 //  [ ] Commit message explains why a new suite (not an extension) was required
 
-#include "test_harness.hpp"
+#include "test_harness.hpp" // unified harness only (#1960)
 
 #include <cstdint>
 #include <string>

@@ -12,7 +12,7 @@
 //   AC #4: end-to-end path via CompilerService::eval works
 //          (define-hygienic-macro + eval-current + stats)
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>
@@ -24,14 +24,14 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
+using ::aura::test::g_failed;
+using ::aura::test::g_passed;
+
 namespace aura_388_detail {
 
 using aura::compiler::CompilerService;
 
-// CHECK is provided by issue_test_harness.hpp (included above).
-// Do not redefine it here — under -Werror the redefinition is
-// fatal and breaks the whole build (pre-existing bug from the
-// import std migration, 8d3e42b7).
+// CHECK is provided by test_harness.hpp — do not redefine.
 
 // Helper: extract int value from inline-pass-stats hash. The
 // hash comes back via (engine:metrics \"compile:inline-pass-stats\"); we re-eval

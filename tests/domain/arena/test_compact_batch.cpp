@@ -1,3 +1,6 @@
+// tests/domain/arena/test_compact_batch.cpp — relocated for #1959 arena pilot
+// (was tests/test_compact_batch.cpp). Prefer this path; do not re-add under tests/ root.
+//
 // test_compact_batch.cpp
 // B pilot #12 (after walk in af2307d7): consolidated compact family
 // — Issues #1842 + #1666 + #1362 + #1757 (compact_env_frames Guard +

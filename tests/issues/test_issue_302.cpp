@@ -27,7 +27,7 @@
 // violation. The contract_handler.cpp at L104 writes a
 // useful diagnostic when triggered.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>

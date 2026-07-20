@@ -4,7 +4,7 @@
 // verification binary once the pattern is established (refactor 1.x).
 // Now uses common header.
 
-#include "issue_test_harness.hpp" // 3.2 dedup pilot (common CHECK + globals)
+#include "test_harness.hpp" // #1960 unified harness
 
 import std;
 namespace aura_issue_harness_pilot_detail {

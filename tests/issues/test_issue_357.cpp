@@ -20,7 +20,7 @@
 //   - 4 post-state assertions adapted to the actual semantics
 //   - Auto-rollback-on-panic toggle tested in both directions
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>

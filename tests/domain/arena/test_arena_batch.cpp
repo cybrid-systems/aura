@@ -1,3 +1,6 @@
+// tests/domain/arena/test_arena_batch.cpp — relocated for #1959 arena pilot
+// (was tests/test_arena_batch.cpp). Prefer this path; do not re-add under tests/ root.
+//
 // test_arena_batch.cpp
 // B pilot #17 (after closure in 72479378): consolidated arena family
 // — Issues #1621 + #405 + #1662 + #546 + #1546/#1554/#1594

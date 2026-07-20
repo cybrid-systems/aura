@@ -28,7 +28,7 @@
 // AC #2 (incremental mutation integration), AC #4 (CI
 // integration), AC #5 (golden mode) are deferred.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>

@@ -24,7 +24,7 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 
 | Path | Role | When to use |
 |------|------|-------------|
-| **`domain/`** | **Preferred** theme suites | New ACs for compiler/runtime themes |
+| **`domain/`** | **Preferred** theme suites | New ACs; theme pilots under `domain/<theme>/` (see `domain/arena/` #1959) |
 | `suite/` | Aura E2E (`.aura` scripts) | End-to-end language / stdlib behavior |
 | `regression/` | Curated regression fixtures | Known-bad programs, redlines |
 | `fixtures/` | Shared JSON / profiles / data | Bundle profiles, integ lists, golden inputs |
@@ -168,20 +168,32 @@ Live policy detail: [`domain/README.md`](domain/README.md).
 Scaffold: [`templates/test_domain_pattern.cpp`](templates/test_domain_pattern.cpp)
 (not a CMake target — copy, rename, register).
 
-## Harness & metadata
+## Harness & metadata (#1960)
 
-- Prefer `#include "test_harness.hpp"` + `CHECK` / `TEST` / `RUN_ALL_TESTS`.
-- Domain suites commonly expose `aura_issue_domain_*_run()` (bundle-friendly)
-  and a small `main` that calls it.
-- Optional headers for tooling:
+**Single recommended header:** `#include "test_harness.hpp"`.
 
-  ```cpp
-  // @category: integration
-  // @reason: domain fiber/orch gates; extends test_domain_fiber_orchestration
-  ```
+| API | Use |
+|-----|-----|
+| `CHECK` / `EXPECT_*` | Assertions (ASan-safe owned message string) |
+| `TEST` / `RUN_ALL_TESTS` | Registered cases + summary |
+| `run_pilot_tests()` | Pilot-style counter summary |
+| `aura_call_expr()` | `engine:metrics` / `stats:get` routing for demoted names |
+| `k_int_env()` | Shared stress/fuzz env knobs |
+| `AURA_ISSUE_TEST` | Bundle entry-point helper |
+| `capture_stable_refs` / `validate_stable_refs` | FlatAST white-box helpers |
 
-- Optional `AURA_ISSUE_TEST(N, "…", { … })` in a domain file when a
-  bundle entry-point symbol is required (see `test_harness.hpp`).
+`issue_test_harness.hpp` is a **deprecated shim** that includes `test_harness.hpp`
+— do not use it in new code.
+
+Domain suites commonly expose `aura_issue_domain_*_run()` (bundle-friendly)
+and a small `main` that calls it.
+
+Optional headers for tooling:
+
+```cpp
+// @category: integration
+// @reason: domain fiber/orch gates; extends test_domain_fiber_orchestration
+```
 
 ## Run
 

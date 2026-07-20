@@ -15,7 +15,7 @@
 // (docs) are deferred.
 
 #include "compiler/aot_mangle.h"
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <atomic>
 #include <chrono>

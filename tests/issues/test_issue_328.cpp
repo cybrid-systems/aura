@@ -19,7 +19,7 @@
 // equivalent coverage in the binary.
 // AC #5 (failure reproduction mode + dump) is deferred.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>
 #include <cstdint>

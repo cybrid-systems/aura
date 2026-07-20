@@ -47,7 +47,7 @@
 // public API surface (accessors + bump helpers) remains
 // reachable and monotonic.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 

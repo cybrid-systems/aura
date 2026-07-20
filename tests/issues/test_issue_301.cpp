@@ -25,7 +25,7 @@
 //   - Documentation: docs/design/compilation/std_meta_migration.md
 //     outlining the phased migration plan.
 
-#include "issue_test_harness.hpp"
+#include "test_harness.hpp" // #1960 unified harness
 
 #include <chrono>
 #include <cstddef>
