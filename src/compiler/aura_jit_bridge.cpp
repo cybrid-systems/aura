@@ -3,9 +3,9 @@
 //
 // Hot-Update MVP scope (Issue #1943): the single-define re-emit path
 // triggered by (compile:relower-strategy) on a single-workspace function
-// is **in scope**. Full incremental re-emit with stable DefineId
-// persistence across epochs (aura_reemit_aot_for_dirty) is **deferred**
-// — see docs/hot-update.md and #1930 / #1952 for the LLVM pipeline work.
+// is **in scope**. Issue #1930 / #1952 close the incremental re-emit
+// pipeline: host-wired LLVM emit callback + process-stable name→func_id
+// map across mutation epochs (see docs/hot-update.md).
 
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
@@ -404,22 +404,47 @@ extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn, void* 
 static aura_reemit_candidate_fn_t g_reemit_candidate_fn = nullptr;
 static void* g_reemit_candidate_userdata = nullptr;
 
-// Issue #1952: actual LLVM re-emit callback (replaces the #1481 stub).
-// When null, aura_reemit_aot_for_dirty falls back to the Phase 1 skeleton
-// behavior (count + commit_func_table_swap gate). When wired, each
-// candidate that survives the region filter invokes the callback and
-// bumps aot_incremental_reemit_success_total + stable_func_id_preserved_total
-// on true. The callback is typically wired by CompilerService via the
-// relower_define_function_minimal + emit_native_object path (#1943 MVP
-// scope). Full stable DefineId persistence (cross-epoch func_id mapping
-// that survives re-emit) is deferred per #1952 Anqi comment.
+// Issue #1952 / #1930: actual LLVM re-emit callback (replaces #1481 stub).
+// When null, aura_reemit_aot_for_dirty falls back to Phase 1 skeleton
+// (count + commit_func_table_swap gate). When wired, each region-filtered
+// candidate invokes the callback; true → success metrics + stable id map.
 static aura_aot_emit_fn_t g_aot_emit_fn = nullptr;
 static void* g_aot_emit_userdata = nullptr;
+
+// Issue #1930: process-stable Define-name → func_id map. Survives
+// mutation epochs so re-emit of the same function keeps a stable id
+// for old closures. Name is the canonical key (Define name == FlatFunction
+// name). Full workspace-migrated DefineId identity remains out-of-scope
+// for cross-workspace COW (#1943 deferred); this map is the single-workspace
+// zero-downtime contract.
+static std::mutex g_stable_func_id_mtx;
+static std::unordered_map<std::string, std::uint32_t> g_name_to_stable_func_id;
+static std::atomic<std::uint32_t> g_next_stable_func_id{1};
+
+// Returns stable func_id for name. out_preserved: 1 if map already held
+// an entry (re-emit reuse), 0 if newly assigned.
+static std::uint32_t preserve_stable_func_id_locked(const char* name, int* out_preserved) {
+    if (out_preserved)
+        *out_preserved = 0;
+    if (!name || !*name)
+        return 0;
+    std::string key(name);
+    auto it = g_name_to_stable_func_id.find(key);
+    if (it != g_name_to_stable_func_id.end()) {
+        if (out_preserved)
+            *out_preserved = 1;
+        return it->second;
+    }
+    const std::uint32_t id = g_next_stable_func_id.fetch_add(1, std::memory_order_relaxed);
+    g_name_to_stable_func_id.emplace(std::move(key), id);
+    return id;
+}
 
 // Last-call stats for tests + EDSL observability primitives.
 static std::atomic<std::uint64_t> g_last_reemit_dirty_count{0};
 static std::atomic<std::uint64_t> g_last_reemit_region_skips{0};
 static std::atomic<std::uint64_t> g_last_reemit_closure_dep_count{0};
+static std::atomic<std::uint64_t> g_last_reemit_success_count{0};
 
 extern "C" void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata) {
     g_reemit_candidate_fn = fn;
@@ -430,6 +455,35 @@ extern "C" void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void
 extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
     g_aot_emit_fn = fn;
     g_aot_emit_userdata = userdata;
+}
+
+// Issue #1930: stable func_id map C-linkage surface.
+extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved) {
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    return preserve_stable_func_id_locked(name, out_preserved);
+}
+
+extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
+    if (!name || !*name)
+        return 0;
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    auto it = g_name_to_stable_func_id.find(name);
+    return it == g_name_to_stable_func_id.end() ? 0 : it->second;
+}
+
+extern "C" std::uint64_t aura_stable_func_id_map_size(void) {
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    return static_cast<std::uint64_t>(g_name_to_stable_func_id.size());
+}
+
+extern "C" void aura_clear_stable_func_id_map(void) {
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    g_name_to_stable_func_id.clear();
+    g_next_stable_func_id.store(1, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_reemit_success_count(void) {
+    return g_last_reemit_success_count.load(std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_reemit_dirty_count(void) {
@@ -1536,17 +1590,24 @@ extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint6
 //   5. Stamp all live closure bridges for the re-emitted set with
 //      the new bridge_epoch (closure_bridge_epoch refresh protocol).
 //
-// Returns: count of FlatFunctions actually re-emitted (after
-// region-mask filter). 0 if no callback is wired (Phase 1 path).
+// Returns (#1930 / #1952 AC):
+//   - when aura_set_aot_emit_fn is wired: count of successful emits
+//     (actual re-emit count, not "would re-emit")
+//   - when emit fn is null (Phase 1/#1480 skeleton): count of
+//     region-filtered candidates (would re-emit)
+//   - 0 if no candidate callback is wired
 //
-// Thread-safety: atomic metric increments (relaxed order is fine
-// for stats). commit_func_table_swap uses acq_rel on the table
-// epoch. Region mask is read with acquire order.
+// Thread-safety: atomic metric increments (relaxed). commit_func_table_swap
+// uses acq_rel on the table epoch. Stable func_id map is mutex-guarded.
 extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
     if (!g_reemit_candidate_fn) {
         // No host callback wired → Phase 1 skeleton fallback.
         if (aot_metrics())
             aot_metrics()->aot_reemit_dirty_skeleton_calls.fetch_add(1, std::memory_order_relaxed);
+        g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+        g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_success_count.store(0, std::memory_order_relaxed);
         return 0;
     }
 
@@ -1555,14 +1616,13 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
 
     std::uint64_t total_candidates = 0;
     std::uint64_t to_re_emit = 0;
+    std::uint64_t success_count = 0;
     std::uint64_t region_skips = 0;
     std::uint64_t closure_dep_count = 0;
     bool any_re_emit = false;
 
-    // Phase 2 walk: iterate host-pushed candidates (name, region,
-    // from_closure_capture) and apply region-mask filter. The actual
-    // LLVM emit for each candidate is #1481 follow-up — for #1480 we
-    // count "would re-emit" and gate commit_func_table_swap on it.
+    // Phase 2 walk: iterate host-pushed candidates + region-mask filter.
+    // #1952: host-wired LLVM emit. #1930: stable name→func_id on success.
     while (true) {
         const char* name = nullptr;
         std::uint64_t region = 0;
@@ -1588,48 +1648,67 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             }
         }
         ++to_re_emit;
-        // Issue #1952: actual LLVM re-emit via host-wired callback
-        // (replaces the #1481 stub that only counted "would re-emit").
-        // When g_aot_emit_fn is wired, each region-filtered candidate
-        // invokes the callback. On true we bump
-        // aot_incremental_reemit_success_total + the MVP stub
-        // stable_func_id_preserved_total (1:1 with success per
-        // (query:aot-incremental-reemit-stats) invariant). On false
-        // we leave the func_table_epoch untouched (consistent with
-        // #1480 Phase 1: failed emit should not advance the table).
-        // When no emit callback is wired, fall back to skeleton
-        // behavior (count + commit_func_table_swap gate).
+
+        // Issue #1952 / #1930: actual LLVM re-emit via host-wired callback.
+        // On true: bump success + get_or_preserve stable func_id (preserved
+        // if name already mapped; assigned if first sighting). On false:
+        // leave func_table_epoch untouched. Skeleton (no emit fn): count
+        // would-reemit + still stamp stable map so multi-round identity holds.
         if (g_aot_emit_fn) {
             const bool emitted = g_aot_emit_fn(name, region, g_aot_emit_userdata);
             if (emitted) {
+                int preserved = 0;
+                {
+                    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                    (void)preserve_stable_func_id_locked(name, &preserved);
+                }
                 if (aot_metrics()) {
                     aot_metrics()->aot_incremental_reemit_success_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    // MVP stub: bumps 1:1 with success. Full stable DefineId
-                    // persistence (cross-epoch func_id mapping that
-                    // survives re-emit) is deferred per #1952 Anqi comment.
-                    aot_metrics()->stable_func_id_preserved_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    if (preserved) {
+                        aot_metrics()->stable_func_id_preserved_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else {
+                        aot_metrics()->stable_func_id_assigned_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
+                ++success_count;
                 any_re_emit = true;
             }
         } else {
-            // Phase 1 skeleton fallback: count as "would re-emit".
+            // Phase 1 / #1480 skeleton: would-reemit + stable map stamp.
+            int preserved = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                (void)preserve_stable_func_id_locked(name, &preserved);
+            }
+            if (aot_metrics()) {
+                if (preserved) {
+                    aot_metrics()->stable_func_id_preserved_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    aot_metrics()->stable_func_id_assigned_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
             any_re_emit = true;
         }
     }
 
     // Atomic commit: bump func_table_epoch only if at least one
-    // candidate survived the region filter. Pre-reemit epoch is
-    // captured above for rollback parity with aura_reload_aot_module.
+    // successful / would-reemit path advanced.
     if (any_re_emit) {
         commit_func_table_swap();
     }
 
     // Stamp last-call stats for tests + EDSL observability primitives.
+    // dirty_count = region-filtered candidates (would-reemit); success
+    // is the actual emit count when callback is wired.
     g_last_reemit_dirty_count.store(to_re_emit, std::memory_order_relaxed);
     g_last_reemit_region_skips.store(region_skips, std::memory_order_relaxed);
     g_last_reemit_closure_dep_count.store(closure_dep_count, std::memory_order_relaxed);
+    g_last_reemit_success_count.store(success_count, std::memory_order_relaxed);
 
     // Metric bumps (relaxed order is fine for stats).
     if (aot_metrics()) {
@@ -1638,18 +1717,21 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         aot_metrics()->aot_closure_dependency_reemit_total.fetch_add(closure_dep_count,
                                                                      std::memory_order_relaxed);
         aot_metrics()->aot_region_filtered_skips.fetch_add(region_skips, std::memory_order_relaxed);
-        // Closure bridge refresh protocol: any successful re-emit
-        // bumps the refresh counter. Pair metric with
-        // jit_hotswap_live_closure_refreshed_total (JIT-side).
+        // Closure bridge refresh: bump by actual successes when emit
+        // wired; else by would-reemit candidate count (#1480 parity).
         if (any_re_emit) {
-            aot_metrics()->aot_closure_bridge_refresh_total.fetch_add(to_re_emit,
+            const std::uint64_t refresh_n = g_aot_emit_fn ? success_count : to_re_emit;
+            aot_metrics()->aot_closure_bridge_refresh_total.fetch_add(refresh_n,
                                                                       std::memory_order_relaxed);
         }
     }
 
-    (void)current_defuse_version; // reserved for #1481 version pin
+    (void)current_defuse_version; // reserved for version pin
     (void)epoch_before;           // reserved for future rollback
-    return to_re_emit;
+    (void)total_candidates;
+    // #1930 AC: return actual re-emit success when emit fn wired;
+    // skeleton path keeps #1480 "would re-emit" return semantics.
+    return g_aot_emit_fn ? success_count : to_re_emit;
 }
 
 extern "C" std::uint64_t aura_aot_last_commit_epoch(void) {

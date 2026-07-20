@@ -244,6 +244,19 @@ extern "C" __attribute__((weak)) void
 aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t /*fn*/, void* /*userdata*/) {}
 extern "C" __attribute__((weak)) void aura_set_aot_emit_fn(aura_aot_emit_fn_t /*fn*/,
                                                            void* /*userdata*/) {}
+extern "C" __attribute__((weak)) std::uint32_t
+aura_get_or_preserve_stable_func_id(const char* /*name*/, int* out_preserved) {
+    if (out_preserved)
+        *out_preserved = 0;
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint32_t aura_lookup_stable_func_id(const char* /*name*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_stable_func_id_map_size(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map(void) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_dirty_count(void) {
     return 0;
 }
@@ -251,6 +264,9 @@ extern "C" __attribute__((weak)) std::uint64_t aura_reemit_region_filtered_skips
     return 0;
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_closure_dep_count(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_success_count(void) {
     return 0;
 }
 extern "C" __attribute__((weak)) bool aura_reload_aot_module(const char* /*path*/,

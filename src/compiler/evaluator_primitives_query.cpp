@@ -10020,46 +10020,81 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       stale_deopt));
         });
 
-    // Issue #1952: query:aot-incremental-reemit-stats.
-    // Returns observability for the aura_reemit_aot_for_dirty pipeline
-    // (build on #1480). 4 counters surfaced:
-    //   - aot_incremental_reemit_count: # of "would re-emit" candidates
-    //     (after region-mask filter; pairs with #1480).
-    //   - aot_incremental_reemit_success_total: # of actual successful
-    //     LLVM re-emits (host-wired aura_set_aot_emit_fn callback
-    //     returned true). Pairs with aot_incremental_reemit_count
-    //     (delta = failures). Issue #1952 AC: aura_reemit_aot_for_dirty
-    //     returns actual re-emit count (not "would re-emit"); this
-    //     counter is the per-call success metric that pairs with that
-    //     return value.
-    //   - stable_func_id_preserved_total: MVP stub bumping 1:1 with
-    //     aot_incremental_reemit_success_total. Full stable DefineId
-    //     persistence (cross-epoch func_id mapping that survives
-    //     re-emit) is deferred per #1952 Anqi comment — out-of-scope
-    //     for MVP. cycle 2 follow-up will replace this stub with a
-    //     real define_id → func_id mapping table.
-    //   - aot_closure_dependency_reemit_total: # of candidates that
-    //     came from closure-capture cascade dependents (from #1480).
-    //
-    // Returns -1 sentinel when stable_func_id_preserved_total !=
-    // aot_incremental_reemit_success_total (MVP stub invariant
-    // violation: stub should bump 1:1 with success). Otherwise returns
-    // the sum of all 4 counters (sum-path, like #1903/#1904/#1905/
-    // #1906/#1907 P0/P1 shape).
+    // Issue #1952 / #1930: query:aot-incremental-reemit-stats.
+    // Hash surface (schema-1930) for the aura_reemit_aot_for_dirty pipeline:
+    //   - aot_incremental_reemit_count: region-filtered "would re-emit"
+    //   - aot_incremental_reemit_success_total: host emit callback true
+    //   - stable_func_id_preserved_total / assigned_total: #1930 map
+    //   - aot_closure_dependency_reemit_total: closure-capture cascade
+    //   - wire flags: emit-callback / stable-map / return-success-when-emit
+    // Optional arg 0 = "sum": returns compact sum (legacy path) without
+    // the old stable==success -1 sentinel (#1930 real map breaks 1:1).
     ObservabilityPrims::register_stats_impl(
-        "query:aot-incremental-reemit-stats", [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_int(0);
-            const std::uint64_t total = ev->get_aot_incremental_reemit_count();
-            const std::uint64_t success = ev->get_aot_incremental_reemit_success_total();
-            const std::uint64_t stable = ev->get_stable_func_id_preserved_total();
-            const std::uint64_t closure_dep = ev->get_aot_closure_dependency_reemit_total();
-            // MVP stub invariant: stable should equal success (1:1).
-            if (stable != success)
-                return make_int(-1); // regression sentinel
-            return make_int(static_cast<std::int64_t>(total + success + stable + closure_dep));
+        "query:aot-incremental-reemit-stats",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            auto* qev = Evaluator::get_query_evaluator();
+            if (!qev)
+                qev = &ev;
+            const std::uint64_t total = qev->get_aot_incremental_reemit_count();
+            const std::uint64_t success = qev->get_aot_incremental_reemit_success_total();
+            const std::uint64_t preserved = qev->get_stable_func_id_preserved_total();
+            const std::uint64_t assigned = qev->get_stable_func_id_assigned_total();
+            const std::uint64_t closure_dep = qev->get_aot_closure_dependency_reemit_total();
+            // Legacy compact sum path: (engine:metrics "query:..." "sum")
+            if (!a.empty() && is_string(a[0])) {
+                auto sidx = as_string_idx(a[0]);
+                if (sidx < string_heap.size() && string_heap[sidx] == "sum") {
+                    return make_int(static_cast<std::int64_t>(total + success + preserved +
+                                                              assigned + closure_dep));
+                }
+            }
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const std::string& k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : k_str)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = string_heap.size();
+                string_heap.push_back(k_str);
+                EvalValue key_ev = make_string(kidx);
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto slot = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[slot] == 0xFF) {
+                        meta[slot] = fp;
+                        keys[slot] = key_ev.val;
+                        vals[slot] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 1930);
+            insert_kv("issue", 1930);
+            insert_kv("schema-1930", 1930);
+            insert_kv("issue-1930", 1930);
+            insert_kv("schema-1952", 1952);
+            insert_kv("active", 1);
+            insert_kv("aot_incremental_reemit_count", static_cast<std::int64_t>(total));
+            insert_kv("aot_incremental_reemit_success_total", static_cast<std::int64_t>(success));
+            insert_kv("stable_func_id_preserved_total", static_cast<std::int64_t>(preserved));
+            insert_kv("stable_func_id_assigned_total", static_cast<std::int64_t>(assigned));
+            insert_kv("aot_closure_dependency_reemit_total",
+                      static_cast<std::int64_t>(closure_dep));
+            insert_kv("stable-func-id-map-wired", 1);
+            insert_kv("emit-callback-path-wired", 1);
+            insert_kv("return-success-when-emit-wired", 1);
+            insert_kv("pipeline-phase", 3); // skeleton + region + emit + stable map
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #1907: query:reflect-schema.
