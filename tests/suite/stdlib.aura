@@ -516,6 +516,16 @@
     (check (> (string-length r) 20))
     (check (string-suffix? r " GMT"))))
 
+;; Issue #1910 B1: date-string weekday must match Sun=0..Sat=6 (rfc822).
+(test-suite "datetime:date-string-weekday"
+  (require std/datetime all:)
+  (check (= (timestamp->weekday 0) 4))
+  (check (string=? (timestamp->date-string 0) "Thu 1 1970"))
+  (check (string=? (timestamp->date-string 86400) "Fri 2 1970"))
+  (check (string=? (timestamp->date-string (* 3 86400)) "Sun 4 1970"))
+  (check (string=? (substring (timestamp->date-string 0) 0 3)
+                   (substring (timestamp->rfc822 0) 0 3))))
+
 (test-suite "datetime:now"
   (require std/datetime all:)
   (let ((n (now)))

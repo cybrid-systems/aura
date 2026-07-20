@@ -102,12 +102,13 @@
     (pad2 (timestamp->minute t)) ":"
     (pad2 (timestamp->second t)) "Z"))
 
+; Issue #1910 B1: must use Sun=0..Sat=6 (same as weekday-name / rfc822).
+; Prior local table started at "Thu" and mislabeled every weekday.
 (define (timestamp->date-string t)
-  (let ((weekday (list "Thu" "Fri" "Sat" "Sun" "Mon" "Tue" "Wed")))
-    (string-append
-      (list-ref weekday (timestamp->weekday t)) " "
-      (number->string (timestamp->day t)) " "
-      (number->string (timestamp->year t)))))
+  (string-append
+    (weekday-name (timestamp->weekday t)) " "
+    (number->string (timestamp->day t)) " "
+    (number->string (timestamp->year t))))
 
 (define (day-of-week y m d)
   ; Zeller-like: 0=Sun, 6=Sat
