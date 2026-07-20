@@ -770,6 +770,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> constraint_blame_chain_length_total{0};
     std::atomic<std::uint64_t> cross_delta_blame_incomplete_total{0};
     std::atomic<std::uint64_t> constraint_blame_chain_rich_complete_total{0};
+    // Issue #1873: derived completeness rate (0–100) =
+    // rich_complete / (rich_complete + incomplete) * 100.
+    // Updated on each blame dump so AI self-repair can watch the trend.
+    std::atomic<std::uint64_t> blame_chain_completeness_rate{0};
+    // Issue #1873: add_delta constraints still missing provenance after
+    // active-context stamp (warning / degrade path — keep partial chain).
+    std::atomic<std::uint64_t> blame_provenance_missing_warning_total{0};
+    // Issue #1873: reverify hit scan cap and appended a partial blame
+    // frame trail (conflict or success-under-truncation).
+    std::atomic<std::uint64_t> reverify_truncation_partial_blame_total{0};
     // Issue #745: Occurrence-priority reverify in solve_delta.
     std::atomic<std::uint64_t> constraint_reverify_narrow_hits_total{0};
     std::atomic<std::uint64_t> constraint_reverify_timeout_prevented_total{0};

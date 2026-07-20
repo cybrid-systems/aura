@@ -303,12 +303,28 @@ std::size_t ConstraintSystem::effective_reverify_limit() const noexcept {
     return std::min(scaled, kReverifyCleanScanMax);
 }
 
+void ConstraintSystem::update_blame_chain_completeness_rate() noexcept {
+    // Issue #1873: 0–100 rate = rich_complete / (rich_complete + incomplete).
+    if (!metrics_)
+        return;
+    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    const auto rich = m->constraint_blame_chain_rich_complete_total.load(std::memory_order_relaxed);
+    const auto incomplete = m->cross_delta_blame_incomplete_total.load(std::memory_order_relaxed);
+    const auto denom = rich + incomplete;
+    const std::uint64_t rate = denom > 0 ? (rich * 100u) / denom : 0;
+    m->blame_chain_completeness_rate.store(rate, std::memory_order_relaxed);
+}
+
 void ConstraintSystem::record_cross_delta_blame_hit() {
-    // Issue #1529: build a dumpable blame chain from stamped
+    // Issue #1529 / #1873: build a dumpable blame chain from stamped
     // delta constraints + active occurrence context, then bump
-    // complete / incomplete / length metrics.
+    // complete / incomplete / length metrics. Truncation and missing
+    // provenance still leave a partial chain (never empty when any
+    // context is available).
     last_blame_chain_ = {};
     last_blame_chain_.root_mutation_id = active_mutation_id_;
+    last_blame_chain_.truncated_reverify = last_reverify_truncated_;
+    last_blame_chain_.unscanned_constraint_count = last_reverify_unscanned_;
 
     auto push_frame = [&](std::uint64_t mut, std::uint32_t pred, std::uint32_t node,
                           std::uint32_t cidx, std::uint8_t kind) {
@@ -319,6 +335,10 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
         f.constraint_index = cidx;
         f.kind = kind;
         last_blame_chain_.frames.push_back(f);
+        // Issue #1873: count frames that still lack the full triple
+        // after context fill-in (partial chain observability).
+        if (mut == 0 || pred == 0 || node == 0)
+            ++last_blame_chain_.missing_provenance_frames;
     };
 
     // Prefer dirty constraints that already carry provenance.
@@ -346,6 +366,12 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
         push_frame(active_mutation_id_, active_predicate_cond_node_, active_affected_node_,
                    UINT32_MAX, 0);
     }
+    // Issue #1873: even with zero active context, leave a synthetic
+    // partial frame so truncation / conflict is never a silent empty chain.
+    if (last_blame_chain_.frames.empty()) {
+        push_frame(0, active_predicate_cond_node_, active_affected_node_, UINT32_MAX, 0);
+        last_blame_chain_.partial = true;
+    }
 
     bool has_mut = last_blame_chain_.root_mutation_id != 0;
     bool has_pred = false;
@@ -360,6 +386,9 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
     }
     // Rich AC: mutation_id + predicate + affected NodeId sequence.
     last_blame_chain_.complete = has_mut && has_pred && has_node;
+    // Issue #1873: partial when missing triple, truncated, or missing frames.
+    last_blame_chain_.partial = !last_blame_chain_.complete || last_reverify_truncated_ ||
+                                last_blame_chain_.missing_provenance_frames > 0;
 
     if (!metrics_)
         return;
@@ -367,21 +396,74 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
     const auto len = last_blame_chain_.frames.size();
     m->constraint_blame_chain_length_total.fetch_add(len, std::memory_order_relaxed);
     m->type_incremental_blame_chain_length_total.fetch_add(len, std::memory_order_relaxed);
+    if (last_reverify_truncated_) {
+        m->reverify_truncation_partial_blame_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     if (active_mutation_id_ == 0) {
         m->constraint_stale_blame_invalidation_total.fetch_add(1, std::memory_order_relaxed);
         m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+        update_blame_chain_completeness_rate();
         return;
     }
     // Legacy complete: active mutation id set (preserves #745 / #690 ACs).
     m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
     m->type_incremental_cross_delta_blame_complete_total.fetch_add(1, std::memory_order_relaxed);
-    if (last_blame_chain_.complete) {
+    // Issue #1873: rich_complete only when is_complete() (triple present
+    // AND not partial/truncated). Otherwise incomplete — drives
+    // blame_chain_completeness_rate and lowers incomplete under better
+    // stamping.
+    if (last_blame_chain_.is_complete()) {
         m->constraint_blame_chain_rich_complete_total.fetch_add(1, std::memory_order_relaxed);
-    } else if (!has_pred || !has_node) {
-        // Mutation-scoped but missing occurrence/affected triple.
+    } else {
         m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
     }
+    (void)has_pred;
+    (void)has_node;
+    update_blame_chain_completeness_rate();
+}
+
+void ConstraintSystem::record_truncated_partial_blame(std::size_t scanned, std::size_t candidates) {
+    // Issue #1873: reverify hit the scan cap without a hard CONFLICT.
+    // Still append a dumpable partial chain so AI self-repair can see
+    // what was scanned vs left unscanned.
+    last_reverify_truncated_ = true;
+    last_reverify_unscanned_ = candidates > scanned ? candidates - scanned : 0;
+    last_blame_chain_ = {};
+    last_blame_chain_.root_mutation_id = active_mutation_id_;
+    last_blame_chain_.partial = true;
+    last_blame_chain_.truncated_reverify = true;
+    last_blame_chain_.unscanned_constraint_count = last_reverify_unscanned_;
+    last_blame_chain_.complete = false;
+
+    DeltaBlameFrame f;
+    f.source_mutation_id = active_mutation_id_;
+    f.predicate_cond_node = active_predicate_cond_node_;
+    f.affected_node = active_affected_node_;
+    f.constraint_index = UINT32_MAX;
+    f.kind = 0;
+    last_blame_chain_.frames.push_back(f);
+    if (f.source_mutation_id == 0 || f.predicate_cond_node == 0 || f.affected_node == 0)
+        last_blame_chain_.missing_provenance_frames = 1;
+    // Affected sequence still useful under truncation.
+    for (auto nid : blame_affected_nodes_) {
+        DeltaBlameFrame af;
+        af.source_mutation_id = active_mutation_id_;
+        af.predicate_cond_node = active_predicate_cond_node_;
+        af.affected_node = nid;
+        af.constraint_index = UINT32_MAX;
+        last_blame_chain_.frames.push_back(af);
+    }
+
+    if (!metrics_)
+        return;
+    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+    m->reverify_truncation_partial_blame_total.fetch_add(1, std::memory_order_relaxed);
+    m->constraint_blame_chain_length_total.fetch_add(last_blame_chain_.frames.size(),
+                                                     std::memory_order_relaxed);
+    // Truncation is incomplete by definition for rich completeness rate.
+    m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+    update_blame_chain_completeness_rate();
 }
 
 int ConstraintSystem::constraint_reverify_priority(std::size_t idx) const {
@@ -446,6 +528,10 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         let_poly_dirty_roots_.empty())
         return true;
 
+    // Issue #1873: reset truncation markers for this reverify pass.
+    last_reverify_truncated_ = false;
+    last_reverify_unscanned_ = 0;
+
     const bool saved_record = delta_record_mode_;
     delta_record_mode_ = false;
 
@@ -478,6 +564,11 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
 
     const auto scan_limit = effective_reverify_limit();
     const bool truncated = to_check.size() > scan_limit;
+    // Issue #1873: surface truncation to blame dump even before conflict.
+    if (truncated) {
+        last_reverify_truncated_ = true;
+        last_reverify_unscanned_ = to_check.size() > scan_limit ? to_check.size() - scan_limit : 0;
+    }
 
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
@@ -585,6 +676,13 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         }
     }
 
+    // Issue #1873: truncated reverify with no hard CONFLICT still
+    // leaves a partial blame trail (scanned vs unscanned) so AI
+    // self-repair can observe the cap rather than a silent success.
+    if (truncated) {
+        record_truncated_partial_blame(scanned, to_check.size());
+    }
+
     delta_record_mode_ = saved_record;
     return true;
 }
@@ -598,6 +696,13 @@ void ConstraintSystem::add_delta(Constraint c) {
         c.predicate_cond_node = active_predicate_cond_node_;
     if (c.affected_node == 0)
         c.affected_node = active_affected_node_;
+    // Issue #1873: still-missing provenance after stamp → warning
+    // metric (degrade but keep partial chain on later conflict).
+    if (metrics_ && c.source_mutation_id == 0 && c.predicate_cond_node == 0 &&
+        c.affected_node == 0) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->blame_provenance_missing_warning_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     const auto lhs = c.lhs;
     const auto rhs = c.rhs;
@@ -1119,6 +1224,12 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
     if (dirty_count_ == 0)
         return SolveResult::SOLVED;
+
+    // Issue #1873: truncation markers are only meaningful for the
+    // reverify pass of this solve; clear so dirty-worklist conflicts
+    // don't inherit a stale truncated_reverify flag.
+    last_reverify_truncated_ = false;
+    last_reverify_unscanned_ = 0;
 
     // Build the delta worklist from constraint_dirty_.
     // Issue #409: reverse-map path collects dirty constraints
@@ -3789,28 +3900,45 @@ static void record_refreshed_narrowing_provenance(FlatAST& flat, StringPool& poo
     rec.predicate_src = pred_src;
     rec.refined_type_str = refined_str;
     rec.if_node = if_id;
-    rec.cond_node = cond_id;
+    // Issue #1873: always stamp cond_node (prefer occ.source_cond_id).
+    rec.cond_node = occ.source_cond_id != 0 ? occ.source_cond_id : cond_id;
     rec.is_negation = false;
     rec.narrow_evidence = narrow_evidence;
     rec.capture_epoch = cache_epoch;
     if (!flat.all_mutations().empty())
         rec.source_mutation_id = flat.all_mutations().back().mutation_id;
+    // Issue #1873: if mutation log empty, still try child provenance
+    // as a degraded mutation stamp (partial chain, not silent zero).
+    if (rec.source_mutation_id == 0 && if_id < flat.size()) {
+        const auto p = flat.provenance(if_id);
+        if (p != 0)
+            rec.source_mutation_id = p;
+    }
     flat.record_narrowing(std::move(rec));
+    // Issue #1873: mirror predicate provenance onto the if node so
+    // subsequent CoercionEntry / apply_coercion_map can recover it.
+    if (if_id < flat.size() && rec.cond_node != 0 && flat.provenance(if_id) == 0)
+        flat.set_provenance(if_id, rec.cond_node);
 
     if (metrics) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics);
         m->occurrence_stale_refreshes_total.fetch_add(1, std::memory_order_relaxed);
-        if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() && occ.source_cond_id != 0) {
+        if (rec.source_mutation_id != 0 && !occ.predicate_name.empty() &&
+            (occ.source_cond_id != 0 || cond_id != 0)) {
             m->occurrence_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
             m->provenance_completeness_hits_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (metrics && rec.source_mutation_id == 0) {
+            // Partial / degraded refresh — still countable as incomplete
+            // provenance for the #1873 rate denominator.
+            m->blame_provenance_missing_warning_total.fetch_add(1, std::memory_order_relaxed);
         }
-        if (!occ.predicate_name.empty() && occ.source_cond_id != 0) {
+        if (!occ.predicate_name.empty() && (occ.source_cond_id != 0 || cond_id != 0)) {
             m->narrowing_provenance_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (narrow_evidence != 0) {
             m->coercion_post_narrow_elim_opportunities_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
-            if (rec.source_mutation_id != 0 && occ.source_cond_id != 0)
+            if (rec.source_mutation_id != 0 && (occ.source_cond_id != 0 || cond_id != 0))
                 m->coercion_narrow_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -7242,8 +7370,14 @@ aura::ast::InvariantStatus post_mutation_invariant_check(aura::ast::FlatAST& fla
             if (flat.get(nid).tag != NodeTag::Coercion)
                 continue;
             const auto ne = static_cast<std::uint32_t>(flat.get(nid).float_value);
+            // Issue #1873: recover provenance from node / mutation log
+            // instead of hardcoding zeros (keeps cross-delta blame trails).
+            std::uint32_t pred = flat.provenance(nid);
+            std::uint64_t mut = 0;
+            if (!flat.all_mutations().empty())
+                mut = flat.all_mutations().back().mutation_id;
             coercion_sites.add(flat.parent_of(nid), 0, nid, /*type_tag=*/0, flat.type_id(nid), 0, 0,
-                               /*predicate_cond_node=*/0, /*source_mutation_id=*/0, ne);
+                               pred, mut, ne);
         }
         if (!coercion_sites.empty())
             (void)revalidate_linear_after_coercion(flat, pool, reg, coercion_sites, &notes_out,
