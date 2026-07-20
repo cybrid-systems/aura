@@ -3998,8 +3998,6 @@ aura_issue_test_link_llvm_jit(test_dead_coercion_elision_narrow_evidence)
 # (query:linear-postmutate-fidelity-stats, schema 800) + bump wiring in
 # record_linear_gc_probe / restore_panic_checkpoint / resume_fiber_migration /
 # materialize_call_env. 8 ACs. Non-duplicative with #793/#792/#784/#763.
-aura_add_issue_test(test_linear_ownership_postmutate_guard_steal_envframe)
-aura_issue_test_link_llvm_jit(test_linear_ownership_postmutate_guard_steal_envframe)
 # Issue #798: ConstraintSystem incremental fidelity under Guard/steal.
 # 4 CompilerMetrics atomics (type_incremental_*_total) +
 # (query:type-incremental-fidelity-stats, schema 798) + bump wiring in
@@ -4910,8 +4908,6 @@ aura_issue_test_link_llvm_jit(test_set_workspace_flat_1729)
 aura_add_issue_test(test_agent_fingerprint_atomic_1730)
 aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic_1730)
 # Issue #1731: linear_post_mutate_enforce(NULL_ENV_ID) observability.
-aura_add_issue_test(test_linear_null_env_id_1731)
-aura_issue_test_link_llvm_jit(test_linear_null_env_id_1731)
 
 
 # Issue #1739: truncate_env_frames_to_checkpoint must bump bridge_epoch.
@@ -5062,8 +5058,6 @@ aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports_1857)
 
 
 # Issue #1867: record_linear_gc_probe violation counters use release; readers acquire.
-aura_add_issue_test(test_linear_gc_probe_memory_order_1867)
-aura_issue_test_link_llvm_jit(test_linear_gc_probe_memory_order_1867)
 # Issue #1868: EnvView zero-copy span lifetime (invalidate on Env bind/realloc).
 # Issue #1869: EnvView::lookup* share MAX_ENV_DEPTH (cyclic parent safe).
 # Issue #1871: solve_delta locality pending_full_solve + adaptive reverify metrics.
@@ -5079,8 +5073,6 @@ aura_issue_test_link_llvm_jit(test_blame_chain_completeness_1873)
 aura_add_issue_test(test_type_propagation_dead_coercion_1874)
 aura_issue_test_link_llvm_jit(test_type_propagation_dead_coercion_1874)
 # Issue #1875: dirty-aware EscapeAnalysis + post-mutation linear validation.
-aura_add_issue_test(test_linear_post_mutation_escape_1875)
-aura_issue_test_link_llvm_jit(test_linear_post_mutation_escape_1875)
 # Issue #1876: runtime sandbox + capability grant enforcement metrics.
 aura_add_issue_test(test_sandbox_capability_enforce_1876)
 aura_issue_test_link_llvm_jit(test_sandbox_capability_enforce_1876)
@@ -5101,8 +5093,6 @@ aura_add_issue_test(test_orch_observability_1881)
 aura_issue_test_link_llvm_jit(test_orch_observability_1881)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
 # Issue #1755: validate_linear_ownership_state bridge_epoch drift metric.
-aura_add_issue_test(test_linear_validate_bridge_epoch_1755)
-aura_issue_test_link_llvm_jit(test_linear_validate_bridge_epoch_1755)
 # Issue #1756: resolve_env_frame_detailed NULL/OOB/INVALID_VERSION.
 aura_add_issue_test(test_resolve_env_frame_detailed_1756)
 aura_issue_test_link_llvm_jit(test_resolve_env_frame_detailed_1756)
@@ -5134,8 +5124,6 @@ aura_issue_test_link_llvm_jit(test_stale_closure_fallback)
 aura_add_issue_test(test_epoch_apply_mandate_1632)
 aura_issue_test_link_llvm_jit(test_epoch_apply_mandate_1632)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
-aura_add_issue_test(test_linear_gc_closedloop_readiness_1599)
-aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)
 # Issue #1600: ResourceQuota on agent_spawn / parallel_intend / join orch paths.
 aura_add_issue_test(test_orch_resource_quota_1600)
 aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
@@ -5166,8 +5154,6 @@ aura_issue_test_link_llvm_jit(test_macro_hygiene_closedloop_health_1613)
 aura_add_issue_test(test_typed_mutation_invariant_audit_1614)
 aura_issue_test_link_llvm_jit(test_typed_mutation_invariant_audit_1614)
 # Issue #1615: linear ownership + coercion synergy / post-coercion reval.
-aura_add_issue_test(test_linear_coercion_synergy_1615)
-aura_issue_test_link_llvm_jit(test_linear_coercion_synergy_1615)
 # Issue #1616: IRClosure/ClosureBridge MacroIntroduced provenance (refine #1047).
 aura_add_issue_test(test_ir_closure_provenance_1616)
 aura_issue_test_link_llvm_jit(test_ir_closure_provenance_1616)
@@ -5566,8 +5552,6 @@ aura_issue_test_link_llvm_jit(test_typesystem_solve_delta_occurrence_priority_he
 aura_add_issue_test(test_typesystem_type_propagation_jit_l2_typed_mutate)
 aura_issue_test_link_llvm_jit(test_typesystem_type_propagation_jit_l2_typed_mutate)
 # Issue #747: Linear + Occurrence predicate-branch safety under typed mutation.
-aura_add_issue_test(test_linear_ownership_occurrence_predicate_mutate)
-aura_issue_test_link_llvm_jit(test_linear_ownership_occurrence_predicate_mutate)
 # Issue #748: SV verification EDSL structured mutate + dirty re-emit closed-loop.
 aura_add_issue_test(test_sv_verification_edsl_full_structured_closedloop)
 aura_issue_test_link_llvm_jit(test_sv_verification_edsl_full_structured_closedloop)

@@ -183,6 +183,19 @@ aura_add_issue_test(test_env_batch)
 aura_issue_test_link_llvm_jit(test_env_batch)
 set_target_properties(test_env_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1615 + #1599 + #1867 + #1731 + #1875 + #1755: linear family batch
+# (linear+coercion synergy + GC root audit + AI closedloop readiness +
+# record_linear_gc_probe memory_order + linear_post_mutate_enforce NULL_ENV_ID +
+# dirty-aware EscapeAnalysis + post-mutation validation hit_rate +
+# validate_linear_ownership_state bridge_epoch drift). #747 + #800 NOT included
+# — bundle members. #1568 NOT included — AuraDomainTests.cmake default-build.
+# test_linear_ownership_batch.cpp NOT included — already a batch entry.
+# EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch convention.
+# On-demand `ninja test_linear_batch`.
+aura_add_issue_test(test_linear_batch)
+aura_issue_test_link_llvm_jit(test_linear_batch)
+set_target_properties(test_linear_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
