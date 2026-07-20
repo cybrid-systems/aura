@@ -4652,6 +4652,10 @@ add_dependencies(all_test_issue_targets test_compile_primitive_guard_1896)
 aura_add_issue_test(test_mutation_systemic_guard_1897)
 aura_issue_test_link_llvm_jit(test_mutation_systemic_guard_1897)
 add_dependencies(all_test_issue_targets test_mutation_systemic_guard_1897)
+# Issue #1898: raw non-owning pointer pin/generation TOCTOU safety.
+aura_add_issue_test(test_raw_pointer_safety_1898)
+aura_issue_test_link_llvm_jit(test_raw_pointer_safety_1898)
+add_dependencies(all_test_issue_targets test_raw_pointer_safety_1898)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

@@ -214,6 +214,11 @@ AURA_COMPILER_METRICS_FIELD(compile_primitive_stale_ir_prevented_total)
 AURA_COMPILER_METRICS_FIELD(mutation_guard_exception_total)
 // Issue #1897: Guard dtor uncaught_exceptions auto-rollback
 AURA_COMPILER_METRICS_FIELD(mutation_guard_uncaught_auto_rollback_total)
+// Issue #1898: raw non-owning pointer pin / TOCTOU soft-fail
+AURA_COMPILER_METRICS_FIELD(raw_pointer_uaf_prevented_total)
+AURA_COMPILER_METRICS_FIELD(compiler_service_pin_reject_total)
+AURA_COMPILER_METRICS_FIELD(type_registry_pin_reject_total)
+AURA_COMPILER_METRICS_FIELD(workspace_flat_pin_total)
 AURA_COMPILER_METRICS_FIELD(eda_primitive_entered_without_guard_total)
 AURA_COMPILER_METRICS_FIELD(eda_sv_commercial_stub_latency_us_total)
 AURA_COMPILER_METRICS_FIELD(eda_sv_corruption_detected_total)
