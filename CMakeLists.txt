@@ -2165,16 +2165,6 @@ aura_issue_test_link_llvm_jit(test_soa_envframe_dualpath_consistency)
 aura_add_issue_test(test_soa_dual_path_consistency)
 aura_issue_test_link_llvm_jit(test_soa_dual_path_consistency)
 # Issue #1639: per-block dirty bitmask → partial re-lower wiring
-# (refine #1474/#1495/#1505/#1514/#1555/#1601/#1605/#1623). 7 ACs
-# source-driven + cross-layer baseline regression (paired with
-# check_incremental_relower_coverage.py linter REMOVED per Anqi
-# 2026-07-19 directive wave 10 — ship-time linter obsolete).
-# Complements the existing test_incremental_relower.cpp (251 lines,
-# 6 ACs covering #1605) by adding the 4 spec metrics observability
-# surface (full_relower_count + dirty_block_ratio + relower_block_hit_rate
-# + running sums for time-weighted averages).
-aura_add_issue_test(test_incremental_relower_perblock)
-aura_issue_test_link_llvm_jit(test_incremental_relower_perblock)
 # Issue #1640: AOT bridge mangle versioning + region filtering +
 # aot_emit_version stale 检测 + incremental re-emit + hot-update
 # observability (refine #136/#243/#708/#1262/#1367/#1369/#1480).
@@ -5279,12 +5269,6 @@ aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)
 # Issue #1600: ResourceQuota on agent_spawn / parallel_intend / join orch paths.
 aura_add_issue_test(test_orch_resource_quota_1600)
 aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
-# Issue #1601: eval/eval_ir prefer partial re-lower consumer wiring.
-aura_add_issue_test(test_incremental_relower_consumer_1601)
-aura_issue_test_link_llvm_jit(test_incremental_relower_consumer_1601)
-# Issue #1605: per-block dirty → partial re-lower (named test_incremental_relower).
-aura_add_issue_test(test_incremental_relower)
-aura_issue_test_link_llvm_jit(test_incremental_relower)
 # Issue #1606: walk_active_closures + linear live scan on invalidate/compact/JIT.
 aura_add_issue_test(test_walk_active_closures_1606)
 aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)

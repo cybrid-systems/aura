@@ -49,6 +49,14 @@ aura_add_issue_test(test_compact_sweep_batch)
 aura_issue_test_link_llvm_jit(test_compact_sweep_batch)
 set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1601 + #1605 + #1639: incremental_relower family batch (per-block
+# dirty bitmask wiring, eval/eval_ir/define_function prefer_partial consumer,
+# schema 1605/1639 metrics). EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_incremental_relower_batch`.
+aura_add_issue_test(test_incremental_relower_batch)
+aura_issue_test_link_llvm_jit(test_incremental_relower_batch)
+set_target_properties(test_incremental_relower_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
