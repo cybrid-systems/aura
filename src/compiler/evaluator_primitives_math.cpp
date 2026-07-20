@@ -1,10 +1,20 @@
 // evaluator_primitives_math.cpp — P0 step 6: m4-linear, regex, math, arithmetic
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+//
+// Issue #1976: m4-move / m4-borrow / m4-return! (Issue #108 M4 linear-type
+// stubs) gated by AURA_ENABLE_M4. define-linear + regex + arithmetic stay on.
+// Note: domain prefix is m4-* (linear), not the m4 macro processor.
+// See docs/m4.md.
 
 module;
 
 #include "primitives_detail.h"
 #include "runtime_shared.h"
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_M4
+#define AURA_ENABLE_M4 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -70,7 +80,9 @@ void register_math_regex_and_arithmetic_primitives(
     std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
     Evaluator& ev) {
 
+#if AURA_ENABLE_M4
     // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
+    // Issue #1976: deferred domain prefix m4-* (AURA_ENABLE_M4).
     add("m4-move", [](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_void();
@@ -85,6 +97,7 @@ void register_math_regex_and_arithmetic_primitives(
         (void)a;
         return make_void();
     });
+#endif // AURA_ENABLE_M4
     add("define-linear", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         return make_void();

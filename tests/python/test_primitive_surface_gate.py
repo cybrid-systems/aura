@@ -156,6 +156,13 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"], 4)
 
+    def test_m4_domain_deferred_and_budgeted(self):
+        self.assertEqual(self.m.DOMAIN_STATUS.get("m4-"), "deferred")
+        self.assertEqual(self.m.domain_status("m4-move"), "deferred")
+        self.assertEqual(self.m.domain_status("m4-return!"), "deferred")
+        self.assertIn("m4-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"], 3)
+
     def test_commercial_domain_counts_prefixes(self):
         names = [
             "tui:init",
@@ -179,6 +186,8 @@ class TestBlockedPatterns(unittest.TestCase):
             "tcp-close",
             "strategy:active",
             "strategy:set-strategy",
+            "m4-move",
+            "m4-borrow",
         ]
         counts = self.m.commercial_domain_counts(names)
         self.assertEqual(counts.get("tui:"), 3)
@@ -190,6 +199,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(counts.get("synthesize:"), 2)
         self.assertEqual(counts.get("tcp-"), 2)
         self.assertEqual(counts.get("strategy:"), 2)
+        self.assertEqual(counts.get("m4-"), 2)
 
     def test_commercial_budget_overrun_fails_strict(self):
         # Synthetic list with one extra tui: name past the frozen budget.
@@ -244,6 +254,12 @@ class TestBlockedPatterns(unittest.TestCase):
     def test_strategy_commercial_budget_overrun_fails_strict(self):
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"]
         fake = [f"strategy:synthetic-{i}" for i in range(budget + 1)]
+        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        self.assertEqual(rc, 1)
+
+    def test_m4_commercial_budget_overrun_fails_strict(self):
+        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"]
+        fake = [f"m4-synthetic-{i}" for i in range(budget + 1)]
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 

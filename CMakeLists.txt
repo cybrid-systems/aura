@@ -230,6 +230,11 @@ option(AURA_ENABLE_TCP "Register tcp-* domain primitives (integration, #1975)" O
 option(AURA_ENABLE_STRATEGY
        "Register strategy:* domain primitives (commercial, #1973)" ON)
 
+# Issue #1976: m4-* linear-type stubs (Issue #108 M4; deferred domain prefix).
+# Default ON for regression linear/borrow tests; slim: -DAURA_ENABLE_M4=OFF
+# (see docs/m4.md). Only m4-move/borrow/return!; define-linear + math/regex stay on.
+option(AURA_ENABLE_M4 "Register m4-* domain primitives (linear stubs, #1976)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -245,7 +250,7 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967–#1975 + #1973: per-source commercial/integration vertical flags
+# Issue #1967–#1976: per-source commercial/integration vertical flags
 # (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
@@ -292,6 +297,11 @@ if(AURA_ENABLE_STRATEGY)
 else()
     set(_AURA_ENABLE_STRATEGY_VAL 0)
 endif()
+if(AURA_ENABLE_M4)
+    set(_AURA_ENABLE_M4_VAL 1)
+else()
+    set(_AURA_ENABLE_M4_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -321,6 +331,10 @@ set_source_files_properties(
     src/compiler/evaluator_primitives_obs_jit.cpp
     PROPERTIES COMPILE_DEFINITIONS
                "AURA_ENABLE_TERMINAL=${_AURA_ENABLE_TERMINAL_VAL}")
+# m4-* linear stubs in evaluator_primitives_math.cpp (#1976); math/regex stay on.
+set_source_files_properties(
+    src/compiler/evaluator_primitives_math.cpp
+    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_M4=${_AURA_ENABLE_M4_VAL}")
 message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
 message(STATUS "eda:* domain: AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL} (#1968)")
 message(STATUS
@@ -334,6 +348,7 @@ message(STATUS
 message(STATUS
         "synthesize:* domain: AURA_ENABLE_SYNTHESIZE=${_AURA_ENABLE_SYNTHESIZE_VAL} (#1974)")
 message(STATUS "tcp-* domain: AURA_ENABLE_TCP=${_AURA_ENABLE_TCP_VAL} (#1975)")
+message(STATUS "m4-* domain: AURA_ENABLE_M4=${_AURA_ENABLE_M4_VAL} (#1976)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the
