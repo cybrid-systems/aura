@@ -13153,6 +13153,15 @@ export struct EnvView {
 // ── ClosureView — read-only view over a Closure's fields ────
 // Exposes params as a SymId span (Issue #145 SoA). Other
 // fields are direct; no copy.
+//
+// Lifetime (Issue #1870): zero-copy view. `params` is a span over
+// Closure::params (realloc on push_back invalidates). `name` is a
+// string_view into Closure::name (reassign/realloc invalidates).
+// `flat` / `pool` / `owner_arena` are raw non-owning pointers — the
+// pointed-to objects must outlive the view (same class as EnvView
+// #1868). Valid use: build view, inspect, drop — do not mutate the
+// source Closure (or free its flat/pool/arena) while the view is live.
+// Owned copies rejected to keep the #145 zero-copy / JIT bridge contract.
 export struct ClosureView {
     std::span<const aura::ast::SymId> params;
     aura::ast::NodeId body_id = aura::ast::NULL_NODE;
