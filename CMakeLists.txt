@@ -1678,14 +1678,8 @@ aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow_task1)
 # cycle + schema_validation setters + 8-thread concurrent
 # + (gc-heap) integration + regression. Non-duplicative
 # with #535/#525/#504/#502/#514 (prior reflect/Guard work).
-aura_add_issue_test(test_reflect_postmutate_guard_snapshot)
-aura_issue_test_link_llvm_jit(test_reflect_postmutate_guard_snapshot)
 # Issue #454: Reflection-to-EDSL bridge closed loop (FlatAST/marker/mutate).
-# 8 ACs: reflect-node-members, schema-of-marker, marker-stats, reflect-members,
-# mutate under Guard + bridge stats monotonic, mutation-log + regression.
-# Non-duplicative with #218/#248/#551 (per-theme reflect tests).
-aura_add_issue_test(test_reflect_edsl_bridge_closed_loop_454)
-aura_issue_test_link_llvm_jit(test_reflect_edsl_bridge_closed_loop_454)
+
 # Issue #594: Static reflection self-mod validation hook (Task6).
 aura_add_issue_test(test_static_reflect_selfmod_validation_task6_594)
 aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6_594)
@@ -2154,11 +2148,7 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 # recursive reflect_members (depth + cycle detect + auto-forwarding)
 # deferred to follow-up #1676; full nested-struct roundtrip tests to
 # #1677; new reflect EDSL primitives to #1678; IR fragment sample to
-# #1679. Per the design doc + the "原语最小化" directive, Phase 1
-# adds no new primitive — the existing primitives gain a new
-# observable dimension through the C-linkage accessor surface.
-aura_add_issue_test(test_reflect_nested)
-aura_issue_test_link_llvm_jit(test_reflect_nested)
+
 # Issue #1649: composite mutate atomic batch + SyntaxMarker propagation
 # observability (partial-redundant Phase 1, refine #1900 / #1502 / #1472
 # / #790 / #761 / #737 / #1908). Phase 1 ships the 2 body-named atomic
@@ -4787,9 +4777,7 @@ aura_issue_test_link_llvm_jit(test_render_ai_native_template_1677)
 # Issue #1678: workspace_marker_macro_introduced max(walk, snapshot).
 aura_add_issue_test(test_workspace_marker_macro_max_1678)
 aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max_1678)
-# Issue #1679: reflect validate terminates on cyclic FlatAST children.
-aura_add_issue_test(test_reflect_validate_cycle_guard_1679)
-aura_issue_test_link_llvm_jit(test_reflect_validate_cycle_guard_1679)
+
 # Issue #1680: query:module-exports mtime cache.
 aura_add_issue_test(test_module_export_cache_1680)
 aura_issue_test_link_llvm_jit(test_module_export_cache_1680)
@@ -5194,9 +5182,7 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate_1636)
 # Issue #1610: IR/JIT/AOT MacroIntroduced + provenance propagation.
 aura_add_issue_test(test_ir_hygiene_propagation_1610)
 aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation_1610)
-# Issue #1611: reflect.hh MacroIntroduced hygiene + post_mutation gate.
-aura_add_issue_test(test_reflect_macro_hygiene_1611)
-aura_issue_test_link_llvm_jit(test_reflect_macro_hygiene_1611)
+
 # Issue #1612: fiber resume/steal/GC MacroIntroduced marker + provenance.
 aura_add_issue_test(test_fiber_macro_hygiene_refresh_1612)
 aura_issue_test_link_llvm_jit(test_fiber_macro_hygiene_refresh_1612)

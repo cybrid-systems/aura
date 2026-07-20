@@ -140,6 +140,15 @@ aura_add_issue_test(test_soa_batch)
 aura_issue_test_link_llvm_jit(test_soa_batch)
 set_target_properties(test_soa_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #454 + #1611 + #1648 + #551 + #1679: reflect family batch
+# (Reflection-to-EDSL bridge + MacroIntroduced hygiene + nested struct
+# throw-site observability + post-mutation Guard impact snapshot +
+# validate cycle guard). EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_reflect_batch`.
+aura_add_issue_test(test_reflect_batch)
+aura_issue_test_link_llvm_jit(test_reflect_batch)
+set_target_properties(test_reflect_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
