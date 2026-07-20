@@ -12724,13 +12724,14 @@ public:
             int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
             int prev = (*slot)--;
             bool outermost = (prev == 1);
-            // Issue #1253 / #1373 / #1375 / #1747: outermost hold-duration
-            // telemetry. Issue #1747: compute BatchMutationMetrics locally,
-            // then publish with ≤6 atomic writes on the common path (was
-            // 15+ scattered fetch_add/CAS on every dtor — cache-line bounce
-            // under high-frequency mutate). Nested guards skip (no enter_ts_).
-            // Issue #1764: enter_ts_ is std::optional — has_value() replaces
-            // the fragile time_since_epoch().count() != 0 sentinel.
+            // Issue #1253 / #1373 / #1375 / #1747 / #1931: outermost hold-
+            // duration telemetry. Issue #1747/#1931: compute BatchMutationMetrics
+            // locally, then publish with ≤6 atomic writes on the common path
+            // (was 15+ scattered fetch_add/CAS on every dtor — cache-line bounce
+            // under high-frequency mutate + hot-update). Nested guards skip
+            // (no enter_ts_). Issue #1764: enter_ts_ is std::optional —
+            // has_value() replaces the fragile time_since_epoch().count()!=0
+            // sentinel.
             if (outermost && enter_ts_.has_value()) {
                 const auto dur = std::chrono::steady_clock::now() - *enter_ts_;
                 const auto us = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
@@ -12798,7 +12799,7 @@ public:
                         b.update_max = (uus > prev_max);
                     }
 
-                    // ── publish common path: ≤6 atomic writes (#1747) ──
+                    // ── publish common path: ≤6 atomic writes (#1747 / #1931) ──
                     // 1–4: dual hold counters (legacy #1253 + agent #1373)
                     // 5: histogram bucket
                     // 6: max (CAS loop when raised; Issue #1765 — no load+store)

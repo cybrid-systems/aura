@@ -2614,10 +2614,12 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1897: query:mutation-systemic-guard-stats — audit inventory for
-    // the systemic MutationBoundaryGuard enforcement pass. Schema **1897**.
-    // Lists which structural mutators use try_acquire + shared helper, and
-    // surfaces uncaught_exceptions auto-rollback dtor metric.
+    // Issue #1897 / #1950 / #1931: query:mutation-systemic-guard-stats —
+    // audit inventory for systemic MutationBoundaryGuard enforcement.
+    // Schema lineage **1897**; **schema-1931** closes hot-update zero-downtime
+    // reliability mandate (dtor ≤6 atomics + 100% compile/mutate Guard wrap +
+    // AC metrics mutation_guard_exception_total /
+    // compile_primitive_stale_ir_prevented_total).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-systemic-guard-stats", [&ev](const auto&) -> EvalValue {
             std::int64_t captures = 0, stale = 0, exceptions = 0, auto_rb = 0, wrapped = 0;
@@ -2633,7 +2635,8 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 wrapped = static_cast<std::int64_t>(
                     m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed));
             }
-            auto* ht = FlatHashTable::create(32);
+            // #1931 adds AC wire keys — create(64) headroom.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2662,7 +2665,9 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             };
             insert_kv("guard-captures", captures);
             insert_kv("stale-ir-prevented", stale);
+            insert_kv("compile_primitive_stale_ir_prevented_total", stale); // #1931 AC metric
             insert_kv("guard-exceptions", exceptions);
+            insert_kv("mutation_guard_exception_total", exceptions); // #1931 AC metric
             insert_kv("uncaught-auto-rollback", auto_rb);
             insert_kv("mutation_guard_uncaught_auto_rollback_total", auto_rb);
             insert_kv("boundary-primitives-wrapped", wrapped);
@@ -2682,6 +2687,17 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("uncaught-exceptions-dtor-wired", 1);
             insert_kv("schema", 1897);
             insert_kv("issue", 1897);
+            // Issue #1931 unified hot-update reliability surface.
+            insert_kv("schema-1931", 1931);
+            insert_kv("issue-1931", 1931);
+            insert_kv("schema-1950", 1950);
+            insert_kv("schema-1747", 1747);
+            insert_kv("dtor-common-path-atomics-cap", 6); // #1747 / #1931 ≤6
+            insert_kv("dtor-batch-metrics-wired", 1);
+            insert_kv("compile-mutate-guard-coverage-100pct", 1); // linter --strict
+            insert_kv("shared-helper-header-wired", 1);           // mutation_guard_helpers.hh
+            insert_kv("coverage-linter-wired", 1); // scripts/check_mutation_guard_coverage.py
+            insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

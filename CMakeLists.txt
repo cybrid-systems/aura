@@ -4756,6 +4756,10 @@ add_dependencies(all_test_issue_targets test_closure_bridge_lifetime_1929)
 aura_add_issue_test(test_aot_incremental_reemit_1930)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit_1930)
 add_dependencies(all_test_issue_targets test_aot_incremental_reemit_1930)
+# Issue #1931: systemic MutationBoundaryGuard + dtor ≤6 atomics hot-path.
+aura_add_issue_test(test_mutation_boundary_guard_1931)
+aura_issue_test_link_llvm_jit(test_mutation_boundary_guard_1931)
+add_dependencies(all_test_issue_targets test_mutation_boundary_guard_1931)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
