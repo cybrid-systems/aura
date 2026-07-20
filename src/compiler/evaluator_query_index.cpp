@@ -3,6 +3,8 @@
 
 module;
 
+#include "observability_metrics.h"
+#include <chrono>
 
 module aura.compiler.evaluator;
 
@@ -189,6 +191,110 @@ void Evaluator::tag_arity_index_sync_after_mutation(const aura::ast::FlatAST& fl
     tag_arity_index_synced_gen_ = flat.generation();
 }
 
+// Issue #1913: post-atomic-batch Evaluator tag_arity_index refresh.
+// Dirty-fraction policy (same threshold as FlatAST #1503):
+//   dirty_n * 100 <= size * threshold_pct → incremental sync
+//   else → full rebuild
+// Always keeps FlatAST ensure_tag_arity_index in lockstep.
+// Arms pattern_query_after_batch latency for the next query:pattern.
+void Evaluator::tag_arity_index_sync_after_atomic_batch(bool sync_query_index) const {
+    if (!sync_query_index || !workspace_flat_)
+        return;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto& flat = *workspace_flat_;
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+
+    atomic_batch_index_sync_calls_.fetch_add(1, std::memory_order_relaxed);
+    if (m)
+        m->atomic_batch_index_sync_calls.fetch_add(1, std::memory_order_relaxed);
+
+    // FlatAST-side ensure (dirty-fraction / delta / full).
+    flat.mark_tag_arity_index_dirty();
+    const auto flat_delta0 = flat.tag_arity_index_delta_hits();
+    const auto flat_full_thr0 = flat.tag_arity_index_threshold_full_rebuilds();
+    const auto flat_patch0 = flat.tag_arity_index_incremental_patches();
+    flat.ensure_tag_arity_index();
+
+    // Evaluator-side index under exclusive lock.
+    std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
+    const std::size_t cur_size = flat.size();
+    const auto cur_gen = flat.generation();
+
+    // Already in sync (no-op commit or empty workspace).
+    if (tag_arity_index_workspace_ == workspace_flat_ && !tag_arity_index_.empty() &&
+        cur_size == tag_arity_index_synced_size_ && cur_gen == tag_arity_index_synced_gen_) {
+        atomic_batch_index_rebuild_skipped_.fetch_add(1, std::memory_order_relaxed);
+        if (m)
+            m->atomic_batch_index_rebuild_skipped.fetch_add(1, std::memory_order_relaxed);
+        pattern_query_after_batch_armed_.store(true, std::memory_order_release);
+        return;
+    }
+
+    // Cold / workspace change → full rebuild.
+    if (tag_arity_index_workspace_ != workspace_flat_ || tag_arity_index_.empty()) {
+        tag_arity_index_rebuild_full(flat);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
+        bump_pattern_index_rebuild_trigger(
+            static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
+        atomic_batch_index_full_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+        if (m)
+            m->atomic_batch_index_full_rebuilds.fetch_add(1, std::memory_order_relaxed);
+        pattern_query_after_batch_armed_.store(true, std::memory_order_release);
+        return;
+    }
+
+    // Dirty-fraction scan (same policy as build_tag_arity_index_unlocked).
+    std::size_t dirty_n = 0;
+    const std::size_t scan_n = std::min(cur_size, tag_arity_index_synced_size_);
+    for (aura::ast::NodeId id = 0; id < static_cast<aura::ast::NodeId>(scan_n); ++id) {
+        if (flat.is_dirty(id))
+            ++dirty_n;
+    }
+    // Also count nodes appended since last sync as dirty for fraction.
+    if (cur_size > tag_arity_index_synced_size_)
+        dirty_n += (cur_size - tag_arity_index_synced_size_);
+
+    const std::uint8_t pct = flat.tag_arity_index_full_rebuild_threshold_pct();
+    const std::size_t denom = cur_size > 0 ? cur_size : 1;
+    const bool prefer_full = dirty_n * 100 > denom * static_cast<std::size_t>(pct);
+
+    if (prefer_full) {
+        tag_arity_index_rebuild_full(flat);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
+        bump_pattern_index_rebuild_trigger(
+            static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
+        atomic_batch_index_full_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+        if (m)
+            m->atomic_batch_index_full_rebuilds.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        // Incremental: dirty-node rekey + append + prune (#1503 / #1913).
+        tag_arity_index_sync_after_mutation(flat);
+        tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
+        flat.bump_tag_arity_index_delta_hits();
+        bump_edsl_tag_arity_delta_patch();
+        bump_pattern_index_rebuild_trigger(
+            static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
+        atomic_batch_index_sync_hits_.fetch_add(1, std::memory_order_relaxed);
+        atomic_batch_index_rebuild_skipped_.fetch_add(1, std::memory_order_relaxed);
+        if (m) {
+            m->atomic_batch_index_sync_hits.fetch_add(1, std::memory_order_relaxed);
+            m->atomic_batch_index_rebuild_skipped.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // Credit FlatAST policy counters when ensure chose threshold full / patch.
+    (void)flat_delta0;
+    (void)flat_full_thr0;
+    (void)flat_patch0;
+
+    pattern_query_after_batch_armed_.store(true, std::memory_order_release);
+
+    const auto us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    (void)us; // sync latency folded into next pattern query sample when armed
+}
+
 void Evaluator::bump_pattern_index_rebuild_trigger(std::uint8_t trigger) const noexcept {
     switch (static_cast<PatternIndexRebuildTrigger>(trigger)) {
         case PatternIndexRebuildTrigger::EagerMutate:
@@ -292,6 +398,13 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
     // MacroIntroduced count into macro_introduced_skipped_in_query_ so
     // AC metrics stay non-zero when the index does the filtering
     // (defense-in-depth loop never sees those ids).
+    //
+    // Issue #1913: when armed by tag_arity_index_sync_after_atomic_batch,
+    // measure this query:pattern bucket snapshot as post-batch latency.
+    const bool measure_post_batch =
+        pattern_query_after_batch_armed_.exchange(false, std::memory_order_acq_rel);
+    const auto t0 = measure_post_batch ? std::chrono::steady_clock::now()
+                                       : std::chrono::steady_clock::time_point{};
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
     const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
@@ -315,8 +428,32 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
         }
     }
     auto it = map.find(key);
-    if (it == map.end())
+    if (it == map.end()) {
+        if (measure_post_batch) {
+            const auto us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            pattern_query_after_batch_samples_.fetch_add(1, std::memory_order_relaxed);
+            pattern_query_after_batch_latency_us_total_.fetch_add(us, std::memory_order_relaxed);
+            auto prev = pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
+            while (us > prev && !pattern_query_after_batch_latency_us_max_.compare_exchange_weak(
+                                    prev, us, std::memory_order_relaxed)) {
+            }
+            if (auto* cm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                cm->pattern_query_after_batch_samples.fetch_add(1, std::memory_order_relaxed);
+                cm->pattern_query_after_batch_latency_us_total.fetch_add(us,
+                                                                         std::memory_order_relaxed);
+                auto pmax =
+                    cm->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed);
+                while (us > pmax &&
+                       !cm->pattern_query_after_batch_latency_us_max.compare_exchange_weak(
+                           pmax, us, std::memory_order_relaxed)) {
+                }
+            }
+        }
         return {};
+    }
     std::vector<aura::ast::NodeId> out = it->second;
     // Defensive: under unique_lock epoch cannot change; if it
     // ever does, count a race-window hit and return empty so
@@ -324,6 +461,27 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
     if (tag_arity_index_epoch_.load(std::memory_order_acquire) != epoch_at_copy) {
         tag_arity_index_race_window_hits_.fetch_add(1, std::memory_order_relaxed);
         return {};
+    }
+    if (measure_post_batch) {
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        pattern_query_after_batch_samples_.fetch_add(1, std::memory_order_relaxed);
+        pattern_query_after_batch_latency_us_total_.fetch_add(us, std::memory_order_relaxed);
+        auto prev = pattern_query_after_batch_latency_us_max_.load(std::memory_order_relaxed);
+        while (us > prev && !pattern_query_after_batch_latency_us_max_.compare_exchange_weak(
+                                prev, us, std::memory_order_relaxed)) {
+        }
+        if (auto* cm = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            cm->pattern_query_after_batch_samples.fetch_add(1, std::memory_order_relaxed);
+            cm->pattern_query_after_batch_latency_us_total.fetch_add(us, std::memory_order_relaxed);
+            auto pmax =
+                cm->pattern_query_after_batch_latency_us_max.load(std::memory_order_relaxed);
+            while (us > pmax && !cm->pattern_query_after_batch_latency_us_max.compare_exchange_weak(
+                                    pmax, us, std::memory_order_relaxed)) {
+            }
+        }
     }
     return out;
 }

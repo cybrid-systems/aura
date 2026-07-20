@@ -4692,6 +4692,10 @@ add_dependencies(all_test_issue_targets test_datetime_shadow_1911)
 aura_add_issue_test(test_stable_ref_cow_batch_1912)
 aura_issue_test_link_llvm_jit(test_stable_ref_cow_batch_1912)
 add_dependencies(all_test_issue_targets test_stable_ref_cow_batch_1912)
+# Issue #1913: atomic-batch ↔ tag_arity_index / query:pattern incremental sync.
+aura_add_issue_test(test_atomic_batch_pattern_1913)
+aura_issue_test_link_llvm_jit(test_atomic_batch_pattern_1913)
+add_dependencies(all_test_issue_targets test_atomic_batch_pattern_1913)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
