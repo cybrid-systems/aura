@@ -1520,6 +1520,24 @@ def cmd_catch_silent_swallow():
     return 0
 
 
+def cmd_mutation_guard_coverage():
+    """Issue #1931 / #1950: compile:*/mutate:* must use MutationBoundaryGuard."""
+    print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950) ═══{N}")
+    script = ROOT / "scripts" / "check_mutation_guard_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict", "--quiet"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail("uncovered compile:*/mutate:* primitive(s) — wrap with run_under_mutation_guard")
+        return 1
+    ok("mutation guard coverage 100%")
+    return 0
+
+
 def cmd_gate():
     """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
 
@@ -1532,6 +1550,7 @@ def cmd_gate():
 
     Issue #1668: also runs dead string_heap_ push audit (--strict).
     Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
+    Issue #1931: also runs mutation Guard coverage linter (--strict).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1561,6 +1580,7 @@ def cmd_gate():
         or cmd_naming_convention()
         or cmd_dead_heap_push()
         or cmd_catch_silent_swallow()
+        or cmd_mutation_guard_coverage()
     )
 
 
@@ -1947,6 +1967,7 @@ def main():
         "naming-convention": cmd_naming_convention,
         "dead-heap-push": cmd_dead_heap_push,
         "catch-silent-swallow": cmd_catch_silent_swallow,
+        "mutation-guard-coverage": cmd_mutation_guard_coverage,
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,

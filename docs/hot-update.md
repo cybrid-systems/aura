@@ -109,9 +109,9 @@ These remain open and are pre-requisites or extensions of the MVP:
 
 - [#1929] Fix `make_closure_view` raw pointer lifetime violation
 - [#1930] Complete `aura_reemit_aot_for_dirty` LLVM re-emit pipeline *(closed: single-workspace stable name→func_id + emit callback)*
-- [#1931] Systemic `MutationBoundaryGuard` enforcement
+- [#1931] Systemic `MutationBoundaryGuard` enforcement *(closed: dtor ≤6 atomics + 100% compile/mutate Guard + schema-1931)*
 - [#1947] `make_closure_view` copies Closure raw pointer
-- [#1950] `MutationBoundaryGuard` dtor 15+ atomic ops per call
+- [#1950] `MutationBoundaryGuard` dtor 15+ atomic ops per call *(closed via #1747/#1931 batch)*
 - [#1952] Complete `aura_reemit_aot_for_dirty` real LLVM incremental re-emit
 - [#1953] Systemic `MutationBoundaryGuard` enforcement + dtor atomic batch opt
 - [#1954] Strengthen `make_closure_view` lifetime + walk_active_closures
