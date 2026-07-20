@@ -10,6 +10,7 @@
 #include "value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h" // Issue #1621: shape churn → arena policy
+#include "core/workspace_epoch.hh" // Issue #1964 cycle 2b: aura::core::current_mutation_epoch()
 #include <algorithm>
 #include <contracts>
 #include <cstdint>
@@ -365,7 +366,7 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
         mutation_shape_churn_count.fetch_add(1, std::memory_order_relaxed);
         shape_jit_pass::record_stability_churn_deopt();
         shape_jit_pass::record_speculative_win_lost();
-        const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+        const std::uint64_t epoch = aura::core::current_mutation_epoch();
         profile.version = epoch > profile.version ? epoch : profile.version + 1;
         shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
         // Issue #1468: feed deopt-storm detector on stability-loss path.
@@ -424,7 +425,7 @@ bool ShapeProfiler::invalidate(FnKey fn) {
         aura::core::arena_policy::signal_shape_churn();
         aura::core::arena_policy::signal_dirty_cascade();
     }
-    const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+    const std::uint64_t epoch = aura::core::current_mutation_epoch();
     if (epoch > it->second.version)
         it->second.version = epoch;
     // Issue #1468: feed deopt-storm detector on every invalidate path.
@@ -462,7 +463,7 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         return 0;
     }
 
-    const std::uint64_t epoch = shape_jit_pass::current_mutation_epoch();
+    const std::uint64_t epoch = aura::core::current_mutation_epoch();
     std::uint32_t touched = 0;
     std::uint32_t preserved = 0;
     std::uint32_t hooks = 0;
