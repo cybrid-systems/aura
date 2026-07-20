@@ -54,12 +54,17 @@ int main() {
         auto pos = src.find("\"compile:hw-bitvec-register\"");
         CHECK(pos != std::string::npos, "primitive present");
         auto win = src.substr(pos, 2200);
-        CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "uses Guard");
-        CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
+        // #1897: may use shared run_under_mutation_guard (try_acquire + try/catch).
+        const bool via_helper = win.find("run_under_mutation_guard") != std::string::npos;
+        const bool via_guard = win.find("MutationBoundaryGuard") != std::string::npos &&
+                               win.find("guard_ok") != std::string::npos;
+        CHECK(via_helper || via_guard, "uses Guard or try_acquire helper");
         CHECK(win.find("register_hw_bitvec") != std::string::npos, "calls register_hw_bitvec");
-        CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
-              "try block");
-        CHECK(win.find("catch") != std::string::npos, "catch path");
+        if (!via_helper) {
+            CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
+                  "try block");
+            CHECK(win.find("catch") != std::string::npos, "catch path");
+        }
         // Ownership note sits above the add() site (#1837).
         auto pre = src.substr(pos > 600 ? pos - 600 : 0, 600);
         CHECK(pre.find("#1837") != std::string::npos || win.find("#1837") != std::string::npos,

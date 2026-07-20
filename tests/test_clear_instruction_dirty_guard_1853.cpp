@@ -54,13 +54,19 @@ int main() {
         auto pos = src.find("\"compile:clear-instruction-dirty!\"");
         CHECK(pos != std::string::npos, "primitive present");
         auto win = src.substr(pos, 2200);
-        CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "uses Guard");
-        CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
+        // #1896/#1897: may use run_compile_dirty_under_guard / run_under_mutation_guard.
+        const bool via_helper = win.find("run_compile_dirty_under_guard") != std::string::npos ||
+                                win.find("run_under_mutation_guard") != std::string::npos;
+        const bool via_guard = win.find("MutationBoundaryGuard") != std::string::npos &&
+                               win.find("guard_ok") != std::string::npos;
+        CHECK(via_helper || via_guard, "uses Guard or try_acquire helper");
         CHECK(win.find("clear_instruction_dirty_fn_") != std::string::npos,
               "calls clear_instruction_dirty_fn_");
-        CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
-              "try block");
-        CHECK(win.find("catch") != std::string::npos, "catch path");
+        if (!via_helper) {
+            CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
+                  "try block");
+            CHECK(win.find("catch") != std::string::npos, "catch path");
+        }
         // Capability gate remains (outside Guard).
         CHECK(win.find("kCapWildcard") != std::string::npos, "keeps capability gate");
     }

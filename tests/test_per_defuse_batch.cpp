@@ -199,10 +199,14 @@ static void run_1845_add_guard() {
         auto pos = src.find("\"compile:per-defuse-index-add\"");
         CHECK(pos != std::string::npos, "primitive present");
         auto win = src.substr(pos, 1800);
-        CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "uses Guard");
-        CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
+        // #1897: may use shared run_under_mutation_guard (try_acquire + try/catch).
+        const bool via_helper = win.find("run_under_mutation_guard") != std::string::npos;
+        const bool via_guard = win.find("MutationBoundaryGuard") != std::string::npos &&
+                               win.find("guard_ok") != std::string::npos;
+        CHECK(via_helper || via_guard, "uses Guard or try_acquire helper");
         CHECK(win.find("add_caller") != std::string::npos, "calls add_caller");
-        CHECK(win.find("catch") != std::string::npos, "catch path");
+        if (!via_helper)
+            CHECK(win.find("catch") != std::string::npos, "catch path");
         auto pre = src.substr(pos > 400 ? pos - 400 : 0, 400);
         CHECK(pre.find("#1839") != std::string::npos ||
                   pre.find("non-owning") != std::string::npos ||
