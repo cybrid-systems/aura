@@ -5193,6 +5193,9 @@ aura_issue_test_link_llvm_jit(test_predicate_memo_partial_evict_1872)
 # Issue #1873: blame chain completeness under truncation + cross-delta conflict.
 aura_add_issue_test(test_blame_chain_completeness_1873)
 aura_issue_test_link_llvm_jit(test_blame_chain_completeness_1873)
+# Issue #1874: TypePropagation expand + DCE cast elision after prop.
+aura_add_issue_test(test_type_propagation_dead_coercion_1874)
+aura_issue_test_link_llvm_jit(test_type_propagation_dead_coercion_1874)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

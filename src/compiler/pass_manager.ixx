@@ -2399,23 +2399,31 @@ private:
 //   - MakePair: type_id when car==cdr type_id; narrow when both match
 //   - MoveOp/BorrowOp/LinearWrap/CellGet: unary type+narrow from src
 //
-// Cost: O(rounds × N) per block, rounds ≤ 8. Idempotent after
+// Cost: O(rounds × N) per block, rounds ≤ 16. Idempotent after
 // fixpoint. Issue #1457: iterative + CastOp / narrow_evidence
 // stamping so DeadCoercionEliminationPass can elide more CastOps
 // for JIT zero-overhead post-mutation.
 //
-// Does NOT call TypeRegistry (lookup_type can re-enter GC/compact
-// mid-pipeline on some paths); only propagates type_ids already
-// stamped by lowering / TypeSpecializationWrap.
+// Issue #1874: expanded opcode set (MutBorrow/IsError/consts/…)
+// + longer fixpoint + optional TypeRegistry for Const* ground
+// stamps (int/bool/string only — no lookup_type, safe mid-pipeline).
+//
+// Does NOT call TypeRegistry::lookup_type (can re-enter GC/compact);
+// only uses pre-cached int_type/bool_type/string_type indices when
+// reg_ is non-null, plus type_ids already stamped by lowering /
+// TypeSpecializationWrap.
 export class TypePropagationPass {
 public:
-    explicit TypePropagationPass(const aura::core::TypeRegistry* /*reg*/ = nullptr) {}
+    explicit TypePropagationPass(const aura::core::TypeRegistry* reg = nullptr)
+        : reg_(reg) {}
 
     void run(aura::ir::IRModule& module) {
         propagated_count_ = 0;
         narrow_propagated_ = 0;
         cast_result_stamped_ = 0;
         extended_ops_propagated_ = 0;
+        fixpoint_rounds_ = 0;
+        const_ground_stamped_ = 0;
         if (module.functions.empty())
             return;
         for (auto& func : module.functions)
@@ -2450,13 +2458,18 @@ public:
     std::size_t cast_result_stamped() const { return cast_result_stamped_; }
     // Issue #1530: stamps applied on the extended opcode set.
     std::size_t extended_ops_propagated() const { return extended_ops_propagated_; }
+    // Issue #1874: sum of fixpoint rounds across blocks (for
+    // type_propagation_fixpoint_rounds metric).
+    std::size_t fixpoint_rounds() const { return fixpoint_rounds_; }
+    std::size_t const_ground_stamped() const { return const_ground_stamped_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
     // Issue #1619: SoAViewAwarePass — propagates type_id / narrow_evidence
     // instruction columns (columnar hot path).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
-    // Issue #1530: original #1457 set + extended pure/ownership/pair ops.
+    // Issue #1530 / #1874: original #1457 set + extended pure/ownership
+    // + more unaries / const ground stamps for DCE coverage.
     static bool should_propagate(aura::ir::IROpcode op) {
         switch (op) {
             case aura::ir::IROpcode::Local:
@@ -2484,6 +2497,17 @@ public:
             case aura::ir::IROpcode::LinearWrap:
             case aura::ir::IROpcode::CellGet:
                 return true;
+            // Issue #1874 expanded set — more pure/ownership + ground consts
+            case aura::ir::IROpcode::MutBorrowOp:
+            case aura::ir::IROpcode::IsError:
+            case aura::ir::IROpcode::RefCountOp:
+            case aura::ir::IROpcode::ConstI64:
+            case aura::ir::IROpcode::ConstF64:
+            case aura::ir::IROpcode::ConstBool:
+            case aura::ir::IROpcode::ConstString:
+            case aura::ir::IROpcode::Arg:
+            case aura::ir::IROpcode::HashRef:
+                return true;
             default:
                 return false;
         }
@@ -2501,6 +2525,18 @@ public:
             case aura::ir::IROpcode::BorrowOp:
             case aura::ir::IROpcode::LinearWrap:
             case aura::ir::IROpcode::CellGet:
+                // #1530
+                return true;
+            case aura::ir::IROpcode::MutBorrowOp:
+            case aura::ir::IROpcode::IsError:
+            case aura::ir::IROpcode::RefCountOp:
+            case aura::ir::IROpcode::ConstI64:
+            case aura::ir::IROpcode::ConstF64:
+            case aura::ir::IROpcode::ConstBool:
+            case aura::ir::IROpcode::ConstString:
+            case aura::ir::IROpcode::Arg:
+            case aura::ir::IROpcode::HashRef:
+                // #1874
                 return true;
             default:
                 return false;
@@ -2533,8 +2569,12 @@ private:
         };
         seed();
 
-        constexpr int kMaxRounds = 8;
+        // Issue #1874: raise cap 8→16 so long Local/Add/Cast chains
+        // reach fixpoint after mutation re-lower densifies the IR.
+        constexpr int kMaxRounds = 16;
+        int rounds_used = 0;
         for (int round = 0; round < kMaxRounds; ++round) {
+            ++rounds_used;
             std::size_t progress = 0;
             for (auto& instr : block.instructions) {
                 if (!should_propagate(instr.opcode))
@@ -2546,6 +2586,7 @@ private:
 
                 std::uint32_t inferred = 0;
                 std::uint32_t inferred_narrow = 0;
+                bool is_const_ground = false;
 
                 switch (instr.opcode) {
                     case aura::ir::IROpcode::CastOp: {
@@ -2574,6 +2615,35 @@ private:
                         }
                         break;
                     }
+                    // Issue #1874: ground-const stamps from pre-cached
+                    // TypeRegistry ids (no lookup_type). Feeds later
+                    // Local/Add/Cast chains so DCE sees type_id match.
+                    case aura::ir::IROpcode::ConstI64:
+                        if (instr.type_id == 0 && reg_) {
+                            inferred = reg_->int_type().index;
+                            is_const_ground = true;
+                        }
+                        break;
+                    case aura::ir::IROpcode::ConstBool:
+                        if (instr.type_id == 0 && reg_) {
+                            inferred = reg_->bool_type().index;
+                            is_const_ground = true;
+                        }
+                        break;
+                    case aura::ir::IROpcode::ConstString:
+                        if (instr.type_id == 0 && reg_) {
+                            inferred = reg_->string_type().index;
+                            is_const_ground = true;
+                        }
+                        break;
+                    case aura::ir::IROpcode::ConstF64:
+                        // Float is not a fixed TypeId index — only keep
+                        // already-stamped type_id in the slot map.
+                        break;
+                    case aura::ir::IROpcode::Arg:
+                        // Arg has no source slot; only seed map from
+                        // already-stamped type_id/narrow_evidence.
+                        break;
                     case aura::ir::IROpcode::Local:
                     case aura::ir::IROpcode::Not:
                     case aura::ir::IROpcode::Car:
@@ -2582,12 +2652,38 @@ private:
                     case aura::ir::IROpcode::MoveOp:
                     case aura::ir::IROpcode::BorrowOp:
                     case aura::ir::IROpcode::LinearWrap:
-                    case aura::ir::IROpcode::CellGet: {
+                    case aura::ir::IROpcode::CellGet:
+                    // Issue #1874: MutBorrow / RefCount unary copy.
+                    case aura::ir::IROpcode::MutBorrowOp:
+                    case aura::ir::IROpcode::RefCountOp:
+                    case aura::ir::IROpcode::IsError: {
+                        // IsError / RefCountOp: operands[1] is the value.
                         const auto src = instr.operands[1];
+                        // IsError result is Bool when reg_ available.
+                        if (instr.opcode == aura::ir::IROpcode::IsError) {
+                            if (instr.type_id == 0 && reg_) {
+                                inferred = reg_->bool_type().index;
+                                is_const_ground = true;
+                            }
+                            // Also copy narrow from value (occurrence path).
+                            if (auto it = slot_narrow.find(src); it != slot_narrow.end())
+                                inferred_narrow = it->second;
+                            break;
+                        }
                         if (auto it = slot_type_id.find(src); it != slot_type_id.end())
                             inferred = it->second;
                         if (auto it = slot_narrow.find(src); it != slot_narrow.end())
                             inferred_narrow = it->second;
+                        break;
+                    }
+                    case aura::ir::IROpcode::HashRef: {
+                        // Propagate narrow_evidence from hash/key when
+                        // they agree; value type is unknown without reg.
+                        auto n1 = slot_narrow.find(instr.operands[1]);
+                        auto n2 = slot_narrow.find(instr.operands[2]);
+                        if (n1 != slot_narrow.end() && n2 != slot_narrow.end() && n1->second != 0 &&
+                            n1->second == n2->second)
+                            inferred_narrow = n1->second;
                         break;
                     }
                     case aura::ir::IROpcode::Add:
@@ -2598,7 +2694,7 @@ private:
                     case aura::ir::IROpcode::Or:
                     // Issue #1530: MakePair stamps when car/cdr agree
                     // (homogeneous pair); compare ops only copy matching
-                    // narrow_evidence (no invented Bool type_id).
+                    // narrow_evidence (no invented Bool type_id unless reg_).
                     case aura::ir::IROpcode::MakePair:
                     case aura::ir::IROpcode::Eq:
                     case aura::ir::IROpcode::Lt:
@@ -2610,7 +2706,8 @@ private:
                         const bool both_typed = t1 != slot_type_id.end() &&
                                                 t2 != slot_type_id.end() && t1->second != 0 &&
                                                 t1->second == t2->second;
-                        // Compare results are Bool — do not stamp operand type_id.
+                        // Compare results are Bool — stamp Bool when reg_
+                        // available (#1874); do not stamp operand type_id.
                         const bool is_compare = instr.opcode == aura::ir::IROpcode::Eq ||
                                                 instr.opcode == aura::ir::IROpcode::Lt ||
                                                 instr.opcode == aura::ir::IROpcode::Gt ||
@@ -2618,6 +2715,10 @@ private:
                                                 instr.opcode == aura::ir::IROpcode::Ge;
                         if (both_typed && !is_compare)
                             inferred = t1->second;
+                        if (is_compare && instr.type_id == 0 && reg_) {
+                            inferred = reg_->bool_type().index;
+                            is_const_ground = true;
+                        }
                         auto n1 = slot_narrow.find(instr.operands[1]);
                         auto n2 = slot_narrow.find(instr.operands[2]);
                         if (n1 != slot_narrow.end() && n2 != slot_narrow.end() && n1->second != 0 &&
@@ -2636,6 +2737,8 @@ private:
                     ++progress;
                     if (extended)
                         ++extended_ops_propagated_;
+                    if (is_const_ground)
+                        ++const_ground_stamped_;
                 }
                 if (inferred_narrow != 0 && instr.narrow_evidence == 0) {
                     instr.narrow_evidence = inferred_narrow;
@@ -2653,12 +2756,16 @@ private:
             if (progress == 0)
                 break;
         }
+        fixpoint_rounds_ += static_cast<std::size_t>(rounds_used);
     }
 
     std::size_t propagated_count_ = 0;
     std::size_t narrow_propagated_ = 0;
     std::size_t cast_result_stamped_ = 0;
     std::size_t extended_ops_propagated_ = 0;
+    std::size_t fixpoint_rounds_ = 0;      // Issue #1874
+    std::size_t const_ground_stamped_ = 0; // Issue #1874
+    const aura::core::TypeRegistry* reg_ = nullptr;
     std::uint64_t pipeline_epoch_ = 0;
     std::function<bool(std::uint32_t)> block_dirty_fn_; // Issue #1574
 };

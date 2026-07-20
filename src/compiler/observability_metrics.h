@@ -5630,12 +5630,20 @@ struct CompilerMetrics {
     // CastOp elision win-rate observability.
     //   - type_propagation_extended_ops_total: stamps applied on the
     //     #1530 extended set (Eq/Lt/Gt/Le/Ge/MakePair/Move/Borrow/
-    //     LinearWrap/CellGet)
+    //     LinearWrap/CellGet) + #1874 expansion
     //   - cast_elision_win_rate_bp: latest pipeline win rate in basis
     //     points (0..10000) = eliminated / max(1, castop_emitted +
     //     eliminated) * 10000 after TypeProp + DCE
     std::atomic<std::uint64_t> type_propagation_extended_ops_total{0};
     std::atomic<std::uint64_t> cast_elision_win_rate_bp{0};
+    // Issue #1874: TypePropagation fixpoint + DCE synergy.
+    //   - type_propagation_fixpoint_rounds: sum of rounds used
+    //     across blocks (≤16 per block after #1874)
+    //   - cast_eliminated_after_propagation: DCE eliminations
+    //     counted when DCE runs after TypeProp in the same pipeline
+    //     step (zero-overhead win after mutation re-lower)
+    std::atomic<std::uint64_t> type_propagation_fixpoint_rounds{0};
+    std::atomic<std::uint64_t> cast_eliminated_after_propagation{0};
     // Issue #306: hardware resource linear-ownership
     // observability counters (EDA track — wire/reg/mem/port
     // borrow + double-drive detection). Exposed via the
