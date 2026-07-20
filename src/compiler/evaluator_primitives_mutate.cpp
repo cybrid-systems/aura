@@ -8,9 +8,11 @@ module;
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
 #include "observability_metrics.h"
-#include "hash_meta.h"             // FNV constants for stats hash
-#include "typed_mutation_audit.h"  // Issue #1589
-#include "render_prim_template.hh" // Issue #1677: aura_is_render_evolution_name
+#include "hash_meta.h"                // FNV constants for stats hash
+#include "typed_mutation_audit.h"     // Issue #1589
+#include "render_prim_template.hh"    // Issue #1677: aura_is_render_evolution_name
+#include "core/sandbox.hh"            // Issue #1878: is_strict() for multi-tenant batch
+#include "core/provenance_tracker.hh" // Issue #1878: last_hygiene tenant stamp
 
 module aura.compiler.evaluator;
 
@@ -3105,14 +3107,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.pairs_.push_back({make_string(cap_idx), result});
         return make_pair(wrap);
     });
-    // (mutate:atomic-batch) — Issue #192 (P0): apply a list of
-    // mutate operations atomically (all-or-nothing). The list is
-    // a sequence of sub-lists, each sub-list is (op-name arg1 arg2 ...)
-    // — same shape as if you'd called the individual (mutate:rebind ...)
-    // / (mutate:remove-node ...) / etc. primitives directly. On any
-    // failure mid-batch, all mutations since the batch started are
-    // rolled back via FlatAST::rollback_since. The result is #t on
-    // full success, #f on rollback.
+    // (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878:
+    // apply a list of mutate operations atomically (all-or-nothing).
+    // The list is a sequence of sub-lists, each (op-name arg1 arg2 ...)
+    // — same shape as the individual (mutate:rebind ...) primitives.
+    // On any failure mid-batch, all mutations since the batch started
+    // are rolled back via FlatAST::rollback_since.
     //
     // Example:
     //   (mutate:atomic-batch
@@ -3121,37 +3121,30 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
     //      "double rebind")
     //
-    // Implementation note: each op's primitive acquires its own lock
-    // (ev.workspace_mtx_ unique_lock). This is "weak atomicity" —
-    // protected from concurrent batches, but if another fiber
-    // mutates in between two batched ops, that mutation would also
-    // be in the log and would be rolled back if a later op in the
-    // batch fails. Strong atomicity (hold the lock the whole time,
-    // dispatch via lockless helpers) is a follow-up.
-    // Issue #213 follow-up: migrate mutate:atomic-batch to
-    // the MutationBoundaryGuard. The atomic-batch already
-    // has its own rollback mechanism (rollback_since(
-    // initial_log_size) on error) — this stays as-is. The
-    // guard adds the lock + version-bump + ev.defuse_index_
-    // invalidation that the legacy code did manually. The
-    // two rollback paths are complementary:
-    //   - The guard's `ok` flag (set when the batch fails)
-    //     bumps ev.defuse_version_ + invalidates ev.defuse_index_
-    //     on exit(false), so readers holding the pre-batch
-    //     snapshot see a mismatch.
-    //   - The batch's internal `ok` flag (set when any
-    //     sub-primitive fails) triggers rollback_since(
-    //     initial_log_size) which actually undoes the
-    //     per-op mutations recorded in the log.
+    // Atomicity mode (Issue #1878, supersedes historical "weak" note):
+    //   STRONG (default): outer MutationBoundaryGuard holds
+    //   workspace_mtx_ unique_lock for the entire batch; all 14
+    //   lockless helpers run under that lock so concurrent tenants/
+    //   fibers cannot interleave mutations into the batch log
+    //   (#1900). Weak atomicity is not used on this path —
+    //   atomic_batch_weak_atomicity_used stays 0.
+    // Keywords:
+    //   :snapshot? #t — capture pre-batch snapshot (Issue #737)
+    //   :tenant-target N — under Strict sandbox, require workspace
+    //     isolation grant for target tenant N (Issue #1878 multi-tenant).
+    // Issue #213: MutationBoundaryGuard + batch rollback_since are
+    // complementary (guard ok flag vs log rollback).
     add_mutate("mutate:atomic-batch", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         // Issue #737: parse args + optional pre-guard snapshot
         // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
         // also takes workspace_mtx_; nested acquire deadlocks).
         if (a.size() < 1) {
-            return mev("bad-arg",
-                       "usage: (mutate:atomic-batch (list ...) [\"summary\"] [:snapshot? #t])");
+            return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
+                                  "[:snapshot? #t] [:tenant-target N])");
         }
         bool want_snapshot = false;
+        std::uint64_t tenant_target = 0;
+        bool have_tenant_target = false;
         for (std::size_t ai = 1; ai < a.size(); ++ai) {
             if (is_keyword(a[ai])) {
                 auto kidx = as_keyword_idx(a[ai]);
@@ -3167,6 +3160,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             want_snapshot = (as_int(a[ai + 1]) != 0);
                         ++ai;
                     }
+                } else if (kw == ":tenant-target") {
+                    // Issue #1878: multi-tenant batch destination.
+                    if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
+                        return mev("bad-arg", ":tenant-target requires an integer tenant id");
+                    tenant_target = static_cast<std::uint64_t>(as_int(a[ai + 1]));
+                    have_tenant_target = true;
+                    ++ai;
                 } else {
                     return mev("bad-arg",
                                std::string("unknown mutate:atomic-batch keyword: ") + kw);
@@ -3178,6 +3178,42 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "ops list must be a list (use (list) for empty)");
         if (!ev.workspace_flat_)
             return mev("no-workspace", "no FlatAST available");
+
+        // Issue #1878: multi-tenant isolation at batch root (before Guard).
+        // Under Strict sandbox (or when :tenant-target is set), refuse
+        // cross-tenant batches without a WorkspaceIsolationPolicy grant.
+        // This runs before snapshot/Guard so denials never half-open a batch.
+        {
+            using aura::compiler::security::kEffectMutate;
+            // Strict = effect sandbox mode 2 or process-wide sandbox Strict.
+            const bool strict = (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+            const auto self = ev.capability_tenant_id();
+            const auto target = have_tenant_target ? tenant_target : self;
+            // Always re-check with the batch-specific op name for audit trail.
+            if (strict || have_tenant_target) {
+                if (!ev.check_workspace_isolation(target, /*ref_tenant=*/0, kEffectMutate,
+                                                  "mutate:atomic-batch")) {
+                    ev.bump_atomic_batch_tenant_isolation_denial();
+                    return mev("tenant-isolation-denied",
+                               "cross-tenant mutate:atomic-batch denied by "
+                               "WorkspaceIsolationPolicy under Strict (#1878)");
+                }
+            }
+            // Provenance: foreign last-hygiene tenant under Strict → deny.
+            if (strict && self != 0) {
+                const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+                if (hs.tenant_id != 0 && hs.tenant_id != self) {
+                    if (!ev.check_workspace_isolation(self, hs.tenant_id, kEffectMutate,
+                                                      "mutate:atomic-batch-ref")) {
+                        ev.bump_atomic_batch_tenant_isolation_denial();
+                        return mev("tenant-isolation-denied",
+                                   "atomic-batch blocked: MacroIntroduced hygiene stamp "
+                                   "belongs to a foreign tenant (#1878)");
+                    }
+                }
+            }
+        }
+
         // Issue #820: e2e atomic-batch observability (refine #790).
         ev.bump_mutate_batch_e2e_started();
         ev.begin_atomic_batch_pinning();
@@ -3419,13 +3455,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.atomic_batch_domain_.ops_total += op_count;
         ev.atomic_batch_domain_.bumps_saved_total += saved;
         ev.commit_atomic_batch_pinning();
-        // Issue #1900 AC3: each successful commit means the outer
+        // Issue #1900 AC3 / #1878: each successful commit means the outer
         // MutationBoundaryGuard serialized all concurrent mutators
         // for the entire batch duration (workspace_mtx_ unique_lock
-        // held from Guard ctor through dtor). Bump the
-        // interleaved_mutation_prevented counter so AI dashboards
-        // can observe "how many strong-atomicity sessions ran".
+        // held from Guard ctor through dtor). Bump interleaved +
+        // strong-atomicity counters (weak path is never taken here).
         ev.bump_atomic_batch_interleaved_prevented();
+        ev.bump_atomic_batch_strong_atomicity_commit();
         // Issue #396 Phase 3: track fiber-context commits for
         // the "executed-under-concurrent-fiber" heuristic.
         if (in_fiber) {

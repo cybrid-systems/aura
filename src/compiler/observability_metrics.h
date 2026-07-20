@@ -558,6 +558,15 @@ struct CompilerMetrics {
     // any concurrent mutator).
     std::atomic<std::uint64_t> atomic_batch_unsupported_op_total{0};
     std::atomic<std::uint64_t> atomic_batch_interleaved_mutation_prevented{0};
+    // Issue #1878: multi-tenant atomic-batch observability.
+    // weak_atomicity_used stays 0 on the default strong path (outer
+    // MutationBoundaryGuard holds workspace_mtx_ for the whole batch);
+    // reserved for any future opt-in weak mode.
+    std::atomic<std::uint64_t> atomic_batch_weak_atomicity_used{0};
+    // Successful batch commits that ran under strong atomicity (#1900/#1878).
+    std::atomic<std::uint64_t> atomic_batch_strong_atomicity_commits{0};
+    // Cross-tenant isolation denials at atomic-batch entry under Strict.
+    std::atomic<std::uint64_t> atomic_batch_tenant_isolation_denials{0};
     // Issue #256: AST operation observability. See ast.ixx
     // for the bump sites + semantics. The ratio
     // mark_dirty_total_nodes / mark_dirty_upward_call_count
