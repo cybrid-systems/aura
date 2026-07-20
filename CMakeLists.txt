@@ -4712,6 +4712,10 @@ add_dependencies(all_test_issue_targets test_envframe_bridge_invalidate_1916)
 aura_add_issue_test(test_jit_critical_coverage_1917)
 aura_issue_test_link_llvm_jit(test_jit_critical_coverage_1917)
 add_dependencies(all_test_issue_targets test_jit_critical_coverage_1917)
+# Issue #1918: SoAView EDSL migration + pipeline DOD enforcement (refine #1241/#1619).
+aura_add_issue_test(test_soa_view_enforcement_1918)
+aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1918)
+add_dependencies(all_test_issue_targets test_soa_view_enforcement_1918)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

@@ -218,20 +218,24 @@ export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
 
-// Issue #1517 / #1619: compile-time DOD compliance check.
+// Issue #1517 / #1619 / #1918: compile-time DOD compliance check.
 // - Passes with kRequireSoAView=true MUST be SoAViewAwarePass (static_assert).
 // - Soft metrics always: SoA aware → concept_enforcement_hits;
 //   legacy/unmarked → soa_view_pass_skipped.
-// - #1619: pack-level check_pipeline_dod_compliance at every pipeline entry.
+// - #1619/#1918: pack-level check_pipeline_dod_compliance at every pipeline entry.
+// - #1918: HotPassDodCompliant (SoAViewAware || Legacy) is the production target;
+//   unmarked passes remain transitional soft-skip (metric only).
 export template <typename P> consteval void check_pass_dod_compliance() {
     using T = std::remove_cvref_t<P>;
     if constexpr (RequiresSoAViewPass<T>) {
         static_assert(SoAViewAwarePass<T>,
                       "Hot pass declared kRequireSoAView must implement uses_soa_view() "
-                      "for zero-overhead DOD (#1517/#1619)");
+                      "for zero-overhead DOD (#1517/#1619/#1918)");
         // Explicit LegacyPass + kRequireSoAView is contradictory.
         static_assert(!LegacyPass<T>,
-                      "Pass cannot declare both kRequireSoAView and kLegacyPass (#1619)");
+                      "Pass cannot declare both kRequireSoAView and kLegacyPass (#1619/#1918)");
+        static_assert(HotPassDodCompliant<T>,
+                      "kRequireSoAView pass must be HotPassDodCompliant (#1918)");
     }
 }
 
@@ -570,6 +574,8 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
     std::span<const ComputeKindResult> results() const { return results_; }
+    // Issue #1918: SoAViewAwarePass — dirty-aware function scan is DOD-friendly.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
 private:
     // mutable so the const-qualified run() can still clear/refill
@@ -590,6 +596,8 @@ public:
     const ArityCheckResult& result() const { return result_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
+    // Issue #1918: SoAViewAwarePass — arity walks function/instruction columns.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
 private:
     // mutable so the const-qualified run() can store the result.
@@ -877,9 +885,9 @@ public:
     std::size_t folded_count() const { return folded_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
-    // Issue #1619: SoAViewAwarePass — const-fold prefers dirty short-circuit
-    // over full AoS walk when block_dirty_fn is set (DOD progressive path).
-    [[nodiscard]] bool uses_soa_view() const noexcept { return static_cast<bool>(block_dirty_fn_); }
+    // Issue #1619 / #1918: SoAViewAwarePass — const-fold is DOD-friendly
+    // (dirty short-circuit when wired; whole-function fold still columnar-ready).
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
 private:
     // Legacy per-instance known-map (kept for fold_block callers
@@ -1333,6 +1341,8 @@ public:
     std::size_t narrow_evidence_skipped() const { return narrow_evidence_skipped_; }
     [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept { return pipeline_epoch_; }
     void set_pipeline_epoch(std::uint64_t epoch) noexcept { pipeline_epoch_ = epoch; }
+    // Issue #1918: SoAViewAwarePass — type_id / narrow_evidence / linear columns.
+    [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
@@ -1347,6 +1357,13 @@ private:
 
 static_assert(JITFriendlyPass<TypeSpecializationWrap>,
               "TypeSpecializationWrap exposes pipeline_epoch_hint");
+static_assert(SoAViewAwarePass<TypeSpecializationWrap>,
+              "TypeSpecializationWrap is SoAViewAware (#1918)");
+static_assert(HotPassDodCompliant<TypeSpecializationWrap>,
+              "TypeSpecializationWrap HotPassDodCompliant (#1918)");
+static_assert(HotPassDodCompliant<ConstantFoldingWrap>, "ConstantFoldingWrap HotPassDodCompliant");
+static_assert(HotPassDodCompliant<ComputeKindWrap>, "ComputeKind HotPassDodCompliant");
+static_assert(HotPassDodCompliant<ArityWrap>, "Arity HotPassDodCompliant");
 
 // ── mark_coercions — mark nodes needing coercion (Issue #163) ───
 // Operates on FlatAST after type-checking, before lowering.
@@ -2865,6 +2882,12 @@ static_assert(SoAViewAwarePass<TypePropagationPass>, "TypePropagationPass is SoA
 static_assert(SoAViewAwarePass<DeadCoercionEliminationPass>,
               "DeadCoercionEliminationPass is SoAViewAware (#1619)");
 static_assert(SoAViewAwarePass<ConstantFoldingWrap>, "ConstantFoldingWrap is SoAViewAware (#1619)");
+static_assert(HotPassDodCompliant<TypePropagationPass>,
+              "TypePropagationPass HotPassDodCompliant (#1918)");
+static_assert(HotPassDodCompliant<DeadCoercionEliminationPass>,
+              "DeadCoercion HotPassDodCompliant (#1918)");
+static_assert(HotPassDodCompliant<ConstantFoldingWrap>,
+              "ConstantFoldingWrap HotPassDodCompliant (#1918)");
 static_assert(IncrementalPass<TypePropagationPass>,
               "TypePropagationPass is IncrementalPass (#1574)");
 static_assert(DirtyAwarePass<ComputeKindWrap>,

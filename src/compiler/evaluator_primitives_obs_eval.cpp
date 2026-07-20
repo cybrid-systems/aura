@@ -12153,8 +12153,8 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #1619: ~15 keys — need headroom (create(16) can drop).
-                auto* ht = FlatHashTable::create(32);
+                // #1619/#1918: ~25 keys — need headroom (create(32) can drop).
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -12214,8 +12214,17 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 m->pipeline_soa_view_aware_total.store(aware, std::memory_order_relaxed);
             }
             const auto ratio_bp = aura::compiler::soa_view::migration_ratio_bp();
+            const auto edsl_bp = aura::compiler::soa_view::edsl_column_access_ratio_bp();
             const auto phase =
                 static_cast<std::int64_t>(aura::compiler::soa_view::kSoaViewEnforcementPhase);
+            const auto matcher =
+                aura::compiler::soa_view::g_edsl_matcher_soa_hits.load(std::memory_order_relaxed);
+            const auto children =
+                aura::compiler::soa_view::g_edsl_children_soa_hits.load(std::memory_order_relaxed);
+            const auto mutate =
+                aura::compiler::soa_view::g_edsl_mutate_soa_hits.load(std::memory_order_relaxed);
+            const auto apply =
+                aura::compiler::soa_view::g_edsl_apply_soa_hits.load(std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"concept-enforcement-hits", make_int(static_cast<std::int64_t>(enforce))},
                 {"soa-view-pass-skipped", make_int(static_cast<std::int64_t>(skipped))},
@@ -12231,8 +12240,19 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"columnar-accessor-required", make_int(1)},
                 {"enforcement-phase", make_int(phase)},
                 {"pipeline-pack-check", make_int(1)},
+                // Issue #1918: EDSL hot-path SoA column access + HotPassDodCompliant
+                {"edsl-column-access-bp", make_int(static_cast<std::int64_t>(edsl_bp))},
+                {"edsl-column-access-pct", make_int(static_cast<std::int64_t>(edsl_bp / 100))},
+                {"edsl-column-access-target-bp", make_int(9000)},
+                {"edsl-matcher-soa-hits", make_int(static_cast<std::int64_t>(matcher))},
+                {"edsl-children-soa-hits", make_int(static_cast<std::int64_t>(children))},
+                {"edsl-mutate-soa-hits", make_int(static_cast<std::int64_t>(mutate))},
+                {"edsl-apply-soa-hits", make_int(static_cast<std::int64_t>(apply))},
+                {"hot-pass-dod-compliant-wired", make_int(1)},
+                {"schema-1918", make_int(1918)},
+                {"issue-1918", make_int(1918)},
                 {"issue", make_int(1619)},
-                {"schema", make_int(1619)}, // lineage 1517
+                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918
             };
             return build_hash(kv);
         });
