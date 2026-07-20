@@ -261,6 +261,11 @@ public:
         std::atomic<std::uint64_t> prologue_epoch_check_total{0};
         std::atomic<std::uint64_t> prologue_epoch_stale_deopt_total{0};
         std::atomic<std::uint64_t> prologue_emit_total{0};
+        // Issue #1917: critical opcode lower success / unhandled + PrimCall fast-path.
+        std::atomic<std::uint64_t> critical_opcode_lowered_total{0};
+        std::atomic<std::uint64_t> critical_opcode_unhandled_total{0};
+        std::atomic<std::uint64_t> primcall_fastpath_hits{0};
+        std::atomic<std::uint64_t> apply_site_epoch_probe_total{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
@@ -297,6 +302,20 @@ public:
     // IROpcode values are either fully lowered or fail-fast safe-deopt
     // (compile nullptr → interpreter). Popcount of this mask is 54.
     static constexpr std::uint64_t kFullyLoweredOpcodeMask = (1ull << 54) - 1ull;
+    // Issue #1917: AI hot-path critical opcodes (ordinals match ir.ixx IROpcode).
+    // Call=20 MakeClosure=21 Capture=22 CaptureRef=23 Apply=24
+    // PrimCall=30 LinearWrap=44..RefCountOp=49 GuardShape=52
+    static constexpr std::uint64_t kCriticalOpcodeMask =
+        (1ull << 20) | (1ull << 21) | (1ull << 22) | (1ull << 23) | (1ull << 24) | (1ull << 30) |
+        (1ull << 44) | (1ull << 45) | (1ull << 46) | (1ull << 47) | (1ull << 48) | (1ull << 49) |
+        (1ull << 52);
+    static constexpr std::uint32_t kCriticalOpcodeCount = 13;
+    [[nodiscard]] static bool is_critical_opcode(std::uint32_t op) noexcept {
+        return op < 64 && (kCriticalOpcodeMask & (1ull << op)) != 0;
+    }
+    // Critical-set coverage among opcodes actually seen at compile time
+    // (or full critical mask if none seen): 0..100.
+    [[nodiscard]] std::uint64_t critical_opcode_coverage_pct() const noexcept;
     // Issue #1516: EH opcode coverage (IsError/TryBegin/TryEnd/Raise).
     [[nodiscard]] std::uint64_t exception_opcode_coverage_count() const noexcept;
     static constexpr std::uint32_t kExceptionOpcodeCount = 4;
