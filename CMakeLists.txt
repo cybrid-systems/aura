@@ -4748,6 +4748,10 @@ add_dependencies(all_test_issue_targets test_envframe_truncate_guard_dual_epoch_
 aura_add_issue_test(test_linear_walk_active_closures_1928)
 aura_issue_test_link_llvm_jit(test_linear_walk_active_closures_1928)
 add_dependencies(all_test_issue_targets test_linear_walk_active_closures_1928)
+# Issue #1929: Closure Bridge make_closure_view lifetime + boundary walk unified.
+aura_add_issue_test(test_closure_bridge_lifetime_1929)
+aura_issue_test_link_llvm_jit(test_closure_bridge_lifetime_1929)
+add_dependencies(all_test_issue_targets test_closure_bridge_lifetime_1929)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

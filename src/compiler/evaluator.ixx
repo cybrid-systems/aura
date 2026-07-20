@@ -13546,11 +13546,13 @@ export struct EnvView {
 // pointed-to objects must outlive the view (same class as EnvView
 // #1868).
 //
-// Issue #1888: `source_lifetime_version` + `live` enable explicit guards.
-// After Closure move / GC erase / tombstone_for_views(), revalidate with
-// is_closure_view_valid(view, live_cl) before any deref of flat/pool/params.
-// make_closure_view rejects already-tombstoned sources (bumps
-// closure_view_dangling_prevented_total).
+// Issue #1888 / #1926 / #1929: `source_lifetime_version` + `live` enable
+// explicit guards. After Closure move / GC erase / tombstone_for_views(),
+// revalidate with is_closure_view_valid(view, live_cl) before any deref of
+// flat/pool/params. make_closure_view rejects already-tombstoned sources
+// (bumps closure_view_dangling_prevented_total). #1929 closes the hot-update
+// Closure Bridge mandate: dual-epoch stamp + safe accessors + apply-path
+// snapshot revalidate + walk_active_closures on mutation/GC/JIT/fiber bounds.
 // Owned copies rejected to keep the #145 zero-copy / JIT bridge contract.
 export struct ClosureView {
     std::span<const aura::ast::SymId> params;

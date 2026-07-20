@@ -5751,12 +5751,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
-    // ── Issue #1888: query:closure-view-lifetime-stats ──
+    // ── Issue #1888 / #1926 / #1929: query:closure-view-lifetime-stats ──
     // ClosureView lifetime stamp / dangling-prevented surface.
+    // schema-1929 unifies ClosureView UAF + walk_active_closures boundary
+    // mandate + live_closure_stale metrics for hot-update production path.
     ObservabilityPrims::register_stats_impl(
         "query:closure-view-lifetime-stats", [&ev](const auto&) -> EvalValue {
-            // Power-of-2 capacity; #1926 adds AC keys (create(32) headroom).
-            auto* ht = FlatHashTable::create(32);
+            // Power-of-2 capacity; #1929 adds unified AC keys (create(64)).
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5801,12 +5803,27 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("dual-epoch-wired", 1);
             insert_kv("schema-1926", 1926);
             insert_kv("issue-1926", 1926);
+            // Issue #1929: unified Closure Bridge / hot-update safety surface.
+            insert_kv("schema-1929", 1929);
+            insert_kv("issue-1929", 1929);
+            insert_kv("safe-accessors-wired", 1); // flat/pool/owner_arena null-on-invalid
+            insert_kv("apply-snapshot-revalidate-wired", 1); // apply_closure revalidate
+            insert_kv("walk-active-closures-wired", 1);      // #1895/#1928
+            insert_kv("boundaries-wired-count", 6);          // inv/compact/trunc/jit/fiber/gc
+            insert_kv("make-closure-view-lifetime-guard", 1);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->closure_view_dangling_prevented_total.store(prevented,
                                                                std::memory_order_relaxed);
                 m->closure_view_invalid_access_total.store(invalid, std::memory_order_relaxed);
                 m->closure_view_lifetime_wired.store(1, std::memory_order_relaxed);
+                const auto stale =
+                    m->compiler_live_closure_stale_prevented_total.load(std::memory_order_relaxed);
+                insert_kv("live_closure_stale_prevented_total", static_cast<std::int64_t>(stale));
+                insert_kv("live-closure-stale-prevented-total", static_cast<std::int64_t>(stale));
                 insert_kv("metrics-mirror", 1);
+            } else {
+                insert_kv("live_closure_stale_prevented_total", 0);
+                insert_kv("live-closure-stale-prevented-total", 0);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
