@@ -165,6 +165,8 @@ target_sources(aura PRIVATE
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
+    # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
+    src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/aura_jit_bridge.cpp
@@ -344,6 +346,8 @@ target_sources(test_ir PRIVATE
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
+    # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
+    src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
@@ -528,6 +532,8 @@ add_library(aura_test_objects STATIC
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
+    # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
+    src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
@@ -709,6 +715,8 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/shape_profiler.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
+    # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
+    src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
@@ -4671,6 +4679,11 @@ add_dependencies(all_test_issue_targets test_aot_hotupdate_typed_audit_1882)
 aura_add_issue_test(test_self_evolution_loop_stats_1883)
 aura_issue_test_link_llvm_jit(test_self_evolution_loop_stats_1883)
 add_dependencies(all_test_issue_targets test_self_evolution_loop_stats_1883)
+
+# Issue #1884: TypePropagation/memo ↔ TypedMutationAudit correlation
+aura_add_issue_test(test_type_prop_invariant_correlation_1884)
+aura_issue_test_link_llvm_jit(test_type_prop_invariant_correlation_1884)
+add_dependencies(all_test_issue_targets test_type_prop_invariant_correlation_1884)
 # Issue #1590: ResourceQuota hot-path (arena + Guard + query schema 1590).
 aura_add_issue_test(test_resource_quota_hotpath)
 aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)

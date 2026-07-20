@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 521,
-  "frozen_count": 444,
+  "frozen_count": 445,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -420,6 +420,7 @@
     "query:top5-commercial-coverage-stats",
     "query:type-incremental-fidelity-stats",
     "query:type-incremental-stats",
+    "query:type-propagation-invariant-stats",
     "query:typed-incremental-stats",
     "query:typed-mutate-coercion-stats",
     "query:typed-mutation-audit-pass-stats",
@@ -982,7 +983,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 421,
+  "stats_count": 422,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1384,6 +1385,7 @@
     "query:top5-commercial-coverage-stats",
     "query:type-incremental-fidelity-stats",
     "query:type-incremental-stats",
+    "query:type-propagation-invariant-stats",
     "query:typed-incremental-stats",
     "query:typed-mutate-coercion-stats",
     "query:typed-mutation-audit-pass-stats",

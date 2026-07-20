@@ -37,6 +37,8 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "bounded_lru.h"
 // Issue #1877: last hygiene provenance stamp for truncated blame frames.
 #include "core/provenance_tracker.hh"
+// Issue #1884: C bridge (avoid <mutex> from typed_mutation_audit.h in this module).
+extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n);
 
 namespace aura::compiler {
 
@@ -2681,8 +2683,11 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         // The next call to synthesize_flat_if will repopulate
         // the memo on demand.
         if (!predicate_memo_.empty()) {
+            const auto n = predicate_memo_.size();
             ++predicate_memo_evictions_;
             predicate_memo_.clear();
+            // Issue #1884: epoch-wide memo drop under mutation thrash.
+            aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
         }
     }
 
@@ -4067,6 +4072,8 @@ void InferenceEngine::evict_predicate_memo_if_over_capacity() {
     if (n > 0) {
         ++predicate_memo_evictions_;
         ++predicate_memo_partial_evictions_;
+        // Issue #1884: correlate thrash with last invariant outcome.
+        aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
     }
 }
 

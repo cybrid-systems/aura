@@ -38,6 +38,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include "jit_typed_mutation_stats.h"
+#include "typed_mutation_audit.h" // Issue #1884: TypeProp ↔ invariant correlation
 #include "linear_occurrence_mutate_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include <unistd.h>
@@ -8453,6 +8454,11 @@ private:
             metrics_.type_propagation_fixpoint_rounds.fetch_add(tp.fixpoint_rounds(),
                                                                 std::memory_order_relaxed);
         }
+        // Issue #1884: feed TypedMutationAudit correlation window.
+        typed_audit::note_type_propagation_pass(
+            static_cast<std::uint64_t>(tp.fixpoint_rounds()),
+            static_cast<std::uint64_t>(tp.narrow_propagated()),
+            static_cast<std::uint64_t>(tp.extended_ops_propagated()));
     }
 
     // Issue #538: accumulate coercion zero-overhead metrics from a
@@ -8467,6 +8473,8 @@ private:
             metrics_.dead_coercion_elision_runtime_check_savings_total.fetch_add(
                 dce.eliminated_count(), std::memory_order_relaxed);
         }
+        // Issue #1884: DCE narrow_evidence hits → audit correlation window.
+        typed_audit::note_dce_narrow_hits(static_cast<std::uint64_t>(dce.narrow_evidence_hits()));
         if (dce.elapsed_us() > 0) {
             metrics_.dead_coercion_elapsed_us_total.fetch_add(dce.elapsed_us(),
                                                               std::memory_order_relaxed);

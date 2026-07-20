@@ -709,6 +709,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:typed-mutation-audit-trail",
     // Issue #1882 — AOT hot-update TypedMutationAudit surface
     "query:aot-hotupdate-audit-stats",
+    // Issue #1884 — TypePropagation / memo ↔ invariant correlation
+    "query:type-propagation-invariant-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats
