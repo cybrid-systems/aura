@@ -4,7 +4,7 @@
   "count": 1077,
   "count": 1076,
   "by_category": {
-    "integration": 481,
+    "integration": 480,
     "issue_specific": 7,
     "regression": 2,
     "unit": 236,
@@ -4357,51 +4357,15 @@
       "issue": null
     },
     {
-      "file": "tests/test_env_bind_linear_race_1861.cpp",
-      "category": "unit",
-      "reason": "Issue #1861 — Env::bind_with_linear_state is single-writer",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_bindings_with_names_race_1863.cpp",
-      "category": "unit",
-      "reason": "Issue #1863 — Env::bindings_with_names walks bindings_symid_",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_frame_stale_vs_invalid_id_1754.cpp",
-      "category": "unit",
-      "reason": "Issue #1754 — is_env_frame_stale must not conflate NULL/OOB",
+      "file": "tests/test_env_batch.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
       "file": "tests/test_env_lookup_batch.cpp",
       "category": "unknown",
       "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_soa_lookup_iter_1859.cpp",
-      "category": "unit",
-      "reason": "Issue #1859 — Env::lookup SoA parent_id_ walk must be",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_symid_primary_path.cpp",
-      "category": "integration",
-      "reason": "Issue #1482 — Env::bind_symid PRIMARY storage + lazy",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_view_lifetime_1868.cpp",
-      "category": "unit",
-      "reason": "Issue #1868 — EnvView / make_env_view zero-copy spans are",
-      "issue": null
-    },
-    {
-      "file": "tests/test_env_view_lookup_depth_1869.cpp",
-      "category": "unit",
-      "reason": "Issue #1869 — EnvView::lookup / lookup_by_intern /",
       "issue": null
     },
     {
