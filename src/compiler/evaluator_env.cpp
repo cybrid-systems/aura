@@ -843,6 +843,13 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->compiler_closure_epoch_mismatch_hits.fetch_add(1, std::memory_order_relaxed);
             m->closure_bridge_epoch_safety_enforced.fetch_add(1, std::memory_order_relaxed);
+            // Issue #1928 / #1895: force-Drop (bridge_epoch=0) + NULL_ENV_ID
+            // hits this path first (is_bridge_stale(0,cur)=true). Still
+            // record null-env safe-fallback so agents can audit force Drop.
+            if (cl.env_id == NULL_ENV_ID && cl.bridge_epoch == 0)
+                m->linear_null_env_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            else if (cl.env_id == NULL_ENV_ID)
+                m->linear_post_mutate_null_env_id_total.fetch_add(1, std::memory_order_relaxed);
         }
         return ne;
     }
@@ -1093,9 +1100,12 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
 // Wired from invalidate_function / compact_env_frames / JIT ResourceTracker
 // via scan_live_closures_for_linear_captures.
 //
-// Issue #1733: isolate per-callback exceptions so a throwing fn does not
-// abort the walk mid-enumeration (GC root registration / invalidate batch
-// would otherwise leave a partial set). Lock still released via RAII.
+// Issue #1733 / #1895 / #1928: isolate per-callback exceptions so a throwing
+// fn does not abort the walk mid-enumeration (GC root registration /
+// invalidate batch would otherwise leave a partial set). Lock still released
+// via RAII. Callers at invalidate / compact / truncate / JIT / fiber / GC
+// boundaries pair this with scan_live_closures_for_linear_captures for
+// forced Drop (bridge_epoch=0) on linear/Moved captures.
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
@@ -1594,18 +1604,12 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
             held_guard = std::move(*gr);
         }
     }
-    // Issue #1949: walk_active_closures pre-truncate scan — catches
-    // any active closure with linear_ownership_state!=Fresh whose
-    // captured env_id would be silently dropped below. Bumps
-    // linear_live_closure_scans_total so operators can audit the
-    // 5+ boundary wirings (Issue #1949 AC #2 + AC #3).
-    {
-        walk_active_closures([](ClosureId /*cid*/, Closure& cl) {
-            (void)cl; // doomed-closure restamp below is the heavy lifter
-        });
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
-    }
+    // Issue #1928 / #1895 / #1949: BEFORE resize, force linear Drop on
+    // live/Moved captures (env_id still in-range for SoA column inspect).
+    // Replaces no-op walk_active_closures metric-only pre-scan.
+    // mark_invalid=true, only_if_moved=false → also NULL_ENV_ID force Drop.
+    (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                 /*only_if_moved=*/false);
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)
@@ -1770,29 +1774,14 @@ std::size_t Evaluator::compact_env_frames() {
     // could add closures_ to a stale view of env_frames_ (frame
     // already reclaimed or remap table wrong).
     std::lock_guard interlock(compact_env_frames_lock_);
-    // Issue #1545 / #1568: pre-compact full boundary consistency —
-    // scan + force Drop linear captures + epoch fence before env_id
-    // remap so apply never walks remapped frames with use-after-move.
-    // (GC root audit deferred to end of compact where restamp/reg run.)
+    // Issue #1545 / #1568 / #1928: pre-compact full boundary consistency —
+    // scan + force Drop linear/Moved/NULL_ENV captures + EnvFrame enforce
+    // before env_id remap so apply never walks remapped frames with
+    // use-after-move. (GC root audit deferred to end of compact.)
     {
-        (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+        (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
+                                                     /*only_if_moved=*/false);
         (void)linear_post_mutate_enforce_all();
-    }
-    // Issue #1949: walk_active_closures pre-compact scan — catches any
-    // active closure with linear_ownership_state!=Fresh whose captured
-    // env_id would be silently remapped/dropped below. Bumps
-    // linear_live_closure_scans_total so operators can audit the
-    // 5+ boundary wirings (Issue #1949 AC #2 + AC #3).
-    {
-        walk_active_closures([](ClosureId /*cid*/, Closure& cl) {
-            // No-op per-closure body — the pre-compact
-            // scan_live_closures_for_linear_captures above is the
-            // heavy lifter. This walk is just for metric accounting
-            // + dual-epoch consistency check.
-            (void)cl;
-        });
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->linear_live_closure_scans_total.fetch_add(1, std::memory_order_relaxed);
     }
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();

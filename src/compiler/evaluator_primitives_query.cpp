@@ -5806,14 +5806,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #1568 / #1596 / #1606 / #1659 / #1895: query:linear-boundary-consistency-stats —
-    // unified mutation/compact/JIT/fiber/GC boundary enforce closed-loop
-    // (walk_active_closures + live-closure linear scan + force Drop + GC root).
-    // Schema **1895** (agents accept 1659|1606|1596|1568 lineage).
+    // Issue #1568 / #1596 / #1606 / #1659 / #1895 / #1928:
+    // query:linear-boundary-consistency-stats — unified mutation/compact/
+    // JIT/fiber/GC boundary enforce closed-loop (walk_active_closures +
+    // live-closure linear scan + force Drop + GC root).
+    // Schema **1895** lineage; **schema-1928** closes #1928 AC surface.
     // Metrics: linear_post_mutate_enforcements, linear_live_closure_scans_total,
     // linear_ownership_violation_prevented, linear_gc_root_audit_checks_total,
     // linear_live_closures_marked_invalid_total (#1606 AC).
-    // #1895: NULL_ENV_ID force Drop + all 5+ boundary wire flags.
+    // #1895/#1928: NULL_ENV_ID force Drop + all 5+ boundary wire flags.
     ObservabilityPrims::register_stats_impl(
         "query:linear-boundary-consistency-stats",
         [&ev, &string_heap, &pairs](std::span<const EvalValue> a) -> EvalValue {
@@ -5878,8 +5879,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
             insert_kv("schema", make_int(1895)); // #1895 closed-loop; lineage 1659/1606/1568
             insert_kv("issue", make_int(1895));
+            insert_kv("schema-1928", make_int(1928)); // #1928 walk_active_closures mandate
+            insert_kv("issue-1928", make_int(1928));
             insert_kv("active", make_int(1));
-            insert_kv("phase", make_int(5)); // production + all-boundary mandate (#1895)
+            insert_kv("phase", make_int(5)); // production + all-boundary mandate (#1895/#1928)
+            insert_kv("truncate-scan-wired", make_int(1));    // #1928 truncate force Drop
+            insert_kv("boundaries-wired-count", make_int(6)); // inv/compact/trunc/jit/fiber/gc
             insert_kv("linear-post-mutate-enforcements",
                       make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
             // #1596 AC5 alias (underscore form) + hyphen form for agents.
