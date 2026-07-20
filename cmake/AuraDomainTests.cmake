@@ -196,6 +196,21 @@ aura_add_issue_test(test_linear_batch)
 aura_issue_test_link_llvm_jit(test_linear_batch)
 set_target_properties(test_linear_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1436 + #1691 + #1701 + #1772 + #1684 + #1702 + #1690 + #1696 +
+# #1685 + #1703 + #1688 + #1689 + #1694 + #1697 + #1686 + #1687 +
+# #1699 + #1704/#1705 + #1700: mutate family batch (mutate:op dispatcher +
+# dead heap define_str + extract-function + from-feedback NodeId + Guard
+# exception + inline-call + insert-child + multi-node log NULL + rebind stale
+# Define + refactor/extract + remove-node all parents + remove-node parent
+# index + replace-pattern + replace-subtree + set-body exception + set-body
+# stale ids + splice + sv Guard + wrap stale parent). test_mutate_cross_thread_
+# migration.cpp NOT included — registered in AuraDomainTests.cmake:694-696
+# default-build with add_dependencies. EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_mutate_batch`.
+aura_add_issue_test(test_mutate_batch)
+aura_issue_test_link_llvm_jit(test_mutate_batch)
+set_target_properties(test_mutate_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
