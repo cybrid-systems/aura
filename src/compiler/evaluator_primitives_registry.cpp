@@ -126,6 +126,8 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_mutation_primitives(prim_registrar(), *this);
 
+    // Issue #1969: auto-evolve-* gated by AURA_ENABLE_AUTO_EVOLVE inside
+    // register_auto_evolve_primitives (agent:/strategy: co-adds stay on).
     primitives_detail::register_auto_evolve_primitives(prim_registrar(), *this);
 
     // ═══════════════════════════════════════════════════════════════
