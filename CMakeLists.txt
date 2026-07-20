@@ -5145,6 +5145,9 @@ aura_issue_test_link_llvm_jit(test_type_propagation_dead_coercion_1874)
 # Issue #1875: dirty-aware EscapeAnalysis + post-mutation linear validation.
 aura_add_issue_test(test_linear_post_mutation_escape_1875)
 aura_issue_test_link_llvm_jit(test_linear_post_mutation_escape_1875)
+# Issue #1876: runtime sandbox + capability grant enforcement metrics.
+aura_add_issue_test(test_sandbox_capability_enforce_1876)
+aura_issue_test_link_llvm_jit(test_sandbox_capability_enforce_1876)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

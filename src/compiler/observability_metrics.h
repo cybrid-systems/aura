@@ -6216,11 +6216,23 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> production_stability_1014_1046_active{1};
     std::atomic<std::uint64_t> rebind_validation_fail_returns_total{0}; // #1019
     std::atomic<std::uint64_t> sandbox_admin_denials_total{0};          // #1020
-    std::atomic<std::uint64_t> dirty_subtree_bfs_walks_total{0};        // #1036
-    std::atomic<std::uint64_t> ir_marker_stats_queries_total{0};        // #1039
-    std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0};      // #1042
-    std::atomic<std::uint64_t> serve_health_slo_active{1};              // #1015
-    std::atomic<std::uint64_t> panic_guard_lifecycle_active{1};         // #1014
+    // Issue #1876: runtime sandbox + capability enforcement observability.
+    //   - sandbox_violations_total: denials while sandbox/effect mode active
+    //   - capability_denials_by_effect: OR of required effect bits ever denied
+    //   - capability_denial_mutate_total / capability_denial_ffi_total: per-effect
+    //   - sandbox_provenance_records_total: record_mutation under sandbox allow
+    //   - sandbox_provenance_invalid_total: is_valid_full tenant/gen mismatch
+    std::atomic<std::uint64_t> sandbox_violations_total{0};
+    std::atomic<std::uint64_t> capability_denials_by_effect{0};
+    std::atomic<std::uint64_t> capability_denial_mutate_total{0};
+    std::atomic<std::uint64_t> capability_denial_ffi_total{0};
+    std::atomic<std::uint64_t> sandbox_provenance_records_total{0};
+    std::atomic<std::uint64_t> sandbox_provenance_invalid_total{0};
+    std::atomic<std::uint64_t> dirty_subtree_bfs_walks_total{0};   // #1036
+    std::atomic<std::uint64_t> ir_marker_stats_queries_total{0};   // #1039
+    std::atomic<std::uint64_t> ir_cache_v2_lru_evictions_total{0}; // #1042
+    std::atomic<std::uint64_t> serve_health_slo_active{1};         // #1015
+    std::atomic<std::uint64_t> panic_guard_lifecycle_active{1};    // #1014
 
     // ── Issues #1047–#1071: hygiene / type / mutate safety batch ──
     std::atomic<std::uint64_t> production_safety_1047_1071_active{1};

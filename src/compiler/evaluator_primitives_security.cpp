@@ -13,6 +13,7 @@ module;
 #include "serve/metrics.h"
 #include "hash_meta.h"                 // FNV constants (#901)
 #include "core/capability_model.hh"    // #1565: snapshot_capability_effect_stats
+#include "core/sandbox.hh"             // #1876: query:sandbox-status
 #include "core/workspace_isolation.hh" // #1566: snapshot_tenant_isolation_stats
 #include "core/mutation_audit_wal.hh"  // #1567: snapshot_audit_wal_stats
 
@@ -224,11 +225,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
-    // Issue #1565: query:capability-effect-stats
+    // Issue #1565 / #1876: query:capability-effect-stats
+    // #1876 folds sandbox-status fields into this existing surface
+    // (no new public query name — primitive freeze #1448).
     ObservabilityPrims::register_stats_impl(
         "query:capability-effect-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::core::capability;
+            using namespace aura::core::sandbox;
             const auto snap = snapshot_capability_effect_stats();
+            const auto& ss = g_sandbox_state();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->capability_effect_enforced_total.store(snap.enforced, std::memory_order_relaxed);
                 m->capability_effect_denied_total.store(snap.denied, std::memory_order_relaxed);
@@ -237,7 +242,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->capability_effect_grant_total.store(snap.grants, std::memory_order_relaxed);
                 m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -276,6 +282,32 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("audits", static_cast<std::int64_t>(snap.audits));
             insert_kv("sandbox-mode", snap.sandbox_mode);
             insert_kv("tenant-id", static_cast<std::int64_t>(ev.capability_tenant_id()));
+            // Issue #1876: sandbox-status fields (folded, no new query name).
+            insert_kv("sandbox-status-schema", 1876);
+            insert_kv("sandbox-active", is_sandbox_active() || ev.sandbox_mode() ? 1 : 0);
+            insert_kv("sandbox-strict", is_strict() || ev.effect_sandbox_mode() == 2 ? 1 : 0);
+            insert_kv("effect-checks", static_cast<std::int64_t>(ss.effect_checks));
+            insert_kv("effect-denials", static_cast<std::int64_t>(ss.effect_denials));
+            insert_kv("sandbox-violations",
+                      m ? static_cast<std::int64_t>(
+                              m->sandbox_violations_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("denials-by-effect",
+                      m ? static_cast<std::int64_t>(
+                              m->capability_denials_by_effect.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("denial-mutate",
+                      m ? static_cast<std::int64_t>(
+                              m->capability_denial_mutate_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("denial-ffi",
+                      m ? static_cast<std::int64_t>(
+                              m->capability_denial_ffi_total.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("provenance-records",
+                      m ? static_cast<std::int64_t>(
+                              m->sandbox_provenance_records_total.load(std::memory_order_relaxed))
+                        : 0);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
