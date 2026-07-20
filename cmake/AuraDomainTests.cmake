@@ -102,6 +102,15 @@ aura_add_issue_test(test_mutation_boundary_batch)
 aura_issue_test_link_llvm_jit(test_mutation_boundary_batch)
 set_target_properties(test_mutation_boundary_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1606 + #1733 + #1753: walk family batch (linear live closure
+# scan + walk_active_closures callback exception isolation +
+# walk_env_frames static_assert shape). EXCLUDE_FROM_ALL per
+# AuraDomainTests.cmake legacy batch convention. On-demand
+# `ninja test_walk_batch`.
+aura_add_issue_test(test_walk_batch)
+aura_issue_test_link_llvm_jit(test_walk_batch)
+set_target_properties(test_walk_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
