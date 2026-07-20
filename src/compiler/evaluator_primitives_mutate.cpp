@@ -8,12 +8,13 @@ module;
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
 #include "observability_metrics.h"
-#include "hash_meta.h"                // FNV constants for stats hash
-#include "typed_mutation_audit.h"     // Issue #1589
-#include "test/test_strategy.h"       // Issue #1887: hot-path / self-mod strategy metrics
-#include "render_prim_template.hh"    // Issue #1677: aura_is_render_evolution_name
-#include "core/sandbox.hh"            // Issue #1878: is_strict() for multi-tenant batch
-#include "core/provenance_tracker.hh" // Issue #1878: last_hygiene tenant stamp
+#include "hash_meta.h"                        // FNV constants for stats hash
+#include "typed_mutation_audit.h"             // Issue #1589
+#include "test/test_strategy.h"               // Issue #1887: hot-path / self-mod strategy metrics
+#include "render_prim_template.hh"            // Issue #1677: aura_is_render_evolution_name
+#include "core/sandbox.hh"                    // Issue #1878: is_strict() for multi-tenant batch
+#include "core/provenance_tracker.hh"         // Issue #1878: last_hygiene tenant stamp
+#include "compiler/mutation_guard_helpers.hh" // Issue #1950: shared run_under_mutation_guard template
 
 module aura.compiler.evaluator;
 
@@ -4342,75 +4343,93 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // the explicit restamp_all_node_generations at the end).
         const auto size_before_appends = static_cast<std::size_t>(flat.size());
 
-        // Step 1: Create lambda with free vars as params, body = extracted node
-        auto lambda_id = flat.add_lambda(free_vars, node);
+        // Issue #1950: MutationBoundaryGuard wrap around the mutation
+        // block (AC #2: 100% Guard wrap on mutate:* primitives). The Guard
+        // dtor (evaluator.ixx:12588, batched to ≤6 atomics per #1747)
+        // owns the defuse_version_ + total_mutations_ bump — this primitive
+        // intentionally removed its manual #1904 path. Validation stays
+        // outside Guard; the mutation block (Steps 1–6 + restamp + return
+        // value) is wrapped so partial state on exception rolls back.
+        return run_under_mutation_guard(
+            ev,
+            [&]() -> EvalValue {
+                // Step 1: Create lambda with free vars as params, body = extracted node
+                auto lambda_id = flat.add_lambda(free_vars, node);
 
-        // Step 2: Create (define new-name lambda)
-        auto new_sym = ev.workspace_pool_->intern(new_name);
-        auto define_id = flat.add_define(new_sym, lambda_id);
-        flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
-        flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+                // Step 2: Create (define new-name lambda)
+                auto new_sym = ev.workspace_pool_->intern(new_name);
+                auto define_id = flat.add_define(new_sym, lambda_id);
+                flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+                flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
 
-        // Step 3: Create call site (new-name free-var-1 ...)
-        auto var_id = flat.add_variable(new_sym);
-        flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
-        std::vector<NodeId> call_args;
-        call_args.reserve(free_vars.size());
-        for (auto fv : free_vars) {
-            auto arg_var = flat.add_variable(fv);
-            call_args.push_back(arg_var);
-        }
-        auto call_id = flat.add_call(var_id, call_args);
-        flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
+                // Step 3: Create call site (new-name free-var-1 ...)
+                auto var_id = flat.add_variable(new_sym);
+                flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+                std::vector<NodeId> call_args;
+                call_args.reserve(free_vars.size());
+                for (auto fv : free_vars) {
+                    auto arg_var = flat.add_variable(fv);
+                    call_args.push_back(arg_var);
+                }
+                auto call_id = flat.add_call(var_id, call_args);
+                flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
-        // Issue #1701: re-validate target + parent edge after multi-add_*.
-        if (static_cast<std::size_t>(node) >= size_before_appends || !flat.is_live_node(node))
-            return ev.make_merr("stale-ref", "extract-function: target invalid after add_*");
-        auto parent_slot_ok = [&]() -> bool {
-            if (parent_of_target == NULL_NODE ||
-                static_cast<std::size_t>(parent_of_target) >= size_before_appends ||
-                !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
-                return false;
-            auto pv = flat.get(parent_of_target);
-            return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
-                   pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
-        };
-        if (!parent_slot_ok()) {
-            child_idx_opt = parent_child_index_if_attached(flat, node);
-            if (!child_idx_opt)
-                return ev.make_merr("stale-ref", "extract-function: parent edge lost after add_*");
-            parent_of_target = flat.parent_of(node);
-            child_idx_in_parent = static_cast<int>(*child_idx_opt);
-            if (!parent_slot_ok())
-                return ev.make_merr("stale-ref", "extract-function: parent invalid after add_*");
-        }
+                // Issue #1701: re-validate target + parent edge after multi-add_*.
+                if (static_cast<std::size_t>(node) >= size_before_appends ||
+                    !flat.is_live_node(node))
+                    return ev.make_merr("stale-ref",
+                                        "extract-function: target invalid after add_*");
+                auto parent_slot_ok = [&]() -> bool {
+                    if (parent_of_target == NULL_NODE ||
+                        static_cast<std::size_t>(parent_of_target) >= size_before_appends ||
+                        !flat.is_live_node(parent_of_target) || child_idx_in_parent < 0)
+                        return false;
+                    auto pv = flat.get(parent_of_target);
+                    return static_cast<std::size_t>(child_idx_in_parent) < pv.children.size() &&
+                           pv.child(static_cast<std::uint32_t>(child_idx_in_parent)) == node;
+                };
+                if (!parent_slot_ok()) {
+                    child_idx_opt = parent_child_index_if_attached(flat, node);
+                    if (!child_idx_opt)
+                        return ev.make_merr("stale-ref",
+                                            "extract-function: parent edge lost after add_*");
+                    parent_of_target = flat.parent_of(node);
+                    child_idx_in_parent = static_cast<int>(*child_idx_opt);
+                    if (!parent_slot_ok())
+                        return ev.make_merr("stale-ref",
+                                            "extract-function: parent invalid after add_*");
+                }
 
-        // Step 5: Replace original node slot with the call
-        flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), call_id);
+                // Step 5: Replace original node slot with the call
+                flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent),
+                               call_id);
 
-        // Step 6: Insert new define as a child of the workspace root
-        // Insert at position 0 (before other defs) to avoid forward-reference issues
-        // Re-read root after appends; require live pre-append or still-valid root.
-        auto ws_root = flat.root;
-        if (ws_root == NULL_NODE || !flat.is_live_node(ws_root))
-            return ev.make_merr("stale-ref",
-                                "extract-function: workspace root invalid after add_*");
-        flat.insert_child(ws_root, 0, define_id);
+                // Step 6: Insert new define as a child of the workspace root
+                // Insert at position 0 (before other defs) to avoid forward-reference issues
+                // Re-read root after appends; require live pre-append or still-valid root.
+                auto ws_root = flat.root;
+                if (ws_root == NULL_NODE || !flat.is_live_node(ws_root))
+                    return ev.make_merr("stale-ref",
+                                        "extract-function: workspace root invalid after add_*");
+                flat.insert_child(ws_root, 0, define_id);
 
-        ev.workspace_flat_->mark_dirty_upward(define_id);
-        ev.workspace_flat_->mark_dirty_upward(ws_root);
+                ev.workspace_flat_->mark_dirty_upward(define_id);
+                ev.workspace_flat_->mark_dirty_upward(ws_root);
 
-        flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
-        flat.restamp_all_node_generations();
+                flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+                flat.restamp_all_node_generations();
 
-        // Return (define-node-id . call-node-id)
-        auto result_pid = ev.pairs_.size();
-        {
-            auto car_val = make_int(static_cast<std::int64_t>(define_id));
-            auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
-            ev.pairs_.push_back(Pair{car_val, cdr_val});
-        }
-        return make_pair(result_pid);
+                // Return (define-node-id . call-node-id)
+                auto result_pid = ev.pairs_.size();
+                {
+                    auto car_val = make_int(static_cast<std::int64_t>(define_id));
+                    auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
+                    ev.pairs_.push_back(Pair{car_val, cdr_val});
+                }
+                return make_pair(result_pid);
+            },
+            ev.make_merr("guard-rejected",
+                         "extract-function: MutationBoundaryGuard rejected the mutation"));
     });
 
     // ── mutate:inline-call ──────────────────────────────────────

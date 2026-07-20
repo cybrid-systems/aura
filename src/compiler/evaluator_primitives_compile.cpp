@@ -12,6 +12,7 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "security_capabilities.h"
+#include "compiler/mutation_guard_helpers.hh" // Issue #1950: shared run_under_mutation_guard template
 
 module aura.compiler.evaluator;
 
@@ -78,49 +79,6 @@ using types::make_void;
 // mutation_guard_exception_total (+ lineage eda_guard_* counters).
 // `on_fail` is returned for both try_acquire reject and caught exceptions
 // (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
-template <typename F>
-EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = make_bool(false),
-                                   bool track_env_compact_violation = false) {
-    bool guard_ok = true;
-    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
-    if (!gr) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
-            if (track_env_compact_violation)
-                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
-                    1, std::memory_order_relaxed);
-        }
-        return on_fail;
-    }
-    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-        m->compile_primitive_guard_captures_total.fetch_add(1, std::memory_order_relaxed);
-    try {
-        return std::forward<F>(body)();
-    } catch (const std::exception&) {
-        guard_ok = false;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
-            m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
-            if (track_env_compact_violation)
-                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
-                    1, std::memory_order_relaxed);
-        }
-        return on_fail;
-    } catch (...) {
-        // [SILENCE-PRIM-#615] Guard-path uncaught → on_fail + metrics; dtor restores.
-        guard_ok = false;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
-            m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
-            if (track_env_compact_violation)
-                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
-                    1, std::memory_order_relaxed);
-        }
-        return on_fail;
-    }
-}
 
 // Issue #1896 alias: dirty-bit mutators default on_fail = #f.
 template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
