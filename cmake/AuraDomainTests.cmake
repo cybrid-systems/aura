@@ -149,6 +149,17 @@ aura_add_issue_test(test_reflect_batch)
 aura_issue_test_link_llvm_jit(test_reflect_batch)
 set_target_properties(test_reflect_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1709 + #1626 + #1706 + #1708 + #1870: closure family batch
+# (capture bounds + dual-check apply_closure + JIT + exists epoch
+# disambiguation + free_list order + ClosureView zero-copy lifetime).
+# test_closure_free.cpp NOT included — registered in AuraDomainTests.cmake
+# as default-build test (add_dependencies(all_test_issue_targets ...));
+# out of scope for batch. EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_closure_batch`.
+aura_add_issue_test(test_closure_batch)
+aura_issue_test_link_llvm_jit(test_closure_batch)
+set_target_properties(test_closure_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)

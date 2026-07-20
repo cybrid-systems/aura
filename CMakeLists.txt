@@ -4850,18 +4850,9 @@ aura_issue_test_link_llvm_jit(test_mutate_refactor_extract_stale_parent_1703)
 # Issue #1704: sv-add-coverpoint / sv-weaken-property MutationBoundaryGuard.
 aura_add_issue_test(test_mutate_sv_guard_1704)
 aura_issue_test_link_llvm_jit(test_mutate_sv_guard_1704)
-# Issue #1706: aura_closure_exists disambiguates epoch OOR vs 0.
-aura_add_issue_test(test_closure_exists_epoch_1706)
-aura_issue_test_link_llvm_jit(test_closure_exists_epoch_1706)
 # Issue #1707: closure cache generation seqlock (torn-read safety).
 aura_add_issue_test(test_jit_closure_cache_race_1707)
 aura_issue_test_link_llvm_jit(test_jit_closure_cache_race_1707)
-# Issue #1708: free_list push before freed=1 (slot leak on throw).
-aura_add_issue_test(test_closure_free_list_order_1708)
-aura_issue_test_link_llvm_jit(test_closure_free_list_order_1708)
-# Issue #1709: capture bounds on func_ids+envs (not envs alone).
-aura_add_issue_test(test_closure_capture_bounds_1709)
-aura_issue_test_link_llvm_jit(test_closure_capture_bounds_1709)
 # Issue #1710: pair car/cdr unchecked bounds+lock (UAF safety).
 aura_add_issue_test(test_pair_unchecked_safety_1710)
 aura_issue_test_link_llvm_jit(test_pair_unchecked_safety_1710)
@@ -5092,9 +5083,6 @@ aura_issue_test_link_llvm_jit(test_env_view_lifetime_1868)
 # Issue #1869: EnvView::lookup* share MAX_ENV_DEPTH (cyclic parent safe).
 aura_add_issue_test(test_env_view_lookup_depth_1869)
 aura_issue_test_link_llvm_jit(test_env_view_lookup_depth_1869)
-# Issue #1870: ClosureView zero-copy span/pointer lifetime (invalidate on mutate).
-aura_add_issue_test(test_closure_view_lifetime_1870)
-aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1870)
 # Issue #1871: solve_delta locality pending_full_solve + adaptive reverify metrics.
 aura_add_issue_test(test_solve_delta_locality_1871)
 aura_issue_test_link_llvm_jit(test_solve_delta_locality_1871)
@@ -5159,9 +5147,7 @@ aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
 # Issue #1604: stale closure fallback on apply_closure + JIT aura_closure_call.
 aura_add_issue_test(test_stale_closure_fallback)
 
-# Issue #1626: forced dual-check apply_closure + JIT aura_closure_call
-aura_add_issue_test(test_closure_dual_check_1626)
-aura_issue_test_link_llvm_jit(test_closure_dual_check_1626)
+
 aura_issue_test_link_llvm_jit(test_stale_closure_fallback)
 # Issue #1632: mandate bridge_epoch + defuse check on apply + JIT + IR
 aura_add_issue_test(test_epoch_apply_mandate_1632)
