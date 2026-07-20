@@ -8,6 +8,10 @@
 // File-scope `extern "C"` forward decls hoisted from each split
 // file (originally between imports and the namespace opening);
 // definitions live in src/serve/fiber.cpp at global scope.
+//
+// Issue #1971: 7 terminal:* names (Phase-A deprecated no-ops, #1351) are
+// gated by AURA_ENABLE_TERMINAL in register_jit_p59 + register_jit_p113.
+// See docs/terminal-domain.md.
 
 module;
 
@@ -32,6 +36,11 @@ module;
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
 #include <limits>
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_TERMINAL
+#define AURA_ENABLE_TERMINAL 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -7710,10 +7719,12 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 59 (orig lines 18572-18664)
 void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
 
+#if AURA_ENABLE_TERMINAL
     // Issue #824 Phase 1 counters → Issue #1351 Phase A deprecation.
     // These no-ops only bump metrics; real terminal APIs live on make-terminal-buffer /
     // terminal-set-cell* / terminal-present-batch / terminal-diff-update.
     // Phase A: return #f + one-shot stderr warn; keep counters. Phase B: delete later.
+    // Issue #1971: commercial UI vertical gate (AURA_ENABLE_TERMINAL).
     auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
         // Per-name one-shot via address of static storage keyed by name pointer
         // (literals are unique). Thread-safe enough for stderr warn spam control.
@@ -7776,6 +7787,7 @@ void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(false);
     });
+#endif // AURA_ENABLE_TERMINAL
     // Issue #830: query:pass-shape-epoch-stats
     ObservabilityPrims::register_stats_impl(
         "query:pass-shape-epoch-stats", [&ev](const auto&) -> EvalValue {
@@ -11385,8 +11397,10 @@ void ObservabilityPrims::register_jit_p112(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 113 (orig lines 21395-21426)
 void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
 
+#if AURA_ENABLE_TERMINAL
     // Issue #856 / #1136 / #1140 → Issue #1351 Phase A deprecation.
     // No-op counter stubs; real APIs: make-terminal-buffer / terminal-diff-update.
+    // Issue #1971: commercial UI vertical gate (AURA_ENABLE_TERMINAL).
     auto deprecate_terminal_noop = [](const char* name, const char* replacement) {
         static std::mutex warn_mu;
         static std::unordered_set<const void*> warned;
@@ -11417,6 +11431,7 @@ void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(false);
     });
+#endif // AURA_ENABLE_TERMINAL
     // Issue #872: primitives:alias name target (Phase 1 registry of aliases)
     add("primitives:alias", [&ev](const auto& a) -> EvalValue {
         if (ev.compiler_metrics_) {
