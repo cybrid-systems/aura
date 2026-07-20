@@ -79,6 +79,38 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
     "synthesize:",
 )
 
+# Issue #1965 cycle 2 — formalize which domain prefixes are CORE vs DEFERRED.
+# - "core"     = essential for production compiler / runtime, keep in codebase.
+# - "deferred" = commercial vertical / UI / integration / AI feature — mark for
+#                follow-up issues (filed in cycle 3 governance doc).
+# Rationale:
+#   - verify:    formal verification integration (safety-critical, keep).
+#   - channel:   cross-fiber messaging (agent framework, keep).
+#   - tui:       terminal UI (UI vertical, defer).
+#   - eda:       electronic design automation (commercial vertical, defer).
+#   - auto-evolve-: self-evolution AI feature (commercial vertical, defer).
+#   - git-:      git integration (integration, defer).
+#   - terminal:  terminal ops (UI/integration, defer).
+#   - seva:      service evaluation (commercial vertical, defer).
+#   - strategy:  strategy DSL (commercial vertical, defer).
+#   - synthesize: synthesis (commercial vertical, defer).
+#   - tcp-:      TCP networking (integration, defer).
+#   - m4-:       m4 macro processor (integration, defer).
+DOMAIN_STATUS: dict[str, str] = {
+    "verify:": "core",
+    "channel:": "core",
+    "tui:": "deferred",
+    "eda:": "deferred",
+    "auto-evolve-": "deferred",
+    "git-": "deferred",
+    "terminal:": "deferred",
+    "seva:": "deferred",
+    "strategy:": "deferred",
+    "synthesize:": "deferred",
+    "tcp-": "deferred",
+    "m4-": "deferred",
+}
+
 # Convenience + ref namespaces (prefix match). Stats handled separately.
 BLOCKED_PREFIXES: tuple[str, ...] = (
     "string-",
@@ -101,8 +133,33 @@ def is_domain_name(name: str) -> bool:
     return any(name.startswith(p) for p in DOMAIN_PREFIXES)
 
 
+def domain_status(name: str) -> str:
+    """Issue #1965 cycle 2: 'core' or 'deferred' for a domain prefix.
+    Returns 'unknown' for non-domain names."""
+    if not is_domain_name(name):
+        return "unknown"
+    for p in DOMAIN_PREFIXES:
+        if name.startswith(p):
+            return DOMAIN_STATUS.get(p, "deferred")
+    return "unknown"
+
+
 def core_public_names(all_names: list[str]) -> list[str]:
     return [n for n in all_names if not is_domain_name(n)]
+
+
+def domain_breakdown(all_names: list[str]) -> dict[str, dict[str, int]]:
+    """Per-prefix count bucketed by domain_status. Issue #1965 cycle 2."""
+    out: dict[str, dict[str, int]] = {}
+    for n in all_names:
+        if not is_domain_name(n):
+            continue
+        for p in DOMAIN_PREFIXES:
+            if n.startswith(p):
+                bucket = out.setdefault(p, {"core": 0, "deferred": 0})
+                bucket[DOMAIN_STATUS.get(p, "deferred")] += 1
+                break
+    return out
 
 
 def is_stats_like(name: str) -> bool:
@@ -232,6 +289,16 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
     print("  categories:")
     for k, v in buckets.items():
         print(f"    {k:12s} {len(v)}")
+    # Issue #1965 cycle 2: per-prefix core vs deferred breakdown.
+    print("  domain status (Issue #1965 cycle 2):")
+    breakdown = domain_breakdown(all_names)
+    core_dom = sum(v.get("core", 0) for v in breakdown.values())
+    def_dom = sum(v.get("deferred", 0) for v in breakdown.values())
+    print(f"    total core domain     : {core_dom}")
+    print(f"    total deferred domain : {def_dom}")
+    for p in sorted(breakdown.keys()):
+        b = breakdown[p]
+        print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
 
     # Hard ceiling — no growth past interim limit (total surface).
     if public_count > INTERIM_HARD_CEILING:
