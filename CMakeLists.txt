@@ -4955,9 +4955,6 @@ aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic_1730)
 aura_add_issue_test(test_linear_null_env_id_1731)
 aura_issue_test_link_llvm_jit(test_linear_null_env_id_1731)
 
-# Issue #1733: walk_active_closures isolates callback exceptions.
-aura_add_issue_test(test_walk_active_closures_ex_1733)
-aura_issue_test_link_llvm_jit(test_walk_active_closures_ex_1733)
 # Issue #1734: collect_compiler_managed_gc_roots bridge_epoch drift detect.
 aura_add_issue_test(test_gc_roots_bridge_epoch_drift_1734)
 aura_issue_test_link_llvm_jit(test_gc_roots_bridge_epoch_drift_1734)
@@ -5157,9 +5154,6 @@ aura_issue_test_link_llvm_jit(test_atomic_batch_tenant_1878)
 # Issue #1879: orch spawn/join/steal StableNodeRef provenance mandate.
 aura_add_issue_test(test_orch_stable_ref_lifecycle_1879)
 aura_issue_test_link_llvm_jit(test_orch_stable_ref_lifecycle_1879)
-# Issue #1753: walk_env_frames uses static_assert for F signature.
-aura_add_issue_test(test_walk_env_frames_static_assert_1753)
-aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
 aura_add_issue_test(test_env_frame_stale_vs_invalid_id_1754)
 aura_issue_test_link_llvm_jit(test_env_frame_stale_vs_invalid_id_1754)
@@ -5206,9 +5200,6 @@ aura_issue_test_link_llvm_jit(test_linear_gc_closedloop_readiness_1599)
 # Issue #1600: ResourceQuota on agent_spawn / parallel_intend / join orch paths.
 aura_add_issue_test(test_orch_resource_quota_1600)
 aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
-# Issue #1606: walk_active_closures + linear live scan on invalidate/compact/JIT.
-aura_add_issue_test(test_walk_active_closures_1606)
-aura_issue_test_link_llvm_jit(test_walk_active_closures_1606)
 # Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
 aura_add_issue_test(test_unified_invalidation_1607)
 aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
