@@ -10,6 +10,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include <cassert>
+#include <memory> // Issue #1880: unique_ptr for orch agent body guard
 
 module aura.compiler.evaluator;
 
@@ -1507,6 +1508,36 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
     if (!ev)
         return;
     ev->complete_post_join_linear_enforcement(joined_fiber);
+}
+
+// Issue #1880: thread-local MutationBoundaryGuard for orch agent body.
+// try_acquire → typed ResourceQuotaExceeded (never panic/throw).
+namespace {
+    thread_local std::unique_ptr<aura::compiler::Evaluator::MutationBoundaryGuard>
+        g_orch_agent_body_guard{};
+} // namespace
+
+extern "C" int aura_orch_agent_body_try_acquire() {
+    // Release any stale guard from a previous agent on this worker.
+    g_orch_agent_body_guard.reset();
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0; // serve-only / no Evaluator → body runs without guard
+    bool ok = true;
+    auto g = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(*ev, /*pending=*/1, &ok);
+    if (!g) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+            m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return 1; // typed reject — caller skips body, no panic
+    }
+    g_orch_agent_body_guard = std::move(*g);
+    return 0;
+}
+
+extern "C" void aura_orch_agent_body_release_guard() {
+    g_orch_agent_body_guard.reset();
 }
 
 // Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).

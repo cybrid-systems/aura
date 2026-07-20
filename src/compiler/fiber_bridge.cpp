@@ -65,4 +65,10 @@ __attribute__((weak, used)) void aura_evaluator_bump_steal_outermost_enforced() 
 // full module into their link unit.
 __attribute__((weak, used)) void aura_evaluator_on_fiber_join(void* /*joined_fiber*/) {}
 
+// Issue #1880: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
+__attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {
+    return 0; // no evaluator → allow body
+}
+__attribute__((weak, used)) void aura_orch_agent_body_release_guard() {}
+
 } // extern "C"

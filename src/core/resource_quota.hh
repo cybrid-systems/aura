@@ -66,6 +66,12 @@ struct ResourceQuota {
     // Issue #1600: orchestration-layer rejection counters (spawn / parallel_intend).
     std::atomic<std::uint64_t> fiber_spawn_rejected_total{0};
     std::atomic<std::uint64_t> orchestration_quota_exceeded_total{0};
+    // Issue #1880: deep orch ResourceQuota (memory/mailbox/arena) rejects +
+    // live agent arena reservation bytes (for dashboards / backoff).
+    std::atomic<std::uint64_t> orch_resource_quota_rejects_total{0};
+    std::atomic<std::uint64_t> agent_arena_usage_bytes{0};
+    std::atomic<std::uint64_t> agent_arena_reserve_total{0};
+    std::atomic<std::uint64_t> agent_arena_release_total{0};
 
     void set_limit(Dimension d, std::uint64_t limit) noexcept {
         switch (d) {
@@ -295,6 +301,40 @@ struct ResourceQuota {
         overflow_guards_total.store(0, std::memory_order_relaxed);
         fiber_spawn_rejected_total.store(0, std::memory_order_relaxed);
         orchestration_quota_exceeded_total.store(0, std::memory_order_relaxed);
+        orch_resource_quota_rejects_total.store(0, std::memory_order_relaxed);
+        agent_arena_usage_bytes.store(0, std::memory_order_relaxed);
+        agent_arena_reserve_total.store(0, std::memory_order_relaxed);
+        agent_arena_release_total.store(0, std::memory_order_relaxed);
+    }
+
+    // Issue #1880: reserve agent arena/mailbox memory for orchestration spawn.
+    // nullopt = OK and usage bumped; on reject bumps orch_resource_quota_rejects.
+    [[nodiscard]] std::optional<QuotaError> try_consume_agent_arena(std::uint64_t bytes) noexcept {
+        auto err = check_and_consume(Dimension::Memory, bytes);
+        if (err) {
+            orch_resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            orchestration_quota_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            err->message = "orchestration agent arena/mailbox quota exceeded";
+            return err;
+        }
+        agent_arena_usage_bytes.fetch_add(bytes, std::memory_order_relaxed);
+        agent_arena_reserve_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+
+    void release_agent_arena(std::uint64_t bytes) noexcept {
+        if (bytes == 0)
+            return;
+        release(Dimension::Memory, bytes);
+        // Saturating sub for live usage gauge.
+        auto cur = agent_arena_usage_bytes.load(std::memory_order_relaxed);
+        for (;;) {
+            const auto next = cur >= bytes ? cur - bytes : 0;
+            if (agent_arena_usage_bytes.compare_exchange_weak(cur, next, std::memory_order_acq_rel,
+                                                              std::memory_order_relaxed))
+                break;
+        }
+        agent_arena_release_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     [[nodiscard]] static std::string dim_name(Dimension d) {
