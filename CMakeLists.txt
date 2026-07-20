@@ -4849,6 +4849,10 @@ add_dependencies(all_test_issue_targets test_atomic_batch_dispatch_1899)
 aura_add_issue_test(test_self_evo_stats_1909)
 aura_issue_test_link_llvm_jit(test_self_evo_stats_1909)
 add_dependencies(all_test_issue_targets test_self_evo_stats_1909)
+# Issue #1910 B1: timestamp->date-string weekday table (Sun=0..Sat=6).
+aura_add_issue_test(test_datetime_date_string_1910)
+aura_issue_test_link_llvm_jit(test_datetime_date_string_1910)
+add_dependencies(all_test_issue_targets test_datetime_date_string_1910)
 # Issue #1911 B8: datetime leap-year?/days-in-month no type-checker shadow.
 aura_add_issue_test(test_datetime_shadow_1911)
 aura_issue_test_link_llvm_jit(test_datetime_shadow_1911)

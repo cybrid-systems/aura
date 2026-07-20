@@ -15,9 +15,9 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 | Location | Count | Notes |
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 635 | Legacy per-issue mains / bundle members |
-| `tests/test_*.cpp` (issue-oriented) | 262 | Numbered root tests + `*_batch` drivers |
+| `tests/test_*.cpp` (issue-oriented) | 263 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 9 | Preferred destination suites |
-| **Total scanned** | **906** | |
+| **Total scanned** | **907** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 69 | 13 | 5 | 87 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 69 | 14 | 5 | 88 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 52 | 1 | 229 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 26 | 1 | 77 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 12 | 5 | 0 | 17 | P1 — small, already partially batched |
@@ -233,7 +233,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (87)
+### `arena_compaction` — Arena / compaction / GC (88)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
@@ -247,12 +247,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 - `tests/domain/arena/test_gc_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
 
-#### root/ (13)
+#### root/ (14)
 
 - `tests/test_arena_auto_compact_intelligent_1919.cpp` (#1919) — AC1: AutoCompactMode Conservative/Balanced/Aggressive + dynamic thr 30–60%
 - `tests/test_ast_column_compaction_closed_loop_416.cpp` (#416) — test_ast_column_compaction_closed_loop_416.cpp
 - `tests/test_closure_batch.cpp` (—) [batch_driver] — test_closure_batch.cpp
 - `tests/test_commit_panic_bridge_epoch_1728.cpp` (#1728) — AC1: source cites #1728; commit calls bridge_epoch_bump_fn_
+- `tests/test_datetime_date_string_1910.cpp` (#1910) — AC1: datetime.aura uses weekday-name (no Thu-first local table)
 - `tests/test_env_batch.cpp` (—) [large, batch_driver] — test_env_batch.cpp
 - `tests/test_envframe_truncate_epoch_1889.cpp` (#1889) — AC1: truncate drops frames → bridge_epoch advances + metric
 - `tests/test_envframe_truncate_guard_dual_epoch_1927.cpp` (#1927) — AC1: source cites #1927; nested-guard skip + defuse_version bump
