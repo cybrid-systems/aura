@@ -4,6 +4,7 @@
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"
 #include "jit_typed_mutation_stats.h"
+#include "typed_mutation_audit.h" // Issue #1882: sample JIT hotpath into TypedMutationAudit
 #include "value_tags.h"
 
 #if AURA_HAVE_LLVM
@@ -627,6 +628,7 @@ struct LLVMBuilder {
                 return;
             if (inst.narrow_evidence != 0)
                 aura::compiler::jit_typed_mutation::record_linear_state_optimized();
+            aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-linear-optimized");
             const char* probe_fn = (fn.name && fn.name[0]) ? fn.name : "";
             auto* name_gv = irb->CreateGlobalString(probe_fn, "lin_probe_fn");
             auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
@@ -969,6 +971,7 @@ struct LLVMBuilder {
                 // skip the runtime shape check (mirrors ir_executor).
                 if (inst.narrow_evidence != 0) {
                     aura::compiler::jit_typed_mutation::record_narrow_evidence_hit();
+                    aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-narrow-evidence");
                     store(inst.ops[0], c64(KWD_TRUE_VAL));
                     irb->CreateBr(bb_merge);
                 } else {
@@ -1497,6 +1500,7 @@ struct LLVMBuilder {
                     result_slot < fn.local_count && !fn.escape_map[result_slot]) {
                     if (inst.narrow_evidence != 0 || inst.type_id != 0)
                         aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
+                    aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-type-propagation");
                     // L2 SPECIALIZED: stack-allocate the pair.
                     // Issue #200: aura_alloc_pair_arena intrinsic
                     // (4/4 of the #194 migration). Bumps
@@ -1679,6 +1683,7 @@ struct LLVMBuilder {
                 if (inst.narrow_evidence != 0) {
                     aura::compiler::jit_typed_mutation::record_narrow_evidence_hit();
                     aura::compiler::jit_typed_mutation::record_cast_elided_in_l2();
+                    aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-cast-elided-l2");
                     store(inst.ops[0], load(inst.ops[1]));
                     return true;
                 }
