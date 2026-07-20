@@ -572,7 +572,8 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 bumps_saved = ev.workspace_flat_->atomic_batch_bumps_saved();
                 active = ev.workspace_flat_->atomic_batch_active();
             }
-            auto* ht = FlatHashTable::create(8);
+            // Issue #1878: capacity 16 (was 8) for atomicity/tenant fields.
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -603,6 +604,16 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("commits-total", static_cast<std::int64_t>(commits));
             insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
             insert_kv("schema", 622);
+            // Issue #1878: fold atomicity-mode into existing stats-hash
+            // (no new query:* name — primitive freeze). 1 = strong default.
+            insert_kv("atomicity-mode", 1);
+            insert_kv("weak-atomicity-used",
+                      static_cast<std::int64_t>(ev.atomic_batch_weak_atomicity_used_total()));
+            insert_kv("strong-atomicity-commits",
+                      static_cast<std::int64_t>(ev.atomic_batch_strong_atomicity_commits_total()));
+            insert_kv("tenant-isolation-denials",
+                      static_cast<std::int64_t>(ev.atomic_batch_tenant_isolation_denials_total()));
+            insert_kv("schema-1878", 1878);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

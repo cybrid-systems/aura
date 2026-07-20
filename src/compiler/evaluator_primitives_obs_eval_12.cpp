@@ -567,10 +567,9 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
     // rollback-count, ops-per-batch (avg).
     ObservabilityPrims::register_stats_impl("atomic-batch:stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Issue #394 / #258: capacity 32 (was 8). #1502 adds
-            // topology + schema keys (~11 total); cap-8 + FNV-1a
-            // probing occasionally failed to insert a key.
-            auto* ht = FlatHashTable::create(32);
+            // Issue #394 / #258 / #1878: capacity 64 (was 32). #1502 +
+            // #1900 + #1878 multi-tenant atomicity keys need headroom.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -654,6 +653,18 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
             {"interleaved-prevented",
              make_int(static_cast<std::int64_t>(ev.atomic_batch_interleaved_prevented_total()))},
             {"schema-1900", make_int(1900)},
+            // Issue #1878: strong atomicity mode (1) is default; weak
+            // metric is exposed for Agent dashboards (stays 0 unless a
+            // future opt-in weak path lands). Tenant isolation denials
+            // count Strict / :tenant-target cross-tenant refusals.
+            {"atomicity-mode", make_int(1)}, // 1 = strong (default)
+            {"weak-atomicity-used",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_weak_atomicity_used_total()))},
+            {"strong-atomicity-commits",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_strong_atomicity_commits_total()))},
+            {"tenant-isolation-denials",
+             make_int(static_cast<std::int64_t>(ev.atomic_batch_tenant_isolation_denials_total()))},
+            {"schema-1878", make_int(1878)},
         };
         return build_hash(kv);
     });

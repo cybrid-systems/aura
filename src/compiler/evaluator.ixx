@@ -11847,6 +11847,19 @@ public:
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->atomic_batch_interleaved_mutation_prevented.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1878: multi-tenant + atomicity-mode telemetry.
+    void bump_atomic_batch_weak_atomicity_used() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->atomic_batch_weak_atomicity_used.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_strong_atomicity_commit() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->atomic_batch_strong_atomicity_commits.fetch_add(1, std::memory_order_relaxed);
+    }
+    void bump_atomic_batch_tenant_isolation_denial() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->atomic_batch_tenant_isolation_denials.fetch_add(1, std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t atomic_batch_unsupported_op_total() const noexcept {
         if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
             return m->atomic_batch_unsupported_op_total.load(std::memory_order_relaxed);
@@ -11855,6 +11868,21 @@ public:
     [[nodiscard]] std::uint64_t atomic_batch_interleaved_prevented_total() const noexcept {
         if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
             return m->atomic_batch_interleaved_mutation_prevented.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_weak_atomicity_used_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
+            return m->atomic_batch_weak_atomicity_used.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_strong_atomicity_commits_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
+            return m->atomic_batch_strong_atomicity_commits.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_tenant_isolation_denials_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_))
+            return m->atomic_batch_tenant_isolation_denials.load(std::memory_order_relaxed);
         return 0;
     }
     // Issue #790: public accessors for the 2 NEW
