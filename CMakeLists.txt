@@ -4769,9 +4769,7 @@ aura_issue_test_link_llvm_jit(test_lock_order_closures_env_1664)
 aura_add_issue_test(test_scan_skip_freed_closures_1665)
 aura_issue_test_link_llvm_jit(test_scan_skip_freed_closures_1665)
 
-# Issue #1667: ~Evaluator releases PanicCheckpoint GC defer (no depth leak).
-aura_add_issue_test(test_gc_defer_dtor_release_1667)
-aura_issue_test_link_llvm_jit(test_gc_defer_dtor_release_1667)
+
 # Issue #1670: observability peel tier table (data-driven register_*_all).
 aura_add_issue_test(test_observability_tier_table_1670)
 aura_issue_test_link_llvm_jit(test_observability_tier_table_1670)
@@ -4953,9 +4951,7 @@ aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic_1730)
 aura_add_issue_test(test_linear_null_env_id_1731)
 aura_issue_test_link_llvm_jit(test_linear_null_env_id_1731)
 
-# Issue #1734: collect_compiler_managed_gc_roots bridge_epoch drift detect.
-aura_add_issue_test(test_gc_roots_bridge_epoch_drift_1734)
-aura_issue_test_link_llvm_jit(test_gc_roots_bridge_epoch_drift_1734)
+
 # Issue #1739: truncate_env_frames_to_checkpoint must bump bridge_epoch.
 aura_add_issue_test(test_truncate_env_bridge_epoch_1739)
 aura_issue_test_link_llvm_jit(test_truncate_env_bridge_epoch_1739)
@@ -5107,9 +5103,7 @@ aura_issue_test_link_llvm_jit(test_env_bind_linear_race_1861)
 # Issue #1863: Env::bindings_with_names raw walk + resolve under single-writer.
 aura_add_issue_test(test_env_bindings_with_names_race_1863)
 aura_issue_test_link_llvm_jit(test_env_bindings_with_names_race_1863)
-# Issue #1864: gc_root_count shared_lock(closures_mtx_) — not safepoint-only.
-aura_add_issue_test(test_gc_root_count_lock_1864)
-aura_issue_test_link_llvm_jit(test_gc_root_count_lock_1864)
+
 
 # Issue #1867: record_linear_gc_probe violation counters use release; readers acquire.
 aura_add_issue_test(test_linear_gc_probe_memory_order_1867)

@@ -4565,27 +4565,15 @@
       "issue": null
     },
     {
-      "file": "tests/test_gc_defer_dtor_release_1667.cpp",
-      "category": "unit",
-      "reason": "Issue #1667 — ~Evaluator must release process-wide PanicCheckpoint",
+      "file": "tests/test_gc_batch.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
       "file": "tests/test_gc_evaluator_integration.cpp",
       "category": "unknown",
       "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/test_gc_root_count_lock_1864.cpp",
-      "category": "unit",
-      "reason": "Issue #1864 — Evaluator::gc_root_count must shared_lock",
-      "issue": null
-    },
-    {
-      "file": "tests/test_gc_roots_bridge_epoch_drift_1734.cpp",
-      "category": "unit",
-      "reason": "Issue #1734 — collect_compiler_managed_gc_roots must detect",
       "issue": null
     },
     {

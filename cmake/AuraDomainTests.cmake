@@ -120,6 +120,17 @@ aura_add_issue_test(test_compact_batch)
 aura_issue_test_link_llvm_jit(test_compact_batch)
 set_target_properties(test_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1667 + #1734 + #1864: gc family batch (~Evaluator releases
+# PanicCheckpoint GC defer + collect_compiler_managed_gc_roots bridge_epoch
+# drift detect + gc_root_count shared_lock closures_mtx_). test_gc_evaluator_
+# integration.cpp NOT included — custom CMake integration test with
+# add_executable + add_test + custom contract_handler/stub target_sources
+# (CMakeLists.txt:725-803). EXCLUDE_FROM_ALL per AuraDomainTests.cmake
+# legacy batch convention. On-demand `ninja test_gc_batch`.
+aura_add_issue_test(test_gc_batch)
+aura_issue_test_link_llvm_jit(test_gc_batch)
+set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
