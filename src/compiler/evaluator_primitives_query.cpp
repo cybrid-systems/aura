@@ -2359,7 +2359,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
-    // Issue #547 / #1501 / #1609 / #1636: query:pattern-hygiene-stats —
+    // Issue #547 / #1501 / #1609 / #1636 / #1892: query:pattern-hygiene-stats —
     // authoritative MacroIntroduced hygiene dashboard for query:pattern.
     // Schema **1636** (lineage 1609/1501/547). Defense-in-depth:
     // root/full-walk skip + recursive matcher + user-only
@@ -2404,22 +2404,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto recursive_skips =
                 static_cast<std::int64_t>(ev->get_pattern_recursive_macro_skipped());
             const auto violations = static_cast<std::int64_t>(ev->get_hygiene_violation_count());
-            // #1636 AC: issue-body metric names (aliases of existing counters).
+            // #1636 / #1892 AC: issue-body metric names (aliases of existing counters).
             const auto pattern_skips = root_skips + recursive_skips;
             insert_kv("root-skips", root_skips);
             insert_kv("recursive-skips", recursive_skips);
             insert_kv("hygiene-violations", violations);
             insert_kv("macro_introduced_skipped_in_pattern_total", pattern_skips);
             insert_kv("macro-introduced-skipped-in-pattern-total", pattern_skips);
+            // #1892 AC name (exact): hotpath default-skip total.
+            insert_kv("macro_introduced_skipped_in_query_total", root_skips);
+            insert_kv("macro-introduced-skipped-in-query-total", root_skips);
             insert_kv("hygiene_violation_prevented_total", violations);
             insert_kv("hygiene-violation-prevented-total", violations);
+            // Result leakage after verify_pattern_result_hygiene (must stay 0).
+            insert_kv("pattern-macro-filter-violations",
+                      static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
+            insert_kv("hygiene-leakage",
+                      static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
             // #547 back-compat: total used by agents that expected int sum
             insert_kv("total", root_skips + violations);
             insert_kv("macro-markers",
                       static_cast<std::int64_t>(workspace_marker_macro_introduced(ev)));
             insert_kv("hygiene-index-served",
                       static_cast<std::int64_t>(ev->get_tag_arity_hygiene_index_served()));
-            // #1609 / #1636 wire flags
+            // #1609 / #1636 / #1892 wire flags
             insert_kv("core-loop-force-skip-wired", 1);
             insert_kv("matcher-recursive-skip-wired", 1);
             insert_kv("user-only-tag-arity-index-wired", 1);
@@ -2427,8 +2435,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("default-exclude-macro-introduced", 1);
             insert_kv("allow-macro-introduced-opt-in", 1);
             insert_kv("pattern-hygiene-mandate-active", 1);
-            insert_kv("issue", 1636);
-            insert_kv("schema", 1636); // lineage 1609 / 1501 / 547 / 1047
+            insert_kv("typed-mutation-audit-skip-wired", 1); // #1892
+            insert_kv("self-evo-query-hygiene-mandate", 1);  // #1892
+            insert_kv("issue", 1892);
+            insert_kv("schema", 1892); // lineage 1636 / 1609 / 1501 / 547 / 1047
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

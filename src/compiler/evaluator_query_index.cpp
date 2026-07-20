@@ -285,16 +285,35 @@ void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
 std::vector<aura::ast::NodeId>
 Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
                                      bool skip_macro_introduced) const {
-    // Issue #1372 / #1501: single unique_lock covers build + bucket
+    // Issue #1372 / #1501 / #1892: single unique_lock covers build + bucket
     // copy. When skip_macro_introduced, serve user-only index so the
     // default hygienic query:pattern path never iterates MacroIntroduced
-    // roots from the hot (tag,arity) bucket.
+    // roots from the hot (tag,arity) bucket. Also credit the excluded
+    // MacroIntroduced count into macro_introduced_skipped_in_query_ so
+    // AC metrics stay non-zero when the index does the filtering
+    // (defense-in-depth loop never sees those ids).
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
     const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
     const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
-    if (skip_macro_introduced)
+    if (skip_macro_introduced) {
         tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);
+        // #1892: full bucket size − user-only size = MacroIntroduced excluded.
+        std::size_t full_n = 0;
+        std::size_t user_n = 0;
+        if (auto fit = tag_arity_index_.find(key); fit != tag_arity_index_.end())
+            full_n = fit->second.size();
+        if (auto uit = tag_arity_index_user_.find(key); uit != tag_arity_index_user_.end())
+            user_n = uit->second.size();
+        if (full_n > user_n) {
+            const auto excluded = static_cast<std::uint64_t>(full_n - user_n);
+            // Credit index-level exclusions into the same counter as the
+            // defense-in-depth loop (bump_macro_introduced_skipped_in_query).
+            // compiler_metrics_ correlation lives in that non-const bump;
+            // keep this const path free of CompilerMetrics (#1892).
+            macro_introduced_skipped_in_query_.fetch_add(excluded, std::memory_order_relaxed);
+        }
+    }
     auto it = map.find(key);
     if (it == map.end())
         return {};
