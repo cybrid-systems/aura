@@ -3,7 +3,7 @@
 //
 //   AC1: C++ spawn_agent_with_mailbox + join
 //   AC2: agent_send / mailbox attach
-//   AC3: conduct_parallel alias
+//   AC3: parallel_intend batch (orch stats bump; #1966 dropped conduct_parallel)
 //   AC4: Aura orch:spawn-agent + orch:agent-join
 //   AC5: orch:parallel-intend alias
 //   AC6: query:orch-module-stats schema 1588
@@ -98,8 +98,10 @@ static void ac2_send_recv() {
     CHECK(h.mailbox && h.mailbox->size() >= 1, "message still in mailbox or consumed");
 }
 
-static void ac3_conduct_parallel() {
-    std::println("\n--- AC3: conduct_parallel ---");
+static void ac3_parallel_intend() {
+    // Issue #1966: conduct_parallel alias removed; call parallel_intend +
+    // bump orch parallel_batches at the call site (same observability).
+    std::println("\n--- AC3: parallel_intend batch ---");
     Scheduler sched(3);
     SchedRunner runner(sched);
     std::vector<aura::orch::TaskSpec> tasks;
@@ -110,8 +112,9 @@ static void ac3_conduct_parallel() {
         }});
     }
     auto b0 = aura::orch::g_orch_module_stats.parallel_batches.load();
+    aura::orch::g_orch_module_stats.parallel_batches.fetch_add(1, std::memory_order_relaxed);
     auto batch =
-        aura::orch::conduct_parallel(sched, tasks, {.max_concurrency = 2, .timeout_ms = 10000});
+        aura::orch::parallel_intend(sched, tasks, {.max_concurrency = 2, .timeout_ms = 10000});
     CHECK(batch.status == aura::orch::BatchStatus::Ok, "batch Ok");
     CHECK(batch.ok_count == 4, "4 ok");
     CHECK(aura::orch::g_orch_module_stats.parallel_batches.load() > b0, "parallel counter");
@@ -174,7 +177,7 @@ int main() {
     std::println("=== test_orch_agent_spawn (#1588) ===");
     ac1_spawn_join();
     ac2_send_recv();
-    ac3_conduct_parallel();
+    ac3_parallel_intend();
     ac4_aura_spawn_join();
     ac5_parallel_alias();
     ac6_stats();

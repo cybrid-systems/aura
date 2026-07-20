@@ -1569,6 +1569,27 @@ def cmd_mutation_guard_coverage():
     return 0
 
 
+def cmd_orch_mvp_scope():
+    """Issue #1965 / #1966: orch/ multi-agent public symbols must stay removed."""
+    print(f"{B}═══ orch MVP scope (#1965 / #1966) ═══{N}")
+    script = ROOT / "scripts" / "check_orch_mvp_scope.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run(
+        [sys.executable, str(script), "--strict", "--quiet"],
+        cwd=ROOT,
+    )
+    if r.returncode != 0:
+        fail(
+            "removed orch multi-agent symbol reintroduced — "
+            "use parallel_intend / evaluator-local name table (see #1966)"
+        )
+        return 1
+    ok("orch MVP scope clean (no AgentRegistry / conduct_parallel reintro)")
+    return 0
+
+
 def cmd_legacy_test_inventory():
     """Issue #1957: living legacy test inventory freshness check.
 
@@ -1613,6 +1634,7 @@ def cmd_gate():
     Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
     Issue #1931: also runs mutation Guard coverage linter (--strict).
     Issue #1957: also runs legacy test inventory --check (regen with --fix).
+    Issue #1966: also runs orch MVP scope linter (--strict; removed multi-agent symbols).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1643,6 +1665,7 @@ def cmd_gate():
         or cmd_dead_heap_push()
         or cmd_catch_silent_swallow()
         or cmd_mutation_guard_coverage()
+        or cmd_orch_mvp_scope()
         or cmd_legacy_test_inventory()
     )
 
@@ -2296,6 +2319,7 @@ def main():
         "dead-heap-push": cmd_dead_heap_push,
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
+        "orch-mvp-scope": cmd_orch_mvp_scope,
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
