@@ -41,6 +41,14 @@ aura_add_issue_test(test_fiber_resume_batch)
 aura_issue_test_link_llvm_jit(test_fiber_resume_batch)
 set_target_properties(test_fiber_resume_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1732 + #1865 + #1866: compact_sweep family batch (typed
+# CompactSweepResult, pair_remap_ clear, null-marks metric). EXCLUDE_FROM_ALL
+# per AuraDomainTests.cmake legacy batch convention. On-demand
+# `ninja test_compact_sweep_batch`.
+aura_add_issue_test(test_compact_sweep_batch)
+aura_issue_test_link_llvm_jit(test_compact_sweep_batch)
+set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
