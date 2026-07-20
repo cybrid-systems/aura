@@ -171,6 +171,8 @@ void Evaluator::register_all_primitives() {
         primitives_detail::register_stdlib_review_primitives(prim_registrar(), *this);
 
         // Issue #499: foundational EDA parse/query/mutate primitives module.
+        // Issue #1968: gated by AURA_ENABLE_EDA inside register_eda_primitives
+        // (no-op when commercial EDA vertical is disabled).
         primitives_detail::register_eda_primitives(prim_registrar(), *this);
 
         primitives_detail::register_security_primitives(prim_registrar(), *this);

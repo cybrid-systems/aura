@@ -1,6 +1,11 @@
 // evaluator_primitives_eda.cpp — Issue #499: Foundational EDA primitives
 // module (parse/query/mutate/waveform/hardware feedback) for Agent-driven
 // verification + hardware co-design workflows.
+//
+// Issue #1968: eda:* is a commercial EDA vertical (DOMAIN_STATUS deferred).
+// Registration gated by AURA_ENABLE_EDA (CMake option, default ON).
+// Slim/core builds: -DAURA_ENABLE_EDA=OFF → register_eda_primitives no-op.
+// See docs/eda.md + scripts/check_primitive_surface.py COMMERCIAL_DOMAIN_BUDGETS.
 
 module;
 
@@ -15,6 +20,11 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h"
 #include "hash_meta.h" // FNV constants (#901)
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_EDA
+#define AURA_ENABLE_EDA 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -171,6 +181,12 @@ void maybe_hardware_feedback(Evaluator& ev, aura::ast::NodeId node) {
 namespace aura::compiler::primitives_detail {
 
 void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev) {
+#if !AURA_ENABLE_EDA
+    // Issue #1968: commercial EDA vertical disabled for this build.
+    (void)add;
+    (void)ev;
+    return;
+#else
     using namespace eda_detail;
 
     add("eda:parse-netlist", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -869,6 +885,7 @@ void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evalu
                  {"emit-len", make_int(static_cast<std::int64_t>(reemit.sv_text.size()))},
                  {"roundtrip-ok", make_int(validation.ok ? 1 : 0)}});
         });
+#endif // AURA_ENABLE_EDA
 }
 
 } // namespace aura::compiler::primitives_detail

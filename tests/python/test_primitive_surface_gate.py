@@ -92,7 +92,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertLessEqual(self.m.INTERIM_HARD_CEILING, 700)
         self.assertGreaterEqual(self.m.INTERIM_HARD_CEILING, 500)
 
-    # ── Issue #1965 / #1967 domain status + commercial budgets ──
+    # ── Issue #1965 / #1967 / #1968 domain status + commercial budgets ──
     def test_tui_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("tui:"), "deferred")
         self.assertEqual(self.m.domain_status("tui:init"), "deferred")
@@ -100,22 +100,38 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("tui:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"], 21)
 
-    def test_commercial_domain_counts_tui(self):
+    def test_eda_domain_deferred_and_budgeted(self):
+        self.assertEqual(self.m.DOMAIN_STATUS.get("eda:"), "deferred")
+        self.assertEqual(self.m.domain_status("eda:load-sv"), "deferred")
+        self.assertEqual(self.m.domain_status("eda:parse-netlist"), "deferred")
+        self.assertIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"], 13)
+
+    def test_commercial_domain_counts_tui_and_eda(self):
         names = [
             "tui:init",
             "tui:present",
             "query:root",
-            "eda:emit",
+            "eda:load-sv",
+            "eda:parse-netlist",
             "tui:cell",
+            "eda:invoke-simulator",
         ]
         counts = self.m.commercial_domain_counts(names)
         self.assertEqual(counts.get("tui:"), 3)
+        self.assertEqual(counts.get("eda:"), 3)
 
     def test_commercial_budget_overrun_fails_strict(self):
         # Synthetic list with one extra tui: name past the frozen budget.
         budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["tui:"]
         fake = [f"tui:synthetic-{i}" for i in range(budget + 1)]
         # run_strict_checks prints + returns 1 on overrun.
+        rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
+        self.assertEqual(rc, 1)
+
+    def test_eda_commercial_budget_overrun_fails_strict(self):
+        budget = self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"]
+        fake = [f"eda:synthetic-{i}" for i in range(budget + 1)]
         rc = self.m.run_strict_checks(fake + ["query:root"], stats_names=[])
         self.assertEqual(rc, 1)
 
