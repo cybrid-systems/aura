@@ -1,0 +1,96 @@
+[
+  {
+    "name": "occurrence",
+    "code": "(let ((x \"hi\")) (if (string? x) x \"fallback\"))",
+    "pipeline": "typecheck",
+    "expected_type": "String",
+    "typecheck_suite": true
+  },
+  {
+    "name": "str_literal",
+    "code": "\"hi\"",
+    "pipeline": "typecheck",
+    "expected_type": "String",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_add",
+    "code": "(+ 1 2)",
+    "pipeline": "typecheck",
+    "expected_type": "Int",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_coercion",
+    "code": "(+ \"42\" 1)",
+    "pipeline": "typecheck",
+    "expected_type": "Int",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_lambda",
+    "code": "(lambda (x) x)",
+    "pipeline": "typecheck",
+    "expected_type": "->",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_let",
+    "code": "(let ((x 10)) x)",
+    "pipeline": "typecheck",
+    "expected_type": "Int"
+  },
+  {
+    "name": "tc_literal",
+    "code": "42",
+    "pipeline": "typecheck",
+    "expected_type": "Int",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_occurrence",
+    "code": "(let ((x \"hello\")) (if (string? x) x \"fallback\"))",
+    "pipeline": "typecheck",
+    "expected_type": "String"
+  },
+  {
+    "name": "tc_str",
+    "code": "\"hello\"",
+    "pipeline": "typecheck",
+    "expected_type": "String"
+  },
+  {
+    "name": "tc_string_append",
+    "code": "(string-append \"a\" \"b\")",
+    "pipeline": "typecheck",
+    "expected_type": "String",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_string_length",
+    "code": "(string-length \"hello\")",
+    "pipeline": "typecheck",
+    "expected_type": "Int"
+  },
+  {
+    "name": "tc_type_of",
+    "code": "(type-of 42)",
+    "pipeline": "typecheck",
+    "expected_type": "Type",
+    "typecheck_suite": true
+  },
+  {
+    "name": "tc_type_query",
+    "code": "(type? 42 \"Int\")",
+    "pipeline": "typecheck",
+    "expected_type": "Bool",
+    "typecheck_suite": true
+  },
+  {
+    "name": "wrong_arity",
+    "code": "(+ 1)",
+    "pipeline": "typecheck",
+    "expected_type": "Int",
+    "typecheck_suite": true
+  }
+]

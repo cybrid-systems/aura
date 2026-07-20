@@ -1,13 +1,11 @@
-"""Benchmark and typecheck-suite fixtures."""
+"""Benchmark and typecheck-suite fixtures (#1962 shards)."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "benchmark_tests.json"
+from fixture_store import load_case_array
 
 
 @dataclass
@@ -28,7 +26,7 @@ class TypecheckCase:
 
 
 def _load_raw() -> list[dict]:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return load_case_array("benchmark")
 
 
 def load_benchmark_cases() -> list[BenchCase]:

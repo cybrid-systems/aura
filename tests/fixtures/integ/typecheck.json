@@ -1,0 +1,192 @@
+[
+  {
+    "name": "err_arity",
+    "code": "(+ 1)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "err_type",
+    "code": "(+ 1 \"a\")",
+    "pipeline": "typecheck"
+  },
+  {
+    "name": "err_wrong_arg_type",
+    "code": "(/ \"a\" 1)",
+    "pipeline": "typecheck"
+  },
+  {
+    "name": "gg_expr_annot",
+    "code": "(: x Int (+ 1 2))",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "gg_int_annot",
+    "code": "(: x Int 42)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "gg_let_annot",
+    "code": "(let ((x 10)) x)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "gg_nested_annot",
+    "code": "(+ (: x Int 10) (: y Int 20))",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "ir_gg_annot",
+    "code": "(: x Int 42)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_add",
+    "code": "(+ 1 2)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_adt_concrete",
+    "code": "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)",
+    "pipeline": "typecheck",
+    "expected": "BoolOption"
+  },
+  {
+    "name": "tc_adt_poly",
+    "code": "(define-type (Option a) (Some a) (None)) (Some 42)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_annot_int",
+    "code": "(: x Int 42)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_append",
+    "code": "(string-append \"a\" \"b\")",
+    "pipeline": "typecheck",
+    "expected": "String"
+  },
+  {
+    "name": "tc_coercion",
+    "code": "(+ \"42\" 1)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_cons_pair",
+    "code": "(pair? (cons 1 2))",
+    "pipeline": "typecheck",
+    "expected": "Bool"
+  },
+  {
+    "name": "tc_filter",
+    "code": "(filter (lambda (x) (> x 2)) (list 1 2))",
+    "pipeline": "typecheck",
+    "expected": "Any"
+  },
+  {
+    "name": "tc_int",
+    "code": "42",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_let_lambda",
+    "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_list",
+    "code": "(list 1 2 3)",
+    "pipeline": "typecheck",
+    "expected": "Any"
+  },
+  {
+    "name": "tc_macro_def",
+    "code": "(defmacro (twice x) (+ x x))",
+    "pipeline": "typecheck",
+    "expected": "(__t0 -> __t0)"
+  },
+  {
+    "name": "tc_map",
+    "code": "(map (lambda (x) (* x 2)) (list 1 2))",
+    "pipeline": "typecheck",
+    "expected": "Any"
+  },
+  {
+    "name": "tc_occ_float",
+    "code": "(let ((x 3.14)) (if (float? x) (+ x 1) 0))",
+    "pipeline": "typecheck",
+    "expected": "Float"
+  },
+  {
+    "name": "tc_occ_pair",
+    "code": "(let ((x (cons 1 2))) (if (pair? x) #t #f))",
+    "pipeline": "typecheck",
+    "expected": "Bool"
+  },
+  {
+    "name": "tc_occurrence",
+    "code": "(let ((x \"hello\")) (if (string? x) x \"fallback\"))",
+    "pipeline": "typecheck",
+    "expected": "String"
+  },
+  {
+    "name": "tc_pair",
+    "code": "(cons 1 2)",
+    "pipeline": "typecheck",
+    "expected": "Any"
+  },
+  {
+    "name": "tc_query_return",
+    "code": "(+ 1 2)",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  },
+  {
+    "name": "tc_str",
+    "code": "\"hello\"",
+    "pipeline": "typecheck",
+    "expected": "String"
+  },
+  {
+    "name": "tc_string_compare",
+    "code": "(string=? \"a\" \"a\")",
+    "pipeline": "typecheck",
+    "expected": "Bool"
+  },
+  {
+    "name": "tc_type_of",
+    "code": "(type-of 42)",
+    "pipeline": "typecheck",
+    "expected": "Type"
+  },
+  {
+    "name": "tc_type_query",
+    "code": "(type? 42 \"Int\")",
+    "pipeline": "typecheck",
+    "expected": "Bool"
+  },
+  {
+    "name": "tc_value_restrict",
+    "code": "(let ((x (+ 1 2))) (type-of x)",
+    "pipeline": "typecheck",
+    "expected": "Type"
+  },
+  {
+    "name": "tc_vector",
+    "code": "(vector-length (vector (list 1)))",
+    "pipeline": "typecheck",
+    "expected": "Int"
+  }
+]

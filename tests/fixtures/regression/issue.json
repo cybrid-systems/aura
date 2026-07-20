@@ -1,0 +1,68 @@
+[
+  {
+    "name": "issue-18-any-annot-chain",
+    "code": "(: z Any (+ 1 (: x Int 2)))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-18-any-annot-fn",
+    "code": "(let ((f (lambda (x) (: y Any (+ x 1))))) (f 41))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-18-any-annot-let",
+    "code": "(let ((x (: y Any 42))) x)",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-18-any-let-poly",
+    "code": "(let ((id (lambda (x) x))) (let ((y (: z Any (id 42)))) y))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-19-coerce-float-int-fn",
+    "code": "(define (g x) (+ x 1)) (display (g 3.14))",
+    "expect_out": "4.14",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-19-coerce-int-float-fn",
+    "code": "(define (f x) (+ x 1.5)) (display (f 3))",
+    "expect_out": "4.5",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-19-coerce-int-string-annot",
+    "code": "(: x Int \"42\")",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-20-occurrence-and",
+    "code": "(let ((x 42)) (if (and (number? x) (integer? x)) x 0))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-20-occurrence-and-diff",
+    "code": "(let ((x \"hello\")) (if (and (string? x) (number? x)) x \"fallback\"))",
+    "expect_out": "fallback",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-20-occurrence-basic",
+    "code": "(let ((x \"hello\")) (if (string? x) (string-length x) 0))",
+    "expect_out": "5",
+    "expect_err": ""
+  },
+  {
+    "name": "issue-20-occurrence-not",
+    "code": "(let ((x \"hello\")) (if (not (string? x)) 0 (string-length x)))",
+    "expect_out": "5",
+    "expect_err": ""
+  }
+]

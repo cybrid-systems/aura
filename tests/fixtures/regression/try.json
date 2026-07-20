@@ -1,0 +1,14 @@
+[
+  {
+    "name": "try-catch-error",
+    "code": "(try (display (car ())) (catch (e) \"caught\"))",
+    "expect_out": "caught",
+    "expect_err": ""
+  },
+  {
+    "name": "try-catch-ok",
+    "code": "(try \"ok\" (catch (e) \"error\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  }
+]

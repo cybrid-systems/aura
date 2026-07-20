@@ -1,0 +1,14 @@
+[
+  {
+    "name": "effect-mutate-basic",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(display (f 41))\")(typecheck-current)(eval-current))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "effect-type-IO",
+    "code": "(type-of 42)",
+    "expect_out": "Int",
+    "expect_err": ""
+  }
+]

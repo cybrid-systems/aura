@@ -1,0 +1,8 @@
+[
+  {
+    "name": "linear-eval",
+    "code": "(set-code \"(display (move 42))\") (eval-current)",
+    "expect_out": "42",
+    "expect_err": ""
+  }
+]

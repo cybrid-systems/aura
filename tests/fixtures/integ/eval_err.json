@@ -1,0 +1,35 @@
+[
+  {
+    "name": "err_div_zero",
+    "code": "(/ 1 0)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "err_unbound",
+    "code": "x",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_arg",
+    "code": "(display notexist)",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_arg2",
+    "code": "(+ notexist 1)",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_var",
+    "code": "nonexistent",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  }
+]

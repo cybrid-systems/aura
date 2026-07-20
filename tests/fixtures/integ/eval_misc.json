@@ -1,0 +1,260 @@
+[
+  {
+    "name": "add",
+    "code": "(+ 1 2)",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "annot_bind",
+    "code": "(: x Int 5) x",
+    "pipeline": "eval",
+    "expected": "5"
+  },
+  {
+    "name": "annot_bind_coerce",
+    "code": "(: x Int \"42\") x",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "annot_bind_expr",
+    "code": "(: a Int (+ 1 2)) a",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "annot_bind_multi",
+    "code": "(: a Int 10)(: b Int 5)(+ a b)",
+    "pipeline": "eval",
+    "expected": "15"
+  },
+  {
+    "name": "apply_add",
+    "code": "(apply + (list 1 2 3))",
+    "pipeline": "eval",
+    "expected": "6"
+  },
+  {
+    "name": "apply_str",
+    "code": "(apply string-append (list \"hello \" \"world\"))",
+    "pipeline": "eval",
+    "expected": "hello world"
+  },
+  {
+    "name": "boundary_lambda",
+    "code": "((lambda (x) (+ x 1)) 41)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "closure",
+    "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "coerce_annot_erasure",
+    "code": "(: x Int 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "coerce_arith",
+    "code": "(+ 1 \"2\")",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "coerce_strlen",
+    "code": "(string-length 12345)",
+    "pipeline": "eval",
+    "expected": "5"
+  },
+  {
+    "name": "define_annot_2param",
+    "code": "(define (add (: x Int) (: y Int)) (+ x y))(display (add 3 4))",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "define_annot_shorthand",
+    "code": "(define (f (: x Int)) (+ x 1))(display (f 41))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "div",
+    "code": "(/ 100 5)",
+    "pipeline": "eval",
+    "expected": "20"
+  },
+  {
+    "name": "fact_5",
+    "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+    "pipeline": "eval",
+    "expected": "120"
+  },
+  {
+    "name": "ffi_strlen",
+    "code": "((c-func -1 \"strlen\" \"(String) -> Int\") \"hello\")",
+    "pipeline": "eval",
+    "expected": "5"
+  },
+  {
+    "name": "ffi_strlen_empty",
+    "code": "((c-func -1 \"strlen\" \"(String) -> Int\") \"\")",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "filter_count",
+    "code": "(length (filter (lambda (x) (> x 2)) (list 1 2 3 4 5)))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "format_basic",
+    "code": "(format \"~a = ~a\" \"x\" 42)",
+    "pipeline": "eval",
+    "expected": "x = 42"
+  },
+  {
+    "name": "format_write",
+    "code": "(format \"~s\" \"hello\")",
+    "pipeline": "eval",
+    "expected": "\"hello\""
+  },
+  {
+    "name": "fuzz_adt_coercion",
+    "code": "(begin (define-type (Wrap a) (Wrap a)) (car (cdr (Wrap (+ 1 2.5)))))",
+    "pipeline": "eval",
+    "expected": "3.5"
+  },
+  {
+    "name": "fuzz_adt_let_poly",
+    "code": "(begin (define-type (Box a) (Box a)) ((lambda (f) (f (Box 42))) (lambda (x) (car (cdr x)))))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "fuzz_adt_nested",
+    "code": "(begin (define-type (Tree a) (Leaf a) (Node Tree Tree)) (match (Leaf 1) ((Leaf v) v) ((Node l r) 0)))",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "gg_expr_exec",
+    "code": "(: x Int (+ 1 2))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "gg_int_exec",
+    "code": "(: x Int 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "gg_let_exec",
+    "code": "(let ((x 10)) x)",
+    "pipeline": "eval",
+    "expected": "10"
+  },
+  {
+    "name": "gg_poly_exec",
+    "code": "(let ((id (lambda (x) x))) (id 42))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "if_false",
+    "code": "(if 0 42 0)",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "if_true",
+    "code": "(if 1 42 0)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "int_to_char",
+    "code": "(integer->char 65)",
+    "pipeline": "eval",
+    "expected": "65"
+  },
+  {
+    "name": "ir_dyn_coerce",
+    "code": "(: x Int 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "let_simple",
+    "code": "(let ((x 10)) x)",
+    "pipeline": "eval",
+    "expected": "10"
+  },
+  {
+    "name": "literal_int",
+    "code": "42",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "literal_neg",
+    "code": "-5",
+    "pipeline": "eval",
+    "expected": "-5"
+  },
+  {
+    "name": "make_vector",
+    "code": "(vector-length (make-vector 5 42))",
+    "pipeline": "eval",
+    "expected": "5"
+  },
+  {
+    "name": "map_length",
+    "code": "(length (map (lambda (x) (* x 2)) (list 1 2 3)))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "mul",
+    "code": "(* 6 7)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "nested_list",
+    "code": "(car (car (list (list 1 2) (list 3 4))))",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "pair",
+    "code": "(car (cons 1 2))",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "string",
+    "code": "(string-append \"a\" \"b\")",
+    "pipeline": "eval",
+    "expected": "ab"
+  },
+  {
+    "name": "sub",
+    "code": "(- 10 3)",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "variadic_lambda",
+    "code": "(apply (lambda (x . rest) (cons x rest)) (list 1 2 3))",
+    "pipeline": "eval",
+    "expected": "(1 2 3)"
+  }
+]

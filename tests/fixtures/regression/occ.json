@@ -1,0 +1,14 @@
+[
+  {
+    "name": "occ-hash",
+    "code": "(let ((x (hash))) (if (hash? x) 42 0))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "occ-integer",
+    "code": "(let ((x 42)) (if (integer? x) (+ x 1) 0))",
+    "expect_out": "43",
+    "expect_err": ""
+  }
+]

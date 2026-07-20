@@ -1,12 +1,10 @@
-"""Integration test case fixtures for build.py integ suite."""
+"""Integration test case fixtures for build.py integ suite (#1962 shards)."""
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "integ_tests.json"
+from fixture_store import load_case_array
 
 
 @dataclass
@@ -20,7 +18,6 @@ class IntegCase:
 
 
 def load_integ_cases() -> list[IntegCase]:
-    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
     return [
         IntegCase(
             name=item["name"],
@@ -30,5 +27,5 @@ def load_integ_cases() -> list[IntegCase]:
             expected_err=item.get("expected_err", ""),
             expected_status=item.get("expected_status", 0),
         )
-        for item in raw
+        for item in load_case_array("integ")
     ]

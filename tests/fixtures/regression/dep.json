@@ -1,0 +1,38 @@
+[
+  {
+    "name": "dep-chain-3",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"v2\")(typecheck-current)(eval-current)(display (h 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  },
+  {
+    "name": "dep-chain-5",
+    "code": "(begin (set-code \"(define (a x) (+ x 1))(define (b x) (a x))(define (c x) (b x))(define (d x) (c x))(define (e x) (d x))\")(typecheck-current)(mutate:rebind \"a\" \"(lambda (x) (* x 2))\" \"v2\")(typecheck-current)(eval-current)(display (e 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  },
+  {
+    "name": "dep-repeat-mutate",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"v1\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (- x 1))\" \"v2\")(typecheck-current)(eval-current)(display (g 5)))",
+    "expect_out": "4",
+    "expect_err": ""
+  },
+  {
+    "name": "dep-set-body",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))(define (calc x) (add x 1))\")(typecheck-current)(mutate:set-body \"add\" \"(* x y)\")(typecheck-current)(eval-current)(display (calc 5)))",
+    "expect_out": "5",
+    "expect_err": ""
+  },
+  {
+    "name": "dep-set-body-chain",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(mutate:set-body \"f\" \"(* x 2)\")(typecheck-current)(eval-current)(display (g 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  },
+  {
+    "name": "dep-tc-stress",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"v2\")(typecheck-current)(typecheck-current)(typecheck-current)(eval-current)(display (g 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  }
+]

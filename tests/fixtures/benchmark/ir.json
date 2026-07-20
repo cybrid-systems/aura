@@ -1,0 +1,38 @@
+[
+  {
+    "name": "ir_add",
+    "code": "(+ 1 2)",
+    "pipeline": "ir",
+    "expected_val": 3
+  },
+  {
+    "name": "ir_closure",
+    "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+    "pipeline": "ir",
+    "expected_val": 42
+  },
+  {
+    "name": "ir_fact",
+    "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+    "pipeline": "ir",
+    "expected_val": 120
+  },
+  {
+    "name": "ir_fib_10",
+    "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
+    "pipeline": "ir",
+    "expected_val": 55
+  },
+  {
+    "name": "ir_if",
+    "code": "(if (< 3 5) 100 200)",
+    "pipeline": "ir",
+    "expected_val": 100
+  },
+  {
+    "name": "ir_lambda",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "ir",
+    "expected_val": 10
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "incr-basic",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(display (typecheck-current))(typecheck-current))",
+    "expect_out": "type: Void\nno errors",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-cache-hit",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(typecheck-current)(typecheck-current)(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-caller-chain",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(display (eval-current))(display (h 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-caller-dirty",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))(define (caller z) (add z 1))(define (other z) (* z 2))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"mul\")(typecheck-current)(display (eval-current))(display (caller 5))(display (other 5)))",
+    "expect_out": "10",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-large-typecheck",
+    "code": "(begin (set-code \"(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (define (map f l) (if (null? l) (quote ()) (cons (f (car l)) (map f (cdr l)))))(define (sum l) (if (null? l) 0 (+ (car l) (sum (cdr l)))))\")(typecheck-current)(typecheck-current)(typecheck-current)(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-multi-mutate",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(mutate:rebind \"g\" \"(lambda (x) (f x))\" \"chain\")(typecheck-current)(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-mutate",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"test\")(typecheck-current)(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "incr-workspace-switch",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(typecheck-current)(define sandbox (workspace:create \"sandbox\"))(workspace:switch sandbox)(set-code \"(define (f x) (* x 2))\")(typecheck-current)(workspace:switch 0)(typecheck-current)(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  }
+]

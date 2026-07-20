@@ -1,0 +1,8 @@
+[
+  {
+    "name": "thread-pool-enqueue-stdin",
+    "code": "(display (thread_pool:enqueue (lambda () (+ 1 2))))",
+    "expect_out": "3",
+    "expect_err": ""
+  }
+]

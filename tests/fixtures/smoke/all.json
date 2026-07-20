@@ -1,13 +1,13 @@
 [
   {
-    "name": "basic_eval",
-    "command": "echo 42 | build/aura",
-    "expected": "42"
-  },
-  {
     "name": "basic_add",
     "command": "echo '(+ 1 2)' | build/aura",
     "expected": "3"
+  },
+  {
+    "name": "basic_eval",
+    "command": "echo 42 | build/aura",
+    "expected": "42"
   },
   {
     "name": "basic_ir",
@@ -15,13 +15,13 @@
     "expected": "3"
   },
   {
-    "name": "basic_typecheck",
-    "command": "echo 42 | build/aura --typecheck",
-    "expected": "Int"
-  },
-  {
     "name": "basic_serve",
     "command": "printf '(+ 1 2)' | build/aura --serve",
     "expected": "status"
+  },
+  {
+    "name": "basic_typecheck",
+    "command": "echo 42 | build/aura --typecheck",
+    "expected": "Int"
   }
 ]

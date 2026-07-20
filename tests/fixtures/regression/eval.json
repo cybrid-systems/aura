@@ -1,0 +1,14 @@
+[
+  {
+    "name": "eval-async-stdin-fallback",
+    "code": "(display (eval:async \"(+ 1 2)\"))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "eval-capture",
+    "code": "(begin (set-code \"(display 42)\") (eval-current-output))",
+    "expect_out": "42",
+    "expect_err": ""
+  }
+]

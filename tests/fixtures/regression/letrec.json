@@ -1,0 +1,8 @@
+[
+  {
+    "name": "letrec-poly",
+    "code": "(letrec ((id (lambda (x) x)))(display (id 99))(display (id #f)))",
+    "expect_out": "99#f",
+    "expect_err": ""
+  }
+]

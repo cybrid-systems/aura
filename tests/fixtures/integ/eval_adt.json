@@ -1,0 +1,62 @@
+[
+  {
+    "name": "adt_car_tag",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (car (Some 42)))",
+    "pipeline": "eval",
+    "expected": "Some"
+  },
+  {
+    "name": "adt_either",
+    "code": "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))",
+    "pipeline": "eval",
+    "expected": "err"
+  },
+  {
+    "name": "adt_match_none",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match None ((Some x) x) (None 0)))",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "adt_match_some",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some x) x) (None 0)))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "adt_multi_field",
+    "code": "(begin (define-type (Pair a b) (pair a b)) (car (cdr (pair 1 2))))",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "adt_none_is_not_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "adt_none_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (pair? None))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "adt_some_cadr",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (car (cdr (Some 42))))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "adt_some_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (pair? (Some 42)))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "adt_wildcard",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match (Some 99) ((Some _) #t) (None #f)))",
+    "pipeline": "eval",
+    "expected": "#t"
+  }
+]
