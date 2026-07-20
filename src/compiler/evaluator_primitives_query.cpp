@@ -2439,6 +2439,120 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("self-evo-query-hygiene-mandate", 1);  // #1892
             insert_kv("issue", 1892);
             insert_kv("schema", 1892); // lineage 1636 / 1609 / 1501 / 547 / 1047
+            // Issue #1914 AC metric aliases on pattern-hygiene surface.
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                insert_kv("pattern_hygiene_filter_hits",
+                          static_cast<std::int64_t>(
+                              m->pattern_hygiene_filter_hits.load(std::memory_order_relaxed)));
+                insert_kv("macro_introduced_in_pattern_violations",
+                          static_cast<std::int64_t>(m->macro_introduced_in_pattern_violations.load(
+                              std::memory_order_relaxed)));
+            } else {
+                insert_kv("pattern_hygiene_filter_hits", pattern_skips);
+                insert_kv("macro_introduced_in_pattern_violations",
+                          static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #1914: query:hygiene-provenance-stats — unified hygiene +
+    // provenance diagnostics dashboard for AI self-evo root-cause.
+    // Schema **1914**. Aggregates pattern hygiene filters, provenance
+    // query hits, by-marker :where composition, invalidation_trace,
+    // and TypedMutationAudit signals.
+    ObservabilityPrims::register_stats_impl(
+        "query:hygiene-provenance-stats",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+            auto load_m =
+                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
+                return m ? (m->*field).load(std::memory_order_relaxed) : 0;
+            };
+            if (m)
+                m->hygiene_provenance_stats_queries_total.fetch_add(1, std::memory_order_relaxed);
+
+            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
+            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
+            const std::uint64_t filter_hits = load_m(&CompilerMetrics::pattern_hygiene_filter_hits);
+            const std::uint64_t pattern_skips = root_skips + recursive_skips;
+            const std::uint64_t prov_queries = load_m(&CompilerMetrics::provenance_query_total);
+            const std::uint64_t leakage =
+                load_m(&CompilerMetrics::macro_introduced_in_pattern_violations);
+            const std::uint64_t filter_viol = ev->get_pattern_macro_filter_violations();
+            const std::uint64_t hygiene_viol = ev->get_hygiene_violation_count();
+            const std::uint64_t where_hits = load_m(&CompilerMetrics::by_marker_where_filter_hits);
+            const std::uint64_t stable_prov =
+                load_m(&CompilerMetrics::stable_ref_provenance_query_total);
+            std::int64_t inv_trace = 0;
+            std::int64_t inv_records = 0;
+            if (auto* ws = ev->workspace_flat()) {
+                inv_trace = static_cast<std::int64_t>(ws->invalidation_trace_size());
+                inv_records = static_cast<std::int64_t>(ws->invalidation_trace_records_total());
+            }
+
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+
+            // AC metric names (exact)
+            insert_kv("pattern_hygiene_filter_hits",
+                      static_cast<std::int64_t>(filter_hits > 0 ? filter_hits : pattern_skips));
+            insert_kv("pattern-hygiene-filter-hits",
+                      static_cast<std::int64_t>(filter_hits > 0 ? filter_hits : pattern_skips));
+            insert_kv("provenance_query_total", static_cast<std::int64_t>(prov_queries));
+            insert_kv("provenance-query-total", static_cast<std::int64_t>(prov_queries));
+            insert_kv("macro_introduced_in_pattern_violations",
+                      static_cast<std::int64_t>(leakage > 0 ? leakage : filter_viol));
+            insert_kv("macro-introduced-in-pattern-violations",
+                      static_cast<std::int64_t>(leakage > 0 ? leakage : filter_viol));
+            // Supporting dashboard keys
+            insert_kv("root-skips", static_cast<std::int64_t>(root_skips));
+            insert_kv("recursive-skips", static_cast<std::int64_t>(recursive_skips));
+            insert_kv("pattern-macro-filter-violations", static_cast<std::int64_t>(filter_viol));
+            insert_kv("hygiene-violations", static_cast<std::int64_t>(hygiene_viol));
+            insert_kv("by-marker-where-hits", static_cast<std::int64_t>(where_hits));
+            insert_kv("stable-ref-provenance-queries", static_cast<std::int64_t>(stable_prov));
+            insert_kv("invalidation-trace-size", inv_trace);
+            insert_kv("invalidation-trace-records-total", inv_records);
+            insert_kv("default-hygiene-wired", 1);
+            insert_kv("by-marker-where-wired", 1);
+            insert_kv("node-provenance-wired", 1);
+            insert_kv("last-mutation-provenance-wired", 1);
+            insert_kv("lineage-1892", 1892);
+            insert_kv("lineage-1909", 1909);
+            insert_kv("schema", 1914);
+            insert_kv("issue", 1914);
+            insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

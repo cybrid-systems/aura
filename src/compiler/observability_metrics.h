@@ -953,6 +953,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_total{0};
     std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_max{0};
     std::atomic<std::uint64_t> pattern_query_after_batch_samples{0};
+    // Issue #1914: hygiene / provenance query diagnostics for AI self-evo.
+    // pattern_hygiene_filter_hits: MacroIntroduced skips on query:pattern.
+    // provenance_query_total: query:node-provenance + last-mutation-provenance hits.
+    // macro_introduced_in_pattern_violations: result-leakage after verify hygiene.
+    std::atomic<std::uint64_t> pattern_hygiene_filter_hits{0};
+    std::atomic<std::uint64_t> provenance_query_total{0};
+    std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
+    std::atomic<std::uint64_t> by_marker_where_filter_hits{0};
+    std::atomic<std::uint64_t> hygiene_provenance_stats_queries_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};

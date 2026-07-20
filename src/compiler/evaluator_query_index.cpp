@@ -503,6 +503,10 @@ void Evaluator::verify_pattern_result_hygiene(const aura::ast::FlatAST& flat, Ev
                 const auto id = static_cast<aura::ast::NodeId>(as_int(item));
                 if (id < flat.size() && flat.is_macro_introduced(id)) {
                     pattern_macro_filter_violations_.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1914: AC metric alias for result-leakage.
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->macro_introduced_in_pattern_violations.fetch_add(
+                            1, std::memory_order_relaxed);
                 }
             }
             cur = pairs_[pidx].cdr;

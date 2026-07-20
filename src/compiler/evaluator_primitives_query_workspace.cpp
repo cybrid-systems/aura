@@ -1085,7 +1085,7 @@ void register_workspace_query_primitives(
         return result;
     });
 
-    // (query:by-marker marker-name) — Issue #244: general marker
+    // (query:by-marker marker-name) — Issue #244 / #1914: general marker
     // query. Returns all nodes with the given SyntaxMarker.
     // marker-name is a string: "User" / "MacroIntroduced" /
     // "BoolLiteral". The opposite of (query:macro-introduced)
@@ -1095,14 +1095,16 @@ void register_workspace_query_primitives(
     // Returns a list of NodeIds (same encoding as
     // query:node-type / query:filter).
     //
-    // Optional 2nd arg: integer limit N. Only the first N
-    // matches are returned. Default: no limit.
-    add("query:by-marker", [ws, mev](const auto& a) -> EvalValue {
+    // Optional:
+    //   limit-int (positional 2nd) — first N matches
+    //   :where / :tag "NodeTag" — Issue #1914: compose with tag filter
+    //     e.g. (query:by-marker "User" :where "Define")
+    //   :limit N — keyword form of limit
+    add("query:by-marker", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || a.size() > 2 || !is_string(a[0]))
-            return mev(
-                "bad-arg",
-                "usage: (query:by-marker marker-name) or (query:by-marker marker-name limit-int)");
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
+                                  "[:where|:tag tag-name] [:limit N])");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
 
@@ -1125,28 +1127,295 @@ void register_workspace_query_primitives(
         }
 
         std::int64_t limit = -1;
-        if (a.size() == 2) {
-            if (!is_int(a[1]))
-                return mev("bad-arg", "limit must be an integer");
-            limit = as_int(a[1]);
-            if (limit < 0)
-                return mev("bad-arg", "limit must be non-negative");
+        bool have_where_tag = false;
+        aura::ast::NodeTag where_tag = aura::ast::NodeTag::Begin;
+        auto parse_tag = [](std::string_view name) -> std::optional<aura::ast::NodeTag> {
+            if (name == "Define" || name == "define")
+                return aura::ast::NodeTag::Define;
+            if (name == "Call" || name == "call")
+                return aura::ast::NodeTag::Call;
+            if (name == "Lambda" || name == "lambda")
+                return aura::ast::NodeTag::Lambda;
+            if (name == "Variable" || name == "var")
+                return aura::ast::NodeTag::Variable;
+            if (name == "If" || name == "IfExpr" || name == "if")
+                return aura::ast::NodeTag::IfExpr;
+            if (name == "Let" || name == "let")
+                return aura::ast::NodeTag::Let;
+            if (name == "LetRec" || name == "letrec")
+                return aura::ast::NodeTag::LetRec;
+            if (name == "Begin" || name == "begin")
+                return aura::ast::NodeTag::Begin;
+            if (name == "Set" || name == "set!")
+                return aura::ast::NodeTag::Set;
+            if (name == "LiteralInt" || name == "int")
+                return aura::ast::NodeTag::LiteralInt;
+            if (name == "LiteralString" || name == "string")
+                return aura::ast::NodeTag::LiteralString;
+            return std::nullopt;
+        };
+        auto kw_name = [&](const EvalValue& v) -> std::string_view {
+            if (!is_keyword(v))
+                return {};
+            auto kidx = as_keyword_idx(v);
+            if (kidx >= ws.keyword_table.size())
+                return {};
+            return ws.keyword_table[kidx];
+        };
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (is_int(a[ai]) && limit < 0 && !is_keyword(a[ai])) {
+                limit = as_int(a[ai]);
+                if (limit < 0)
+                    return mev("bad-arg", "limit must be non-negative");
+                continue;
+            }
+            if (is_keyword(a[ai])) {
+                const auto kw = kw_name(a[ai]);
+                if (kw == ":where" || kw == ":tag") {
+                    if (ai + 1 >= a.size() || !is_string(a[ai + 1]))
+                        return mev("bad-arg", ":where/:tag requires a tag-name string");
+                    auto sidx = as_string_idx(a[ai + 1]);
+                    if (sidx >= ws.string_heap.size())
+                        return mev("bad-arg", "tag name string index out of range");
+                    auto parsed = parse_tag(ws.string_heap[sidx]);
+                    if (!parsed)
+                        return mev("unknown-tag", std::string("unknown NodeTag for :where: \"") +
+                                                      ws.string_heap[sidx] + "\"");
+                    where_tag = *parsed;
+                    have_where_tag = true;
+                    ++ai;
+                    continue;
+                }
+                if (kw == ":limit") {
+                    if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
+                        return mev("bad-arg", ":limit requires a non-negative integer");
+                    limit = as_int(a[ai + 1]);
+                    if (limit < 0)
+                        return mev("bad-arg", "limit must be non-negative");
+                    ++ai;
+                    continue;
+                }
+                return mev("bad-arg",
+                           std::string("unknown query:by-marker keyword: ") + std::string(kw));
+            }
+            return mev("bad-arg", "unexpected argument after marker-name");
         }
 
         auto& flat = *ws.workspace_flat;
         EvalValue result = make_void();
         std::int64_t emitted = 0;
+        std::int64_t where_hits = 0;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (limit >= 0 && emitted >= limit)
                 break;
-            if (flat.marker(id) == target) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
-                ++emitted;
+            if (flat.marker(id) != target)
+                continue;
+            if (have_where_tag) {
+                if (id >= flat.size())
+                    continue;
+                auto view = flat.get(id);
+                if (view.tag != where_tag)
+                    continue;
+                ++where_hits;
             }
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+            result = make_pair(pid);
+            ++emitted;
+        }
+        // Issue #1914: observability for :where composition.
+        if (have_where_tag) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->by_marker_where_filter_hits.fetch_add(
+                    static_cast<std::uint64_t>(where_hits > 0 ? where_hits : 1),
+                    std::memory_order_relaxed);
         }
         return result;
+    });
+
+    // Issue #1914: (query:node-provenance node-id) — full diagnostic hash
+    // for AI root-cause of failed mutate / hygiene. Combines StableNodeRef
+    // capture + SyntaxMarker + last mutation targeting this node + fiber.
+    // Returns #f on bad args / OOR; hash otherwise (schema 1914).
+    add("query:node-provenance", [ws, mev, &ev](const auto& a) -> EvalValue {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:node-provenance node-id)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto& flat = *ws.workspace_flat;
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (nid >= flat.size())
+            return make_bool(false);
+
+        const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+        auto ref = flat.make_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
+        const bool is_live = ref.is_valid_in(flat);
+        const bool is_macro = flat.is_macro_introduced(nid);
+        const auto marker = flat.marker(nid);
+        std::int64_t marker_code = 0;
+        if (marker == aura::ast::SyntaxMarker::MacroIntroduced)
+            marker_code = 1;
+        else if (marker == aura::ast::SyntaxMarker::BoolLiteral)
+            marker_code = 2;
+
+        // Last mutation that targeted this node (scan log reverse).
+        std::int64_t last_mut_id = 0;
+        std::int64_t last_mut_author = 0;
+        std::int64_t last_mut_parent = 0;
+        std::string last_op;
+        std::string last_summary;
+        const auto view = flat.mutation_log_view();
+        for (auto it = view.rbegin(); it != view.rend(); ++it) {
+            if (it->target_node == nid) {
+                last_mut_id = static_cast<std::int64_t>(it->mutation_id);
+                last_mut_author = static_cast<std::int64_t>(it->author_fingerprint);
+                last_mut_parent = static_cast<std::int64_t>(it->parent_mutation_id);
+                last_op = it->operator_name;
+                last_summary = it->summary;
+                break;
+            }
+        }
+        // Invalidation trace hit for that mutation (if any).
+        std::int64_t inv_trace_hits = 0;
+        if (last_mut_id > 0) {
+            if (flat.last_invalidation_for(static_cast<std::uint64_t>(last_mut_id)))
+                inv_trace_hits = 1;
+        }
+
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto i = ((h >> 1) + at) & (hcap - 1);
+                if (meta[i] == 0xFF) {
+                    meta[i] = fp;
+                    auto kidx = ws.string_heap.size();
+                    ws.string_heap.push_back(k_str);
+                    keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[i] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("id", static_cast<std::int64_t>(ref.id));
+        insert_kv("gen", static_cast<std::int64_t>(ref.gen));
+        insert_kv("mutation-id-at-capture", static_cast<std::int64_t>(ref.mutation_id_at_capture));
+        insert_kv("workspace-id", static_cast<std::int64_t>(ref.workspace_id));
+        insert_kv("fiber-id", static_cast<std::int64_t>(ref.fiber_id));
+        insert_kv("wrap-epoch", static_cast<std::int64_t>(ref.wrap_epoch));
+        insert_kv("is-live", is_live ? 1 : 0);
+        insert_kv("macro-flag", is_macro ? 1 : 0);
+        insert_kv("macro_flag", is_macro ? 1 : 0);
+        insert_kv("marker", marker_code);
+        insert_kv("tag", static_cast<std::int64_t>(static_cast<std::uint32_t>(flat.get(nid).tag)));
+        insert_kv("mutation_id", last_mut_id);
+        insert_kv("last-mutation-id", last_mut_id);
+        insert_kv("author-fingerprint", last_mut_author);
+        insert_kv("parent-mutation-id", last_mut_parent);
+        insert_kv("invalidation-trace-hit", inv_trace_hits);
+        // reason code: 0=none, 1=user-mutate, 2=macro-introduced, 3=stale-ref
+        std::int64_t reason = 0;
+        if (is_macro)
+            reason = 2;
+        else if (last_mut_id > 0)
+            reason = 1;
+        else if (!is_live)
+            reason = 3;
+        insert_kv("reason", reason);
+        // Encode op/summary lengths so Agent can correlate without string hash.
+        insert_kv("operator-name-len", static_cast<std::int64_t>(last_op.size()));
+        insert_kv("summary-len", static_cast<std::int64_t>(last_summary.size()));
+        insert_kv("schema", 1914);
+        insert_kv("issue", 1914);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #1914: (query:last-mutation-provenance) — blame + hygiene context
+    // for the most recent workspace mutation. Hash schema 1914.
+    add("query:last-mutation-provenance", [ws, mev, &ev](const auto& a) -> EvalValue {
+        (void)a;
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (!ws.workspace_flat)
+            return make_void();
+        auto& flat = *ws.workspace_flat;
+        const auto view = flat.mutation_log_view();
+        if (view.empty())
+            return make_void();
+        const auto& rec = view.back();
+        const auto nid = rec.target_node;
+        const bool in_range = nid < flat.size();
+        const bool is_macro = in_range && flat.is_macro_introduced(nid);
+        std::int64_t inv_hit = 0;
+        if (flat.last_invalidation_for(rec.mutation_id))
+            inv_hit = 1;
+
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto i = ((h >> 1) + at) & (hcap - 1);
+                if (meta[i] == 0xFF) {
+                    meta[i] = fp;
+                    auto kidx = ws.string_heap.size();
+                    ws.string_heap.push_back(k_str);
+                    keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[i] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("mutation_id", static_cast<std::int64_t>(rec.mutation_id));
+        insert_kv("target-node", static_cast<std::int64_t>(nid));
+        insert_kv("author-fingerprint", static_cast<std::int64_t>(rec.author_fingerprint));
+        insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec.parent_mutation_id));
+        insert_kv("composite-transaction-id",
+                  static_cast<std::int64_t>(rec.composite_transaction_id));
+        insert_kv("macro-flag", is_macro ? 1 : 0);
+        insert_kv("macro_flag", is_macro ? 1 : 0);
+        insert_kv("invalidation-trace-hit", inv_hit);
+        insert_kv("invalidation-trace-size",
+                  static_cast<std::int64_t>(flat.invalidation_trace_size()));
+        insert_kv("operator-name-len", static_cast<std::int64_t>(rec.operator_name.size()));
+        insert_kv("summary-len", static_cast<std::int64_t>(rec.summary.size()));
+        insert_kv("fiber-id", static_cast<std::int64_t>(aura_fiber_current_id()));
+        insert_kv("workspace-gen", static_cast<std::int64_t>(flat.generation()));
+        insert_kv("reason", is_macro ? 2 : 1);
+        insert_kv("schema", 1914);
+        insert_kv("issue", 1914);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // (query:macro-introduced) — Issue #244: shortcut for

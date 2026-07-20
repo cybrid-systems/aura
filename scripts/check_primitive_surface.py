@@ -60,7 +60,9 @@ TARGET_BUDGET = 420
 # Interim hard ceiling ratchets down as demotion batches land (#1449).
 # After dirty/render demotion (~573 total). Hard-fail only on growth past this.
 # Raised 520→521 after #1907 (reflect/EDSL bridge public surface +1).
-INTERIM_HARD_CEILING = 521
+# Raised 521→523 after #1914 (query:node-provenance + query:last-mutation-provenance
+# diagnostic hashes for AI hygiene root-cause; arg-taking, not engine:metrics-only).
+INTERIM_HARD_CEILING = 523
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
