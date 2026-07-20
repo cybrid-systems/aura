@@ -250,9 +250,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:mf-mailbox-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::serve::mf_mailbox;
-            std::uint64_t pushes = 0, pops = 0, broadcasts = 0, bp = 0, attaches = 0;
-            MultiFiberMailbox::snapshot_global(pushes, pops, broadcasts, bp, attaches);
-            auto* ht = FlatHashTable::create(8);
+            // Issue #1881: full health fields (priority / waits / linear).
+            std::uint64_t pushes = 0, pops = 0, broadcasts = 0, bp = 0, attaches = 0, ph = 0,
+                          waits = 0, tmo = 0, lchk = 0, lviol = 0;
+            MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
+                                                    waits, tmo, lchk, lviol);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -284,22 +287,30 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("broadcasts", static_cast<std::int64_t>(broadcasts));
             insert_kv("backpressure-rejects", static_cast<std::int64_t>(bp));
             insert_kv("attaches", static_cast<std::int64_t>(attaches));
+            insert_kv("priority-high", static_cast<std::int64_t>(ph));
+            insert_kv("recv-waits", static_cast<std::int64_t>(waits));
+            insert_kv("recv-timeouts", static_cast<std::int64_t>(tmo));
+            insert_kv("linear-checks", static_cast<std::int64_t>(lchk));
+            insert_kv("linear-violations", static_cast<std::int64_t>(lviol));
             insert_kv("phase", static_cast<std::int64_t>(kMultiFiberMailboxPhase));
             insert_kv("schema", 1585);
+            insert_kv("schema-1881", 1881);
+            insert_kv("health-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
 
-    // Issue #1586: process-global parallel_orch / parallel_intend stats.
+    // Issue #1586 / #1881: process-global parallel_orch / parallel_intend stats.
     // Full spawn/join/aggregate API is C++ (parallel_orch.h); agent EDSL
     // surface for (parallel-intend ...) is #1587.
     ObservabilityPrims::register_stats_impl(
         "query:parallel-orch-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::serve::parallel_orch;
             std::uint64_t batches = 0, spawned = 0, joined = 0, ok = 0, err = 0, ff = 0, to = 0,
-                          mb = 0;
-            snapshot_global(batches, spawned, joined, ok, err, ff, to, mb);
+                          mb = 0, qr = 0, inv = 0, bok = 0, bpart = 0, jwait = 0, elapsed = 0;
+            snapshot_global_ext(batches, spawned, joined, ok, err, ff, to, mb, qr, inv, bok, bpart,
+                                jwait, elapsed);
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -335,8 +346,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fail-fast-aborts", static_cast<std::int64_t>(ff));
             insert_kv("timeouts", static_cast<std::int64_t>(to));
             insert_kv("mailbox-posts", static_cast<std::int64_t>(mb));
+            // Issue #1881 health fields
+            insert_kv("quota-rejects", static_cast<std::int64_t>(qr));
+            insert_kv("invalid-batches", static_cast<std::int64_t>(inv));
+            insert_kv("batch-ok", static_cast<std::int64_t>(bok));
+            insert_kv("batch-partial", static_cast<std::int64_t>(bpart));
+            insert_kv("join-wait-us-total", static_cast<std::int64_t>(jwait));
+            insert_kv("avg-join-us", batches > 0 ? static_cast<std::int64_t>(jwait / batches) : 0);
+            insert_kv("parallel-elapsed-us", static_cast<std::int64_t>(elapsed));
             insert_kv("phase", static_cast<std::int64_t>(kParallelOrchPhase));
             insert_kv("schema", 1586);
+            insert_kv("schema-1881", 1881);
+            insert_kv("health-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

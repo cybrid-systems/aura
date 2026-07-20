@@ -27,8 +27,8 @@
 
 namespace aura::serve::parallel_orch {
 
-inline constexpr int kParallelOrchPhase = 2; // #1586 production
-inline constexpr int kParallelOrchIssue = 1586;
+inline constexpr int kParallelOrchPhase = 3; // #1881 observability
+inline constexpr int kParallelOrchIssue = 1881;
 
 // ── Policy ─────────────────────────────────────────────
 struct ParallelPolicy {
@@ -88,6 +88,11 @@ struct ParallelOrchStats {
     // Issue #1600: ResourceQuota orchestration rejects.
     std::atomic<std::uint64_t> quota_rejects{0};
     std::atomic<std::uint64_t> spawn_rejected_quota{0};
+    // Issue #1881: batch outcome + join latency for health dashboards.
+    std::atomic<std::uint64_t> batch_ok_total{0};
+    std::atomic<std::uint64_t> batch_partial_total{0};
+    std::atomic<std::uint64_t> batch_fail_fast_total{0};
+    std::atomic<std::uint64_t> join_wait_us_total{0};
 };
 
 inline ParallelOrchStats g_parallel_orch_stats{};
@@ -115,6 +120,23 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
     fail_fast = g_parallel_orch_stats.fail_fast_aborts.load(std::memory_order_relaxed);
     timeouts = g_parallel_orch_stats.timeouts.load(std::memory_order_relaxed);
     mailbox_posts = g_parallel_orch_stats.mailbox_posts.load(std::memory_order_relaxed);
+}
+
+// Issue #1881: extended snapshot for health dashboards.
+inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
+                                std::uint64_t& joined, std::uint64_t& ok, std::uint64_t& err,
+                                std::uint64_t& fail_fast, std::uint64_t& timeouts,
+                                std::uint64_t& mailbox_posts, std::uint64_t& quota_rejects,
+                                std::uint64_t& invalid, std::uint64_t& batch_ok,
+                                std::uint64_t& batch_partial, std::uint64_t& join_wait_us,
+                                std::uint64_t& elapsed_us) noexcept {
+    snapshot_global(batches, spawned, joined, ok, err, fail_fast, timeouts, mailbox_posts);
+    quota_rejects = g_parallel_orch_stats.quota_rejects.load(std::memory_order_relaxed);
+    invalid = g_parallel_orch_stats.invalid_batches.load(std::memory_order_relaxed);
+    batch_ok = g_parallel_orch_stats.batch_ok_total.load(std::memory_order_relaxed);
+    batch_partial = g_parallel_orch_stats.batch_partial_total.load(std::memory_order_relaxed);
+    join_wait_us = g_parallel_orch_stats.join_wait_us_total.load(std::memory_order_relaxed);
+    elapsed_us = g_parallel_orch_stats.parallel_elapsed_us.load(std::memory_order_relaxed);
 }
 
 // ── Core: parallel_run ─────────────────────────────────
@@ -345,6 +367,8 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
     out.join_status = jr.status;
     out.wait_us = jr.wait_us;
     g_parallel_orch_stats.tasks_joined.fetch_add(fibers.size(), std::memory_order_relaxed);
+    // Issue #1881: always accumulate join wait (was missing → dead join latency).
+    g_parallel_orch_stats.join_wait_us_total.fetch_add(jr.wait_us, std::memory_order_relaxed);
 
     // On overall timeout: stop admitting + request cancel, then best-effort drain.
     // Task bodies should check Fiber::is_cancel_requested() / not spin forever.
@@ -382,10 +406,15 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
         out.status = BatchStatus::Timeout;
     } else if (out.aborted_count > 0 || (policy.fail_fast && out.err_count > 0)) {
         out.status = BatchStatus::FailFast;
+        // Issue #1881: ensure fail-fast batch outcomes always bump counter
+        // (body path may have already incremented fail_fast_aborts).
+        g_parallel_orch_stats.batch_fail_fast_total.fetch_add(1, std::memory_order_relaxed);
     } else if (out.err_count > 0) {
         out.status = BatchStatus::Partial;
+        g_parallel_orch_stats.batch_partial_total.fetch_add(1, std::memory_order_relaxed);
     } else {
         out.status = BatchStatus::Ok;
+        g_parallel_orch_stats.batch_ok_total.fetch_add(1, std::memory_order_relaxed);
     }
 
     const auto elapsed = static_cast<std::uint64_t>(

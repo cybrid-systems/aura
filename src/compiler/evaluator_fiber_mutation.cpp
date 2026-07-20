@@ -1523,6 +1523,26 @@ extern "C" int aura_orch_agent_body_try_acquire() {
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return 0; // serve-only / no Evaluator → body runs without guard
+    // Issue #1881: Fiber stacks are small — do not construct a full
+    // MutationBoundaryGuard on the fiber path (stack smash under spawn
+    // stress). Use lightweight check_mutation_quota only; host-side
+    // call sites may still try_acquire for a full Guard.
+    const bool on_fiber =
+        (Evaluator::g_current_fiber_void != nullptr) || (aura::serve::g_current_fiber != nullptr);
+    if (on_fiber) {
+        if (auto err = ev->check_mutation_quota(/*pending=*/1)) {
+            (void)err;
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                m->resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+                m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return 1;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
+        return 0;
+    }
     bool ok = true;
     auto g = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(*ev, /*pending=*/1, &ok);
     if (!g) {

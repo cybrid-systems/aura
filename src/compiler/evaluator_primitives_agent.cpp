@@ -2781,8 +2781,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                   : 0;
             const auto cm_lin =
                 m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
-            // Capacity 64: #1588 base + #1879 provenance fields (FNV headroom).
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: #1588 + #1879/#1880/#1881 health fields (FNV headroom).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2809,6 +2809,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     }
                 }
             };
+            auto& os = aura::orch::g_orch_module_stats;
             insert_kv("agents-spawned", static_cast<std::int64_t>(spawned));
             insert_kv("agents-joined", static_cast<std::int64_t>(joined));
             insert_kv("agents-send", static_cast<std::int64_t>(sends));
@@ -2829,17 +2830,87 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #1880: ResourceQuota orch rejects (mirror process quota).
             insert_kv("resource-quota-rejects-total",
                       static_cast<std::int64_t>(
-                          aura::orch::g_orch_module_stats.resource_quota_rejects_total.load(
-                              std::memory_order_relaxed)));
+                          os.resource_quota_rejects_total.load(std::memory_order_relaxed)));
             insert_kv("agent-body-try-acquire-rejects",
                       static_cast<std::int64_t>(
-                          aura::orch::g_orch_module_stats.agent_body_try_acquire_rejects_total.load(
-                              std::memory_order_relaxed)));
+                          os.agent_body_try_acquire_rejects_total.load(std::memory_order_relaxed)));
             insert_kv("agent-body-try-acquire-ok",
                       static_cast<std::int64_t>(
-                          aura::orch::g_orch_module_stats.agent_body_try_acquire_ok_total.load(
-                              std::memory_order_relaxed)));
+                          os.agent_body_try_acquire_ok_total.load(std::memory_order_relaxed)));
             insert_kv("schema-1880", 1880);
+            // Issue #1881: unified orch health (agent + mailbox + parallel mirrors).
+            // New query:orch-*-stats names are frozen; fold into this hash instead.
+            insert_kv("agents-active",
+                      static_cast<std::int64_t>(os.agents_active.load(std::memory_order_relaxed)));
+            insert_kv("quota-rejects", static_cast<std::int64_t>(
+                                           os.spawn_quota_rejects.load(std::memory_order_relaxed)));
+            insert_kv("send-backpressure",
+                      static_cast<std::int64_t>(
+                          os.send_backpressure_total.load(std::memory_order_relaxed)));
+            insert_kv("send-closed", static_cast<std::int64_t>(
+                                         os.send_closed_total.load(std::memory_order_relaxed)));
+            insert_kv("recv-empty", static_cast<std::int64_t>(
+                                        os.recv_empty_total.load(std::memory_order_relaxed)));
+            insert_kv("join-ok",
+                      static_cast<std::int64_t>(os.join_ok_total.load(std::memory_order_relaxed)));
+            insert_kv("join-fail", static_cast<std::int64_t>(
+                                       os.join_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("join-wait-us-total", static_cast<std::int64_t>(os.join_wait_us_total.load(
+                                                std::memory_order_relaxed)));
+            const auto jn = os.join_ok_total.load(std::memory_order_relaxed) +
+                            os.join_fail_total.load(std::memory_order_relaxed);
+            insert_kv("avg-join-us",
+                      jn > 0 ? static_cast<std::int64_t>(
+                                   os.join_wait_us_total.load(std::memory_order_relaxed) / jn)
+                             : 0);
+            // Mailbox submodule (prefix mailbox-*)
+            using namespace aura::serve::mf_mailbox;
+            std::uint64_t mp = 0, mo = 0, mbc = 0, mbp = 0, ma = 0, mph = 0, mw = 0, mt = 0,
+                          mlc = 0, mlv = 0;
+            MultiFiberMailbox::snapshot_global_full(mp, mo, mbc, mbp, ma, mph, mw, mt, mlc, mlv);
+            insert_kv("mailbox-pushes", static_cast<std::int64_t>(mp));
+            insert_kv("mailbox-pops", static_cast<std::int64_t>(mo));
+            insert_kv("mailbox-backpressure-rejects", static_cast<std::int64_t>(mbp));
+            insert_kv("mailbox-priority-high", static_cast<std::int64_t>(mph));
+            insert_kv("mailbox-recv-waits", static_cast<std::int64_t>(mw));
+            insert_kv("mailbox-linear-violations", static_cast<std::int64_t>(mlv));
+            // Parallel submodule (prefix parallel-*)
+            using namespace aura::serve::parallel_orch;
+            std::uint64_t pb = 0, ps = 0, pj = 0, pok = 0, perr = 0, pff = 0, pto = 0, pmb = 0,
+                          pqr = 0, pinv = 0, pbok = 0, pbpart = 0, pjw = 0, pel = 0;
+            snapshot_global_ext(pb, ps, pj, pok, perr, pff, pto, pmb, pqr, pinv, pbok, pbpart, pjw,
+                                pel);
+            insert_kv("parallel-batches-total", static_cast<std::int64_t>(pb));
+            insert_kv("parallel-tasks-ok", static_cast<std::int64_t>(pok));
+            insert_kv("parallel-tasks-err", static_cast<std::int64_t>(perr));
+            insert_kv("parallel-fail-fast", static_cast<std::int64_t>(pff));
+            insert_kv("parallel-timeouts", static_cast<std::int64_t>(pto));
+            insert_kv("parallel-batch-ok", static_cast<std::int64_t>(pbok));
+            insert_kv("parallel-avg-join-us", pb > 0 ? static_cast<std::int64_t>(pjw / pb) : 0);
+            // Composite health score 0..100 for AI backoff decisions.
+            std::int64_t health = 100;
+            if (spawned > 0) {
+                const auto rej = os.spawn_quota_rejects.load(std::memory_order_relaxed) +
+                                 os.resource_quota_rejects_total.load(std::memory_order_relaxed);
+                const auto fail = os.join_fail_total.load(std::memory_order_relaxed);
+                const auto bp = os.send_backpressure_total.load(std::memory_order_relaxed);
+                const auto sp = std::max<std::uint64_t>(spawned, 1);
+                const auto join_n = std::max<std::uint64_t>(jn, 1);
+                const auto send_n = std::max<std::uint64_t>(sends + bp, 1);
+                health = 100;
+                health -= static_cast<std::int64_t>(std::min<std::uint64_t>(40, (rej * 40) / sp));
+                health -=
+                    static_cast<std::int64_t>(std::min<std::uint64_t>(30, (fail * 30) / join_n));
+                health -=
+                    static_cast<std::int64_t>(std::min<std::uint64_t>(30, (bp * 30) / send_n));
+                if (health < 0)
+                    health = 0;
+            }
+            insert_kv("health-score", health);
+            insert_kv("schema-1881", 1881);
+            insert_kv("agent-stats-wired", 1);    // alias for query:orch-agent-stats intent
+            insert_kv("mailbox-stats-wired", 1);  // alias for query:orch-mailbox-stats intent
+            insert_kv("parallel-stats-wired", 1); // alias for query:orch-parallel-stats intent
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
