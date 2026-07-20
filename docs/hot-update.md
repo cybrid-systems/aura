@@ -95,6 +95,25 @@ documented as future work and have related open issues:
 - `compile:cache-size` / `compile:dirty-count` / `compile:dep-edges`
   (low-level IR cache stats — observable but not part of MVP contract)
 
+## HotUpdateRegistry (#1956)
+
+Process-wide coordination center for hot-update callbacks and listeners:
+
+| Piece | Role |
+|-------|------|
+| `src/compiler/hot_update_registry.hh` / `.cpp` | `HotUpdateRegistry` singleton |
+| C ABI (`aura_set_reemit_candidate_fn`, `aura_set_aot_emit_fn`, …) | Still the process ABI; setters bookkeep into the registry |
+| `register_epoch_listener` / `register_dirty_listener` | Dynamic listeners (agents / tests / plugins) |
+| `query:hot-update-registry-stats` | Dashboard: wiring flags + `hot_update_registry_*` counters |
+
+```bash
+# Metrics
+(engine:metrics "query:hot-update-registry-stats")
+# schema-1956, reemit-provider-wired, hot_update_registry_register_calls_total, …
+```
+
+MVP (#1943): single-workspace; no cross-COW DefineId migration.
+
 ## How to use this doc
 
 - If you are an AI agent driving Aura hot-update: stay within "In scope".
@@ -118,6 +137,7 @@ These remain open and are pre-requisites or extensions of the MVP:
 - [#1955] `compact_env_frames` / `truncate_env_frames_to_checkpoint`
   consistency: Guard + dual-epoch *(closed: schema-1955 refine of #1927)*
 - [#1956] Establish `hot_update_registry` unified coordination center
+  *(closed: `HotUpdateRegistry` + `query:hot-update-registry-stats`)*
 - (and many closed historical hot-update issues, e.g. #1905, #1747,
   #1710, #1707, #1658, #1636, #1627, #1625, #1623, #1616, #1614,
   #1609, #1607)
