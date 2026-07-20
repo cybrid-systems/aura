@@ -26,7 +26,9 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.type;
+import aura.compiler.ir;
 import aura.compiler.pass_manager;
+import aura.compiler.service;
 import aura.compiler.value;
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
@@ -529,18 +531,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
         });
 
-    // Issue #455 / #1039 / #1644: query:ir-marker-stats
+    // Issue #455 / #1039 / #1644 / #1891: query:ir-marker-stats
     // Hash of SyntaxMarker counts read from the IR (per-instruction
     // source_marker across IRModule.functions[*].blocks[*].instructions[*])
     // — the authoritative IR-layer marker surface — augmented with the
-    // two Issue #1644 IR-hygiene observability counters. #1644 closes the
-    // prior follow-up that scanned AST marker_column only (the old impl's
-    // "IR per-instruction markers are a follow-up when IRModule is always
-    // reachable" note), and pairs the marker stats with the cross-marker
-    // inliner-skip + lowering-propagation observability hooks for closed-
-    // loop MacroIntroduced hygiene in self-evolution. 5-field hash
-    // returned: {ir_user, ir_macro_intro, ir_bool_lit,
-    //             lowering_marker_propagated_total, ir_macro_introduced_inlined_skipped_total}.
+    // two Issue #1644 IR-hygiene observability counters. #1891 prefers
+    // CompilerService::last_ir_module() walk; falls back to AST marker
+    // column when no IR has been compiled yet. Pairs marker stats with
+    // cross-marker inliner-skip + lowering-propagation observability for
+    // closed-loop MacroIntroduced hygiene in self-evolution.
     ObservabilityPrims::register_stats_impl(
         "query:ir-marker-stats", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -550,10 +549,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     m->ir_marker_stats_queries_total.fetch_add(1, std::memory_order_relaxed);
             }
             std::int64_t ir_user = 0, ir_macro_intro = 0, ir_bool_lit = 0;
-            // AC3: prefer IR module when available via query evaluator's
-            // compiler service hook; fall back to AST marker column scan.
-            // (Avoid hard dependency on messaging_bridge globals here.)
-            if (ev && ev->workspace_flat()) {
+            std::int64_t ir_walked = 0;
+            // AC3 / #1891: prefer last_ir_module instruction walk.
+            if (ev && ev->compiler_service()) {
+                auto* svc = static_cast<aura::compiler::CompilerService*>(ev->compiler_service());
+                if (const auto& mod_opt = svc->last_ir_module(); mod_opt.has_value()) {
+                    ir_walked = 1;
+                    for (const auto& fn : mod_opt->functions) {
+                        for (const auto& blk : fn.blocks) {
+                            for (const auto& instr : blk.instructions) {
+                                if (instr.source_marker == 1)
+                                    ++ir_macro_intro;
+                                else if (instr.source_marker == 2)
+                                    ++ir_bool_lit;
+                                else
+                                    ++ir_user;
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: AST marker column when IR not yet available.
+            if (!ir_walked && ev && ev->workspace_flat()) {
                 const auto& flat = *ev->workspace_flat();
                 const auto n = flat.size();
                 for (std::uint32_t i = 0; i < n; ++i) {
@@ -566,7 +583,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         ++ir_user;
                 }
             }
-            // AC4: read the two new counters.
+            // AC4 / #1891: CompilerMetrics when live; else shared C totals
+            // (lowering) + InlinePass hook (skip) — module-boundary safe.
             std::int64_t lowering_marker_propagated = 0;
             std::int64_t ir_macro_introduced_inlined_skipped = 0;
             if (ev) {
@@ -578,9 +596,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             std::memory_order_relaxed);
                 }
             }
+            const auto c_stamped = static_cast<std::int64_t>(aura_hygiene_ir_macro_marker_total());
+            if (c_stamped > lowering_marker_propagated)
+                lowering_marker_propagated = c_stamped;
+            const auto hook_skipped = static_cast<std::int64_t>(ir_inline_hygiene_skipped(ev));
+            if (hook_skipped > ir_macro_introduced_inlined_skipped)
+                ir_macro_introduced_inlined_skipped = hook_skipped;
             // Compat scalar: sum of IR marker buckets for pre-#1644 callers.
             const std::int64_t marker_total = ir_user + ir_macro_intro + ir_bool_lit;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_int(marker_total);
             auto meta = ht->metadata();
@@ -617,6 +641,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("total", marker_total);
             insert_kv("lowering-marker-propagated", lowering_marker_propagated);
             insert_kv("ir-macro-introduced-inlined-skipped", ir_macro_introduced_inlined_skipped);
+            insert_kv("ir-module-walked", ir_walked);
+            insert_kv("schema", 1891);
+            insert_kv("issue", 1891);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -5964,9 +5991,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_bool(result.ok);
     });
 
-    // Issue #501 / #514 / #1610 / #1616: query:ir-hygiene-stats —
+    // Issue #501 / #514 / #1610 / #1616 / #1891: query:ir-hygiene-stats —
     // IR-level MacroIntroduced + ClosureBridge provenance (refine #1047).
-    // Schema **1616**. Also exposed as query:ir-marker-stats (same hash).
+    // Schema **1891** (lineage 1616 / 1610 / 501). Authoritative e2e surface
+    // for self-evolution: propagated counts + zero-leakage key.
     auto build_ir_hygiene_stats = [&string_heap](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
@@ -6017,6 +6045,40 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             load_m(&CompilerMetrics::ir_closure_macro_marker_consults_total);
         const std::uint64_t macro_ignored =
             load_m(&CompilerMetrics::macro_introduced_ignored_in_ir_total);
+        // #1891: lowering_marker_propagated from metrics or shared C stamp.
+        std::uint64_t lowering_prop = load_m(&CompilerMetrics::lowering_marker_propagated_total);
+        if (stamped > lowering_prop)
+            lowering_prop = stamped;
+        std::uint64_t inline_skip_metric =
+            load_m(&CompilerMetrics::ir_macro_introduced_inlined_skipped_total);
+        if (inline_skipped > inline_skip_metric)
+            inline_skip_metric = inline_skipped;
+        // IR-module walk: count MacroIntroduced instrs + zero-provenance leaks.
+        std::uint64_t ir_instr_macro = 0;
+        std::uint64_t ir_instr_total = 0;
+        std::uint64_t ir_macro_zero_provenance = 0;
+        std::int64_t ir_module_walked = 0;
+        if (ev->compiler_service()) {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(ev->compiler_service());
+            if (const auto& mod_opt = svc->last_ir_module(); mod_opt.has_value()) {
+                ir_module_walked = 1;
+                for (const auto& fn : mod_opt->functions) {
+                    for (const auto& blk : fn.blocks) {
+                        for (const auto& instr : blk.instructions) {
+                            ++ir_instr_total;
+                            if (instr.source_marker == 1) {
+                                ++ir_instr_macro;
+                                if (instr.provenance == 0)
+                                    ++ir_macro_zero_provenance;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Leakage: MacroIntroduced treated as user in IR + zero-provenance
+        // MacroIntroduced IR instrs (should be 0 after #1891 clone stamp).
+        const std::uint64_t hygiene_leakage = macro_ignored + ir_macro_zero_provenance;
         const std::uint64_t total = inline_skipped + markers + stamped + ir_prov;
         // Issue #1780: per-Evaluator policy (not InlinePass static).
         const bool respects = ev->get_inline_respect_macro_hygiene();
@@ -6052,8 +6114,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("closure-bridge-marker-wired", 1);
         insert_kv("ir-closure-marker-wired", 1);
         insert_kv("flat-instr-provenance-wired", 1);
-        insert_kv("issue", 1616);
-        insert_kv("schema", 1616); // lineage 1610 / 1047 / 501
+        // #1891 e2e keys
+        insert_kv("lowering-marker-propagated", static_cast<std::int64_t>(lowering_prop));
+        insert_kv("ir-macro-introduced-inlined-skipped",
+                  static_cast<std::int64_t>(inline_skip_metric));
+        insert_kv("ir-module-walked", ir_module_walked);
+        insert_kv("ir-instr-total", static_cast<std::int64_t>(ir_instr_total));
+        insert_kv("ir-instr-macro-introduced", static_cast<std::int64_t>(ir_instr_macro));
+        insert_kv("ir-macro-zero-provenance", static_cast<std::int64_t>(ir_macro_zero_provenance));
+        insert_kv("hygiene-leakage", static_cast<std::int64_t>(hygiene_leakage));
+        insert_kv("clone-provenance-stamped-wired", 1);
+        insert_kv("issue", 1891);
+        insert_kv("schema", 1891); // lineage 1616 / 1610 / 1047 / 501
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

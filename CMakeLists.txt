@@ -4624,6 +4624,10 @@ add_dependencies(all_test_issue_targets test_envframe_truncate_epoch_1889)
 aura_add_issue_test(test_envframe_resolve_distinction_1890)
 aura_issue_test_link_llvm_jit(test_envframe_resolve_distinction_1890)
 add_dependencies(all_test_issue_targets test_envframe_resolve_distinction_1890)
+# Issue #1891: MacroIntroduced e2e AST→IR→JIT/ClosureBridge hygiene propagation.
+aura_add_issue_test(test_ir_macro_hygiene_e2e_1891)
+aura_issue_test_link_llvm_jit(test_ir_macro_hygiene_e2e_1891)
+add_dependencies(all_test_issue_targets test_ir_macro_hygiene_e2e_1891)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

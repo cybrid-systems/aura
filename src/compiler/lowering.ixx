@@ -206,8 +206,14 @@ export struct LoweringState {
             // Local hygiene counters below; Evaluator metrics via query path
             // (lowering must not name Evaluator — module boundary).
             (void)(mk != aura::ast::SyntaxMarker::User);
-            // Issue #1610: provenance stamping (macro expansion origin).
-            const auto prov = current_flat->provenance(current_source_id);
+            // Issue #1610 / #1891: provenance stamping (macro expansion origin).
+            // If MacroIntroduced but clone left provenance 0 (legacy path /
+            // non-clone materialization), fall back to source AST node id so
+            // IR/JIT/blame never lose the hygiene origin entirely.
+            auto prov = current_flat->provenance(current_source_id);
+            if (prov == 0 && mk == aura::ast::SyntaxMarker::MacroIntroduced) {
+                prov = static_cast<std::uint32_t>(current_source_id == 0 ? 1 : current_source_id);
+            }
             blk.instructions.back().provenance = prov;
             if (prov != 0) {
                 hygiene_ir_provenance_stamped_total.fetch_add(1, std::memory_order_relaxed);
@@ -216,10 +222,12 @@ export struct LoweringState {
             if (mk == aura::ast::SyntaxMarker::MacroIntroduced) {
                 // Observability for hygiene-IR propagation (CompilerMetrics
                 // not always available in lowering TU — bump local atomic).
-                // Issue #1273 / #1610: MacroIntroduced path for InlinePass /
-                // query:pattern / JIT (source_marker == 1).
+                // Issue #1273 / #1610 / #1891: MacroIntroduced path for
+                // InlinePass / query:pattern / JIT (source_marker == 1).
+                // C total feeds query:ir-hygiene-stats lowering-marker-propagated
+                // (module boundary — no Evaluator name in this TU).
                 hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
-                aura_hygiene_ir_macro_marker_inc(); // #1610 shared C counter
+                aura_hygiene_ir_macro_marker_inc(); // #1610/#1891 shared C counter
                 if (cur_func)
                     cur_func->marker = 1; // IRFunction-level MacroIntroduced
             }

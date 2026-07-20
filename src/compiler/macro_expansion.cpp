@@ -528,6 +528,12 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
         // User) doesn't accidentally trip the dirty bit.
         // Iterative walk via std::vector stack — no
         // recursion, safe for pathological depth.
+        //
+        // Issue #1891: also stamp expansion provenance at clone
+        // time (not only fiber restamp #1612) so AST→IR lowering
+        // sees non-zero provenance for MacroIntroduced nodes and
+        // blame / JIT hygiene can correlate back to the expansion
+        // origin without waiting for steal/GC repair.
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
             if (aura_evaluator_mutation_boundary_depth() > 0)
                 aura_evaluator_bump_macro_expand_checkpoint_save();
@@ -541,6 +547,11 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
             // Issue #1248: hygiene tracer expansion count (MacroIntroduced stamps).
             g_hygiene_tracer_expansions.fetch_add(1, std::memory_order_relaxed);
             (void)fiber_id;
+            // Prefer source body provenance; else weak-link to source body id
+            // (same weak pattern as fiber restamp #1612 / #1891).
+            const std::uint32_t src_prov = source.provenance(body_id);
+            const std::uint32_t origin =
+                src_prov != 0 ? src_prov : static_cast<std::uint32_t>(body_id == 0 ? 1 : body_id);
             std::vector<aura::ast::NodeId> stack;
             stack.push_back(new_id);
             while (!stack.empty()) {
@@ -551,6 +562,8 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
                 target.apply_macro_dirty_bits(
                     cur, static_cast<std::uint8_t>(
                              aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+                if (target.provenance(cur) == 0)
+                    target.set_provenance(cur, origin);
                 auto cv = target.get(cur);
                 std::vector<aura::ast::NodeId> walk_children(cv.children.begin(),
                                                              cv.children.end());
