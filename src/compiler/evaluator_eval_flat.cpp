@@ -439,7 +439,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
-        // Issue #1926: refuse tombstoned snapshots (move/free/GC raced
+        // Issue #1926 / #1929: refuse tombstoned snapshots (move/free/GC raced
         // after map copy). Lifetime_version==0 ⇒ pointees may dangle.
         if (!cl_copy.lifetime_valid_for_views()) {
             g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
@@ -452,8 +452,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             bump_compiler_root_dangling_prevented();
             return std::nullopt;
         }
-        // Issue #1926: revalidate under lock before materialize — map entry
-        // may have been erased/tombstoned after the snapshot copy.
+        // Issue #1926 / #1929: revalidate under lock before materialize — map
+        // entry may have been erased/tombstoned after the snapshot copy.
         if (!revalidate_closure_snapshot(cid, cl_copy)) {
             if (metrics) {
                 metrics->closure_view_dangling_prevented_total.store(

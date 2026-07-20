@@ -5881,10 +5881,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("issue", make_int(1895));
             insert_kv("schema-1928", make_int(1928)); // #1928 walk_active_closures mandate
             insert_kv("issue-1928", make_int(1928));
+            insert_kv("schema-1929", make_int(1929)); // #1929 Closure Bridge unified surface
+            insert_kv("issue-1929", make_int(1929));
             insert_kv("active", make_int(1));
             insert_kv("phase", make_int(5)); // production + all-boundary mandate (#1895/#1928)
             insert_kv("truncate-scan-wired", make_int(1));    // #1928 truncate force Drop
             insert_kv("boundaries-wired-count", make_int(6)); // inv/compact/trunc/jit/fiber/gc
+            insert_kv("closure-view-lifetime-paired",
+                      make_int(1)); // pairs query:closure-view-lifetime-stats
             insert_kv("linear-post-mutate-enforcements",
                       make_int(L(m ? &m->linear_post_mutate_enforcements : nullptr)));
             // #1596 AC5 alias (underscore form) + hyphen form for agents.
