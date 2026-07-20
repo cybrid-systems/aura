@@ -6,9 +6,10 @@ Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
   ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
-  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap
-  ./build.py gate --fix       # 同上，但 auto-regen docs/registry + lint/format --fix（#1572）
+  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap + inventory
+  ./build.py gate --fix       # 同上，但 auto-regen docs/registry/inventory + lint/format --fix（#1572/#1957）
   ./build.py gate --scripts-only  # 跳过 clang-format（脚本-only,无 C++ 编译）
+  ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
   ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
@@ -1568,6 +1569,36 @@ def cmd_mutation_guard_coverage():
     return 0
 
 
+def cmd_legacy_test_inventory():
+    """Issue #1957: living legacy test inventory freshness check.
+
+    Without --fix: ``scripts/inventory_legacy_tests.py --check`` (exit 1 if
+    tests/legacy_test_inventory.md is stale). With --fix: regenerate the
+    markdown. Re-run after domain migrations or bulk test adds.
+    """
+    print(f"{B}═══ Legacy test inventory (#1957) ═══{N}")
+    script = ROOT / "scripts" / "inventory_legacy_tests.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    fix = "--fix" in sys.argv[2:]
+    args = [sys.executable, str(script)]
+    if not fix:
+        args.append("--check")
+    r = subprocess.run(args, cwd=ROOT)
+    if r.returncode != 0:
+        if fix:
+            fail("legacy inventory regenerate failed")
+        else:
+            fail(
+                "legacy_test_inventory.md stale — run "
+                "`python3 scripts/inventory_legacy_tests.py` or `./build.py gate --fix`"
+            )
+        return 1
+    ok("legacy test inventory up to date" if not fix else "legacy test inventory regenerated")
+    return 0
+
+
 def cmd_gate():
     """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
 
@@ -1581,6 +1612,7 @@ def cmd_gate():
     Issue #1668: also runs dead string_heap_ push audit (--strict).
     Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
     Issue #1931: also runs mutation Guard coverage linter (--strict).
+    Issue #1957: also runs legacy test inventory --check (regen with --fix).
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -1611,6 +1643,7 @@ def cmd_gate():
         or cmd_dead_heap_push()
         or cmd_catch_silent_swallow()
         or cmd_mutation_guard_coverage()
+        or cmd_legacy_test_inventory()
     )
 
 
@@ -2263,6 +2296,7 @@ def main():
         "dead-heap-push": cmd_dead_heap_push,
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
+        "legacy-test-inventory": cmd_legacy_test_inventory,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
         "test": lambda: cmd_test(args or ["all"]),
