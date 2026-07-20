@@ -4,7 +4,7 @@
   "count": 1077,
   "count": 1076,
   "by_category": {
-    "integration": 480,
+    "integration": 478,
     "issue_specific": 7,
     "regression": 2,
     "unit": 236,
@@ -4783,33 +4783,15 @@
       "issue": null
     },
     {
+      "file": "tests/test_linear_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/test_linear_boundary_consistency_1568.cpp",
       "category": "unit",
       "reason": "Issue #1568 — linear boundary consistency closed-loop:",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_coercion_synergy_1615.cpp",
-      "category": "integration",
-      "reason": "Issue #1615 — linear ownership + coercion synergy:",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_gc_closedloop_readiness_1599.cpp",
-      "category": "integration",
-      "reason": "Issue #1599 — GC root audit consistency + linear scan integration",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_gc_probe_memory_order_1867.cpp",
-      "category": "unit",
-      "reason": "Issue #1867 — record_linear_gc_probe violation counters use",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_null_env_id_1731.cpp",
-      "category": "unit",
-      "reason": "Issue #1731 — linear_post_mutate_enforce(NULL_ENV_ID) must",
       "issue": null
     },
     {
@@ -4828,18 +4810,6 @@
       "file": "tests/test_linear_ownership_postmutate_guard_steal_envframe.cpp",
       "category": "unknown",
       "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_post_mutation_escape_1875.cpp",
-      "category": "unit",
-      "reason": "Issue #1875 — dirty-aware EscapeAnalysisPass + post-mutation",
-      "issue": null
-    },
-    {
-      "file": "tests/test_linear_validate_bridge_epoch_1755.cpp",
-      "category": "unit",
-      "reason": "Issue #1755 — validate_linear_ownership_state must reject",
       "issue": null
     },
     {
