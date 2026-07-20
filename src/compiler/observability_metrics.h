@@ -2379,6 +2379,10 @@ struct CompilerMetrics {
     // "prevented" / "propagated" series for the atomic-batch closed-loop.
     std::atomic<std::uint64_t> atomic_batch_hygiene_violation_prevented_total{0};
     std::atomic<std::uint64_t> mutate_template_marker_propagated_total{0};
+    // Issue #1893: marker/provenance/dirty metadata snapshot + restore
+    // on mutate:atomic-batch rollback (self-evo audit completeness).
+    std::atomic<std::uint64_t> atomic_batch_metadata_restored_total{0};
+    std::atomic<std::uint64_t> atomic_batch_metadata_captured_total{0};
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
 

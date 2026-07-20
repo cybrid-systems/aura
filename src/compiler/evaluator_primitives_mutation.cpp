@@ -603,7 +603,7 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("active", active ? 1 : 0);
             insert_kv("commits-total", static_cast<std::int64_t>(commits));
             insert_kv("bumps-saved-last-batch", static_cast<std::int64_t>(bumps_saved));
-            insert_kv("schema", 622);
+            insert_kv("schema", 622); // #622 base; #1878/#1893 extend via schema-* keys
             // Issue #1878: fold atomicity-mode into existing stats-hash
             // (no new query:* name — primitive freeze). 1 = strong default.
             insert_kv("atomicity-mode", 1);
@@ -614,6 +614,29 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("tenant-isolation-denials",
                       static_cast<std::int64_t>(ev.atomic_batch_tenant_isolation_denials_total()));
             insert_kv("schema-1878", 1878);
+            // Issue #1893: marker/provenance/dirty metadata snapshot/restore.
+            std::int64_t meta_cap = 0, meta_rest = 0;
+            if (ev.workspace_flat_) {
+                meta_cap = static_cast<std::int64_t>(
+                    ev.workspace_flat_->atomic_batch_metadata_captured_total());
+                meta_rest = static_cast<std::int64_t>(
+                    ev.workspace_flat_->atomic_batch_metadata_restored_total());
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                meta_cap = static_cast<std::int64_t>(std::max(
+                    static_cast<std::uint64_t>(meta_cap),
+                    m->atomic_batch_metadata_captured_total.load(std::memory_order_relaxed)));
+                meta_rest = static_cast<std::int64_t>(std::max(
+                    static_cast<std::uint64_t>(meta_rest),
+                    m->atomic_batch_metadata_restored_total.load(std::memory_order_relaxed)));
+            }
+            insert_kv("metadata-captured-total", meta_cap);
+            insert_kv("metadata-restored-total", meta_rest);
+            insert_kv("atomic_batch_metadata_restored_total", meta_rest);
+            insert_kv("metadata-snapshot-wired", 1);
+            insert_kv("flatast-copy-metadata-wired", 1);
+            insert_kv("schema-1893", 1893);
+            insert_kv("issue", 1893);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
