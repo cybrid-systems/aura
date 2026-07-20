@@ -7,6 +7,8 @@ module;
 #include <contracts>
 #include <cstdint>
 
+#include "jit_typed_mutation_stats.h" // ir_soa_migration Phase 2 counters (#1920)
+
 export module aura.compiler.soa_view;
 
 import std;
@@ -170,6 +172,51 @@ static_assert(SoAViewFull<IRFunctionSoAView>, "IRFunctionSoAView must satisfy So
     return IRFunctionSoAView{func};
 }
 
+// Issue #1920: module-level SoA view for pass / JIT / executor consumers.
+struct IRModuleV2View {
+    const IRModuleV2* mod = nullptr;
+
+    [[nodiscard]] std::size_t function_count() const noexcept {
+        return mod ? mod->functions.size() : 0;
+    }
+    [[nodiscard]] IRFunctionSoAView function_view(std::size_t fi) const noexcept {
+        if (!mod || fi >= mod->functions.size()) {
+            record_soa_view_miss();
+            return {};
+        }
+        return make_function_soa_view(&mod->functions[fi]);
+    }
+    // Walk every function's dirty blocks; records dirty-driven skips/runs.
+    template <typename Fn> void for_each_dirty_block(Fn&& fn) const {
+        if (!mod) {
+            record_soa_view_miss();
+            return;
+        }
+        for (std::size_t fi = 0; fi < mod->functions.size(); ++fi) {
+            auto& func = const_cast<IRFunctionSoA&>(mod->functions[fi]);
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t bid, BasicBlockSoA& blk) { fn(fi, bid, blk); },
+                /*dirty_only=*/true);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
+            if (skips)
+                record_soa_dirty_short_circuit();
+        }
+        record_soa_view_hit();
+    }
+};
+
+[[nodiscard]] inline IRModuleV2View make_module_soa_view(const IRModuleV2* m) noexcept {
+    if (!m) {
+        record_soa_view_miss();
+        return {};
+    }
+    record_edsl_soa_migration_progress(1);
+    return IRModuleV2View{m};
+}
+
 // tag_arity_index: compact (tag, arity) → column index helper for matcher hot path.
 [[nodiscard]] constexpr std::uint32_t tag_arity_index(std::uint8_t tag,
                                                       std::uint8_t arity) noexcept {
@@ -184,6 +231,7 @@ static_assert(SoAViewFull<IRFunctionSoAView>, "IRFunctionSoAView must satisfy So
         record_soa_view_miss();
         return 0;
     }
+    aura::compiler::ir_soa_migration::record_shape_column_consult();
     return view.shape_id(idx);
 }
 
@@ -194,6 +242,7 @@ static_assert(SoAViewFull<IRFunctionSoAView>, "IRFunctionSoAView must satisfy So
         record_soa_view_miss();
         return 0;
     }
+    aura::compiler::ir_soa_migration::record_linear_column_consult();
     return view.linear_ownership(idx);
 }
 

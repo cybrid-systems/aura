@@ -4719,6 +4719,21 @@ public:
             metrics_.selfevo_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
             (void)evaluator_.scan_live_closures_for_linear_captures(
                 /*mark_invalid=*/true, /*only_if_moved=*/true);
+            // Issue #1920 / #1046: closure capture dirty tracking —
+            // free_vars (captures) on nested / body IR force SoA block
+            // dirty so partial re-lower revisits capture sites.
+            bool has_captures = false;
+            for (const auto& irf : primary.irs) {
+                if (!irf.free_vars.empty()) {
+                    has_captures = true;
+                    break;
+                }
+            }
+            if (has_captures || primary.irs.size() > 1) {
+                aura::compiler::ir_soa_migration::record_capture_dirty_mark(1);
+                for (auto& sfn : primary.soa_mod.functions)
+                    sfn.mark_all_blocks_dirty();
+            }
         }
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for

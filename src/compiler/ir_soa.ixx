@@ -4,20 +4,17 @@
 //
 // Structure-of-Arrays parallel implementation of the IR layer.
 // Coexists with the existing AoS IRModule (src/compiler/ir.ixx).
-// Phase 1 (this file) ships the scaffold:
+// Phase 1 ships the scaffold:
 //   - IRFunctionSoA: per-function SoA columns
 //   - IRInstructionView: non-owning view (analogous to NodeView)
 //   - BasicBlockSoA: range-based block representation
 //   - IRModuleV2: top-level container
 //   - add_instruction / view_at / iterate-by-block API
 //
-// Phase 2+ (deferred to fresh session): port LoweringState,
-// ir_executor, passes, JIT bridge to use IRModuleV2. See
-// Issue #254 / ir_soa_migration (archived: git tag docs-archive-pre-2026-06).
-//
-// This file is intentionally independent — no consumer imports
-// it yet. The existing IRModule paths continue to work
-// unchanged.
+// Phase 2 (#1920): consumers (lowering dual-emit, ir_executor SoA walk,
+// DirtyAware passes run(IRModuleV2), JIT shape/column consult, capture
+// dirty marks) adopt IRModuleV2 + block_dirty_/shape_ids_ for
+// incremental decisions. See ir_soa_migration in jit_typed_mutation_stats.h.
 
 module;
 
@@ -207,11 +204,26 @@ export struct IRFunctionSoA {
         return n;
     }
 
+    // Issue #1920: clean-block count (complement of dirty) for
+    // incremental skip metrics.
+    [[nodiscard]] std::size_t clean_block_count() const noexcept {
+        std::size_t n = 0;
+        for (std::size_t bi = 0; bi < blocks_.size(); ++bi) {
+            if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
+                ++n;
+        }
+        return n;
+    }
+
     // Issue #196: public read-only view of the per-block dirty
     // bitmask for the observability layer.
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& block_dirty_column() const noexcept {
         return block_dirty_;
     }
+
+    // Issue #1920: for_each_block defined after BasicBlockSoA (below).
+    template <typename Fn>
+    std::pair<std::size_t, std::size_t> for_each_block(Fn&& fn, bool dirty_only = true);
 
     // Issue #380: per-instruction dirty tracking. Mirrors the
     // per-block API above but at instruction granularity.
@@ -326,6 +338,24 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     }
 }
 
+// Issue #1920: invoke Fn(block_id, BasicBlockSoA&) for each dirty
+// block (or all blocks when dirty_only=false). Defined after
+// BasicBlockSoA is complete.
+template <typename Fn>
+inline std::pair<std::size_t, std::size_t> IRFunctionSoA::for_each_block(Fn&& fn, bool dirty_only) {
+    std::size_t runs = 0;
+    std::size_t skips = 0;
+    for (auto& block : blocks_) {
+        if (dirty_only && !is_block_dirty(block.block_id)) {
+            ++skips;
+            continue;
+        }
+        ++runs;
+        fn(block.block_id, block);
+    }
+    return {runs, skips};
+}
+
 // ── IRInstructionView ─────────────────────────────────────────
 //
 // Non-owning view of a single instruction in an IRFunctionSoA.
@@ -387,8 +417,8 @@ export struct IRInstructionView {
 // ── IRModuleV2 ────────────────────────────────────────────────
 //
 // Top-level container for SoA-style IR. Parallel to the existing
-// `IRModule` (AoS). No consumer uses this yet — Phase 1 ships
-// the infrastructure for Phase 2+ to migrate to.
+// `IRModule` (AoS). Phase 2 (#1920): primary container for dual-emit
+// lower, DirtyAware pass SoA overloads, and JIT column consults.
 export struct IRModuleV2 {
     std::string name;
     std::uint32_t entry_function_id = 0;
@@ -570,6 +600,53 @@ export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
         f.blocks.push_back(std::move(b));
     }
     return f;
+}
+
+// Issue #1920: full-module SoA → AoS conversion for pipeline bridges.
+export inline aura::ir::IRModule to_aos_module(const IRModuleV2& soa) {
+    aura::ir::IRModule mod;
+    mod.entry_function_id = soa.entry_function_id;
+    mod.string_pool = soa.string_pool;
+    mod.functions.reserve(soa.functions.size());
+    for (const auto& fn : soa.functions)
+        mod.functions.push_back(to_aos_view(fn));
+    return mod;
+}
+
+// Issue #1920: interpreter / JIT hot-path SoA column walk.
+// Returns {instructions_visited, dirty_runs, clean_skips}. Callers
+// record ir_soa_migration consumer/dirty metrics (header counters).
+export struct SoaHotpathWalkResult {
+    std::size_t instructions = 0;
+    std::size_t dirty_runs = 0;
+    std::size_t clean_skips = 0;
+};
+export inline SoaHotpathWalkResult walk_soa_function_hotpath(const IRFunctionSoA& fn,
+                                                             bool dirty_only = true) noexcept {
+    SoaHotpathWalkResult r{};
+    if (fn.blocks_.empty()) {
+        r.instructions = fn.opcodes_.size();
+        if (r.instructions > 0)
+            r.dirty_runs = 1;
+        return r;
+    }
+    for (const auto& block : fn.blocks_) {
+        if (dirty_only && !fn.is_block_dirty(block.block_id)) {
+            ++r.clean_skips;
+            continue;
+        }
+        ++r.dirty_runs;
+        // Touch shape/linear/opcode columns for locality (no AoS chase).
+        for (std::uint32_t i = block.start_idx; i < block.end_idx && i < fn.opcodes_.size(); ++i) {
+            ++r.instructions;
+            (void)fn.opcodes_[i];
+            if (i < fn.shape_ids_.size())
+                (void)fn.shape_ids_[i];
+            if (i < fn.linear_ownership_states_.size())
+                (void)fn.linear_ownership_states_[i];
+        }
+    }
+    return r;
 }
 
 } // namespace aura::compiler
