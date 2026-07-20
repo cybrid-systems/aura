@@ -32,10 +32,15 @@ def scan() -> dict:
     # tests moved into tests/issues/ are still picked up.
     tests_dir = ROOT / "tests"
     issue_subdir = tests_dir / "issues"
+    domain_dir = tests_dir / "domain"
     candidates: list[Path] = []
     candidates.extend(sorted(tests_dir.glob("test_*.cpp")))
     if issue_subdir.is_dir():
         candidates.extend(sorted(issue_subdir.glob("test_*.cpp")))
+    # Domain suites + theme pilots (e.g. domain/arena/, #1959)
+    if domain_dir.is_dir():
+        candidates.extend(sorted(domain_dir.glob("test_*.cpp")))
+        candidates.extend(sorted(domain_dir.glob("*/test_*.cpp")))
     for path in sorted(set(candidates)):
         try:
             head = path.read_text(encoding="utf-8", errors="replace")[:4000]

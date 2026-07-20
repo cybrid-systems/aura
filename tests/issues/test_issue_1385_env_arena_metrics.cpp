@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // @category: integration
 // @reason: uses CompilerService + (stats:get "compiler:metrics") primitive
 //          to verify the 4 env_frames_/arena observability

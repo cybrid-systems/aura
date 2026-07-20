@@ -15,9 +15,9 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 | Location | Count | Notes |
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 635 | Legacy per-issue mains / bundle members |
-| `tests/test_*.cpp` (issue-oriented) | 252 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 4 | Preferred destination suites |
-| **Total scanned** | **891** | |
+| `tests/test_*.cpp` (issue-oriented) | 215 | Numbered root tests + `*_batch` drivers |
+| `tests/domain/test_*.cpp` | 9 | Preferred destination suites |
+| **Total scanned** | **859** | |
 
 ### Related artifacts
 
@@ -32,15 +32,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 69 | 18 | 0 | 87 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 57 | 1 | 234 | P0 — high volume; strong domain suite foothold |
+| `arena_compaction` | Arena / compaction / GC | 69 | 10 | 5 | 84 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 39 | 1 | 216 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 24 | 1 | 75 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 12 | 6 | 0 | 18 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 12 | 4 | 0 | 16 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 59 | 16 | 1 | 76 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 36 | 10 | 0 | 46 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 32 | 10 | 0 | 42 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 201 | 89 | 1 | 291 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 22 | 0 | 22 | P3 — review case-by-case |
+| `shape_soa` | Shape / SoA / column layout | 32 | 9 | 0 | 41 | P2 — small-medium; soa_batch precedent |
+| `observability` | Observability / metrics / query:*-stats | 201 | 86 | 1 | 288 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 17 | 0 | 17 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -53,7 +53,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `bundle_run_fn` | 165 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
 | `own_main` | 61 | File defines `int main()` (standalone or bundle source) |
-| `issue_test_harness` | 12 | Older issue-specific harness helper |
+| `issue_test_harness` | 11 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
@@ -65,13 +65,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 341
+- `test_harness.hpp` — 351
 - `compiler/observability_metrics.h` — 65
 - `compiler/aura_jit_bridge.h` — 20
 - `serve/scheduler.h` — 16
 - `compiler/aura_jit.h` — 12
 - `serve/fiber.h` — 11
-- `issue_test_harness.hpp` — 11
 - `serve/worker.h` — 6
 - `compiler/shape_profiler.h` — 5
 - `core/gc_hooks.h` — 4
@@ -80,6 +79,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `compiler/aot_mangle.h` — 3
 - `core/cpp26_contract_stats.h` — 3
 - `compiler/messaging_bridge.h` — 3
+- `compiler/runtime_shared.h` — 3
 
 ### Top module imports (first 50 lines, issues/)
 
@@ -112,7 +112,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **13**
 - Phase-slice files (`*_phase*`): **15**
 - Small files (< 4 KiB, possible thin probes): **9**
-- Existing `*_batch` drivers (migration milestones): **24**
+- Existing `*_batch` drivers (migration milestones): **29**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -155,24 +155,29 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Batch drivers already present
 
+- `tests/domain/arena/test_arena_batch.cpp` → theme `arena_compaction`
 - `tests/test_atomic_batch_rollback_closed_loop_529.cpp` → theme `mutation_dirty`
 - `tests/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
 - `tests/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` → theme `mutation_dirty`
 - `tests/test_atomic_batch_tenant_1878.cpp` → theme `mutation_dirty`
-- `tests/test_compact_batch.cpp` → theme `arena_compaction`
-- `tests/test_compact_sweep_batch.cpp` → theme `arena_compaction`
+- `tests/test_closure_batch.cpp` → theme `arena_compaction`
+- `tests/domain/arena/test_compact_batch.cpp` → theme `arena_compaction`
+- `tests/domain/arena/test_compact_sweep_batch.cpp` → theme `arena_compaction`
 - `tests/test_dead_coercion_batch.cpp` → theme `mutation_dirty`
+- `tests/test_env_batch.cpp` → theme `arena_compaction`
 - `tests/test_env_lookup_batch.cpp` → theme `fiber_orch`
 - `tests/test_fiber_resume_batch.cpp` → theme `fiber_orch`
-- `tests/test_gc_batch.cpp` → theme `arena_compaction`
+- `tests/domain/arena/test_gc_batch.cpp` → theme `arena_compaction`
 - `tests/test_guard_dtor_batch_metrics_1747.cpp` → theme `observability`
 - `tests/test_incremental_relower_batch.cpp` → theme `jit_incremental`
 - `tests/test_incremental_type_batch.cpp` → theme `jit_incremental`
 - `tests/issues/test_issue_1449_demotion_batch.cpp` → theme `observability`
 - `tests/test_issues_809_817_batch.cpp` → theme `fiber_orch`
 - `tests/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
+- `tests/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/test_linear_ownership_batch.cpp` → theme `linear_ownership`
 - `tests/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
+- `tests/test_mutate_batch.cpp` → theme `mutation_dirty`
 - `tests/test_mutation_boundary_batch.cpp` → theme `mutation_dirty`
 - `tests/test_open_issues_phase1_batch.cpp` → theme `uncategorized`
 - `tests/test_per_defuse_batch.cpp` → theme `fiber_orch`
@@ -182,9 +187,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Domain suites (do not regress; extend these)
 
+- `tests/domain/arena/test_arena_batch.cpp`
+- `tests/domain/arena/test_arena_defrag_concurrent.cpp`
+- `tests/domain/arena/test_compact_batch.cpp`
+- `tests/domain/arena/test_compact_sweep_batch.cpp`
 - `tests/domain/test_domain_fiber_orchestration.cpp`
 - `tests/domain/test_domain_hygiene_dirty.cpp`
 - `tests/domain/test_domain_typed_mutate.cpp`
+- `tests/domain/arena/test_gc_batch.cpp`
 - `tests/domain/test_obs_schema_matrix.cpp`
 
 ## Migration priority roadmap
@@ -219,28 +229,28 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (87)
+### `arena_compaction` — Arena / compaction / GC (84)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### root/ (18)
+#### domain/ (5)
 
-- `tests/test_arena_auto_compact_policy_1621.cpp` (#1621) — closed-loop (refine #743/#722/#1518).
-- `tests/test_arena_compaction_orchestration_closed_loop_405.cpp` (#405) — test_arena_compaction_orchestration_closed_loop_405.cpp
-- `tests/test_arena_owner_dtor_clear_1662.cpp` (#1662) — AC1: set_arena installs owner; after ~Evaluator owner is cleared
+- `tests/domain/arena/test_arena_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_arena_batch.cpp — relocated for #1959 arena pilot
+- `tests/domain/arena/test_arena_defrag_concurrent.cpp` (—) [domain_suite, theme_arena] — tests/domain/arena/test_arena_defrag_concurrent.cpp — relocated for #1959 arena pilot
+- `tests/domain/arena/test_compact_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_batch.cpp — relocated for #1959 arena pilot
+- `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
+- `tests/domain/arena/test_gc_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
+
+#### root/ (10)
+
 - `tests/test_ast_column_compaction_closed_loop_416.cpp` (#416) — test_ast_column_compaction_closed_loop_416.cpp
-- `tests/test_closure_exists_epoch_1706.cpp` (#1706) — AC1: exists(-1) / exists(huge) == 0; epoch OOR still returns 0
-- `tests/test_closure_view_lifetime_1870.cpp` (#1870) — AC1: ClosureView / make_closure_view document #1870 lifetime
+- `tests/test_closure_batch.cpp` (—) [batch_driver] — test_closure_batch.cpp
 - `tests/test_commit_panic_bridge_epoch_1728.cpp` (#1728) — AC1: source cites #1728; commit calls bridge_epoch_bump_fn_
-- `tests/test_compact_batch.cpp` (—) [batch_driver] — test_compact_batch.cpp
-- `tests/test_compact_sweep_batch.cpp` (—) [batch_driver] — test_compact_sweep_batch.cpp — batch driver for compact_sweep family.
+- `tests/test_env_batch.cpp` (—) [large, batch_driver] — test_env_batch.cpp
 - `tests/test_epoch_apply_hotpath_1598.cpp` (#1598) — AC1: apply_closure after epoch bump → stale_closure_prevented /
-- `tests/test_gc_batch.cpp` (—) [batch_driver] — test_gc_batch.cpp
 - `tests/test_generation_epoch_closed_loop_414.cpp` (#414) [small] — test_generation_epoch_closed_loop_414.cpp
-- `tests/test_linear_gc_probe_memory_order_1867.cpp` (#1867) — AC1: source uses release on violation path; acquire on key loads
-- `tests/test_linear_validate_bridge_epoch_1755.cpp` (#1755) [small] — AC1: source cites #1755; bridge mismatch path present
 - `tests/test_production_sweep_1316_1320.cpp` (#1316) — test_production_sweep_1316_1320.cpp — Issues #1316–#1320 Phase 1
 - `tests/test_resource_quota_manager_1618.cpp` (#1618) — AC1: ResourceQuotaManager check_and_consume + provenance message
 - `tests/test_set_arena_atomic_owner_1663.cpp` (#1663) — AC1: has_arena_owner is all-or-nothing under concurrent set/clear
@@ -307,7 +317,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_456.cpp` (#456) — primitives (query:dirty-subtree,
 - `tests/issues/test_issue_464_arena_auto_compaction.cpp` (#464) — test_issue_464_arena_auto_compaction.cpp — Issue #464:
 - `tests/issues/test_issue_508.cpp` (#508) — test_issue_508.cpp — Issue #508: DeadCoercionEliminationPass
-- `tests/issues/test_issue_569_observability.cpp` (#569) [obs_named] — Issue #569 — arena-auto-compact-defrag-stats hash slice
+- `tests/issues/test_issue_569_observability.cpp` (#569) [obs_named] — DEPRECATED location for new work (#1959): prefer tests/domain/arena/
 - `tests/issues/test_issue_604.cpp` (#604) — Issue #604 arena auto-compact + defrag + fiber/GC safepoint
 - `tests/issues/test_issue_623.cpp` (#623) — arena:auto-compact-threshold (read) + arena:set-auto-compact-threshold (write)
 - `tests/issues/test_issue_642.cpp` (#642) — observability surface already covers ~70% of the AC4 surface
@@ -318,7 +328,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_767.cpp` (#767) — test_issue_767.cpp — Issue #767: Arena Auto-Compact Policy +
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (234)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (216)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -328,7 +338,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_typed_mutate.cpp` (—) [domain_suite] — test_domain_typed_mutate.cpp — Domain suite: typed mutate / type-system gates
 
-#### root/ (57)
+#### root/ (39)
 
 - `tests/test_atomic_batch_rollback_closed_loop_529.cpp` (#529) [batch_driver] — test_atomic_batch_rollback_closed_loop_529.cpp
 - `tests/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver] — test_atomic_batch_rollback_fiber_task1.cpp —
@@ -341,32 +351,14 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_dirty_propagation_cost_closed_loop_408.cpp` (#408) [small] — test_dirty_propagation_cost_closed_loop_408.cpp
 - `tests/test_dirty_reason_verification_propagation_415.cpp` (#415) [small] — test_dirty_reason_verification_propagation_415.cpp
 - `tests/test_edsl_query_mutate_commercial_closed_loop_636.cpp` (#636) — test_edsl_query_mutate_commercial_closed_loop_636.cpp
-- `tests/test_env_view_lifetime_1868.cpp` (#1868) — AC1: EnvView / make_env_view document #1868 lifetime contract
 - `tests/test_envframe_dualpath_stale_closed_loop_418.cpp` (#418) — test_envframe_dualpath_stale_closed_loop_418.cpp
 - `tests/test_guard_dtor_invariant_noexcept_1766.cpp` (#1766) — via throwing ensure_* probes. Contract: depth decremented first;
 - `tests/test_guard_hold_max_cas_1765.cpp` (#1765) — AC1: source cites #1765; compare_exchange_weak on us_max
 - `tests/test_ir_closure_provenance_1616.cpp` (#1616) — AC1: IRInstruction + FlatInstruction carry marker+provenance (wired)
 - `tests/test_issues_819_829_batch.cpp` (#819) [batch_driver] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
-- `tests/test_linear_post_mutation_escape_1875.cpp` (#1875) — AC1: source cites #1875; EscapeAnalysis dirty-aware + hit_rate metric
+- `tests/test_linear_batch.cpp` (—) [large, batch_driver] — test_linear_batch.cpp
 - `tests/test_marker_metadata_lock_1783.cpp` (#1783) — AC1: source has metadata_mtx_ + begin_metadata_mutation / reader lock
-- `tests/test_mutate_dead_heap_define_str_1691.cpp` (#1691) — AC1: source site uses local define_str only (no push_back(define_str))
-- `tests/test_mutate_extract_stale_parent_1701.cpp` (#1701) — AC1: extract after pad growth replaces target with call under parent
-- `tests/test_mutate_from_feedback_node_id_1772.cpp` (#1772) — AC1: source cites #1772; invalid_node metric bump present
-- `tests/test_mutate_guard_exception_safety_1684.cpp` (#1684) — AC1: run_or_rollback success leaves ok=true
-- `tests/test_mutate_inline_stale_parent_1702.cpp` (#1702) — AC1: inline after pad growth installs cloned body under intended parent
-- `tests/test_mutate_insert_child_stale_parent_1690.cpp` (#1690) — AC1: insert-child into Begin after large pad growth
-- `tests/test_mutate_multi_node_log_null_1696.cpp` (#1696) — AC1: NULL_NODE is distinct from NodeId 0
-- `tests/test_mutate_rebind_stale_define_1685.cpp` (#1685) — AC1: multi-define workspace — rebind only changes the named binding
-- `tests/test_mutate_refactor_extract_stale_parent_1703.cpp` (#1703) — AC1: refactor/extract after pad applies under intended parent
-- `tests/test_mutate_remove_node_all_parents_1688.cpp` (#1688) — AC1: single-parent remove still works (tree case)
-- `tests/test_mutate_remove_node_parent_index_1689.cpp` (#1689) — AC1: collect matches full scan on small DAG
-- `tests/test_mutate_replace_pattern_stale_parent_1694.cpp` (#1694) — AC1: multi-match replace-pattern after pad growth applies correctly
-- `tests/test_mutate_replace_subtree_stale_parent_1697.cpp` (#1697) — AC1: replace-subtree after pad growth applies under intended parent
-- `tests/test_mutate_set_body_exception_safety_1686.cpp` (#1686) [small] — AC1: set-body happy path still #t and body changes
-- `tests/test_mutate_set_body_stale_ids_1687.cpp` (#1687) — AC1: multi-define pad + set-body body-expr only changes named binding
-- `tests/test_mutate_splice_stale_parent_1699.cpp` (#1699) — AC1: multi-arg splice after pad growth inserts under intended parent
-- `tests/test_mutate_sv_guard_1704.cpp` (#1704) — AC1: sv-add-coverpoint on live node succeeds and logs mutation
-- `tests/test_mutate_wrap_stale_parent_1700.cpp` (#1700) — AC1: wrap after pad growth attaches under intended parent
+- `tests/test_mutate_batch.cpp` (—) [large, batch_driver] — test_mutate_batch.cpp
 - `tests/test_mutation_boundary_batch.cpp` (—) [large, batch_driver] — test_mutation_boundary_batch.cpp
 - `tests/test_mutation_rollback_coverage_400.cpp` (#400) — test_mutation_rollback_coverage_400.cpp
 - `tests/test_mutator_dispatch_stats_lock_1849.cpp` (#1849) — AC1: source cites #1849; capture + shared_mutex / bump_* present
@@ -657,17 +649,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_791.cpp` (#791) — test_issue_791.cpp — Issue #791: P0 exhaustive
 - `tests/issues/test_issue_803.cpp` (#803) — test_issue_803.cpp — Issue #803: P0 EDA-SV-
 
-### `linear_ownership` — Linear ownership / borrow / consume (18)
+### `linear_ownership` — Linear ownership / borrow / consume (16)
 
 **Target:** tests/test_linear_ownership_batch.cpp → domain/
 
 **Priority:** P1 — small, already partially batched
 
-#### root/ (6)
+#### root/ (4)
 
 - `tests/test_compiler_service_ownership_1839.cpp` (#1839) [small] — AC1: evaluator.ixx cites #1839 ownership contract
-- `tests/test_env_bind_linear_race_1861.cpp` (#1861) — AC1: Env / StringPool / bind_with_linear_state document #1861
-- `tests/test_linear_null_env_id_1731.cpp` (#1731) — AC1: metric field + source cites #1731
 - `tests/test_linear_ownership_batch.cpp` (—) [large, batch_driver] — test_linear_ownership_batch.cpp
 - `tests/test_render_dispatch_linear_epoch_1676.cpp` (#1676) — AC1: query:render-stats schema/issue 1676
 - `tests/test_type_registry_ownership_1837.cpp` (#1837) [small] — AC1: evaluator.ixx / ctor cite #1837 ownership contract
@@ -836,16 +826,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_793.cpp` (#793) — test_issue_793.cpp — Issue #793: P0 JIT/AOT
 - `tests/issues/test_issue_794.cpp` (#794) — test_issue_794.cpp — Issue #794: P0 unified
 
-### `shape_soa` — Shape / SoA / column layout (42)
+### `shape_soa` — Shape / SoA / column layout (41)
 
 **Target:** tests/test_soa_batch.cpp → domain/
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### root/ (10)
+#### root/ (9)
 
 - `tests/test_apply_closure_envframe_soa_1660.cpp` (#1660) — AC1: closure_is_epoch_or_env_stale unified helper
-- `tests/test_env_soa_lookup_iter_1859.cpp` (#1859) — AC1: source cites #1859; iterative while (no tmp.lookup recurse)
 - `tests/test_ir_soa_dual_emit_flag_1629.cpp` (#1629) — AC1: enable_soa_dual_emit_ / process flag default false
 - `tests/test_ir_soa_incremental_closed_loop_404.cpp` (#404) — test_ir_soa_incremental_closed_loop_404.cpp
 - `tests/test_matcher_stable_captures_1695.cpp` (#1695) — AC1: QueryMatchState / PendingGuard use StableNodeRef values
@@ -890,7 +879,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (291)
+### `observability` — Observability / metrics / query:*-stats (288)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -900,7 +889,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability query schemas
 
-#### root/ (89)
+#### root/ (86)
 
 - `tests/test_ai_closedloop_readiness_1593.cpp` (#1593) — AC1: schema 1593 + health-score / action / recommendation
 - `tests/test_aot_stats_null_metrics_1843.cpp` (#1843) [small] — AC1: source cites #1843; early !m branch; no m ? load pattern
@@ -909,7 +898,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_blame_chain_completeness_1873.cpp` (#1873) — conflicts and truncated reverify (partial frames + completeness rate).
 - `tests/test_bugfix_968_984.cpp` (#968) [small] — test_bugfix_968_984.cpp — Issues #968–#984 bugfix regression
 - `tests/test_closedloop_stats_hash_cap_1795.cpp` (#1795) [small] — AC1: source cites #1795; capacity ≥ 16 / 2×keys
-- `tests/test_closure_dual_check_1626.cpp` (#1626) — AC1: query:epoch-apply-hotpath-stats schema 1626 AC keys
 - `tests/test_commercial_production_readiness_closed_loop_634.cpp` (#634) — test_commercial_production_readiness_closed_loop_634.cpp
 - `tests/test_compiler_metrics_ownership_1835.cpp` (#1835) [small] — AC1: evaluator.ixx cites #1835 ownership contract
 - `tests/test_compiler_runtime_production_readiness_closed_loop_441.cpp` (#441) — test_compiler_runtime_production_readiness_closed_loop_441.cpp
@@ -932,8 +920,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_ir_metadata_interpreter_jit_closed_loop_403.cpp` (#403) — test_ir_metadata_interpreter_jit_closed_loop_403.cpp
 - `tests/test_let_poly_solve_delta_1617.cpp` (#1617) — AC1: mark_let_poly_dirty tracks roots + metrics
 - `tests/test_linear_boundary_consistency_1568.cpp` (#1568) — enforce_linear_boundary_consistency, force_drop, use-after-move
-- `tests/test_linear_coercion_synergy_1615.cpp` (#1615) — AC1: revalidate_linear_after_coercion callable / stats advance
-- `tests/test_linear_gc_closedloop_readiness_1599.cpp` (#1599) — + AI closed-loop readiness + adaptive safepoint (refine #1478/#1483/#1493/
 - `tests/test_lookup_stats_impl_heterogeneous_1671.cpp` (#1671) [small] — AC1: engine:metrics by-name resolves a registered stats impl
 - `tests/test_module_export_cache_1680.cpp` (#1680) — AC1: query:module-exports "std/list" returns foldr/map
 - `tests/test_mutation_guard_try_acquire_1628.cpp` (#1628) — AC1: try_acquire success under unlimited quota
@@ -1196,22 +1182,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_781.cpp` (#781) — test_issue_781.cpp — Issue #781: High-performance byte
 - `tests/issues/test_issue_806.cpp` (#806) — test_issue_806.cpp — Issue #806: P0 stdlib AI-native
 
-### `uncategorized` — Uncategorized / mixed (22)
+### `uncategorized` — Uncategorized / mixed (17)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### root/ (22)
+#### root/ (17)
 
 - `tests/test_auto_evolve_tick_no_dbg_1712.cpp` (#1712) [small] — AC1: source has no [DBG tick] / detect.val fprintf in tick body
 - `tests/test_build_kv_hash_dedup_1787.cpp` (#1787) [small] — AC1: source has build_kv_hash helper citing #1787
-- `tests/test_closure_capture_bounds_1709.cpp` (#1709) [small] — AC1: capture into live alloc succeeds (no crash)
-- `tests/test_closure_free_list_order_1708.cpp` (#1708) [small] — AC1: free then alloc reuses a slot (reuse_total increases or id recycled)
 - `tests/test_compile02_no_dup_imports_1857.cpp` (#1857) — AC1: source cites #1857; each import line appears once
-- `tests/test_env_bindings_with_names_race_1863.cpp` (#1863) — unsupported under the #1861 single-writer contract.
-- `tests/test_env_frame_stale_vs_invalid_id_1754.cpp` (#1754) [small] — AC1: source cites #1754; is_env_frame_invalid_id present
-- `tests/test_env_view_lookup_depth_1869.cpp` (#1869) — AC1: source cites #1869; EnvView lookups use env_lookup_enter
 - `tests/test_find_after_parens_1723.cpp` (#1723) — AC1: source cites #1723; find_after tracks depth
 - `tests/test_intend_heap_slots_1721.cpp` (#1721) — AC1: source cites #1721 and uses put_slot / slot_goal/code/err
 - `tests/test_module_loader_dead_heap_circular_1692.cpp` (#1692) — AC1: source has no eidx + push_back on circular path

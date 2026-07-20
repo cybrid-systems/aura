@@ -13,11 +13,10 @@ function(aura_add_issue_bundle PROFILE)
 
     set(_sources "tests/bundles/test_issues_${PROFILE}_main.cpp")
     foreach(_m IN LISTS _members)
-        if(_m MATCHES "^test_issue_")
-            list(APPEND _sources "tests/issues/${_m}.cpp")
-        else()
-            list(APPEND _sources "tests/${_m}.cpp")
-        endif()
+        # Prefer aura_resolve_test_cpp so domain/<theme>/ pilots (#1959)
+        # and tests/domain/ suites resolve without hard-coded paths.
+        aura_resolve_test_cpp(${_m} _aura_bundle_src)
+        list(APPEND _sources "${_aura_bundle_src}")
     endforeach()
 
     add_executable(${_target} ${_sources})

@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // @category: unit
 // @reason: pure C++ test of ArenaGroup auto-compaction
 //          lifecycle + EDSL (engine:metrics \"query:arena-auto-stats\") primitive

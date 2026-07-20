@@ -1,3 +1,6 @@
+// NOTE (#1959): arena theme home is tests/domain/arena/. This file stays
+// at tests/ root while it remains a jit_late3 bundle member.
+//
 // test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp — Issue #743:
 // Arena auto-compact + live defrag + fiber safepoint + dirty/Shape closed loop.
 //

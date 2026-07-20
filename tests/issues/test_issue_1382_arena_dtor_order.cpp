@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // test_issue_1382_arena_dtor_order.cpp — Issue #1382:
 // aura::ast::ASTArena contract test: `run_destructors()` MUST run before
 // `resource_.release()` in both `~aura::ast::ASTArena()` and `reset()`.

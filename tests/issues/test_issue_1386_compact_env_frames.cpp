@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // @category: integration
 // @reason: uses CompilerService + (evaluator:compact-env-frames)
 //          primitive to verify env_frames_ arena compaction +
