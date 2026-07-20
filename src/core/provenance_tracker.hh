@@ -1,6 +1,8 @@
-// provenance_tracker.hh — Issues #1180/#1500/#1564/#1630: full StableNodeRef
+// provenance_tracker.hh — Issues #1180/#1500/#1564/#1630/#1877: full StableNodeRef
 // provenance enforcement surface (header form for evaluator + tests).
 // Complements FlatAST::StableNodeRef; does not replace it.
+// Issue #1877: MacroIntroduced hygiene → provenance stamp + FailOnStale
+// under sandbox Strict (no silent restamp in multi-tenant AI self-modify).
 
 #ifndef AURA_CORE_PROVENANCE_TRACKER_HH
 #define AURA_CORE_PROVENANCE_TRACKER_HH
@@ -34,6 +36,11 @@ struct ProvenanceEnforcementMetrics {
     // Issue #1630 AC counters (aliases for Agent dashboards).
     std::atomic<std::uint64_t> boundary_pinned_auto_restamp_total{0};
     std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
+    // Issue #1877: hygiene-protected / MacroIntroduced gates stamped into
+    // provenance tracker (audit log + StableNodeRef-style record).
+    std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
+    // Issue #1877: Strict sandbox engaged FailOnStale provenance policy.
+    std::atomic<std::uint64_t> fail_on_stale_strict_sandbox_total{0};
 };
 
 inline ProvenanceEnforcementMetrics& g_provenance_enforcement() noexcept {
@@ -79,21 +86,37 @@ inline void record_cross_cow_provenance_enforced(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().cross_cow_provenance_enforced_total.fetch_add(
         n, std::memory_order_relaxed);
 }
-
-inline void reset_provenance_enforcement_for_test() noexcept {
-    auto& m = g_provenance_enforcement();
-    m.stable_ref_auto_refresh_total.store(0, std::memory_order_relaxed);
-    m.stable_ref_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
-    m.cross_layer_provenance_mismatch_total.store(0, std::memory_order_relaxed);
-    m.ensure_valid_calls_total.store(0, std::memory_order_relaxed);
-    m.ensure_valid_success_total.store(0, std::memory_order_relaxed);
-    m.ensure_valid_fail_total.store(0, std::memory_order_relaxed);
-    m.fiber_id_mismatch_total.store(0, std::memory_order_relaxed);
-    m.policy_enforced_total.store(0, std::memory_order_relaxed);
-    m.hot_path_auto_refresh_total.store(0, std::memory_order_relaxed);
-    m.boundary_pinned_auto_restamp_total.store(0, std::memory_order_relaxed);
-    m.cross_cow_provenance_enforced_total.store(0, std::memory_order_relaxed);
+inline void record_macro_hygiene_provenance_hit(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().macro_hygiene_provenance_hits_total.fetch_add(
+        n, std::memory_order_relaxed);
 }
+inline void record_fail_on_stale_strict_sandbox(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().fail_on_stale_strict_sandbox_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+
+// Issue #1877: last MacroIntroduced hygiene → provenance stamp so truncated
+// blame chains can append a hygiene frame (traceable under AI self-modify).
+struct HygieneProvenanceStamp {
+    std::uint32_t node_id = 0;
+    std::uint64_t tenant_id = 0;
+    std::uint64_t source_mutation_id = 0;
+    std::uint32_t fiber_id = 0;
+    std::uint64_t seq = 0;
+};
+
+// Validate tenant_id against current principal (hot-path helper for #1877).
+// Zero on either side is treated as "unset" (compatible with legacy refs).
+[[nodiscard]] inline bool tenant_ids_compatible(std::uint64_t ref_tenant,
+                                                std::uint64_t current_tenant) noexcept {
+    if (ref_tenant == 0 || current_tenant == 0)
+        return true;
+    return ref_tenant == current_tenant;
+}
+
+// Forward decl so reset can clear last_hygiene on the process-wide tracker.
+struct ProvenanceTracker;
+inline ProvenanceTracker& g_provenance_tracker() noexcept;
 
 struct ProvenanceStatsSnapshot {
     std::uint64_t auto_refresh = 0;
@@ -107,6 +130,8 @@ struct ProvenanceStatsSnapshot {
     std::uint64_t hot_path_refresh = 0;
     std::uint64_t boundary_pinned_auto_restamp = 0;
     std::uint64_t cross_cow_provenance_enforced = 0;
+    std::uint64_t macro_hygiene_provenance_hits = 0;
+    std::uint64_t fail_on_stale_strict_sandbox = 0;
     int phase = kProvenanceTrackerPhase;
     int issue = kProvenanceTrackerIssue;
 };
@@ -125,6 +150,8 @@ struct ProvenanceStatsSnapshot {
         m.hot_path_auto_refresh_total.load(std::memory_order_relaxed),
         m.boundary_pinned_auto_restamp_total.load(std::memory_order_relaxed),
         m.cross_cow_provenance_enforced_total.load(std::memory_order_relaxed),
+        m.macro_hygiene_provenance_hits_total.load(std::memory_order_relaxed),
+        m.fail_on_stale_strict_sandbox_total.load(std::memory_order_relaxed),
         kProvenanceTrackerPhase,
         kProvenanceTrackerIssue,
     };
@@ -137,6 +164,9 @@ struct ProvenanceTracker {
     std::uint64_t validations = 0;
     std::uint64_t dirty_propagations = 0;
     AutoRefreshPolicy policy = AutoRefreshPolicy::AutoRefreshOnBoundary;
+    // Issue #1877: last hygiene stamp lives on the process-wide tracker so
+    // module TUs (type_checker) and non-module TUs (tests/audit) share it.
+    HygieneProvenanceStamp last_hygiene{};
 
     void record_mutation() noexcept { ++records; }
     void set_policy(AutoRefreshPolicy p) noexcept { policy = p; }
@@ -158,9 +188,54 @@ struct ProvenanceTracker {
     }
 };
 
+// Namespace-scope inline (not function-local static) so module TUs that
+// include this header in the global module fragment share one instance
+// with non-module TUs (tests / typed_mutation_audit). Issue #1877.
+inline ProvenanceTracker g_provenance_tracker_storage{};
+
 inline ProvenanceTracker& g_provenance_tracker() noexcept {
-    static ProvenanceTracker t;
-    return t;
+    return g_provenance_tracker_storage;
+}
+
+// Alias onto process-wide tracker (module-safe shared state).
+inline HygieneProvenanceStamp& g_last_hygiene_provenance_stamp() noexcept {
+    return g_provenance_tracker().last_hygiene;
+}
+
+// Stamp hygiene violation into process-wide provenance tracker + last stamp.
+// tenant_id from workspace_isolation / CapabilityGrant principal.
+// Issue #1877: called from TypedMutationAudit hygiene gate so both audit
+// trail and provenance tracker see MacroIntroduced blocks.
+inline void record_macro_hygiene_provenance(std::uint32_t node_id, std::uint64_t tenant_id = 0,
+                                            std::uint64_t mutation_id = 0,
+                                            std::uint32_t fiber_id = 0) noexcept {
+    auto& tr = g_provenance_tracker();
+    tr.record_mutation();
+    record_macro_hygiene_provenance_hit();
+    auto& s = tr.last_hygiene;
+    s.node_id = node_id;
+    s.tenant_id = tenant_id;
+    s.source_mutation_id = mutation_id;
+    s.fiber_id = fiber_id;
+    ++s.seq;
+}
+
+inline void reset_provenance_enforcement_for_test() noexcept {
+    auto& m = g_provenance_enforcement();
+    m.stable_ref_auto_refresh_total.store(0, std::memory_order_relaxed);
+    m.stable_ref_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
+    m.cross_layer_provenance_mismatch_total.store(0, std::memory_order_relaxed);
+    m.ensure_valid_calls_total.store(0, std::memory_order_relaxed);
+    m.ensure_valid_success_total.store(0, std::memory_order_relaxed);
+    m.ensure_valid_fail_total.store(0, std::memory_order_relaxed);
+    m.fiber_id_mismatch_total.store(0, std::memory_order_relaxed);
+    m.policy_enforced_total.store(0, std::memory_order_relaxed);
+    m.hot_path_auto_refresh_total.store(0, std::memory_order_relaxed);
+    m.boundary_pinned_auto_restamp_total.store(0, std::memory_order_relaxed);
+    m.cross_cow_provenance_enforced_total.store(0, std::memory_order_relaxed);
+    m.macro_hygiene_provenance_hits_total.store(0, std::memory_order_relaxed);
+    m.fail_on_stale_strict_sandbox_total.store(0, std::memory_order_relaxed);
+    g_provenance_tracker().last_hygiene = {};
 }
 
 } // namespace aura::core::provenance
