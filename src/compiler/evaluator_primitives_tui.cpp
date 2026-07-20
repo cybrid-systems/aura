@@ -1,5 +1,10 @@
 // evaluator_primitives_tui.cpp — Issues #1331–#1343/#1353: tui:* primitives
 // Headless-safe wrapper over src/tui/tui_runtime.hh + tui_input.hh (#1353 raw input)
+//
+// Issue #1967: tui:* is a commercial UI vertical (DOMAIN_STATUS deferred).
+// Registration is gated by AURA_ENABLE_TUI (CMake option, default ON).
+// Slim/core builds: -DAURA_ENABLE_TUI=OFF → register_tui_primitives is a no-op.
+// See docs/tui.md + scripts/check_primitive_surface.py COMMERCIAL_DOMAIN_BUDGETS.
 
 module;
 
@@ -13,6 +18,11 @@ module;
 #include <cstdint>
 #include <cstdlib>
 #include <string>
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_TUI
+#define AURA_ENABLE_TUI 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -122,6 +132,12 @@ namespace {
 } // namespace
 
 void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
+#if !AURA_ENABLE_TUI
+    // Issue #1967: commercial UI vertical disabled for this build.
+    (void)add;
+    (void)ev;
+    return;
+#else
     // 1. (tui:init [title [cols [rows [live?]]]]) → #t/#f
     //    Headless by default (CI-safe). live?=#t or AURA_TUI_LIVE=1 writes
     //    present() frames to stdout when it is a TTY.
@@ -428,6 +444,7 @@ void register_tui_primitives(PrimRegistrar add, Evaluator& ev) {
         "tui:frame-ansi",
         RENDER_PRIMITIVE_META(0, "Last TUI frame as ANSI string (#1676 render-tier).",
                               "() -> string"));
+#endif // AURA_ENABLE_TUI
 }
 
 } // namespace aura::compiler::primitives_detail

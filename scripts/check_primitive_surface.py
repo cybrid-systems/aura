@@ -88,7 +88,8 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 # Rationale:
 #   - verify:    formal verification integration (safety-critical, keep).
 #   - channel:   cross-fiber messaging (agent framework, keep).
-#   - tui:       terminal UI (UI vertical, defer).
+#   - tui:       terminal UI (UI vertical) — KEEP deferred, #1967: gated by
+#                AURA_ENABLE_TUI + COMMERCIAL_DOMAIN_BUDGETS["tui:"].
 #   - eda:       electronic design automation (commercial vertical, defer).
 #   - auto-evolve-: self-evolution AI feature (commercial vertical, defer).
 #   - git-:      git integration (integration, defer).
@@ -111,6 +112,14 @@ DOMAIN_STATUS: dict[str, str] = {
     "synthesize:": "deferred",
     "tcp-": "deferred",
     "m4-": "deferred",
+}
+
+# Issue #1967: per-prefix commercial / UI domain budgets.
+# Deferred DOMAIN_STATUS prefixes that are KEPT (not deleted) must not grow
+# without an intentional budget raise in this map + PR justification.
+# Count is source-scanned add("prefix…") names (same as freeze inventory).
+COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
+    "tui:": 21,  # #1967 — terminal UI vertical; AURA_ENABLE_TUI build flag
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -162,6 +171,17 @@ def domain_breakdown(all_names: list[str]) -> dict[str, dict[str, int]]:
                 bucket[DOMAIN_STATUS.get(p, "deferred")] += 1
                 break
     return out
+
+
+def commercial_domain_counts(all_names: list[str]) -> dict[str, int]:
+    """Per-prefix counts for COMMERCIAL_DOMAIN_BUDGETS (#1967)."""
+    counts = dict.fromkeys(COMMERCIAL_DOMAIN_BUDGETS, 0)
+    for n in all_names:
+        for p in COMMERCIAL_DOMAIN_BUDGETS:
+            if n.startswith(p):
+                counts[p] += 1
+                break
+    return counts
 
 
 def is_stats_like(name: str) -> bool:
@@ -301,6 +321,24 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
     for p in sorted(breakdown.keys()):
         b = breakdown[p]
         print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
+
+    # Issue #1967: commercial UI / vertical budgets (kept deferred domains).
+    print("  commercial domain budgets (Issue #1967):")
+    commercial_counts = commercial_domain_counts(all_names)
+    for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
+        budget = COMMERCIAL_DOMAIN_BUDGETS[p]
+        n = commercial_counts.get(p, 0)
+        status = "OK" if n <= budget else "FAIL"
+        print(f"    {p:18s} count={n:2d}  budget={budget:2d}  [{status}]")
+        if n > budget:
+            print(
+                f"FAIL: commercial domain {p!r} has {n} primitives, "
+                f"budget is {budget} (Issue #1967). Raise "
+                f"COMMERCIAL_DOMAIN_BUDGETS in scripts/check_primitive_surface.py "
+                f"only with explicit PR justification.",
+                file=sys.stderr,
+            )
+            rc = 1
 
     # Hard ceiling — no growth past interim limit (total surface).
     if public_count > INTERIM_HARD_CEILING:

@@ -92,7 +92,9 @@ Evaluator::Evaluator() {
 
     primitives_detail::register_network_primitives(prim_registrar(), *this);
 
-    // Issues #1331–#1343 Phase 1: TUI pixel/cell rendering surface
+    // Issues #1331–#1343 Phase 1: TUI pixel/cell rendering surface.
+    // Issue #1967: gated by AURA_ENABLE_TUI (commercial UI vertical;
+    // deferred from SlimSurface core). When OFF, register is a no-op.
     primitives_detail::register_tui_primitives(prim_registrar(), *this);
 
     primitives_detail::register_type_primitives(prim_registrar(), *this);
