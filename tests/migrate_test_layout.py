@@ -82,6 +82,7 @@ ALLOWED_ROOT_OTHER = frozenset(
         "migrate_test_layout.py",
         "legacy_test_inventory.md",
         "domain_classification.md",
+        "root_test_classification.md",  # scripts/classify_root_tests.py
         "test-binding-allowlist.txt",
         "test_harness.hpp",
         "issue_test_harness.hpp",  # deprecated shim → test_harness.hpp
