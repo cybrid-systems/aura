@@ -8419,7 +8419,7 @@ public:
     const aura::ir::IRStatsSnapshot& last_ir_stats() const noexcept { return last_ir_stats_; }
 
 private:
-    // Issue #1457: surface TypePropagationPass work into metrics.
+    // Issue #1457 / #1874: surface TypePropagationPass work into metrics.
     void accumulate_type_propagation_metrics(const aura::compiler::TypePropagationPass& tp) {
         metrics_.type_propagation_runs_.fetch_add(1, std::memory_order_relaxed);
         const auto total =
@@ -8431,6 +8431,11 @@ private:
         if (tp.extended_ops_propagated() > 0) {
             metrics_.type_propagation_extended_ops_total.fetch_add(tp.extended_ops_propagated(),
                                                                    std::memory_order_relaxed);
+        }
+        // Issue #1874: fixpoint rounds (sum across blocks).
+        if (tp.fixpoint_rounds() > 0) {
+            metrics_.type_propagation_fixpoint_rounds.fetch_add(tp.fixpoint_rounds(),
+                                                                std::memory_order_relaxed);
         }
     }
 
@@ -8494,6 +8499,10 @@ private:
             }
             if (eliminated > 0) {
                 metrics_.dce_cast_elision_total.fetch_add(eliminated, std::memory_order_relaxed);
+                // Issue #1874: DCE eliminations in a pipeline that
+                // always runs TypeProp first (see callers below).
+                metrics_.cast_eliminated_after_propagation.fetch_add(eliminated,
+                                                                     std::memory_order_relaxed);
             }
         }
     }
