@@ -1868,9 +1868,7 @@ aura_issue_test_link_llvm_jit(test_ir_metadata_interpreter_jit_closed_loop_403)
 # Issue #404: IR SoA Phase 3 block_dirty incremental lowering closed loop.
 aura_add_issue_test(test_ir_soa_incremental_closed_loop_404)
 aura_issue_test_link_llvm_jit(test_ir_soa_incremental_closed_loop_404)
-# Issue #405: Arena auto-compaction orchestration closed loop.
-aura_add_issue_test(test_arena_compaction_orchestration_closed_loop_405)
-aura_issue_test_link_llvm_jit(test_arena_compaction_orchestration_closed_loop_405)
+
 # Issue #406: Pass Pipeline + Contracts hot-path closed loop.
 aura_add_issue_test(test_pass_contracts_hotpath_closed_loop_406)
 aura_issue_test_link_llvm_jit(test_pass_contracts_hotpath_closed_loop_406)
@@ -1949,10 +1947,7 @@ aura_issue_test_link_llvm_jit(test_shapeprofiler_stability_deopt_jit_mutate)
 # validating the panic-checkpoint + nested Guard matrix
 # + auto-rollback + (gc-heap) integration + 1000+ nested
 # mutate fuzz + 8-thread concurrent nested mutate +
-# regression. Non-duplicative with #534 (impl) and #529
-# (atomic batch + rollback).
-aura_add_issue_test(test_arena_panic_checkpoint_nested_fiber)
-aura_issue_test_link_llvm_jit(test_arena_panic_checkpoint_nested_fiber)
+
 # Issue #545: Scheduler/Worker Work-Stealing + GC Safepoint
 # + MutationBoundary Coordination + Eventfd Wakeup stress
 # tests (P0). 8 scenarios complementing #542 with: 16+
@@ -4736,9 +4731,7 @@ aura_issue_test_link_llvm_jit(test_apply_closure_envframe_soa_1660)
 # Issue #1661: shape + linear collaborative pass mandate.
 aura_add_issue_test(test_shape_linear_collaborative_pass_1661)
 aura_issue_test_link_llvm_jit(test_shape_linear_collaborative_pass_1661)
-# Issue #1662: ~Evaluator clears arena_owner (UAF fix).
-aura_add_issue_test(test_arena_owner_dtor_clear_1662)
-aura_issue_test_link_llvm_jit(test_arena_owner_dtor_clear_1662)
+
 # Issue #1663: set_arena owner atomic vs concurrent allocate_raw.
 aura_add_issue_test(test_set_arena_atomic_owner_1663)
 aura_issue_test_link_llvm_jit(test_set_arena_atomic_owner_1663)
@@ -5208,8 +5201,7 @@ aura_issue_test_link_llvm_jit(test_ir_soa_dual_emit_flag_1629)
 aura_add_issue_test(test_cpp26_contracts_hotpath_1620)
 aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_1620)
 
-aura_add_issue_test(test_arena_auto_compact_policy_1621)
-aura_issue_test_link_llvm_jit(test_arena_auto_compact_policy_1621)
+
 
 aura_add_issue_test(test_value_encoding_v2_dispatch_contracts_1622)
 aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_1622)
@@ -5234,9 +5226,7 @@ aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
 # Issue #1625: nested lambda per-block targeted dirty cascade
 # Issue #1506: eval/eval_ir prefer relower_define_blocks (partial) over cache_define.
 # Issue #1555: eval/eval_ir clean-hit reuse + 1000-round set-body relower stress.
-# Issue #1546: Arena::allocate_raw ↔ check_arena_quota / allocate_checked wiring.
-aura_add_issue_test(test_arena_quota_wired)
-aura_issue_test_link_llvm_jit(test_arena_quota_wired)
+
 # Issue #1547: MutationBoundaryGuard::try_acquire typed ResourceQuotaExceeded.
 aura_add_issue_test(test_mutation_guard_typed_error)
 aura_issue_test_link_llvm_jit(test_mutation_guard_typed_error)

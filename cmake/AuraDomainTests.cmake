@@ -160,6 +160,18 @@ aura_add_issue_test(test_closure_batch)
 aura_issue_test_link_llvm_jit(test_closure_batch)
 set_target_properties(test_closure_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1621 + #405 + #1662 + #546 + #1546/#1554: arena family batch
+# (smart auto-compact policy + compaction orchestration closed loop +
+# ~Evaluator clears arena_owner + panic checkpoint nested fiber +
+# arena allocate_raw quota wiring). #743 NOT included — bundle member
+# via tests/bundles/test_issues_jit_late3_main.cpp; #1390 NOT included —
+# AuraDomainTests.cmake default-build with link_llvm_jit_minimal.
+# EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch convention.
+# On-demand `ninja test_arena_batch`.
+aura_add_issue_test(test_arena_batch)
+aura_issue_test_link_llvm_jit(test_arena_batch)
+set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
