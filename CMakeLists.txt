@@ -189,6 +189,13 @@ option(AURA_ENABLE_TUI "Register tui:* domain primitives (UI vertical, #1967)" O
 # -DAURA_ENABLE_EDA=OFF (see docs/eda.md).
 option(AURA_ENABLE_EDA "Register eda:* domain primitives (EDA vertical, #1968)" ON)
 
+# Issue #1969: auto-evolve-* self-evolution AI vertical (deferred). Default ON
+# for agent closed-loop tests; slim builds: -DAURA_ENABLE_AUTO_EVOLVE=OFF
+# (see docs/auto-evolve.md). Only the 7 auto-evolve-* names are gated;
+# agent:/strategy: co-registered in the same TU stay available.
+option(AURA_ENABLE_AUTO_EVOLVE
+       "Register auto-evolve-* domain primitives (self-evo vertical, #1969)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -204,8 +211,8 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967 / #1968: per-source commercial vertical flags (avoids PUBLIC
-# recompile of the entire aura_test_objects graph when a flag flips).
+# Issue #1967 / #1968 / #1969: per-source commercial vertical flags (avoids
+# PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
 else()
@@ -216,6 +223,11 @@ if(AURA_ENABLE_EDA)
 else()
     set(_AURA_ENABLE_EDA_VAL 0)
 endif()
+if(AURA_ENABLE_AUTO_EVOLVE)
+    set(_AURA_ENABLE_AUTO_EVOLVE_VAL 1)
+else()
+    set(_AURA_ENABLE_AUTO_EVOLVE_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
@@ -224,8 +236,16 @@ set_source_files_properties(
     src/compiler/evaluator_primitives_eda.cpp
     src/compiler/evaluator_primitives_compile.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL}")
+# auto-evolve-* lives in evaluator_primitives_agent.cpp (7 names only;
+# agent:/strategy: co-registered in the same function stay always on).
+set_source_files_properties(
+    src/compiler/evaluator_primitives_agent.cpp
+    PROPERTIES COMPILE_DEFINITIONS
+               "AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL}")
 message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
 message(STATUS "eda:* domain: AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL} (#1968)")
+message(STATUS
+        "auto-evolve-* domain: AURA_ENABLE_AUTO_EVOLVE=${_AURA_ENABLE_AUTO_EVOLVE_VAL} (#1969)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the

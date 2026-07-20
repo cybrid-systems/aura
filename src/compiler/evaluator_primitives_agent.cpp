@@ -1,5 +1,12 @@
 // evaluator_primitives_agent.cpp — P0 step 18: auto-evolve / synthesize / intend / strategy
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
+//
+// Issue #1969: auto-evolve-* is a commercial self-evolution AI vertical
+// (DOMAIN_STATUS deferred). The 7 auto-evolve-* names are gated by
+// AURA_ENABLE_AUTO_EVOLVE (CMake option, default ON). agent:running? /
+// agent:tick and strategy:* co-registered in register_auto_evolve_primitives
+// stay available when the flag is OFF (agent:tick degrades to no-op when
+// auto-evolve-tick/once are unregistered). See docs/auto-evolve.md.
 
 module;
 
@@ -25,6 +32,11 @@ module;
 #include <random>
 #include <thread>
 #include <unordered_map>
+
+// Default ON when the TU is compiled outside the CMake graph (tools/IDE).
+#ifndef AURA_ENABLE_AUTO_EVOLVE
+#define AURA_ENABLE_AUTO_EVOLVE 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -213,6 +225,8 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #1232 Phase 1: gate all auto-evolve primitives with kCapSelfEvo.
     // Local lambda (not free function) so private Evaluator heaps are reachable
     // the same way other agent register_* lambdas already do.
+    // Also wraps agent:/strategy: adds co-registered in this function (same
+    // self-evo capability surface historically).
     auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
         add_raw(std::move(name),
                 PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
@@ -228,6 +242,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }});
     };
 
+#if AURA_ENABLE_AUTO_EVOLVE
     // Issue #97 Action 2: Auto-evolve closed loop
     // (auto-evolve-once detect-fn fix-fn) → runs one cycle:
     //   1. calls detect-fn → list of "gap" records
@@ -236,6 +251,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //
     // Issue #1713: ClosureIds must stay live until apply_closure
     // (shared agent_cid_live in anonymous namespace).
+    // Issue #1969: commercial self-evo vertical (AURA_ENABLE_AUTO_EVOLVE).
 
     add("auto-evolve-once", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
@@ -365,11 +381,14 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     add("auto-evolve-total-fixed", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.auto_evolve_total_fixed_));
     });
+#endif // AURA_ENABLE_AUTO_EVOLVE
 
     // ── Issues #1327 Phase 1: agent service bridge (single entry points) ──
     // Full SelfEvolutionService C++ move is multi-week; Phase 1 exposes
     // agent:tick / agent:running? as the stable Aura surface that forwards
     // to the existing auto-evolve machinery (legacy names still work).
+    // Always registered: when AURA_ENABLE_AUTO_EVOLVE=0, agent:tick degrades
+    // (lookup of auto-evolve-tick/once fails → false / 0).
     add("agent:running?", [&ev](const auto&) -> EvalValue {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_legacy_auto_evolve_hits.fetch_add(1, std::memory_order_relaxed);
