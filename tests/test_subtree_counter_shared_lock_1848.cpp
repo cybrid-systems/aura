@@ -46,8 +46,8 @@ int main() {
     {
         std::println("\n--- AC1: shared_lock on subtree readers ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_06.cpp",
-                              "../src/compiler/evaluator_primitives_compile_06.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;

@@ -23,7 +23,7 @@
 //   - src/compiler/service.ixx: hook captures `this`, reads
 //     metrics_; CompilerService::bidirectional_mode() accessor
 //     exposes the persistent flag.
-//   - src/compiler/evaluator_primitives_compile_07.cpp (p63):
+//   - src/compiler/evaluator_primitives_compile.cpp (p63):
 //     (stats:get \"compile:bidirectional-stats\") primitive — default tier
 //     (kPrimSecSafe), read-only.
 //

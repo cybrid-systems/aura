@@ -51,8 +51,8 @@ int main() {
     // ── AC1/AC2: source ──
     {
         std::println("\n--- AC1/AC2: per-Evaluator path (no InlinePass static) ---");
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_04.cpp",
-                                "../src/compiler/evaluator_primitives_compile_04.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_04.cpp");
         CHECK(prim.find("#1780") != std::string::npos, "cites #1780");
         auto pos = prim.find("add(\"*allow-macro-inline*\"");

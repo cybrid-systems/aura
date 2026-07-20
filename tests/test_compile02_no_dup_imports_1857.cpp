@@ -50,8 +50,8 @@ int main() {
     {
         std::println("\n--- AC1: compile_02 no duplicate imports ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_02.cpp",
-                              "../src/compiler/evaluator_primitives_compile_02.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;
@@ -81,14 +81,14 @@ int main() {
     {
         std::println("\n--- AC2: all compile_0*.cpp free of dup imports ---");
         const char* files[] = {
-            "src/compiler/evaluator_primitives_compile_00.cpp",
-            "src/compiler/evaluator_primitives_compile_01.cpp",
-            "src/compiler/evaluator_primitives_compile_02.cpp",
-            "src/compiler/evaluator_primitives_compile_03.cpp",
-            "src/compiler/evaluator_primitives_compile_04.cpp",
-            "src/compiler/evaluator_primitives_compile_05.cpp",
-            "src/compiler/evaluator_primitives_compile_06.cpp",
-            "src/compiler/evaluator_primitives_compile_07.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
+            "src/compiler/evaluator_primitives_compile.cpp",
         };
         for (const char* rel : files) {
             std::string src = read_file(rel);

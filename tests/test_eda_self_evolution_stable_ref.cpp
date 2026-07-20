@@ -15,7 +15,7 @@
 //   AC4: 1000+ iter long-running self-modification + fiber steal
 //        + GC compact, ASan/TSan clean, no stale ref access.
 //   AC5: docs (verified manually against eda.md / primitive
-//        comments in evaluator_primitives_compile_04.cpp).
+//        comments in evaluator_primitives_compile.cpp).
 //   AC6: tracked separately in #1822 sync.
 
 #include "test_harness.hpp"

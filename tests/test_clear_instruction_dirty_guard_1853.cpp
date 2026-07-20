@@ -43,8 +43,8 @@ int main() {
     {
         std::println("\n--- AC1: Guard + try/catch on clear-instruction-dirty! ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_03.cpp",
-                              "../src/compiler/evaluator_primitives_compile_03.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;

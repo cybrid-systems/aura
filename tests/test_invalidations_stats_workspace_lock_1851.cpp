@@ -43,8 +43,8 @@ int main() {
     {
         std::println("\n--- AC1: shared_lock on invalidations-stats ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_00.cpp",
-                              "../src/compiler/evaluator_primitives_compile_00.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;

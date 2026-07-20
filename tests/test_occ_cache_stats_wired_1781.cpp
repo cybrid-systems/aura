@@ -47,8 +47,8 @@ int main() {
     // ── AC1/AC2: source no longer stub ──
     {
         std::println("\n--- AC1/AC2: wired to CompilerMetrics (no 0/0/0 stub) ---");
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_04.cpp",
-                                "../src/compiler/evaluator_primitives_compile_04.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_04.cpp");
         CHECK(prim.find("#1781") != std::string::npos, "cites #1781");
         auto pos = prim.find("\"compile:occ-cache-stats\"");

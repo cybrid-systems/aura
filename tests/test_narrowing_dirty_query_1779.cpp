@@ -41,8 +41,8 @@ int main() {
     {
         std::println("\n--- AC1/AC2: query path (no set+restore) ---");
         std::string prim;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_04.cpp",
-                              "../src/compiler/evaluator_primitives_compile_04.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             prim = read_file(p);
             if (!prim.empty())
                 break;

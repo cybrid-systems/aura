@@ -49,8 +49,8 @@ int main() {
     // ── AC1/AC2: source ──
     {
         std::println("\n--- AC1/AC2: capacity ≥ 2×keys ---");
-        auto src = read_first({"src/compiler/evaluator_primitives_compile_04.cpp",
-                               "../src/compiler/evaluator_primitives_compile_04.cpp"});
+        auto src = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                               "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!src.empty(), "read compile_04.cpp");
         CHECK(src.find("#1795") != std::string::npos, "cites #1795");
         auto pos = src.find("\"query:sv-verification-closedloop-stats-hash\"");
