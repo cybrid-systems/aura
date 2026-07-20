@@ -57,6 +57,15 @@ aura_add_issue_test(test_incremental_relower_batch)
 aura_issue_test_link_llvm_jit(test_incremental_relower_batch)
 set_target_properties(test_incremental_relower_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #597 + #619 + #635: macro+reflect+self-evo family batch
+# (Task6 full matrix with fuzz/concurrent/fiber/stress/regression, follow-up
+# closed loop, commercial production-readiness closed loop). EXCLUDE_FROM_ALL
+# per AuraDomainTests.cmake legacy batch convention. On-demand
+# `ninja test_macro_reflect_batch`.
+aura_add_issue_test(test_macro_reflect_batch)
+aura_issue_test_link_llvm_jit(test_macro_reflect_batch)
+set_target_properties(test_macro_reflect_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)

@@ -1833,15 +1833,6 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_index_sv)
 # EDSL self-evolution paths (Task6 production review).
 # 11 scenarios validating: full macro → query:pattern →
 # Guard mutate → reflect validate → dirty/epoch → eval
-# → fiber yield + new (query:macro-reflect-self-evo-stats)
-# primitive + fuzz/panic injection + 8-thread concurrent
-# + 200-iter stress + regression. Non-duplicative with
-# #547/#548/#549/#551/#326/#327 (per-theme tests).
-aura_add_issue_test(test_macro_reflect_self_evo_full_matrix_task6)
-aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_full_matrix_task6)
-# Issue #619: Task6 macro+reflect+self-evo follow-up closed loop.
-aura_add_issue_test(test_macro_reflect_self_evo_closed_loop_task6_followup)
-aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_closed_loop_task6_followup)
 # Issue #595: EDSL self-evolution marker/dirty/epoch/Guard closed loop.
 # 7 ACs: self-evolution-loop-stats synthesis, hygiene filter, Guard dirty/
 # epoch propagation, validation_pass, marker+epoch regression, multi-round
@@ -1904,9 +1895,6 @@ aura_issue_test_link_llvm_jit(test_compiler_runtime_production_readiness_closed_
 # Non-duplicative with #441/#595/#602/#607 and #620-#633 per-theme tests.
 aura_add_issue_test(test_commercial_production_readiness_closed_loop_634)
 aura_issue_test_link_llvm_jit(test_commercial_production_readiness_closed_loop_634)
-# Issue #635: Macro+reflect+self-evo commercial closed-loop (July 2026).
-aura_add_issue_test(test_macro_reflect_self_evo_commercial_closed_loop_635)
-aura_issue_test_link_llvm_jit(test_macro_reflect_self_evo_commercial_closed_loop_635)
 # Issue #636: EDSL workspace query/mutate commercial closed-loop (July 2026).
 aura_add_issue_test(test_edsl_query_mutate_commercial_closed_loop_636)
 aura_issue_test_link_llvm_jit(test_edsl_query_mutate_commercial_closed_loop_636)
