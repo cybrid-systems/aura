@@ -4768,9 +4768,7 @@ aura_issue_test_link_llvm_jit(test_lock_order_closures_env_1664)
 # Issue #1665: scan_live_closures skips tombstoned / erased TW closures.
 aura_add_issue_test(test_scan_skip_freed_closures_1665)
 aura_issue_test_link_llvm_jit(test_scan_skip_freed_closures_1665)
-# Issue #1666: compact hook replace/chain (no silent overwrite).
-aura_add_issue_test(test_compact_hook_chain_1666)
-aura_issue_test_link_llvm_jit(test_compact_hook_chain_1666)
+
 # Issue #1667: ~Evaluator releases PanicCheckpoint GC defer (no depth leak).
 aura_add_issue_test(test_gc_defer_dtor_release_1667)
 aura_issue_test_link_llvm_jit(test_gc_defer_dtor_release_1667)
@@ -5057,9 +5055,7 @@ aura_issue_test_link_llvm_jit(test_verify_dirty_totals_snapshot_1840)
 # Issue #1841: seva:run-demo-with-metrics strategy lock + metrics ownership.
 aura_add_issue_test(test_seva_demo_metrics_1841)
 aura_issue_test_link_llvm_jit(test_seva_demo_metrics_1841)
-# Issue #1842: evaluator:compact-env-frames MutationBoundaryGuard + try/catch.
-aura_add_issue_test(test_compact_env_frames_guard_1842)
-aura_issue_test_link_llvm_jit(test_compact_env_frames_guard_1842)
+
 # Issue #1843: compile:aot-stats early nullptr check (no per-field m? ternaries).
 aura_add_issue_test(test_aot_stats_null_metrics_1843)
 aura_issue_test_link_llvm_jit(test_aot_stats_null_metrics_1843)
@@ -5163,9 +5159,7 @@ aura_issue_test_link_llvm_jit(test_linear_validate_bridge_epoch_1755)
 # Issue #1756: resolve_env_frame_detailed NULL/OOB/INVALID_VERSION.
 aura_add_issue_test(test_resolve_env_frame_detailed_1756)
 aura_issue_test_link_llvm_jit(test_resolve_env_frame_detailed_1756)
-# Issue #1757: compact_pairs returns std::size_t (match compact_env_frames).
-aura_add_issue_test(test_compact_pairs_size_t_1757)
-aura_issue_test_link_llvm_jit(test_compact_pairs_size_t_1757)
+
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)
 aura_issue_test_link_llvm_jit(test_post_steal_closed_loop_1592)

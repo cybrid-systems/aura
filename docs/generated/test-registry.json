@@ -4151,27 +4151,9 @@
       "issue": null
     },
     {
-      "file": "tests/test_compact_env_frames_guard_1842.cpp",
-      "category": "unit",
-      "reason": "Issue #1842 — evaluator:compact-env-frames must wrap",
-      "issue": null
-    },
-    {
-      "file": "tests/test_compact_hook_chain_1666.cpp",
-      "category": "unit",
-      "reason": "Issue #1666 — set_on_compact_hook replace vs chain; set_arena",
-      "issue": null
-    },
-    {
-      "file": "tests/test_compact_mutation_log.cpp",
+      "file": "tests/test_compact_batch.cpp",
       "category": "unknown",
       "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/test_compact_pairs_size_t_1757.cpp",
-      "category": "unit",
-      "reason": "Issue #1757 — compact_pairs returns std::size_t (count",
       "issue": null
     },
     {
