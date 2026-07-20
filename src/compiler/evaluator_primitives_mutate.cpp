@@ -10,6 +10,7 @@ module;
 #include "observability_metrics.h"
 #include "hash_meta.h"                // FNV constants for stats hash
 #include "typed_mutation_audit.h"     // Issue #1589
+#include "test/test_strategy.h"       // Issue #1887: hot-path / self-mod strategy metrics
 #include "render_prim_template.hh"    // Issue #1677: aura_is_render_evolution_name
 #include "core/sandbox.hh"            // Issue #1878: is_strict() for multi-tenant batch
 #include "core/provenance_tracker.hh" // Issue #1878: last_hygiene tenant stamp
@@ -5466,6 +5467,85 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("predicate-memo-evictions",
                           static_cast<std::int64_t>(
                               m->predicate_memo_evictions_total.load(std::memory_order_relaxed)));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // ── Issue #1887: query:test-strategy-stats ──
+    // Hot-path coverage matrix + AI self-mod loop SLO surface.
+    // Purpose: agents read coverage-hit-rate-bp without scanning tests/
+    // Schema: 1887  Category: general  Safety: pure query
+    ObservabilityPrims::register_stats_impl(
+        "query:test-strategy-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::test::strategy;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto& c = g_test_strategy_counters;
+            const auto cov_bp = coverage_hit_rate_bp();
+            const auto loops = c.self_mod_loops.load(std::memory_order_relaxed);
+            const auto hits = c.total_hits.load(std::memory_order_relaxed);
+            insert_kv("schema", kTestStrategySchema);
+            insert_kv("issue", kTestStrategyIssue);
+            insert_kv("active", 1);
+            insert_kv("phase", kTestStrategyPhase);
+            insert_kv("matrix-count", kHotPathScenarioCount);
+            insert_kv("scenarios-hit-unique", static_cast<std::int64_t>(scenarios_hit_unique()));
+            insert_kv("coverage-hit-rate-bp", static_cast<std::int64_t>(cov_bp));
+            insert_kv("total-hits", static_cast<std::int64_t>(hits));
+            insert_kv("total-pass",
+                      static_cast<std::int64_t>(c.total_pass.load(std::memory_order_relaxed)));
+            insert_kv("total-fail",
+                      static_cast<std::int64_t>(c.total_fail.load(std::memory_order_relaxed)));
+            insert_kv("self-mod-loops", static_cast<std::int64_t>(loops));
+            insert_kv("self-mod-loops-ok", static_cast<std::int64_t>(c.self_mod_loops_ok.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("self-mod-loops-fail", static_cast<std::int64_t>(c.self_mod_loops_fail.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv("self-mod-slo-min", static_cast<std::int64_t>(kSelfModMinLoopsSlo));
+            insert_kv("self-mod-slo-met", self_mod_slo_met() ? 1 : 0);
+            insert_kv("hotpath-coverage-slo-min-bp",
+                      static_cast<std::int64_t>(kHotPathMinCoverageBp));
+            insert_kv("hotpath-coverage-slo-met", hotpath_coverage_slo_met() ? 1 : 0);
+            insert_kv("profile-selections", static_cast<std::int64_t>(c.profile_selections.load(
+                                                std::memory_order_relaxed)));
+            // P0 matrix anchors (AC: ≥2 P0 issues linked).
+            insert_kv("p0-anchor-a",
+                      matrix_entry(HotPathScenario::MutateStealGcOldClosure).related_issue_primary);
+            insert_kv(
+                "p0-anchor-b",
+                matrix_entry(HotPathScenario::MutateStealGcOldClosure).related_issue_secondary);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->test_strategy_total_hits.store(hits, std::memory_order_relaxed);
+                m->test_strategy_coverage_hit_rate_bp.store(cov_bp, std::memory_order_relaxed);
+                m->test_strategy_self_mod_loops.store(loops, std::memory_order_relaxed);
+                insert_kv("metrics-mirror", 1);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

@@ -23,6 +23,11 @@
 - [ ] New public APIs follow [`docs/naming_convention.md`](../docs/naming_convention.md) (Purpose / Pre / Post / Safety Class / Issue / AI-Native Rationale where applicable)
 - [ ] Primitive names respect freeze prefixes; PrimMeta filled for Agent-visible adds
 
+## Test strategy (#1887)
+
+- [ ] Hot-path / AI self-mod changes reference [`tests/STRATEGY.md`](../tests/STRATEGY.md) (stamp `note_strategy_scenario` or extend a domain suite)
+- [ ] Prefer domain suites over new `test_issue_*` binaries
+
 ## Test plan
 
 - [ ] `./build.py gate`

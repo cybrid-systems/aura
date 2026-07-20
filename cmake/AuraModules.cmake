@@ -64,8 +64,9 @@ set(AURA_CXX_MODULE_COMPILER
 #   WITH_REPL          — include src/repl/repl.cppm (main aura binary)
 #   WITH_REFLECT       — include src/reflect/reflect.ixx (issue tests)
 #   WITH_TYPE_CONCEPTS — include src/compiler/type_concepts.ixx (issue tests)
+#   WITH_TEST_STRATEGY — include src/test/test_strategy.ixx (#1887; issue tests)
 function(aura_target_cxx_modules TARGET)
-    set(options WITH_REPL WITH_REFLECT WITH_TYPE_CONCEPTS)
+    set(options WITH_REPL WITH_REFLECT WITH_TYPE_CONCEPTS WITH_TEST_STRATEGY)
     cmake_parse_arguments(ARG "${options}" "" "" ${ARGN})
 
     set(_module_files ${AURA_CXX_MODULE_CORE} ${AURA_CXX_MODULE_COMPILER})
@@ -77,6 +78,10 @@ function(aura_target_cxx_modules TARGET)
     endif()
     if(ARG_WITH_TYPE_CONCEPTS)
         list(APPEND _module_files src/compiler/type_concepts.ixx)
+    endif()
+    if(ARG_WITH_TEST_STRATEGY)
+        # Issue #1887: hot-path / AI self-mod strategy matrix module.
+        list(APPEND _module_files src/test/test_strategy.ixx)
     endif()
 
     target_sources(${TARGET} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES ${_module_files})

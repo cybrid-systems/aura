@@ -2,6 +2,17 @@
 
 How and where to add tests in Aura.
 
+## High-level strategy (#1887)
+
+Hot-path coverage matrix, AI self-mod SLO, and strategy profiles:
+
+- **[`STRATEGY.md`](STRATEGY.md)** — matrix + production-readiness goals
+- Code: `src/test/test_strategy.h` / `import aura.test.strategy`
+- Metrics: `(engine:metrics "query:test-strategy-stats")` (schema 1887)
+
+New hot-path or self-mod tests should stamp `note_strategy_scenario(...)`
+(or extend a domain suite that does) so coverage-bp stays honest.
+
 ## Philosophy
 
 **Theme-based domain tests beat per-issue files.**

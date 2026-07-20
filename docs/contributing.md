@@ -58,6 +58,17 @@ Issue / AI-Native Rationale):
 - [`docs/naming_convention.md`](naming_convention.md) — authority
 - Check: `python3 scripts/check_naming_convention.py`
 
+## Test strategy — hot paths & AI self-mod (#1887)
+
+High-level coverage matrix (mutate/steal/GC, invalidate/JIT deopt, audit, …)
+and self-mod loop SLO:
+
+- [`tests/STRATEGY.md`](../tests/STRATEGY.md) — overview
+- [`src/test/test_strategy.h`](../src/test/test_strategy.h) — matrix + metrics API
+- Query: `(engine:metrics "query:test-strategy-stats")`
+- Harness: `note_strategy_scenario` / `note_strategy_self_mod_loop` in
+  `tests/test_harness.hpp`
+
 ## Architecture / module boundaries (#1885)
 
 Dependency direction and cross-layer contracts:

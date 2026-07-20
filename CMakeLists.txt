@@ -548,7 +548,7 @@ set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 # BMIs across targets yet) — this is the duplicate work Fix #2
 # (sccache) will eliminate. For now, modules in both places are
 # necessary to make aura_test_objects compile.
-aura_target_cxx_modules(aura_test_objects WITH_REFLECT WITH_TYPE_CONCEPTS)
+aura_target_cxx_modules(aura_test_objects WITH_REFLECT WITH_TYPE_CONCEPTS WITH_TEST_STRATEGY)
 set_source_files_properties(src/reflect/reflect.ixx PROPERTIES COMPILE_FLAGS "-freflection")
 target_include_directories(aura_test_objects PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_test_objects PUBLIC cxx_std_26)
@@ -4635,6 +4635,10 @@ aura_issue_test_link_llvm_jit(test_concept_constraints)
 # Issue #1885: module_boundary.ixx layering + dependency DAG + contracts.
 aura_add_issue_test(test_module_boundary_1885)
 add_dependencies(all_test_issue_targets test_module_boundary_1885)
+# Issue #1887: hot-path / AI self-mod test strategy matrix + metrics.
+aura_add_issue_test(test_test_strategy_1887)
+aura_issue_test_link_llvm_jit(test_test_strategy_1887)
+add_dependencies(all_test_issue_targets test_test_strategy_1887)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
