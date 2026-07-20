@@ -2154,9 +2154,9 @@ std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
 // Issue #1870 / #1888 / #1926 / #1929: zero-copy ClosureView.
 // params span + name string_view + flat/pool/owner_arena raw pointers dangle
 // if the Closure is moved/freed. Same lifetime class as EnvView (#1868).
-// #1888/#1929: reject tombstoned sources; stamp source_lifetime_version for
-// is_closure_view_valid(view, cl) revalidation after concurrent GC/move.
-// #1926 dual-epoch (bridge) + #1929 unified hot-update Closure Bridge AC.
+// #1888/#1929/#1954: reject tombstoned sources; stamp source_lifetime_version
+// for is_closure_view_valid(view, cl) revalidation after concurrent GC/move.
+// #1926 dual-epoch (bridge) + #1929/#1954 unified hot-update Closure Bridge AC.
 // See ClosureView comment in evaluator.ixx.
 ClosureView make_invalid_closure_view() noexcept {
     return ClosureView{};
@@ -2224,12 +2224,14 @@ const aura::ast::ASTArena* closure_view_owner_arena(const ClosureView& v) noexce
 }
 
 ClosureView make_closure_view(const Closure& cl) {
-    // Issue #1888 / #1926 / #1929: no raw pointer view from a tombstoned /
-    // moved-from Closure. Also refuse lifetime_version==0 even if pointers
-    // non-null (defensive against partial init). Callers under concurrent
-    // mutation/GC/compact/fiber-steal must revalidate via
+    // Issue #1888 / #1926 / #1929 / #1954: no raw pointer view from a
+    // tombstoned / moved-from Closure. Also refuse lifetime_version==0 even
+    // if pointers non-null (defensive against partial init). Callers under
+    // concurrent mutation/GC/compact/fiber-steal must revalidate via
     // is_closure_view_valid(view, live_cl) or revalidate_closure_snapshot
     // before deref of flat/pool/owner_arena (or use safe accessors).
+    // (aura_closure_is_freed is the C ABI id-based gate; C++ path uses
+    // lifetime_version + tombstone_for_views instead — Issue #1954.)
     if (!cl.lifetime_valid_for_views() || cl.lifetime_version == 0) {
         g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         return make_invalid_closure_view();

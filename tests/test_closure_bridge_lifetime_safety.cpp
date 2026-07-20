@@ -1,7 +1,7 @@
-// test_closure_bridge_lifetime_safety.cpp — Issue #1947
+// test_closure_bridge_lifetime_safety.cpp — Issue #1947 / #1954
 // @category: unit
-// @reason: Issue #1947 — P0 ClosureView UAF guards under concurrent
-// move/GC/compact + refine of #1926/#1888/#1870/#1895.
+// @reason: Issue #1947 / #1954 — P0 ClosureView UAF guards under concurrent
+// move/GC/compact + refine of #1926/#1888/#1870/#1895/#1929.
 //
 // AC1: make_closure_view stamps source_lifetime_version + live
 //      on a fresh Closure; soft + strong validity checks pass.

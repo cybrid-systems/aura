@@ -5883,6 +5883,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("issue-1928", make_int(1928));
             insert_kv("schema-1929", make_int(1929)); // #1929 Closure Bridge unified surface
             insert_kv("issue-1929", make_int(1929));
+            insert_kv("schema-1954", make_int(1954)); // #1954 refine of #1929
+            insert_kv("issue-1954", make_int(1954));
             insert_kv("active", make_int(1));
             insert_kv("phase", make_int(5)); // production + all-boundary mandate (#1895/#1928)
             insert_kv("truncate-scan-wired", make_int(1));    // #1928 truncate force Drop
