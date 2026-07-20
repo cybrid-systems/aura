@@ -4704,10 +4704,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_violation_post_mutate_total{0};
     std::atomic<std::uint64_t> gc_root_sync_total{0};
     std::atomic<std::uint64_t> dangling_prevented_total{0};
-    // Issue #1888: ClosureView make / access rejected because source was
+    // Issue #1888 / #1926: ClosureView make / access rejected because source was
     // tombstoned (move / free / GC) or soft-invalid (process-wide mirror of
     // g_closure_view_dangling_prevented_total).
     std::atomic<std::uint64_t> closure_view_dangling_prevented_total{0};
+    // Issue #1926: strong revalidation / snapshot revalidate failures
+    // (process-wide mirror of g_closure_view_invalid_access_total).
+    std::atomic<std::uint64_t> closure_view_invalid_access_total{0};
+    // Issue #1926: feature flag for dual lifetime + free-table wiring.
+    std::atomic<std::uint64_t> closure_view_lifetime_wired{1};
 
     // Issue #720: JIT/Interpreter parity observability counters
     // for (query:jit-interpreter-parity-stats). Exposes the
