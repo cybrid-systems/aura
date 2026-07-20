@@ -7321,9 +7321,9 @@ public:
     // (bump_aot_safe_boundary_hit + 3 from #785) gated behind
     // AOT_RELOAD_PHASE_2_PLUS. Phase 1 ships the metric fields
     // in observability_metrics.h:5232-5234, 5298 + the query
-    // primitives in evaluator_primitives_obs_jit_01.cpp:850 +
-    // obs_jit_03.cpp:692-700; per-decision-point bump sites
-    // are Phase 2+ wire-up work in aura_jit_bridge.cpp +
+    // primitives in evaluator_primitives_obs_jit.cpp (#1963
+    // consolidated from obs_jit_NN splits); per-decision-point
+    // bump sites are Phase 2+ wire-up work in aura_jit_bridge.cpp +
     // MutationBoundaryGuard + fiber.cpp + EnvFrame sync.
     // Defining the macro re-enables the helpers + the call-
     // site tests below skip cleanly via the same #ifdef.
