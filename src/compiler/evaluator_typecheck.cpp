@@ -459,6 +459,23 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             m->typed_mutation_linear_ok_total.fetch_add(1, std::memory_order_relaxed);
         if (r.provenance_ok)
             m->typed_mutation_prov_ok_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1884: mirror process-wide correlation into CompilerMetrics.
+        const auto& ac = typed_audit::g_typed_mutation_audit_counters;
+        m->type_propagation_invariant_correlation_total.store(
+            ac.type_prop_invariant_correlation_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        m->type_propagation_invariant_pass_with_evidence_total.store(
+            ac.type_prop_invariant_pass_with_evidence_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        m->type_propagation_invariant_fail_with_evidence_total.store(
+            ac.type_prop_invariant_fail_with_evidence_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        m->type_propagation_evidence_lost_total.store(
+            ac.type_prop_evidence_lost_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        m->predicate_memo_evict_invariant_correlation_total.store(
+            ac.predicate_memo_evict_correlated_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
     }
     return r.all_ok();
 }

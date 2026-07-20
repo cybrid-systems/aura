@@ -5373,6 +5373,105 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
+    // ── Issue #1884: query:type-propagation-invariant-stats ──
+    // Correlates TypePropagationPass / DCE narrow_evidence / predicate_memo
+    // with TypedMutationAudit invariant outcomes (AI self-evo debug surface).
+    ObservabilityPrims::register_stats_impl(
+        "query:type-propagation-invariant-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::typed_audit;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto& c = g_typed_mutation_audit_counters;
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            insert_kv("schema", 1884);
+            insert_kv("issue", 1884);
+            insert_kv("active", 1);
+            insert_kv("correlation-total",
+                      static_cast<std::int64_t>(
+                          c.type_prop_invariant_correlation_total.load(std::memory_order_relaxed)));
+            insert_kv("pass-with-evidence",
+                      static_cast<std::int64_t>(c.type_prop_invariant_pass_with_evidence_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("fail-with-evidence",
+                      static_cast<std::int64_t>(c.type_prop_invariant_fail_with_evidence_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("evidence-lost",
+                      static_cast<std::int64_t>(
+                          c.type_prop_evidence_lost_total.load(std::memory_order_relaxed)));
+            insert_kv("memo-evict-correlated",
+                      static_cast<std::int64_t>(
+                          c.predicate_memo_evict_correlated_total.load(std::memory_order_relaxed)));
+            insert_kv("last-fixpoint-rounds",
+                      static_cast<std::int64_t>(
+                          c.last_type_prop_fixpoint_rounds.load(std::memory_order_relaxed)));
+            insert_kv("last-narrow-hits",
+                      static_cast<std::int64_t>(
+                          c.last_type_prop_narrow_hits.load(std::memory_order_relaxed) +
+                          c.last_dce_narrow_hits.load(std::memory_order_relaxed)));
+            insert_kv("last-extended-ops",
+                      static_cast<std::int64_t>(
+                          c.last_type_prop_extended_ops.load(std::memory_order_relaxed)));
+            insert_kv("last-memo-evictions",
+                      static_cast<std::int64_t>(
+                          c.last_predicate_memo_evictions.load(std::memory_order_relaxed)));
+            insert_kv("invariant-all-pass", static_cast<std::int64_t>(c.invariant_all_pass.load(
+                                                std::memory_order_relaxed)));
+            insert_kv("invariant-audits", static_cast<std::int64_t>(
+                                              c.invariant_audits.load(std::memory_order_relaxed)));
+            // Correlation strength: pass_with_evidence / max(1, correlation_total) in bp
+            {
+                const auto corr =
+                    c.type_prop_invariant_correlation_total.load(std::memory_order_relaxed);
+                const auto pass_ev =
+                    c.type_prop_invariant_pass_with_evidence_total.load(std::memory_order_relaxed);
+                const std::int64_t bp =
+                    corr == 0 ? 0 : static_cast<std::int64_t>((pass_ev * 10000ull) / corr);
+                insert_kv("evidence-pass-correlation-bp", bp);
+            }
+            if (m) {
+                insert_kv("type-prop-runs",
+                          static_cast<std::int64_t>(
+                              m->type_propagation_runs_.load(std::memory_order_relaxed)));
+                insert_kv("type-prop-fixpoint-rounds",
+                          static_cast<std::int64_t>(
+                              m->type_propagation_fixpoint_rounds.load(std::memory_order_relaxed)));
+                insert_kv("narrow-evidence-hits",
+                          static_cast<std::int64_t>(m->coercion_narrow_evidence_hits_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("predicate-memo-evictions",
+                          static_cast<std::int64_t>(
+                              m->predicate_memo_evictions_total.load(std::memory_order_relaxed)));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
     // Dedicated AOT hot-update TypedMutationAudit surface (sampled success,
     // always-on failures). Complements query:aot-hotupdate-stats (#590) and

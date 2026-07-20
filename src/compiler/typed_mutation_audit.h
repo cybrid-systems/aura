@@ -95,6 +95,19 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> aot_hotupdate_invariant_fail_total{0};
     std::atomic<std::uint64_t> jit_hotpath_audits{0};
     std::atomic<std::uint64_t> audit_mutation_id_gen{0};
+    // Issue #1884: TypePropagation / predicate_memo ↔ invariant correlation.
+    std::atomic<std::uint64_t> type_prop_invariant_correlation_total{0};
+    std::atomic<std::uint64_t> type_prop_invariant_pass_with_evidence_total{0};
+    std::atomic<std::uint64_t> type_prop_invariant_fail_with_evidence_total{0};
+    std::atomic<std::uint64_t> type_prop_evidence_lost_total{0};
+    std::atomic<std::uint64_t> predicate_memo_evict_correlated_total{0};
+    // Last pass snapshot (process-wide, relaxed) for correlation window.
+    std::atomic<std::uint64_t> last_type_prop_fixpoint_rounds{0};
+    std::atomic<std::uint64_t> last_type_prop_narrow_hits{0};
+    std::atomic<std::uint64_t> last_type_prop_extended_ops{0};
+    std::atomic<std::uint64_t> last_dce_narrow_hits{0};
+    std::atomic<std::uint64_t> last_predicate_memo_evictions{0};
+    std::atomic<std::uint64_t> last_invariant_all_ok{1}; // 1=pass, 0=fail
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -306,6 +319,58 @@ struct InvariantAuditResult {
     [[nodiscard]] bool all_ok() const noexcept { return type_ok && linear_ok && provenance_ok; }
 };
 
+// Issue #1884: stamp last TypePropagationPass / DCE narrow metrics for
+// the next invariant audit correlation window.
+inline void note_type_propagation_pass(std::uint64_t fixpoint_rounds, std::uint64_t narrow_hits,
+                                       std::uint64_t extended_ops) noexcept {
+    g_typed_mutation_audit_counters.last_type_prop_fixpoint_rounds.store(fixpoint_rounds,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_narrow_hits.store(narrow_hits,
+                                                                     std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_extended_ops.store(extended_ops,
+                                                                      std::memory_order_relaxed);
+}
+
+inline void note_dce_narrow_hits(std::uint64_t narrow_hits) noexcept {
+    g_typed_mutation_audit_counters.last_dce_narrow_hits.store(narrow_hits,
+                                                               std::memory_order_relaxed);
+}
+
+inline void note_predicate_memo_eviction(std::uint64_t n) noexcept {
+    if (n == 0)
+        return;
+    g_typed_mutation_audit_counters.last_predicate_memo_evictions.fetch_add(
+        n, std::memory_order_relaxed);
+    // Correlate with last invariant outcome (self-evo thrash under fail).
+    if (g_typed_mutation_audit_counters.last_invariant_all_ok.load(std::memory_order_relaxed) ==
+        0) {
+        g_typed_mutation_audit_counters.predicate_memo_evict_correlated_total.fetch_add(
+            n, std::memory_order_relaxed);
+    }
+}
+
+// Correlate latest type-system pass snapshot with an invariant audit result.
+inline void correlate_invariant_with_type_system(const InvariantAuditResult& r) noexcept {
+    auto& c = g_typed_mutation_audit_counters;
+    c.type_prop_invariant_correlation_total.fetch_add(1, std::memory_order_relaxed);
+    c.last_invariant_all_ok.store(r.all_ok() ? 1 : 0, std::memory_order_relaxed);
+    const auto narrow = c.last_type_prop_narrow_hits.load(std::memory_order_relaxed) +
+                        c.last_dce_narrow_hits.load(std::memory_order_relaxed);
+    const auto fixpoint = c.last_type_prop_fixpoint_rounds.load(std::memory_order_relaxed);
+    const bool had_evidence = narrow > 0 || fixpoint > 0 ||
+                              c.last_type_prop_extended_ops.load(std::memory_order_relaxed) > 0;
+    if (r.all_ok()) {
+        if (had_evidence)
+            c.type_prop_invariant_pass_with_evidence_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        if (had_evidence)
+            c.type_prop_invariant_fail_with_evidence_total.fetch_add(1, std::memory_order_relaxed);
+        // Evidence present but type invariant failed → "lost" for AI debug.
+        if (!r.type_ok && narrow > 0)
+            c.type_prop_evidence_lost_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string_view op,
                                           const InvariantAuditResult& r,
                                           std::uint64_t before_epoch = 0,
@@ -328,6 +393,8 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     else
         g_typed_mutation_audit_counters.provenance_invariant_fail.fetch_add(
             1, std::memory_order_relaxed);
+    // Issue #1884: correlate with last TypePropagation / DCE / memo snapshot.
+    correlate_invariant_with_type_system(r);
     if (r.all_ok()) {
         g_typed_mutation_audit_counters.invariant_all_pass.fetch_add(1, std::memory_order_relaxed);
         capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
@@ -417,6 +484,24 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.jit_hotpath_audits.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.audit_mutation_id_gen.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_correlation_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_pass_with_evidence_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_fail_with_evidence_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_evidence_lost_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.predicate_memo_evict_correlated_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_fixpoint_rounds.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_narrow_hits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_extended_ops.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_dce_narrow_hits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_predicate_memo_evictions.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_invariant_all_ok.store(1, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     std::lock_guard lock(g_trail().mu);

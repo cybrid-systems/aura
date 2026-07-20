@@ -5663,6 +5663,13 @@ struct CompilerMetrics {
     //     step (zero-overhead win after mutation re-lower)
     std::atomic<std::uint64_t> type_propagation_fixpoint_rounds{0};
     std::atomic<std::uint64_t> cast_eliminated_after_propagation{0};
+    // Issue #1884: TypePropagation/DCE ↔ TypedMutationAudit correlation.
+    // Mirrored from typed_audit process counters for engine:metrics dashboards.
+    std::atomic<std::uint64_t> type_propagation_invariant_correlation_total{0};
+    std::atomic<std::uint64_t> type_propagation_invariant_pass_with_evidence_total{0};
+    std::atomic<std::uint64_t> type_propagation_invariant_fail_with_evidence_total{0};
+    std::atomic<std::uint64_t> type_propagation_evidence_lost_total{0};
+    std::atomic<std::uint64_t> predicate_memo_evict_invariant_correlation_total{0};
     // Issue #306: hardware resource linear-ownership
     // observability counters (EDA track — wire/reg/mem/port
     // borrow + double-drive detection). Exposed via the
