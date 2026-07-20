@@ -869,6 +869,20 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"edsl-apply-soa-wired", make_int(1)},
                 {"edsl-mutate-soa-wired", make_int(1)},
                 {"edsl-children-soa-wired", make_int(1)},
+                // Issue #1919: intelligent auto-compact policy surface
+                {"schema-1919", make_int(1919)},
+                {"issue-1919", make_int(1919)},
+                {"arena-intelligent-auto-compact-wired", make_int(1)},
+                {"arena-auto-compact-mode",
+                 make_int(static_cast<std::int64_t>(
+                     static_cast<std::uint8_t>(aura::core::arena_policy::auto_compact_mode())))},
+                {"arena-dynamic-frag-threshold-bp",
+                 make_int(static_cast<std::int64_t>(aura::core::arena_policy::dynamic_threshold_bp
+                                                        .load(std::memory_order_relaxed)))},
+                {"arena-false-positive-bp",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::arena_policy::auto_compact_false_positive_bp()))},
+                {"arena-false-positive-target-bp", make_int(500)},
             };
             return build_kv_hash(ev, kv);
         });

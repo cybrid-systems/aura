@@ -4716,6 +4716,10 @@ add_dependencies(all_test_issue_targets test_jit_critical_coverage_1917)
 aura_add_issue_test(test_soa_view_enforcement_1918)
 aura_issue_test_link_llvm_jit(test_soa_view_enforcement_1918)
 add_dependencies(all_test_issue_targets test_soa_view_enforcement_1918)
+# Issue #1919: intelligent arena auto-compact policy (mode + AI/JIT pressure + FP gate).
+aura_add_issue_test(test_arena_auto_compact_intelligent_1919)
+aura_issue_test_link_llvm_jit(test_arena_auto_compact_intelligent_1919)
+add_dependencies(all_test_issue_targets test_arena_auto_compact_intelligent_1919)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

@@ -12,7 +12,6 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "security_capabilities.h"
-#include "compiler/mutation_guard_helpers.hh" // Issue #1950: shared run_under_mutation_guard template
 
 module aura.compiler.evaluator;
 
@@ -29,6 +28,9 @@ import aura.compiler.query;
 import aura.compiler.macro_expansion;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
+
+// Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
+#include "compiler/mutation_guard_helpers.hh"
 
 namespace aura::compiler::primitives_detail {
 

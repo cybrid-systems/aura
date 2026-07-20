@@ -8,13 +8,13 @@ module;
 #include "messaging_bridge.h"
 #include "security_capabilities.h"
 #include "observability_metrics.h"
-#include "hash_meta.h"                        // FNV constants for stats hash
-#include "typed_mutation_audit.h"             // Issue #1589
-#include "test/test_strategy.h"               // Issue #1887: hot-path / self-mod strategy metrics
-#include "render_prim_template.hh"            // Issue #1677: aura_is_render_evolution_name
-#include "core/sandbox.hh"                    // Issue #1878: is_strict() for multi-tenant batch
-#include "core/provenance_tracker.hh"         // Issue #1878: last_hygiene tenant stamp
-#include "compiler/mutation_guard_helpers.hh" // Issue #1950: shared run_under_mutation_guard template
+#include "hash_meta.h"                    // FNV constants for stats hash
+#include "typed_mutation_audit.h"         // Issue #1589
+#include "test/test_strategy.h"           // Issue #1887: hot-path / self-mod strategy metrics
+#include "render_prim_template.hh"        // Issue #1677: aura_is_render_evolution_name
+#include "core/sandbox.hh"                // Issue #1878: is_strict() for multi-tenant batch
+#include "core/provenance_tracker.hh"     // Issue #1878: last_hygiene tenant stamp
+#include "core/arena_auto_policy_stats.h" // Issue #1919: mutation pressure → auto-compact
 
 module aura.compiler.evaluator;
 
@@ -32,6 +32,9 @@ import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
 import aura.compiler.soa_view;
+
+// Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
+#include "compiler/mutation_guard_helpers.hh"
 
 namespace aura::compiler::primitives_detail {
 
@@ -1386,6 +1389,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1918: mutate hot path records SoA/column migration progress
         // (workspace FlatAST children + defuse SoA under MutationBoundaryGuard).
         soa_view::record_edsl_mutate_soa_path();
+        // Issue #1919: AI multi-round mutation pressure → intelligent auto-compact.
+        aura::core::arena_policy::signal_mutation_pressure();
+        aura::core::arena_policy::signal_dirty_cascade();
         bool ok = true;
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent

@@ -13,12 +13,13 @@
 // batched to ≤6 atomics per #1747) owns the defuse_version_ +
 // total_mutations_ bump — primitives intentionally removed their
 // manual #1904 path. This header keeps the wrap pattern uniform.
+//
+// Include AFTER `module aura.compiler.evaluator;` (+ value imports) so
+// Evaluator / EvalValue / CompilerMetrics are in scope. Do not pull
+// non-existent compiler/evaluator.h from the global module fragment.
 
 #ifndef AURA_COMPILER_MUTATION_GUARD_HELPERS_HH
 #define AURA_COMPILER_MUTATION_GUARD_HELPERS_HH
-
-#include "compiler/evaluator.h"
-#include "compiler/value.h"
 
 namespace aura::compiler {
 

@@ -593,6 +593,9 @@ public:
                     metrics_.arena_compact_deopt_triggered_total.fetch_add(
                         1, std::memory_order_relaxed);
                     aura::core::arena_policy::record_compact_deopt_triggered();
+                    // Issue #1919: feed JIT deopt pressure into intelligent
+                    // auto-compact (raise frag threshold to avoid storms).
+                    aura::core::arena_policy::signal_jit_deopt_pressure();
                     // Fiber / boundary post-compact sync (clears spurious storm).
                     (void)shape_profiler_.on_boundary_or_fiber_sync(
                         /*clear_compact_only_storm=*/true);
@@ -601,6 +604,7 @@ public:
                     metrics_.arena_compact_deopt_throttled_total.fetch_add(
                         1, std::memory_order_relaxed);
                     aura::core::arena_policy::record_compact_deopt_throttled();
+                    aura::core::arena_policy::signal_jit_deopt_pressure();
                 }
                 aura::core::arena_policy::record_shape_inval_on_compact();
                 for (auto& [_, entry] : ir_cache_v2_) {

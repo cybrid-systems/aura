@@ -7037,8 +7037,27 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t soft_gated = static_cast<std::int64_t>(
                 aura::core::arena_policy::smart_policy_soft_gated_total.load(
                     std::memory_order_relaxed));
-            // #1621: ~16 keys — create(32) headroom.
-            auto* ht = FlatHashTable::create(32);
+            // Issue #1919 intelligent policy metrics.
+            const auto mode = static_cast<std::int64_t>(
+                static_cast<std::uint8_t>(aura::core::arena_policy::auto_compact_mode()));
+            const auto dyn_thr = static_cast<std::int64_t>(
+                aura::core::arena_policy::dynamic_threshold_bp.load(std::memory_order_relaxed));
+            const auto mut_sig = static_cast<std::int64_t>(
+                aura::core::arena_policy::mutation_pressure_signal_total.load(
+                    std::memory_order_relaxed));
+            const auto deopt_sig = static_cast<std::int64_t>(
+                aura::core::arena_policy::jit_deopt_pressure_signal_total.load(
+                    std::memory_order_relaxed));
+            const auto fp_total = static_cast<std::int64_t>(
+                aura::core::arena_policy::auto_compact_false_positive_total.load(
+                    std::memory_order_relaxed));
+            const auto tp_total = static_cast<std::int64_t>(
+                aura::core::arena_policy::auto_compact_true_positive_total.load(
+                    std::memory_order_relaxed));
+            const auto fp_bp = static_cast<std::int64_t>(
+                aura::core::arena_policy::auto_compact_false_positive_bp());
+            // #1621 + #1919: ~30 keys — create(64) headroom.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7080,8 +7099,24 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             insert_kv("smart-policy-soft-gated", soft_gated);
             insert_kv("smart-policy-wired", 1);
             insert_kv("closed-loop-wired", 1);
+            // Issue #1919: intelligent mode + dynamic thr + FP + pressure
+            insert_kv("auto-compact-mode", mode); // 0=Conservative 1=Balanced 2=Aggressive
+            insert_kv("dynamic-frag-threshold-bp", dyn_thr);
+            insert_kv("mutation-pressure-signals", mut_sig);
+            insert_kv("jit-deopt-pressure-signals", deopt_sig);
+            insert_kv("auto-compact-false-positive-total", fp_total);
+            insert_kv("auto-compact-true-positive-total", tp_total);
+            insert_kv("auto-compact-false-positive-bp", fp_bp);
+            insert_kv("false-positive-target-bp", 500); // 5%
+            insert_kv("intelligent-policy-wired", 1);
+            insert_kv("frag-threshold-min-bp", 3000);
+            insert_kv("frag-threshold-max-bp", 6000);
+            insert_kv("shape-profiler-on-compact-wired", 1);
+            insert_kv("jit-deopt-throttle-wired", 1);
+            insert_kv("schema-1919", 1919);
+            insert_kv("issue-1919", 1919);
             insert_kv("issue", 1621);
-            insert_kv("schema", 1621); // lineage 743
+            insert_kv("schema", 1621); // lineage 743 → 1621 + #1919
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
