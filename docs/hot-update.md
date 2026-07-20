@@ -116,7 +116,7 @@ These remain open and are pre-requisites or extensions of the MVP:
 - [#1953] Systemic `MutationBoundaryGuard` refine of #1931 *(closed: schema-1953 + gate coverage)*
 - [#1954] Strengthen `make_closure_view` lifetime + walk_active_closures *(closed: schema-1954 refine of #1929)*
 - [#1955] `compact_env_frames` / `truncate_env_frames_to_checkpoint`
-  consistency: Guard + …
+  consistency: Guard + dual-epoch *(closed: schema-1955 refine of #1927)*
 - [#1956] Establish `hot_update_registry` unified coordination center
 - (and many closed historical hot-update issues, e.g. #1905, #1747,
   #1710, #1707, #1658, #1636, #1627, #1625, #1623, #1616, #1614,

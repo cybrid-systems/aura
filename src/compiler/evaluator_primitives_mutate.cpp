@@ -5667,11 +5667,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
-    // ── Issue #1889: query:envframe-truncate-epoch-stats ──
+    // ── Issue #1889 / #1927 / #1955: query:envframe-truncate-epoch-stats ──
     // truncate_env_frames_to_checkpoint dual-epoch + Guard observability.
+    // schema-1955 is the re-audit refine of #1927 (same AC surface).
     ObservabilityPrims::register_stats_impl(
         "query:envframe-truncate-epoch-stats", [&ev](const auto&) -> EvalValue {
-            // Power-of-2 capacity; #1927 adds AC keys (create(32) headroom).
+            // Power-of-2 capacity; #1927/#1955 AC keys (create(32) headroom).
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -5744,8 +5745,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("truncate-bumps-bridge-epoch", 1);
             insert_kv("truncate-bumps-defuse-version", 1); // #1927 dual-epoch lockstep
             insert_kv("nested-guard-skip-wired", 1);       // #1927 panic-restore safe
+            insert_kv("doomed-closure-restamp-wired", 1);  // bridge_epoch=0 on OOB env
             insert_kv("schema-1927", 1927);
             insert_kv("issue-1927", 1927);
+            insert_kv("schema-1955", 1955); // refine #1927 re-audit
+            insert_kv("issue-1955", 1955);
+            insert_kv("schema-1948", 1948); // Guard violation metrics lineage
+            insert_kv("schema-1739", 1739); // bridge bump on truncate lineage
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
