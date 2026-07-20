@@ -5686,6 +5686,9 @@ aura_issue_test_link_llvm_jit(test_issue_1952)
 # Issue #1953: MutationBoundaryGuard systemic refine of #1931 (schema-1953 + dtor ≤6).
 aura_add_issue_test(test_issue_1953)
 aura_issue_test_link_llvm_jit(test_issue_1953)
+# Issue #1954: make_closure_view lifetime + walk_active_closures refine of #1929.
+aura_add_issue_test(test_issue_1954)
+aura_issue_test_link_llvm_jit(test_issue_1954)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 # Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
 # Issue #488: post-mutate reflect validation + Guard impact snapshot.

@@ -5751,13 +5751,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
-    // ── Issue #1888 / #1926 / #1929: query:closure-view-lifetime-stats ──
+    // ── Issue #1888 / #1926 / #1929 / #1954: query:closure-view-lifetime-stats ──
     // ClosureView lifetime stamp / dangling-prevented surface.
     // schema-1929 unifies ClosureView UAF + walk_active_closures boundary
     // mandate + live_closure_stale metrics for hot-update production path.
+    // schema-1954 is the re-audit refine of #1929 (same AC surface).
     ObservabilityPrims::register_stats_impl(
         "query:closure-view-lifetime-stats", [&ev](const auto&) -> EvalValue {
-            // Power-of-2 capacity; #1929 adds unified AC keys (create(64)).
+            // Power-of-2 capacity; #1929/#1954 unified AC keys (create(64)).
             auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
@@ -5803,14 +5804,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("dual-epoch-wired", 1);
             insert_kv("schema-1926", 1926);
             insert_kv("issue-1926", 1926);
-            // Issue #1929: unified Closure Bridge / hot-update safety surface.
+            // Issue #1929 / #1954: unified Closure Bridge / hot-update safety surface.
             insert_kv("schema-1929", 1929);
             insert_kv("issue-1929", 1929);
+            insert_kv("schema-1954", 1954); // refine #1929 re-audit
+            insert_kv("issue-1954", 1954);
             insert_kv("safe-accessors-wired", 1); // flat/pool/owner_arena null-on-invalid
             insert_kv("apply-snapshot-revalidate-wired", 1); // apply_closure revalidate
-            insert_kv("walk-active-closures-wired", 1);      // #1895/#1928
+            insert_kv("walk-active-closures-wired", 1);      // #1895/#1928/#1954
             insert_kv("boundaries-wired-count", 6);          // inv/compact/trunc/jit/fiber/gc
             insert_kv("make-closure-view-lifetime-guard", 1);
+            insert_kv("force-drop-or-mark-invalid-wired", 1); // tombstone_for_views path
+            insert_kv("lifetime-version-stamp-wired", 1);
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                 m->closure_view_dangling_prevented_total.store(prevented,
                                                                std::memory_order_relaxed);

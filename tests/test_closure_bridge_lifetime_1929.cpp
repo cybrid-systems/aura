@@ -121,6 +121,7 @@ static void ac2_schema() {
     CHECK(href(cs, "schema-1926") == 1926, "schema-1926 retained");
     CHECK(href(cs, "schema-1929") == 1929, "schema-1929");
     CHECK(href(cs, "issue-1929") == 1929, "issue-1929");
+    CHECK(href(cs, "schema-1954") == 1954, "schema-1954 refine");
     CHECK(href(cs, "make-closure-view-lifetime-guard") == 1, "view guard wired");
     CHECK(href(cs, "safe-accessors-wired") == 1, "safe accessors");
     CHECK(href(cs, "apply-snapshot-revalidate-wired") == 1, "apply revalidate");
