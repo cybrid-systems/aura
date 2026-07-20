@@ -94,7 +94,8 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 #                AURA_ENABLE_EDA + COMMERCIAL_DOMAIN_BUDGETS["eda:"].
 #   - auto-evolve-: self-evolution AI — KEEP deferred, #1969: gated by
 #                AURA_ENABLE_AUTO_EVOLVE + COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"].
-#   - git-:      git integration (integration, defer).
+#   - git-:      git integration — KEEP deferred, #1970: gated by
+#                AURA_ENABLE_GIT + COMMERCIAL_DOMAIN_BUDGETS["git-"].
 #   - terminal:  terminal ops (UI/integration, defer).
 #   - seva:      service evaluation (commercial vertical, defer).
 #   - strategy:  strategy DSL (commercial vertical, defer).
@@ -124,6 +125,7 @@ COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "tui:": 21,  # #1967 — terminal UI vertical; AURA_ENABLE_TUI build flag
     "eda:": 13,  # #1968 — EDA vertical; AURA_ENABLE_EDA build flag
     "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
+    "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -326,8 +328,8 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
         b = breakdown[p]
         print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
 
-    # Issue #1967 / #1968 / #1969: commercial UI / vertical budgets.
-    print("  commercial domain budgets (Issue #1967 / #1968 / #1969):")
+    # Issue #1967–#1970: commercial / integration vertical budgets.
+    print("  commercial domain budgets (Issue #1967–#1970):")
     commercial_counts = commercial_domain_counts(all_names)
     for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
         budget = COMMERCIAL_DOMAIN_BUDGETS[p]

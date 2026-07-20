@@ -116,6 +116,7 @@ void Evaluator::register_all_primitives() {
 
     primitives_detail::register_file_primitives(prim_registrar(), *this);
 
+    // Issue #1970: git-* gated by AURA_ENABLE_GIT inside register_git_primitives.
     primitives_detail::register_git_primitives(prim_registrar(), *this);
 
     primitives_detail::register_module_primitives(prim_registrar(), *this);
