@@ -69,6 +69,8 @@ class Layout1932(unittest.TestCase):
         readme = (TESTS / "README.md").read_text(encoding="utf-8")
         self.assertIn("python/", readme)
         self.assertIn("1932", readme)
+        # #1939 final cleanup documents What changed + status CLI
+        self.assertIn("What changed", readme)
 
 
 if __name__ == "__main__":
