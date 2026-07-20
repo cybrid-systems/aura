@@ -58,15 +58,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
-from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn
-from benchmark_cases import load_typecheck_cases
-from integ_cases import load_integ_cases
-from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets
-from smoke_cases import load_smoke_cases
+# Issue #1932: harness lives under tests/python/; bench cases under tests/bench/
+_ROOT_FOR_PATH = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
+sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
+from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
+from benchmark_cases import load_typecheck_cases  # noqa: E402
+from integ_cases import load_integ_cases  # noqa: E402
+from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets  # noqa: E402
+from smoke_cases import load_smoke_cases  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
-BENCH = ROOT / "tests" / "benchmark.py"
+BENCH = ROOT / "tests" / "benchmark.py"  # thin entry → tests/bench/benchmark.py
 
 
 def _default_build_dir() -> Path:
@@ -592,7 +595,7 @@ def test_unit():
 
 
 # Integration cases live in tests/fixtures/integ/*.json (#1962)
-# (loaded via tests/integ_cases.py).
+# (loaded via tests/python/integ_cases.py — #1932 layout).
 
 
 def test_integ():
@@ -1398,7 +1401,8 @@ def cmd_primitive_surface():
         )
         return 1
     # Issue #1432 / #1448: synthetic unit tests (blocks deliberately-bad names + strict).
-    ut = ROOT / "tests" / "test_primitive_surface_gate.py"
+    # Issue #1932: gate unit tests live under tests/python/
+    ut = ROOT / "tests" / "python" / "test_primitive_surface_gate.py"
     if ut.exists():
         r2 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
         if r2.returncode != 0:
@@ -1439,7 +1443,8 @@ def cmd_test_binding():
     """Issue #1453: prim source ↔ tests/ binding + test-registry freshness."""
     print(f"{B}═══ Test binding + coverage (#1453) ═══{N}")
     # Unit tests for the gate itself
-    ut = ROOT / "tests" / "test_test_binding_gate.py"
+    # Issue #1932: gate unit tests live under tests/python/
+    ut = ROOT / "tests" / "python" / "test_test_binding_gate.py"
     if ut.exists():
         r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
         if r0.returncode != 0:
@@ -1482,7 +1487,8 @@ def cmd_dead_heap_push():
     if not script.exists():
         fail(f"missing {script}")
         return 1
-    ut = ROOT / "tests" / "test_audit_dead_heap_push.py"
+    # Issue #1932: gate unit tests live under tests/python/
+    ut = ROOT / "tests" / "python" / "test_audit_dead_heap_push.py"
     if ut.exists():
         r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
         if r0.returncode != 0:
@@ -1506,7 +1512,8 @@ def cmd_catch_silent_swallow():
     if not script.exists():
         fail(f"missing {script}")
         return 1
-    ut = ROOT / "tests" / "test_audit_catch_silent_swallow.py"
+    # Issue #1932: gate unit tests live under tests/python/
+    ut = ROOT / "tests" / "python" / "test_audit_catch_silent_swallow.py"
     if ut.exists():
         r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
         if r0.returncode != 0:
@@ -1911,7 +1918,10 @@ def cmd_security():
 def run_bench_llm():
     """Run LLM benchmarks (DeepSeek / MiniMax / Grok) in parallel."""
     print(f"{B}═══ LLM Benchmark (3 models in parallel) ═══{N}")
+    # Issue #1932: thin entrypoint or tests/bench/run_bench_all.py
     bench_script = ROOT / "tests" / "run_bench_all.py"
+    if not bench_script.exists():
+        bench_script = ROOT / "tests" / "bench" / "run_bench_all.py"
     if not bench_script.exists():
         fail(f"Script not found: {bench_script}")
         return 1

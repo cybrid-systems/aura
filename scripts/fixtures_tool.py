@@ -2,7 +2,7 @@
 """Fixture maintenance tooling (#1962).
 
 Commands:
-  validate   Run schema/budget checks (same as tests/fixture_check.py)
+  validate   Run schema/budget checks (same as tests/python/fixture_check.py)
   status     Print shard counts and sizes
   pack KIND  Merge shards → stdout JSON array (export / debugging only)
 

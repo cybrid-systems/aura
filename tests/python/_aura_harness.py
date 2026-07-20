@@ -15,8 +15,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
-TESTS = ROOT / "tests"
+# Issue #1932: this file lives under tests/python/ (was tests/).
+TESTS = Path(__file__).resolve().parent.parent  # .../tests
+ROOT = TESTS.parent
+PYTHON = TESTS / "python"
+BENCH = TESTS / "bench"
+FUZZ = TESTS / "fuzz"
+MEMORY = TESTS / "memory"
 BUILD = ROOT / "build"
 AURA_BIN = BUILD / "aura"
 
@@ -49,7 +54,11 @@ def run(cmd: Sequence[str] | str, **kwargs: Any) -> int:
 
 
 def ensure_tests_on_path() -> None:
-    """Allow `from issue_tier import …` when invoked as python3 tests/run.py."""
+    """Allow sibling imports from tests/python/ (issue_tier, fixture_store, …)."""
+    py = str(PYTHON)
+    if py not in sys.path:
+        sys.path.insert(0, py)
+    # Also keep tests/ on path for any residual top-level helpers.
     tests = str(TESTS)
     if tests not in sys.path:
         sys.path.insert(0, tests)
@@ -110,12 +119,12 @@ def timed_call(fn: Callable[[], int], *, category: str) -> RunReport:
 
 # Categories exposed by tests/run.py (and build.py suite names where shared).
 CATEGORIES: dict[str, str] = {
-    "issues": "C++ issue/domain/bundle binaries (tests/run_issue_tests.py)",
+    "issues": "C++ issue/domain/bundle binaries (tests/python/run_issue_tests.py)",
     "issues-fast": "Same as issues with AURA_ISSUES_TIER=fast",
     "fixtures": "Validate tests/fixtures/*.json",
     "gradual": "Gradual typing guarantee scenarios",
-    "bench": "Compiler pipeline benchmark SLO gate",
+    "bench": "Compiler pipeline benchmark SLO gate (tests/bench/)",
     "mutation": "EDSL mutation_loop self-evolution",
-    "bash": "Legacy tests/run-tests.sh smoke",
+    "bash": "Legacy tests/python/run-tests.sh smoke",
     "list": "List categories (this help)",
 }

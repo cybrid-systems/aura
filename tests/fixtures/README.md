@@ -15,7 +15,7 @@
 | `issue_616/` | Issue-specific sample data | Hand | targeted tests |
 | `basic_add.aura` | Tiny program sample | Hand | misc |
 
-**Generated elsewhere (not here):** `docs/generated/*`, `tests/benchmark_baseline.json`
+**Generated elsewhere (not here):** `docs/generated/*`, `tests/bench/benchmark_baseline.json` (#1932)
 (SLO baseline next to `tests/`; must stay in sync with benchmark shards).
 
 ## Why shards
