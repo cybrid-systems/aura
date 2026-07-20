@@ -10,6 +10,7 @@
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
+#include "hot_update_registry.hh"  // Issue #1956: unified hot-update coordination
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
 #include "typed_mutation_audit.h"  // Issue #1882: TypedMutationAudit on hot-update
 
@@ -300,6 +301,8 @@ extern "C" std::uint64_t aura_get_aot_region_mask_for_eval(void* eval_ptr) {
 
 extern "C" void aura_set_aot_emit_region_mask(std::uint64_t mask) {
     g_aot_emit_region_mask = mask;
+    // Issue #1956: bookkeeping for HotUpdateRegistry dashboard.
+    aura::compiler::hot_update_registry().on_emit_region_mask_set(mask);
 }
 
 extern "C" std::uint64_t aura_get_module_version(void) {
@@ -387,6 +390,7 @@ static void* g_is_define_dirty_userdata = nullptr;
 extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn, void* userdata) {
     g_is_define_dirty_fn = fn;
     g_is_define_dirty_userdata = userdata;
+    aura::compiler::hot_update_registry().on_define_dirty_provider_set(fn != nullptr);
 }
 
 // Issue #1480 Phase 2: host-side re-emit candidate iterator.
@@ -449,18 +453,25 @@ static std::atomic<std::uint64_t> g_last_reemit_success_count{0};
 extern "C" void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata) {
     g_reemit_candidate_fn = fn;
     g_reemit_candidate_userdata = userdata;
+    aura::compiler::hot_update_registry().on_reemit_provider_set(fn != nullptr);
 }
 
 // Issue #1952: set the actual LLVM re-emit callback.
 extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
     g_aot_emit_fn = fn;
     g_aot_emit_userdata = userdata;
+    aura::compiler::hot_update_registry().on_aot_emit_provider_set(fn != nullptr);
 }
 
 // Issue #1930: stable func_id map C-linkage surface.
 extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved) {
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-    return preserve_stable_func_id_locked(name, out_preserved);
+    int preserved = 0;
+    const auto id = preserve_stable_func_id_locked(name, &preserved);
+    aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
+    if (out_preserved)
+        *out_preserved = preserved;
+    return id;
 }
 
 extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
@@ -1662,6 +1673,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
                     (void)preserve_stable_func_id_locked(name, &preserved);
                 }
+                aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
                 if (aot_metrics()) {
                     aot_metrics()->aot_incremental_reemit_success_total.fetch_add(
                         1, std::memory_order_relaxed);
@@ -1683,6 +1695,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
                 (void)preserve_stable_func_id_locked(name, &preserved);
             }
+            aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
             if (aot_metrics()) {
                 if (preserved) {
                     aot_metrics()->stable_func_id_preserved_total.fetch_add(
@@ -1709,6 +1722,9 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     g_last_reemit_region_skips.store(region_skips, std::memory_order_relaxed);
     g_last_reemit_closure_dep_count.store(closure_dep_count, std::memory_order_relaxed);
     g_last_reemit_success_count.store(success_count, std::memory_order_relaxed);
+
+    // Issue #1956: registry aggregates re-emit pipeline traffic.
+    aura::compiler::hot_update_registry().on_reemit_pipeline_call(to_re_emit, success_count);
 
     // Metric bumps (relaxed order is fine for stats).
     if (aot_metrics()) {

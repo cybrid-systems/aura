@@ -144,6 +144,8 @@ target_sources(aura PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/sv_ir_impl.cpp
     src/compiler/aura_jit_bridge.cpp
+    # Issue #1956: HotUpdateRegistry coordination center (non-module).
+    src/compiler/hot_update_registry.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/messaging_bridge_impl.cpp
     # Issue #439 / #451: fiber_bridge.cpp provides the
@@ -333,6 +335,7 @@ target_sources(test_ir PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/hot_update_registry.cpp # Issue #1956
     # Issue #675 follow-up: http_health.cpp provides
     # aura::serve::http::port_from_env (used by
     # evaluator_primitives_security.cpp's
@@ -378,6 +381,7 @@ target_sources(test_concurrent PRIVATE
     # "undefined reference to aura_set_current_fiber_id_fn".
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/hot_update_registry.cpp # Issue #1956
     # aura_jit.cpp defines emit_native_object (called from
     # aura_jit_bridge.cpp's aot_flat_functions_to_binary).
     # contract_handler.cpp provides the global
@@ -552,6 +556,7 @@ if(LLVM_FOUND)
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/aura_jit_bridge.cpp
+        src/compiler/hot_update_registry.cpp # Issue #1956
         src/compiler/aura_jit_prim_dispatch_stub.cpp
         src/core/contract_handler.cpp
         src/core/contract_stub.cpp
@@ -719,7 +724,8 @@ if(LLVM_FOUND)
     target_sources(test_gc_evaluator_integration PRIVATE
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
-        src/compiler/aura_jit_bridge.cpp)
+        src/compiler/aura_jit_bridge.cpp
+        src/compiler/hot_update_registry.cpp)
     # Issue #278 follow-up: aura_jit_prim_dispatch lives in
     # service.ixx (which IS in our FILE_SET above) — no stub
     # needed, unlike test_concurrent / test_spec_jit which don't
@@ -2274,6 +2280,7 @@ target_sources(test_edsl_concurrent_query_mutate PRIVATE
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/hot_update_registry.cpp # Issue #1956
     src/compiler/aura_jit.cpp
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
@@ -5692,6 +5699,9 @@ aura_issue_test_link_llvm_jit(test_issue_1954)
 # Issue #1955: compact/truncate env_frames dual-epoch + Guard refine of #1927.
 aura_add_issue_test(test_issue_1955)
 aura_issue_test_link_llvm_jit(test_issue_1955)
+# Issue #1956: HotUpdateRegistry unified coordination center.
+aura_add_issue_test(test_issue_1956)
+aura_issue_test_link_llvm_jit(test_issue_1956)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 # Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
 # Issue #488: post-mutate reflect validation + Guard impact snapshot.

@@ -35,6 +35,30 @@ import aura.compiler.soa_view;
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
 #include "compiler/mutation_guard_helpers.hh"
+// Issue #1956: C snapshot only (do not attach HotUpdateRegistry to module).
+extern "C" {
+struct aura_hot_update_registry_snapshot {
+    std::int64_t schema;
+    std::int64_t issue;
+    std::int64_t active;
+    std::int64_t reemit_provider_wired;
+    std::int64_t define_dirty_provider_wired;
+    std::int64_t aot_emit_provider_wired;
+    std::int64_t emit_region_mask;
+    std::int64_t epoch_listeners;
+    std::int64_t dirty_listeners;
+    std::int64_t register_calls_total;
+    std::int64_t epoch_notify_total;
+    std::int64_t dirty_notify_total;
+    std::int64_t reemit_pipeline_calls_total;
+    std::int64_t reemit_candidates_total;
+    std::int64_t reemit_success_total;
+    std::int64_t stable_id_preserve_total;
+    std::int64_t stable_id_assign_total;
+    std::int64_t stable_func_id_map_size;
+};
+void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
+}
 
 namespace aura::compiler::primitives_detail {
 
@@ -5836,6 +5860,69 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("live_closure_stale_prevented_total", 0);
                 insert_kv("live-closure-stale-prevented-total", 0);
             }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // ── Issue #1956: query:hot-update-registry-stats ──
+    // Unified HotUpdateRegistry dashboard (registration wiring, listeners,
+    // re-emit pipeline aggregates, stable func_id map size).
+    ObservabilityPrims::register_stats_impl(
+        "query:hot-update-registry-stats", [&ev](const auto&) -> EvalValue {
+            aura_hot_update_registry_snapshot snap{};
+            aura_hot_update_registry_get_snapshot(&snap);
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", snap.schema);
+            insert_kv("issue", snap.issue);
+            insert_kv("schema-1956", 1956);
+            insert_kv("issue-1956", 1956);
+            insert_kv("active", snap.active);
+            insert_kv("reemit-provider-wired", snap.reemit_provider_wired);
+            insert_kv("define-dirty-provider-wired", snap.define_dirty_provider_wired);
+            insert_kv("aot-emit-provider-wired", snap.aot_emit_provider_wired);
+            insert_kv("emit-region-mask", snap.emit_region_mask);
+            insert_kv("epoch-listeners", snap.epoch_listeners);
+            insert_kv("dirty-listeners", snap.dirty_listeners);
+            insert_kv("hot_update_registry_register_calls_total", snap.register_calls_total);
+            insert_kv("hot_update_registry_epoch_notify_total", snap.epoch_notify_total);
+            insert_kv("hot_update_registry_dirty_notify_total", snap.dirty_notify_total);
+            insert_kv("hot_update_registry_reemit_pipeline_calls_total",
+                      snap.reemit_pipeline_calls_total);
+            insert_kv("hot_update_registry_reemit_candidates_total", snap.reemit_candidates_total);
+            insert_kv("hot_update_registry_reemit_success_total", snap.reemit_success_total);
+            insert_kv("hot_update_registry_stable_id_preserve_total",
+                      snap.stable_id_preserve_total);
+            insert_kv("hot_update_registry_stable_id_assign_total", snap.stable_id_assign_total);
+            insert_kv("stable-func-id-map-size", snap.stable_func_id_map_size);
+            insert_kv("mvp-single-workspace", 1); // #1943
+            insert_kv("registry-class-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
