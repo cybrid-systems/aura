@@ -12278,6 +12278,9 @@ public:
         // use time_since_epoch().count() != 0 as a sentinel (impl-defined
         // for steady_clock::time_point default construction).
         std::optional<std::chrono::steady_clock::time_point> enter_ts_;
+        // Issue #1897: snapshot uncaught_exceptions() at enter so dtor can
+        // detect stack unwind even when the caller forgot to flip *flag_.
+        int uncaught_at_enter_ = 0;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
@@ -12421,6 +12424,9 @@ public:
             }
             if (flag_)
                 *flag_ = true; // optimistic default
+            // Issue #1897: capture exception depth so dtor auto-rollback
+            // works even if a nested helper throws past a missed catch.
+            uncaught_at_enter_ = std::uncaught_exceptions();
             // Issue #236 / #1746: thread_local depth counter keyed by
             // Evaluator::instance_id_ (not address). Each fiber has its
             // own LIFO call stack, so nested guards on a single fiber
@@ -12481,6 +12487,18 @@ public:
         ~MutationBoundaryGuard() {
             if (!ev_ || inert_)
                 return; // Issue #1590: quota soft-reject never entered a boundary
+            // Issue #1897 / #1818 class: auto-flip success_flag when an
+            // exception is unwinding through the Guard and the caller did
+            // not mark_failed / set flag=false. Without this, dtor would
+            // commit_panic_checkpoint on a partially-mutated workspace.
+            if (flag_ && *flag_ && std::uncaught_exceptions() > uncaught_at_enter_) {
+                *flag_ = false;
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->mutation_guard_uncaught_auto_rollback_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             bool success = flag_ ? *flag_ : true;
             // exit_mutation_boundary runs under the lock for
             // the outermost guard; lockless for nested guards

@@ -71,18 +71,21 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// Issue #1896: run a compile dirty-bit mutator under MutationBoundaryGuard::
+// Issue #1896 / #1897: run a structural mutator under MutationBoundaryGuard::
 // try_acquire + try/catch so exceptions restore panic checkpoint and never
-// leave partial IR dirty state. On quota/guard failure bumps
+// leave partial workspace/IR state. On quota/guard failure bumps
 // compile_primitive_stale_ir_prevented_total; on throw bumps
 // mutation_guard_exception_total (+ lineage eda_guard_* counters).
-template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
+// `on_fail` is returned for both try_acquire reject and caught exceptions
+// (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
+template <typename F>
+EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = make_bool(false)) {
     bool guard_ok = true;
     auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
     if (!gr) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
-        return make_bool(false);
+        return on_fail;
     }
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
         m->compile_primitive_guard_captures_total.fetch_add(1, std::memory_order_relaxed);
@@ -95,17 +98,22 @@ template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&&
             m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(false);
+        return on_fail;
     } catch (...) {
-        // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics; dtor restores.
+        // [SILENCE-PRIM-#615] Guard-path uncaught → on_fail + metrics; dtor restores.
         guard_ok = false;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
             m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
         }
-        return make_bool(false);
+        return on_fail;
     }
+}
+
+// Issue #1896 alias: dirty-bit mutators default on_fail = #f.
+template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
+    return run_under_mutation_guard(ev, std::forward<F>(body), make_bool(false));
 }
 
 // Issue #909 compile part 0 (orig 72-123)
@@ -2106,8 +2114,11 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
         std::uint8_t reasons = aura::ast::FlatAST::kGeneralDirty;
         if (a.size() >= 2 && is_int(a[1]))
             reasons = static_cast<std::uint8_t>(as_int(a[1]));
-        ws->mark_dirty_upward_fast(node_id, reasons);
-        return make_void();
+        // Issue #1897: structural dirty walk under try_acquire Guard.
+        return run_under_mutation_guard(ev, [&]() -> EvalValue {
+            ws->mark_dirty_upward_fast(node_id, reasons);
+            return make_void();
+        });
     });
 }
 
@@ -2593,6 +2604,79 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #1897: query:mutation-systemic-guard-stats — audit inventory for
+    // the systemic MutationBoundaryGuard enforcement pass. Schema **1897**.
+    // Lists which structural mutators use try_acquire + shared helper, and
+    // surfaces uncaught_exceptions auto-rollback dtor metric.
+    ObservabilityPrims::register_stats_impl(
+        "query:mutation-systemic-guard-stats", [&ev](const auto&) -> EvalValue {
+            std::int64_t captures = 0, stale = 0, exceptions = 0, auto_rb = 0, wrapped = 0;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                captures = static_cast<std::int64_t>(
+                    m->compile_primitive_guard_captures_total.load(std::memory_order_relaxed));
+                stale = static_cast<std::int64_t>(
+                    m->compile_primitive_stale_ir_prevented_total.load(std::memory_order_relaxed));
+                exceptions = static_cast<std::int64_t>(
+                    m->mutation_guard_exception_total.load(std::memory_order_relaxed));
+                auto_rb = static_cast<std::int64_t>(
+                    m->mutation_guard_uncaught_auto_rollback_total.load(std::memory_order_relaxed));
+                wrapped = static_cast<std::int64_t>(
+                    m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed));
+            }
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("guard-captures", captures);
+            insert_kv("stale-ir-prevented", stale);
+            insert_kv("guard-exceptions", exceptions);
+            insert_kv("uncaught-auto-rollback", auto_rb);
+            insert_kv("mutation_guard_uncaught_auto_rollback_total", auto_rb);
+            insert_kv("boundary-primitives-wrapped", wrapped);
+            // Inventory flags (1 = try_acquire + try/catch wired)
+            insert_kv("mark-clear-block-instruction-dirty", 1);
+            insert_kv("mark-dirty-upward-fast", 1);
+            insert_kv("clear-macro-dirty", 1);
+            insert_kv("mark-narrowing-dirty", 1);
+            insert_kv("subtree-bump", 1);
+            insert_kv("per-defuse-index-add", 1);
+            insert_kv("hw-bitvec-register", 1);
+            insert_kv("compact-env-frames", 1);
+            insert_kv("from-verification-feedback", 1);
+            insert_kv("run-verification-feedback", 1);
+            insert_kv("commercial-simulator-stub", 1);
+            insert_kv("try-acquire-wired", 1);
+            insert_kv("uncaught-exceptions-dtor-wired", 1);
+            insert_kv("schema", 1897);
+            insert_kv("issue", 1897);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 compile part 28 (orig 2132-2233)
@@ -2960,8 +3044,12 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
         auto* ws = CompilePrims::pick_macro_flat(ev);
         if (!ws)
             return make_bool(false);
-        ws->clear_macro_dirty_all();
-        return make_bool(true);
+        // Issue #1897: subtractive clear of all macro_dirty_ bits under Guard
+        // (exception mid-clear must not leave partial IR hygiene state).
+        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
+            ws->clear_macro_dirty_all();
+            return make_bool(true);
+        });
     });
 
     // Issue #290: (compile:macro-dirty-stats) — return the
@@ -3140,6 +3228,11 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // Issue #693: (eda:run-verification-feedback report-kind report-text)
     // — parse mock coverage/assert report, apply targeted SV mutate,
     // re-emit via hardware backend hook, and bump closed-loop metrics.
+    //
+    // Issue #1902 / #1773 / #1897: full mutation body (dirty bits +
+    // hardware hooks + reemit) under try_acquire + try/catch. Pre-#1897
+    // used RAII Guard with try only around the hardware hook — dirty
+    // bits could still commit if a throw escaped elsewhere.
     add("eda:run-verification-feedback", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
@@ -3152,11 +3245,9 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         const auto text_idx = as_string_idx(a[1]);
         if (kind_idx >= ev.string_heap_.size() || text_idx >= ev.string_heap_.size())
             return make_bool(false);
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        ev.bump_verify_tool_guard_capture();
-        const std::string& kind = ev.string_heap_[kind_idx];
-        const std::string& text = ev.string_heap_[text_idx];
+        // Copy strings before Guard (heap may grow under mutation).
+        const std::string kind = ev.string_heap_[kind_idx];
+        const std::string text = ev.string_heap_[text_idx];
         aura::ast::NodeId target = aura::ast::NULL_NODE;
         std::size_t i = 0;
         while (i < text.size()) {
@@ -3183,40 +3274,32 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         const auto pref = ws->make_ref(target);
         if (!pref.is_valid_in(*ws))
             return make_bool(false);
-        ev.bump_verify_tool_stable_ref_hit();
-        const bool coverage =
-            kind.find("coverage") != std::string::npos || kind.find("cov") != std::string::npos;
-        ws->bump_sv_mutate_attempt();
-        if (coverage) {
-            ws->apply_verification_dirty_bits(target, aura::ast::FlatAST::kCoverageFeedbackDirty);
-            ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
-            ws->add_mutation(target, "sv-add-coverpoint", "covergroup", "covergroup+coverpoint",
-                             "feedback closed-loop coverpoint");
-            ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
-        } else {
-            ws->apply_verification_dirty_bits(target, aura::ast::FlatAST::kAssertFailureDirty);
-            ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
-            ws->add_mutation(target, "sv-weaken-property", "property", "property+disable-iff",
-                             "feedback closed-loop weaken");
-            ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
-        }
-        ws->mark_dirty_upward(target, aura::ast::FlatAST::kGeneralDirty,
-                              ws->ppa_dirty_reasons(target));
-        ev.bump_verify_tool_dirty_propagation();
-        if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
-            const auto sv_reasons =
-                aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
-            // Issue #1902 / #1773 (refine #1818): wrap throwable external
-            // helpers (hardware::on_structural_mutation,
-            // sv_ir::reemit_sv_node / emit_sv_diff / validate_sv_emit)
-            // in try/catch. Pre-#1902 code did not flip guard_ok
-            // on exception, so Guard dtor would commit_panic_checkpoint
-            // on a partially-mutated workspace → checkpoint drift
-            // + UAF risk on the next mutate call. New contract: any
-            // throw inside the hook block flips guard_ok=false so
-            // the dtor runs restore_panic_checkpoint + bump
-            // eda_guard_exception_handled_total + eda_guard_uncaught_exception_total.
-            try {
+        return run_under_mutation_guard(ev, [&]() -> EvalValue {
+            ev.bump_verify_tool_guard_capture();
+            ev.bump_verify_tool_stable_ref_hit();
+            const bool coverage =
+                kind.find("coverage") != std::string::npos || kind.find("cov") != std::string::npos;
+            ws->bump_sv_mutate_attempt();
+            if (coverage) {
+                ws->apply_verification_dirty_bits(target,
+                                                  aura::ast::FlatAST::kCoverageFeedbackDirty);
+                ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
+                ws->add_mutation(target, "sv-add-coverpoint", "covergroup", "covergroup+coverpoint",
+                                 "feedback closed-loop coverpoint");
+                ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
+            } else {
+                ws->apply_verification_dirty_bits(target, aura::ast::FlatAST::kAssertFailureDirty);
+                ws->apply_verify_dirty_bits(target, aura::ast::FlatAST::kSvaDirty);
+                ws->add_mutation(target, "sv-weaken-property", "property", "property+disable-iff",
+                                 "feedback closed-loop weaken");
+                ws->mark_ppa_dirty(target, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
+            }
+            ws->mark_dirty_upward(target, aura::ast::FlatAST::kGeneralDirty,
+                                  ws->ppa_dirty_reasons(target));
+            ev.bump_verify_tool_dirty_propagation();
+            if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, target)) {
+                const auto sv_reasons =
+                    aura::compiler::hardware::sv_structural_dirty_reasons(*ws, target);
                 aura::compiler::hardware::on_structural_mutation(
                     target,
                     static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
@@ -3252,30 +3335,15 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
                     ev.record_sv_commercial_emit_fidelity(validation.ok, true,
                                                           !reemit.commercial_do_stub.empty());
                 }
-            } catch (const std::exception& e) {
-                guard_ok = false; // Issue #1902 / #1773: notify Guard dtor to restore.
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                return make_bool(false);
-            } catch (...) {
-                // [SILENCE-PRIM-#615] Guard-path uncaught → #f + metrics
-                // (eda_guard_uncaught_exception_total); dtor restores
-                // (#1669 class A intentional-return-value).
-                guard_ok = false; // Issue #1902 / #1773
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                return make_bool(false);
             }
-        }
-        ev.bump_verify_tool_feedback_mutate_success();
-        ev.bump_sv_self_evo_structured_mutate();
-        ev.bump_sv_self_evo_closed_loop_rounds();
-        ev.bump_sv_self_evo_convergence_hits();
-        ev.bump_closed_loop_feedback_mutate_round();
-        ws->bump_sv_mutate_success();
-        return make_bool(true);
+            ev.bump_verify_tool_feedback_mutate_success();
+            ev.bump_sv_self_evo_structured_mutate();
+            ev.bump_sv_self_evo_closed_loop_rounds();
+            ev.bump_sv_self_evo_convergence_hits();
+            ev.bump_closed_loop_feedback_mutate_round();
+            ws->bump_sv_mutate_success();
+            return make_bool(true);
+        });
     });
 }
 
@@ -3705,7 +3773,10 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
         if (a.size() >= 2 && is_bool(a[1])) {
             set = as_bool(a[1]);
         }
-        return make_bool(ev.set_occurrence_dirty_fn_(node_id, set));
+        // Issue #1897: occurrence dirty bit flip under try_acquire Guard.
+        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
+            return make_bool(ev.set_occurrence_dirty_fn_(node_id, set));
+        });
     });
 }
 
@@ -4686,12 +4757,13 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     //
     //   Returns the new size_for_index for the index.
     //
-    // Issue #1845: wrap tracker mutation in MutationBoundaryGuard
+    // Issue #1845 / #1897: wrap tracker mutation in try_acquire Guard
     // + try/catch. Pre-#1845 called add_caller raw — throw mid
     // map/vector growth left the tracker partially consistent
     // with no panic-checkpoint restore. compiler_service_ is
     // non-owning (#1839 ownership contract); concurrent free
-    // mid-eval is unsupported.
+    // mid-eval is unsupported. #1897: prefer try_acquire over
+    // deprecated RAII ctor (typed ResourceQuotaExceeded).
     add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_void();
@@ -4706,29 +4778,15 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
         const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
-            svc->per_defuse_index_tracker().add_caller(DefUseIndex{idx_name},
-                                                       Caller{caller_node_id});
-            return make_int(static_cast<std::int64_t>(
-                svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
-        } catch (const std::exception&) {
-            guard_ok = false; // Issue #1845: restore panic checkpoint
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        }
+        return run_under_mutation_guard(
+            ev,
+            [&]() -> EvalValue {
+                svc->per_defuse_index_tracker().add_caller(DefUseIndex{idx_name},
+                                                           Caller{caller_node_id});
+                return make_int(static_cast<std::int64_t>(
+                    svc->per_defuse_index_tracker().size_for_index(DefUseIndex{idx_name})));
+            },
+            make_int(-1));
     });
 
     // (compile:per-defuse-index-callers <idx-name>)
@@ -4987,42 +5045,26 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     //   boundaries — AI agent iteration, RTL/SV verification
     //   flows, large SoC designs with thousands of defines.
     //
-    // Issue #1847: wrap bump_generation_subtree in
-    // MutationBoundaryGuard + try/catch. Pre-#1847 mutated
+    // Issue #1847 / #1897: wrap bump_generation_subtree in
+    // try_acquire Guard + try/catch. Pre-#1847 mutated
     // subtree_gen_ / generation_ raw — a throw mid ancestor
     // walk left counters partially consistent with no panic
-    // checkpoint restore. Outermost Guard captures checkpoint;
-    // on exception flip guard_ok=false so dtor restores
-    // (#184/#236). Metrics mirror #1842/#1845 Guard path.
+    // checkpoint restore. #1897: try_acquire + shared helper.
     add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (!ev.workspace_flat_)
             return make_int(0);
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
-            const auto before = ev.workspace_flat_->subtree_bump_count();
-            ev.workspace_flat_->bump_generation_subtree(id);
-            const auto after = ev.workspace_flat_->subtree_bump_count();
-            return make_int(after > before ? 1 : 0);
-        } catch (const std::exception&) {
-            guard_ok = false; // Issue #1847: restore panic checkpoint
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        }
+        return run_under_mutation_guard(
+            ev,
+            [&]() -> EvalValue {
+                const auto before = ev.workspace_flat_->subtree_bump_count();
+                ev.workspace_flat_->bump_generation_subtree(id);
+                const auto after = ev.workspace_flat_->subtree_bump_count();
+                return make_int(after > before ? 1 : 0);
+            },
+            make_int(-1));
     });
 
     // (compile:subtree-generation subtree-root-id)
@@ -5213,8 +5255,8 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
     //     width-mismatch diagnostic in InferenceEngine's
     //     subtyping path, Clock/Reset domain tracking.
     //
-    // Issue #1850: wrap register_type / register_hw_bitvec in
-    // MutationBoundaryGuard + try/catch. Pre-#1850 mutated the
+    // Issue #1850 / #1897: wrap register_type / register_hw_bitvec in
+    // try_acquire Guard + try/catch. Pre-#1850 mutated the
     // TypeRegistry raw — throw mid map/side-table growth left
     // partial state with no panic-checkpoint restore.
     // type_registry_ is non-owning when wired from
@@ -5242,36 +5284,22 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
         auto& reg = *reg_ptr;
         const auto width = static_cast<std::uint32_t>(as_int(a[1]));
         const bool is_signed = as_int(a[2]) != 0;
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
-            auto tid = reg.lookup_type(name);
-            // Auto-register the type as INT if it doesn't exist.
-            // The hardware BitVector is an integer-like type
-            // (uint8_t / int16_t / etc.), so INT is a sensible
-            // default tag. Pre-existing types (registered with
-            // other tags via declare-type) are kept.
-            if (!tid.valid()) {
-                tid = reg.register_type(aura::core::TypeTag::INT, name);
-            }
-            reg.register_hw_bitvec(tid, width, is_signed);
-            return make_int(1);
-        } catch (const std::exception&) {
-            guard_ok = false; // Issue #1850: restore panic checkpoint
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return make_int(-1);
-        }
+        return run_under_mutation_guard(
+            ev,
+            [&]() -> EvalValue {
+                auto tid = reg.lookup_type(name);
+                // Auto-register the type as INT if it doesn't exist.
+                // The hardware BitVector is an integer-like type
+                // (uint8_t / int16_t / etc.), so INT is a sensible
+                // default tag. Pre-existing types (registered with
+                // other tags via declare-type) are kept.
+                if (!tid.valid()) {
+                    tid = reg.register_type(aura::core::TypeTag::INT, name);
+                }
+                reg.register_hw_bitvec(tid, width, is_signed);
+                return make_int(1);
+            },
+            make_int(-1));
     });
 }
 
@@ -5978,37 +6006,21 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // algorithm + concurrency contract (caller must serialize
     // at the workspace level).
     //
-    // Issue #1842 / #1889: wrap in MutationBoundaryGuard + try/catch.
+    // Issue #1842 / #1889 / #1897: wrap in try_acquire Guard + try/catch.
     // Pre-#1842 the primitive called compact_env_frames() raw —
     // a throw mid-remap left env_frames_ / Closure::env_id
     // partially consistent with no panic-checkpoint restore.
-    // New contract: Guard captures checkpoint; on exception
-    // flip guard_ok=false so dtor restores (outermost-only
-    // lock, #184/#236). Metrics mirror #1902 EDA Guard path.
     // #1889: all structural env compaction entry points from the
     // public primitive surface must go through Guard (truncate is
     // internal to panic restore, not a free primitive).
+    // #1897: try_acquire (typed quota reject) via shared helper.
     add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
-        bool guard_ok = true;
-        aura::compiler::Evaluator::MutationBoundaryGuard guard(ev, &guard_ok);
-        try {
-            return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
-        } catch (const std::exception&) {
-            guard_ok = false; // Issue #1842: restore panic checkpoint
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return types::make_int(-1);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] Guard-path uncaught → -1 + metrics
-            // (eda_guard_uncaught_exception_total); dtor restores
-            // (#1669 class A intentional-return-value).
-            guard_ok = false;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return types::make_int(-1);
-        }
+        return run_under_mutation_guard(
+            ev,
+            [&]() -> EvalValue {
+                return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
+            },
+            types::make_int(-1));
     });
 
     // Issue #1420 AC3: (compile:bidirectional-stats)

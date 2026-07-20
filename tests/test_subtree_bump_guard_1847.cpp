@@ -54,13 +54,18 @@ int main() {
         auto pos = src.find("\"compile:subtree-bump\"");
         CHECK(pos != std::string::npos, "primitive present");
         auto win = src.substr(pos, 1800);
-        CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "uses Guard");
-        CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
+        // #1897: may use shared run_under_mutation_guard (try_acquire + try/catch).
+        const bool via_helper = win.find("run_under_mutation_guard") != std::string::npos;
+        const bool via_guard = win.find("MutationBoundaryGuard") != std::string::npos &&
+                               win.find("guard_ok") != std::string::npos;
+        CHECK(via_helper || via_guard, "uses Guard or try_acquire helper");
         CHECK(win.find("bump_generation_subtree") != std::string::npos,
               "calls bump_generation_subtree");
-        CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
-              "try block");
-        CHECK(win.find("catch") != std::string::npos, "catch path");
+        if (!via_helper) {
+            CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
+                  "try block");
+            CHECK(win.find("catch") != std::string::npos, "catch path");
+        }
     }
 
     // ── AC2: runtime ──

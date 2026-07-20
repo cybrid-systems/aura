@@ -4648,6 +4648,10 @@ add_dependencies(all_test_issue_targets test_linear_live_closure_walk_1895)
 aura_add_issue_test(test_compile_primitive_guard_1896)
 aura_issue_test_link_llvm_jit(test_compile_primitive_guard_1896)
 add_dependencies(all_test_issue_targets test_compile_primitive_guard_1896)
+# Issue #1897: systemic MutationBoundaryGuard try_acquire + uncaught auto-rollback.
+aura_add_issue_test(test_mutation_systemic_guard_1897)
+aura_issue_test_link_llvm_jit(test_mutation_systemic_guard_1897)
+add_dependencies(all_test_issue_targets test_mutation_systemic_guard_1897)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
