@@ -131,6 +131,15 @@ aura_add_issue_test(test_gc_batch)
 aura_issue_test_link_llvm_jit(test_gc_batch)
 set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1624 + #1638 + #543 + #506 + #1619: soa family batch (PCV/pmr
+# SoAColumnarFull + dual-path consistency wire-up + EnvFrame dual-path
+# observability + IR SoA hotpath adoption + SoAView enforcement/EDSL
+# migration). EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch
+# convention. On-demand `ninja test_soa_batch`.
+aura_add_issue_test(test_soa_batch)
+aura_issue_test_link_llvm_jit(test_soa_batch)
+set_target_properties(test_soa_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
