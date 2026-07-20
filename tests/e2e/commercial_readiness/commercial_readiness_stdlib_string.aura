@@ -1,0 +1,28 @@
+;; Issue #1934 commercial readiness e2e — machine-checkable PASS/FAIL lines.
+;; Python harness (tests/python/e2e_harness.py) requires E2E-PASS and zero FAIL.
+
+(define *e2e-fails* 0)
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (set! *e2e-fails* (+ *e2e-fails* 1))
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+(define (expect-true label actual)
+  (expect label (if actual #t #f) #t))
+
+(require "std/string" all:)
+(expect "append" (string-append "hel" "lo") "hello")
+(expect "length" (string-length "hello") 5)
+(expect-true "prefix" (string-prefix? "hello" "he"))
+(expect-true "suffix" (string-suffix? "hello" "lo"))
+(expect-true "contains" (string-contains? "hello" "ell"))
+(expect "split" (string-split "a,b,c" ",") (list "a" "b" "c"))
+(expect "join" (string-join (list "a" "b" "c") "-") "a-b-c")
+
+(if (= *e2e-fails* 0)
+    (begin (display "E2E-PASS") (newline))
+    (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

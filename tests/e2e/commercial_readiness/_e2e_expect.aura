@@ -1,0 +1,10 @@
+;; Shared expect helper for commercial_readiness e2e (Issue #1934).
+;; Included by concatenating or by paste; kept as documentation of the
+;; harness contract. Each commercial_readiness_*.aura inlines a copy so
+;; files stay single-load (no include path dependency).
+;;
+;; Contract for Python e2e_harness:
+;;   - print "PASS: <label>" on success
+;;   - print "FAIL: <label> expected=... actual=..." on failure
+;;   - print "E2E-PASS" iff zero FAIL lines
+;;   - print "E2E-FAIL" if any FAIL

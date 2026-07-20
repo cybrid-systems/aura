@@ -126,5 +126,6 @@ CATEGORIES: dict[str, str] = {
     "bench": "Compiler pipeline benchmark SLO gate (tests/bench/)",
     "mutation": "EDSL mutation_loop self-evolution",
     "bash": "Legacy tests/python/run-tests.sh smoke",
+    "e2e": "commercial_readiness .aura E2E + golden PASS labels (#1934)",
     "list": "List categories (this help)",
 }

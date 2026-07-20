@@ -1,0 +1,25 @@
+;; commercial_readiness_macros.aura — Issue #1934
+;; Quote / list construction smoke (quasiquote may be unbound in load path).
+
+(define *e2e-fails* 0)
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (set! *e2e-fails* (+ *e2e-fails* 1))
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+(define (expect-true label actual)
+  (expect label (if actual #t #f) #t))
+
+(expect "quote-list" (quote (1 2 3)) (list 1 2 3))
+(expect "quote-nested" (quote (a (b c))) (list (quote a) (list (quote b) (quote c))))
+(expect-true "pair-quote" (pair? (quote (x y))))
+(expect "car-quote" (car (quote (10 20))) 10)
+(expect "cadr-quote" (car (cdr (quote (10 20)))) 20)
+
+(if (= *e2e-fails* 0)
+    (begin (display "E2E-PASS") (newline))
+    (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

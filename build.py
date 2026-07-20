@@ -1225,6 +1225,15 @@ def test_suite_s0():
     return test_suite_runner(s0=True)
 
 
+def test_e2e():
+    """Issue #1934: commercial_readiness .aura E2E with golden PASS labels."""
+    script = ROOT / "tests" / "python" / "run_e2e.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    return run([sys.executable, str(script)], cwd=ROOT)
+
+
 # ═══════════════════════════════════════════════════════════════
 # CI tiering
 # ═══════════════════════════════════════════════════════════════
@@ -1275,6 +1284,7 @@ SUITES = {
     "bash": test_bash,
     "suite": test_suite_runner,
     "suite-s0": test_suite_s0,
+    "e2e": test_e2e,  # Issue #1934 commercial_readiness golden E2E
     "repl": test_repl,
     "concurrent": test_concurrent,
     "issues": test_issues,

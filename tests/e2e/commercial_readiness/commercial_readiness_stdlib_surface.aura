@@ -1,0 +1,29 @@
+;; commercial_readiness_stdlib_surface.aura — Issue #1934
+
+(define *e2e-fails* 0)
+(define (expect label actual expected)
+  (if (equal? actual expected)
+      (begin (display "PASS: ") (display label) (newline))
+      (begin
+        (set! *e2e-fails* (+ *e2e-fails* 1))
+        (display "FAIL: ") (display label)
+        (display " expected=") (display expected)
+        (display " actual=") (display actual)
+        (newline))))
+(define (expect-true label actual)
+  (expect label (if actual #t #f) #t))
+
+(expect-true "number?" (number? 1))
+(expect-true "string?" (string? "x"))
+(expect-true "proc?" (procedure? (lambda (x) x)))
+(expect-true "list?" (list? (list 1 2)))
+(expect-true "pair?" (pair? (cons 1 2)))
+(expect-true "equal-list" (equal? (list 1 2) (list 1 2)))
+(expect "apply-sum" (apply + (list 1 2 3)) 6)
+(expect "map-sq" (map (lambda (x) (* x x)) (list 1 2 3)) (list 1 4 9))
+(expect-true "null?" (null? (list)))
+(expect-true "not-null" (not (null? (list 1))))
+
+(if (= *e2e-fails* 0)
+    (begin (display "E2E-PASS") (newline))
+    (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

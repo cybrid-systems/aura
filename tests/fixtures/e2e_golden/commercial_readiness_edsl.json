@@ -1,0 +1,12 @@
+{
+  "schema": 1934,
+  "issue": 1934,
+  "source": "tests/e2e/commercial_readiness/commercial_readiness_edsl.aura",
+  "pass_labels": [
+    "set-code-add",
+    "query-root",
+    "query-children",
+    "query-node"
+  ],
+  "min_passes": 4
+}
