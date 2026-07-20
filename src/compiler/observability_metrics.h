@@ -3551,6 +3551,11 @@ struct CompilerMetrics {
     // Issue #1731: linear_post_mutate_enforce(NULL_ENV_ID) is a no-op
     // (no captures); count so materialize/TCO/JIT can audit bypass.
     std::atomic<std::uint64_t> linear_post_mutate_null_env_id_total{0};
+    // Issue #1895: bulk scan force-Drop for NULL_ENV_ID / OOB live closures
+    // (untracked linear body — safe-fallback instead of silent skip).
+    std::atomic<std::uint64_t> linear_null_env_force_drop_total{0};
+    // materialize_call_env empty-Env path after force Drop (bridge_epoch=0).
+    std::atomic<std::uint64_t> linear_null_env_safe_fallback_total{0};
     // Issue #1538: combined post-mutation linear pipeline (invariant + enforce).
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_total{0};
     std::atomic<std::uint64_t> linear_post_mutate_pipeline_unsafe_total{0};

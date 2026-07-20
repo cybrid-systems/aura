@@ -837,14 +837,19 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // bodies that don't actually reference the captured
     // scope (the most common case for this failure mode).
     //
-    // Issue #1731: for NULL_ENV_ID, linear_post_mutate_enforce is a
+    // Issue #1731 / #1895: for NULL_ENV_ID, linear_post_mutate_enforce is a
     // documented no-op (no captures). Still call it so
     // linear_post_mutate_null_env_id_total is observable before
     // the empty-Env fallback (TCO / top-level lambda audit).
+    // bridge_epoch==0 (force Drop from scan) is already safe; non-zero
+    // still falls back to empty Env (no dangling linear body walk).
     if (cl.env_id == NULL_ENV_ID) {
         (void)linear_post_mutate_enforce(NULL_ENV_ID);
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->materialize_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            if (cl.bridge_epoch == 0)
+                m->linear_null_env_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return ne;
     }
     if (cl.env_id >= env_frames_.size()) {
@@ -1098,8 +1103,26 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     for (auto& [id, cl] : closures_) {
         (void)id;
         ++out.examined;
-        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+        // Issue #1895 / #1731: NULL_ENV_ID or OOB env — no SoA linear column
+        // to inspect. On bulk mark paths (invalidate / compact / JIT,
+        // mark_invalid && !only_if_moved) force Drop (bridge_epoch=0) for
+        // still-live stamps so materialize_call_env / apply take safe
+        // fallback rather than trusting an untracked linear body.
+        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
+            if (mark_invalid && !only_if_moved && cur_bridge != 0 && cl.bridge_epoch != 0) {
+                cl.bridge_epoch = 0;
+                ++out.marked_invalid;
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                    m->linear_live_closures_marked_invalid_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                    m->linear_null_env_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                    m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             continue;
+        }
         if (filter_env_id != NULL_ENV_ID && cl.env_id != filter_env_id)
             continue;
         const EnvFrame& fr = env_frames_[cl.env_id];
