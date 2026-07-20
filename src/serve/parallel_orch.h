@@ -158,6 +158,31 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
         return out;
     }
 
+    // Issue #1880: preflight estimated arena memory for all tasks (typed, no panic).
+    {
+        auto& pq = aura::core::resource_quota::process_resource_quota();
+        constexpr std::uint64_t kTaskArena = 4096;
+        const auto mem_need = static_cast<std::uint64_t>(tasks.size()) * kTaskArena +
+                              (mb ? static_cast<std::uint64_t>(tasks.size()) * 64u : 0u);
+        if (auto merr = pq.check(aura::core::resource_quota::Dimension::Memory, mem_need)) {
+            pq.orch_resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            pq.orchestration_quota_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_parallel_orch_stats.quota_rejects.fetch_add(1, std::memory_order_relaxed);
+            g_parallel_orch_stats.invalid_batches.fetch_add(1, std::memory_order_relaxed);
+            out.status = BatchStatus::QuotaExceeded;
+            out.results.resize(tasks.size());
+            for (std::size_t i = 0; i < tasks.size(); ++i) {
+                out.results[i].task_index = i;
+                out.results[i].ok = false;
+                out.results[i].error =
+                    "ResourceQuotaExceeded: " +
+                    aura::core::resource_quota::ResourceQuotaManager::format_reason(*merr);
+            }
+            out.err_count = static_cast<std::uint32_t>(tasks.size());
+            return out;
+        }
+    }
+
     g_parallel_orch_stats.tasks_spawned.fetch_add(tasks.size(), std::memory_order_relaxed);
 
     // Shared so timed-out join does not leave fibers writing into stack out.

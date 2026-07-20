@@ -397,8 +397,24 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("atomic_bump_epochs_unified", 1);
             insert_kv("legacy_ctor_deprecated", 1);
             insert_kv("guard_failure_linear_probe_wired", 1);
-            insert_kv("issue", 1634);
-            insert_kv("schema", 1634); // lineage 1628|1618|1600|1590|1547|1476
+            // Issue #1880: orch agent arena/mailbox + try_acquire body path.
+            insert_kv("orch_resource_quota_rejects_total",
+                      static_cast<std::int64_t>(
+                          pq.orch_resource_quota_rejects_total.load(std::memory_order_relaxed)));
+            insert_kv("agent_arena_usage_bytes",
+                      static_cast<std::int64_t>(
+                          pq.agent_arena_usage_bytes.load(std::memory_order_relaxed)));
+            insert_kv("agent_arena_reserve_total",
+                      static_cast<std::int64_t>(
+                          pq.agent_arena_reserve_total.load(std::memory_order_relaxed)));
+            insert_kv("agent_arena_release_total",
+                      static_cast<std::int64_t>(
+                          pq.agent_arena_release_total.load(std::memory_order_relaxed)));
+            insert_kv("orch_agent_body_try_acquire_wired", 1);
+            insert_kv("orch_spawn_memory_preflight_wired", 1);
+            insert_kv("schema-1880", 1880);
+            insert_kv("issue", 1634);  // primary lineage id (1628|1618|1600…)
+            insert_kv("schema", 1634); // keep stable; Agents use schema-1880 for #1880 fields
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

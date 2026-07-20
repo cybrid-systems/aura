@@ -2826,6 +2826,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       static_cast<std::int64_t>(std::max(linear_prev, cm_lin)));
             insert_kv("schema-1879", 1879);
             insert_kv("provenance-mandate-wired", 1);
+            // Issue #1880: ResourceQuota orch rejects (mirror process quota).
+            insert_kv("resource-quota-rejects-total",
+                      static_cast<std::int64_t>(
+                          aura::orch::g_orch_module_stats.resource_quota_rejects_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("agent-body-try-acquire-rejects",
+                      static_cast<std::int64_t>(
+                          aura::orch::g_orch_module_stats.agent_body_try_acquire_rejects_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("agent-body-try-acquire-ok",
+                      static_cast<std::int64_t>(
+                          aura::orch::g_orch_module_stats.agent_body_try_acquire_ok_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-1880", 1880);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

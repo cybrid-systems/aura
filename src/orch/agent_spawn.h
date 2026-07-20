@@ -1,11 +1,13 @@
-// agent_spawn.h — Issue #1588 / #1879: unified agent spawn (fiber + mailbox + join).
+// agent_spawn.h — Issue #1588 / #1879 / #1880: unified agent spawn.
 // Header API under aura::orch; pairs with serve/parallel_orch and multi_fiber_mailbox.
-// Issue #1879: spawn body exit + join force StableNodeRef provenance refresh /
-// auto re-pin / linear ownership probe via evaluator C trampolines.
+// Issue #1879: spawn body exit + join force StableNodeRef provenance refresh.
+// Issue #1880: ResourceQuota preflight (arena/mailbox/fibers) + try_acquire
+// body wrapper (typed ResourceQuotaExceeded, no panic).
 
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
 
+#include "core/resource_quota.hh"
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
@@ -27,11 +29,26 @@
 // in fiber_bridge.cpp for serve-only link units).
 extern "C" void aura_evaluator_post_resume_refresh();
 extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
+// Issue #1880: MutationBoundaryGuard::try_acquire around agent body (0=ok, 1=reject).
+extern "C" int aura_orch_agent_body_try_acquire();
+extern "C" void aura_orch_agent_body_release_guard();
 
 namespace aura::orch {
 
-inline constexpr int kOrchModulePhase = 2; // #1879 provenance mandate
-inline constexpr int kOrchModuleIssue = 1879;
+inline constexpr int kOrchModulePhase = 3; // #1880 ResourceQuota orch
+inline constexpr int kOrchModuleIssue = 1880;
+
+// Estimated per-agent arena footprint + mailbox high-water bytes (#1880).
+inline constexpr std::uint64_t kOrchAgentArenaBytes = 4096;
+inline constexpr std::uint64_t kOrchMailboxSlotBytes = 64;
+
+[[nodiscard]] inline std::uint64_t estimate_agent_memory_bytes(std::size_t mailbox_high_water,
+                                                               bool attach_mailbox) noexcept {
+    std::uint64_t n = kOrchAgentArenaBytes;
+    if (attach_mailbox)
+        n += static_cast<std::uint64_t>(mailbox_high_water) * kOrchMailboxSlotBytes;
+    return n;
+}
 
 // ── Process-wide orch module stats ─────────────────────
 struct OrchModuleStats {
@@ -47,6 +64,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> stable_ref_auto_refresh_total{0};
     std::atomic<std::uint64_t> fiber_steal_provenance_enforced_total{0};
     std::atomic<std::uint64_t> linear_violation_prevented_total{0};
+    // Issue #1880: ResourceQuota rejects + try_acquire body rejects.
+    std::atomic<std::uint64_t> resource_quota_rejects_total{0};
+    std::atomic<std::uint64_t> agent_body_try_acquire_rejects_total{0};
+    std::atomic<std::uint64_t> agent_body_try_acquire_ok_total{0};
 };
 
 inline OrchModuleStats g_orch_module_stats{};
@@ -100,9 +121,11 @@ struct AgentHandle {
     serve::Fiber* fiber = nullptr;
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
     bool ok = false;
-    // Issue #1600: typed quota failure surface for Agent frameworks.
+    // Issue #1600 / #1880: typed quota failure surface for Agent frameworks.
     bool quota_exceeded = false;
     std::string error; // e.g. "ResourceQuotaExceeded: fibers quota exceeded"
+    // Issue #1880: memory reserved at spawn (released on join / spawn fail).
+    std::uint64_t reserved_memory_bytes = 0;
 };
 
 struct AgentSpec {
@@ -115,6 +138,9 @@ struct AgentSpec {
 // Spawn a fiber agent on `sched`, optionally with a private MultiFiberMailbox
 // attached to the running fiber (attach happens inside the fiber so g_current_fiber
 // is valid).
+// Issue #1880: preflight ResourceQuota (fibers + estimated arena/mailbox memory)
+// with typed ResourceQuotaExceeded (never panic). Agent body uses
+// MutationBoundaryGuard::try_acquire when an Evaluator is wired.
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
@@ -122,6 +148,32 @@ struct AgentSpec {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         return h;
     }
+
+    auto& pq = aura::core::resource_quota::process_resource_quota();
+
+    // Issue #1880: fiber capacity preflight (check only; Scheduler::spawn also consumes).
+    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/1)) {
+        g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        pq.orch_resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        h.quota_exceeded = true;
+        h.error = "ResourceQuotaExceeded: " + ferr->message;
+        return h;
+    }
+
+    // Issue #1880: arena + mailbox high-water memory reservation.
+    const auto mem_cost = estimate_agent_memory_bytes(spec.mailbox_high_water, spec.attach_mailbox);
+    if (auto merr = pq.try_consume_agent_arena(mem_cost)) {
+        g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        h.quota_exceeded = true;
+        h.error = "ResourceQuotaExceeded: " +
+                  aura::core::resource_quota::ResourceQuotaManager::format_reason(*merr);
+        return h;
+    }
+    h.reserved_memory_bytes = mem_cost;
 
     auto mb = spec.attach_mailbox
                   ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(spec.mailbox_high_water)
@@ -132,7 +184,20 @@ struct AgentSpec {
     serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach]() mutable {
         if (attach && mb && serve::g_current_fiber)
             mb->attach(serve::g_current_fiber);
-        body();
+        // Issue #1880: try_acquire mutation boundary when Evaluator is bound.
+        // On reject: skip body (typed quota path already recorded); no panic.
+        const int acq = aura_orch_agent_body_try_acquire();
+        if (acq == 0) {
+            g_orch_module_stats.agent_body_try_acquire_ok_total.fetch_add(
+                1, std::memory_order_relaxed);
+            body();
+            aura_orch_agent_body_release_guard();
+        } else {
+            g_orch_module_stats.agent_body_try_acquire_rejects_total.fetch_add(
+                1, std::memory_order_relaxed);
+            g_orch_module_stats.resource_quota_rejects_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
         // Issue #1879: after agent body, force StableNodeRef provenance
         // validation + auto pin/refresh + linear ownership probe so COW /
         // steal / GC cannot leave dangling refs for the join path.
@@ -143,8 +208,11 @@ struct AgentSpec {
 
     if (!f) {
         // Issue #1600: Scheduler::spawn returns nullptr on fiber ResourceQuota.
+        pq.release_agent_arena(mem_cost);
+        h.reserved_memory_bytes = 0;
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
         h.error = "ResourceQuotaExceeded: fibers quota exceeded";
         return h;
@@ -156,6 +224,15 @@ struct AgentSpec {
     h.ok = true;
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     return h;
+}
+
+// Issue #1880: release spawn-time memory reservation (idempotent).
+inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
+    if (h.reserved_memory_bytes == 0)
+        return;
+    aura::core::resource_quota::process_resource_quota().release_agent_arena(
+        h.reserved_memory_bytes);
+    h.reserved_memory_bytes = 0;
 }
 
 // Join a single agent (Fiber::join) + Issue #1879 post-join provenance.
@@ -172,6 +249,8 @@ struct AgentSpec {
     // even when Fiber::join skipped host refresh (nested fiber join).
     if (jr.status == serve::JoinStatus::Ok)
         orch_post_join_provenance(h.fiber);
+    // Issue #1880: free arena/mailbox reservation after join.
+    release_agent_memory_reservation(h);
     return jr;
 }
 
@@ -195,6 +274,9 @@ struct AgentSpec {
         for (auto* f : fibers)
             orch_post_join_provenance(f);
     }
+    // Issue #1880: release per-handle memory reservations.
+    for (auto& a : agents)
+        release_agent_memory_reservation(a);
     return jr;
 }
 

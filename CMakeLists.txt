@@ -5122,6 +5122,9 @@ aura_issue_test_link_llvm_jit(test_atomic_batch_tenant_1878)
 # Issue #1879: orch spawn/join/steal StableNodeRef provenance mandate.
 aura_add_issue_test(test_orch_stable_ref_lifecycle_1879)
 aura_issue_test_link_llvm_jit(test_orch_stable_ref_lifecycle_1879)
+# Issue #1880: ResourceQuota + try_acquire on agent_spawn / parallel_orch.
+aura_add_issue_test(test_orch_quota_integration_1880)
+aura_issue_test_link_llvm_jit(test_orch_quota_integration_1880)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
 aura_add_issue_test(test_env_frame_stale_vs_invalid_id_1754)
 aura_issue_test_link_llvm_jit(test_env_frame_stale_vs_invalid_id_1754)
