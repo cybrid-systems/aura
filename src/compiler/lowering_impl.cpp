@@ -1572,6 +1572,8 @@ static IRModule lower_to_ir_impl(
     // Opt-in via ir_soa_migration::set_soa_dual_emit_enabled(true) /
     // CompilerService::set_soa_dual_emit(true).
     if (aura::compiler::ir_soa_migration::soa_dual_emit_enabled()) {
+        // Issue #1920: lowering is a Phase 2 SoA consumer when dual-emit on.
+        aura::compiler::ir_soa_migration::record_consumer_lowering();
         state.enable_soa_dual_emit();
         aura::compiler::ir_soa_migration::record_dual_emit_bridge();
     } else {

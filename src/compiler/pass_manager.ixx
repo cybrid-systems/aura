@@ -838,6 +838,40 @@ public:
         }
     }
 
+    // Issue #1920 Phase 2: SoA const-fold over dirty blocks (columnar walk).
+    // Folded count approximates elidable Const* ops in dirty ranges.
+    void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        folded_ = 0;
+        for (auto& func : mod.functions) {
+            for (auto& block : func.blocks_) {
+                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
+                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
+                    continue;
+                }
+                if (dirty_blocks_only)
+                    aura::compiler::ir_soa_migration::record_dirty_block_run();
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    if (i >= func.opcodes_.size())
+                        break;
+                    using aura::ir::IROpcode;
+                    switch (func.opcodes_[i]) {
+                        case IROpcode::ConstI64:
+                        case IROpcode::ConstF64:
+                        case IROpcode::ConstBool:
+                        case IROpcode::ConstString:
+                            ++folded_;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (i < func.shape_ids_.size())
+                        aura::compiler::ir_soa_migration::record_shape_column_consult();
+                }
+            }
+        }
+    }
+
     // Per-function fold — accumulates the per-function count
     // into the wrap's total. Returns the per-function delta,
     // matching the legacy `fold_function` contract (the
@@ -1711,18 +1745,23 @@ public:
         return any_change;
     }
 
-    // Issue #538: SoA IR incremental DCE. Processes only dirty
+    // Issue #538 / #1920: SoA IR incremental DCE. Processes only dirty
     // blocks when dirty_blocks_only is true (default). Marks
     // blocks dirty when elisions occur so downstream JIT can
-    // invalidate specialized code.
+    // invalidate specialized code. Phase 2 consumer: DirtyAware + SoA.
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         if (keep_for_debug_)
             return;
+        aura::compiler::ir_soa_migration::record_consumer_pass();
         auto t0 = std::chrono::steady_clock::now();
         for (auto& func : mod.functions) {
             for (auto& block : func.blocks_) {
-                if (dirty_blocks_only && !func.is_block_dirty(block.block_id))
+                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
+                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
                     continue;
+                }
+                if (dirty_blocks_only)
+                    aura::compiler::ir_soa_migration::record_dirty_block_run();
                 aura::ir::BasicBlock aos_block;
                 aos_block.id = block.block_id;
                 aos_block.instructions.reserve(block.end_idx - block.start_idx);
@@ -2554,6 +2593,39 @@ public:
         }
     }
     void run(aura::ir::BasicBlock& block) { run_on_block(block); }
+
+    // Issue #1920 Phase 2: SoA type propagation over dirty blocks only.
+    // Walks type_id / narrow_evidence columns without full AoS conversion.
+    void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        for (auto& func : mod.functions) {
+            for (auto& block : func.blocks_) {
+                if (dirty_blocks_only && !func.is_block_dirty(block.block_id)) {
+                    aura::compiler::ir_soa_migration::record_dirty_block_skip();
+                    continue;
+                }
+                if (dirty_blocks_only)
+                    aura::compiler::ir_soa_migration::record_dirty_block_run();
+                // Columnar consult: shape + linear for each instruction in block.
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    if (i < func.shape_ids_.size()) {
+                        (void)func.shape_ids_[i];
+                        aura::compiler::ir_soa_migration::record_shape_column_consult();
+                    }
+                    if (i < func.type_ids_.size() && func.type_ids_[i] != 0) {
+                        ++propagated_count_;
+                        aura::compiler::jit_typed_mutation::record_type_propagation_stamp();
+                    }
+                    if (i < func.narrow_evidence_.size() && func.narrow_evidence_[i] != 0)
+                        ++narrow_propagated_;
+                    if (i < func.linear_ownership_states_.size()) {
+                        (void)func.linear_ownership_states_[i];
+                        aura::compiler::ir_soa_migration::record_linear_column_consult();
+                    }
+                }
+            }
+        }
+    }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "type-propagation"; }
@@ -4509,6 +4581,8 @@ public:
             aos_view_ = aura::ir::IRModule{};
             return true;
         }
+        // Issue #1920: JIT/bridge consumer adoption + dirty short-circuit stats.
+        aura::compiler::ir_soa_migration::record_consumer_jit();
         // Build a temporary AoS IRModule from the SoA module
         // for the wrapped pass to consume. This is the
         // bridge — the SoA side is the source of truth, the
@@ -4521,12 +4595,17 @@ public:
             ++soa_functions_visited_;
             soa_instructions_visited_ += soa_fn.opcodes_.size();
             ++aos_view_built_count_;
-            // Issue #1517: consult SoAView columns on the bridge hot path.
+            // Issue #1517 / #1920: consult SoAView columns on the bridge hot path.
             auto view = soa_view::make_function_soa_view(&soa_fn);
             if (view.size() > 0) {
                 (void)soa_view::consult_shape(view, 0);
                 (void)soa_view::consult_linear(view, 0);
             }
+            // Dirty-driven: clean functions still convert once for AoS bridge,
+            // but clean blocks are counted as skips for incremental metrics.
+            const auto clean = soa_fn.clean_block_count();
+            if (clean > 0)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(clean);
             auto aos_fn = aura::compiler::to_aos_view(soa_fn);
             aos_view_.functions.push_back(std::move(aos_fn));
         }

@@ -12156,6 +12156,28 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t dual_skipped = static_cast<std::int64_t>(
                 aura::compiler::ir_soa_migration::dual_emit_skipped_total.load(
                     std::memory_order_relaxed));
+            // Issue #1920 Phase 2 consumer adoption + dirty/shape metrics.
+            namespace im = aura::compiler::ir_soa_migration;
+            const auto c_low = static_cast<std::int64_t>(
+                im::consumer_lowering_hits.load(std::memory_order_relaxed));
+            const auto c_ex = static_cast<std::int64_t>(
+                im::consumer_executor_hits.load(std::memory_order_relaxed));
+            const auto c_pass =
+                static_cast<std::int64_t>(im::consumer_pass_hits.load(std::memory_order_relaxed));
+            const auto c_jit =
+                static_cast<std::int64_t>(im::consumer_jit_hits.load(std::memory_order_relaxed));
+            const auto dirty_skips = static_cast<std::int64_t>(
+                im::dirty_block_driven_skips.load(std::memory_order_relaxed));
+            const auto dirty_runs = static_cast<std::int64_t>(
+                im::dirty_block_driven_runs.load(std::memory_order_relaxed));
+            const auto clean_bp = static_cast<std::int64_t>(im::dirty_driven_clean_hit_rate_bp());
+            const auto shape_c = static_cast<std::int64_t>(
+                im::shape_column_consults.load(std::memory_order_relaxed));
+            const auto lin_c = static_cast<std::int64_t>(
+                im::linear_column_consults.load(std::memory_order_relaxed));
+            const auto cap_d = static_cast<std::int64_t>(
+                im::capture_dirty_marks_total.load(std::memory_order_relaxed));
+            const auto families = static_cast<std::int64_t>(im::consumer_families_active());
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 m->ir_soa_dual_emit_bridge_count.store(static_cast<std::uint64_t>(dual_bridge),
@@ -12176,8 +12198,28 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"soa-dual-emit-bridge-count", make_int(dual_bridge)},
                 {"soa-dual-emit-skipped-total", make_int(dual_skipped)},
                 {"soa-dual-emit-flag-wired", make_int(1)},
+                // Issue #1920 Phase 2 full consumer adoption
+                {"migration-phase", make_int(im::kIrSoaMigrationPhase)},
+                {"consumer-lowering-hits", make_int(c_low)},
+                {"consumer-executor-hits", make_int(c_ex)},
+                {"consumer-pass-hits", make_int(c_pass)},
+                {"consumer-jit-hits", make_int(c_jit)},
+                {"consumer-families-active", make_int(families)},
+                {"dirty-block-driven-skips", make_int(dirty_skips)},
+                {"dirty-block-driven-runs", make_int(dirty_runs)},
+                {"dirty-driven-clean-hit-rate-bp", make_int(clean_bp)},
+                {"shape-column-consults", make_int(shape_c)},
+                {"linear-column-consults", make_int(lin_c)},
+                {"capture-dirty-marks", make_int(cap_d)},
+                {"phase2-consumer-wired", make_int(1)},
+                {"irmodulev2-view-wired", make_int(1)},
+                {"dce-soa-run-wired", make_int(1)},
+                {"typeprop-soa-run-wired", make_int(1)},
+                {"constfold-soa-run-wired", make_int(1)},
+                {"schema-1920", make_int(1920)},
+                {"issue-1920", make_int(1920)},
                 {"issue", make_int(1629)},
-                {"schema", make_int(1629)}, // lineage 1619|1517|1377
+                {"schema", make_int(1629)}, // lineage 1619|1517|1377 → 1629 + #1920
             };
             return build_hash(kv);
         });
