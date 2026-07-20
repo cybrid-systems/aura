@@ -1733,14 +1733,6 @@ aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6_594)
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
 aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
-# Issue #526: dirty/epoch → type_checker selective recheck +
-# Pass short-circuit for typed self-mod soundness.
-aura_add_issue_test(test_incremental_type_dirty)
-aura_issue_test_link_llvm_jit(test_incremental_type_dirty)
-# Issue #536: touched_roots + selective re-narrow + typed-mutation
-# stats matrix (dirty/epoch propagation for AI self-mod).
-aura_add_issue_test(test_incremental_type_dirty_narrowing)
-aura_issue_test_link_llvm_jit(test_incremental_type_dirty_narrowing)
 # Issue #608: dependency-tracked solve_delta + occurrence-dirty
 # + per-symbol post-mutate incremental type reliability matrix.
 aura_add_issue_test(test_typechecker_incremental_dependency_occurrence_dirty_post_mutate)
@@ -2447,10 +2439,6 @@ add_test(NAME test_edsl_concurrent_query_mutate_verification
          COMMAND ./test_edsl_concurrent_query_mutate)
 # Issue #394: hash-ref fix for (atomic-batch:stats) + concurrent
 # fiber safety during atomic batch + mutate_api.md docs.
-# Issue #432 / #466: ConstraintSystem solve_delta cross-delta
-# soundness (touched-root reverify + conflict metrics).
-aura_add_issue_test(test_incremental_type_soundness)
-aura_issue_test_link_llvm_jit(test_incremental_type_soundness)
 # Issue #509: touched_roots cross-delta + constraint-delta-stats.
 aura_add_issue_test(test_constraintsystem_solve_delta_touched_roots_509)
 aura_issue_test_link_llvm_jit(test_constraintsystem_solve_delta_touched_roots_509)

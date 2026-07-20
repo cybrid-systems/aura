@@ -66,6 +66,15 @@ aura_add_issue_test(test_macro_reflect_batch)
 aura_issue_test_link_llvm_jit(test_macro_reflect_batch)
 set_target_properties(test_macro_reflect_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #526 + #536 + #432/#466: incremental_type family batch
+# (dirty→type_checker selective recheck, touched_roots+re-narrow predicate
+# mutate matrix, solve_delta cross-delta soundness). EXCLUDE_FROM_ALL per
+# AuraDomainTests.cmake legacy batch convention. On-demand
+# `ninja test_incremental_type_batch`.
+aura_add_issue_test(test_incremental_type_batch)
+aura_issue_test_link_llvm_jit(test_incremental_type_batch)
+set_target_properties(test_incremental_type_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
