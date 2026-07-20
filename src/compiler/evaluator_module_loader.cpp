@@ -383,9 +383,11 @@ bool Evaluator::gc_module(const std::string& path) {
     if (arena_it != module_arena_ptrs_.end() && arena_it->second) {
         auto* owner = arena_it->second;
         for (auto it = closures_.begin(); it != closures_.end();) {
-            if (it->second.owner_arena == owner)
+            if (it->second.owner_arena == owner) {
+                // Issue #1888: tombstone before erase for ClosureView lifetime.
+                invalidate_closure_lifetime(it->second);
                 it = closures_.erase(it);
-            else
+            } else
                 ++it;
         }
     }

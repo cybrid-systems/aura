@@ -893,7 +893,77 @@ export struct Closure {
     // (Issue #1365). Unstamped + active tracking → is_bridge_stale true
     // unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1.
     std::uint64_t bridge_epoch = 0;
+    // Issue #1888: ClosureView lifetime stamp. 0 = tombstoned (moved-from /
+    // freed / explicitly invalidated). Views capture this and must revalidate
+    // against a live Closure via is_closure_view_valid(view, cl).
+    std::uint64_t lifetime_version = 1;
+
+    Closure() = default;
+    Closure(const Closure&) = default;
+    Closure& operator=(const Closure&) = default;
+    // Aggregate-style ctor (replaces brace-init after user move ctors; eval_flat).
+    Closure(std::string name_in, std::vector<aura::ast::SymId> params_in, ast::FlatAST* flat_in,
+            ast::StringPool* pool_in, ast::NodeId body_in, EnvId env_in, bool dotted_in,
+            ast::ASTArena* arena_in, std::uint64_t bridge_in = 0,
+            std::uint64_t lifetime_in = 1) noexcept
+        : name(std::move(name_in))
+        , params(std::move(params_in))
+        , flat(flat_in)
+        , pool(pool_in)
+        , body_id(body_in)
+        , env_id(env_in)
+        , dotted(dotted_in)
+        , owner_arena(arena_in)
+        , bridge_epoch(bridge_in)
+        , lifetime_version(lifetime_in) {}
+    // Move tombstones the source so any ClosureView stamped from it fails
+    // is_closure_view_valid(view, moved_from) and so raw flat/pool are null.
+    Closure(Closure&& o) noexcept
+        : name(std::move(o.name))
+        , params(std::move(o.params))
+        , flat(o.flat)
+        , pool(o.pool)
+        , body_id(o.body_id)
+        , env_id(o.env_id)
+        , dotted(o.dotted)
+        , owner_arena(o.owner_arena)
+        , bridge_epoch(o.bridge_epoch)
+        , lifetime_version(o.lifetime_version) {
+        o.tombstone_for_views();
+    }
+    Closure& operator=(Closure&& o) noexcept {
+        if (this != &o) {
+            name = std::move(o.name);
+            params = std::move(o.params);
+            flat = o.flat;
+            pool = o.pool;
+            body_id = o.body_id;
+            env_id = o.env_id;
+            dotted = o.dotted;
+            owner_arena = o.owner_arena;
+            bridge_epoch = o.bridge_epoch;
+            lifetime_version = o.lifetime_version;
+            o.tombstone_for_views();
+        }
+        return *this;
+    }
+
+    // Purpose: mark Closure unusable for ClosureView (move / free / GC erase)
+    // Post: lifetime_version==0; flat/pool/owner_arena null
+    // Issue: #1888
+    void tombstone_for_views() noexcept {
+        lifetime_version = 0;
+        flat = nullptr;
+        pool = nullptr;
+        owner_arena = nullptr;
+    }
+
+    [[nodiscard]] bool lifetime_valid_for_views() const noexcept { return lifetime_version != 0; }
 };
+
+// Issue #1888: process-wide counter for ClosureView dangling prevented
+// (make_closure_view is Evaluator-free; declared early for Evaluator methods).
+export inline std::atomic<std::uint64_t> g_closure_view_dangling_prevented_total{0};
 
 // Legacy alias — kept for backward compatibility during the
 // P2 transition (Issue #127). New code should prefer
@@ -6266,6 +6336,15 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #1888: mirror process-wide ClosureView dangling prevented counter.
+    void sync_closure_view_dangling_metrics() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->closure_view_dangling_prevented_total.store(
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
         }
     }
     // Issue #720: JIT/Interpreter parity counters backing the
@@ -13182,13 +13261,18 @@ export struct EnvView {
 // Exposes params as a SymId span (Issue #145 SoA). Other
 // fields are direct; no copy.
 //
-// Lifetime (Issue #1870): zero-copy view. `params` is a span over
+// Lifetime (Issue #1870 / #1888): zero-copy view. `params` is a span over
 // Closure::params (realloc on push_back invalidates). `name` is a
 // string_view into Closure::name (reassign/realloc invalidates).
 // `flat` / `pool` / `owner_arena` are raw non-owning pointers — the
 // pointed-to objects must outlive the view (same class as EnvView
-// #1868). Valid use: build view, inspect, drop — do not mutate the
-// source Closure (or free its flat/pool/arena) while the view is live.
+// #1868).
+//
+// Issue #1888: `source_lifetime_version` + `live` enable explicit guards.
+// After Closure move / GC erase / tombstone_for_views(), revalidate with
+// is_closure_view_valid(view, live_cl) before any deref of flat/pool/params.
+// make_closure_view rejects already-tombstoned sources (bumps
+// closure_view_dangling_prevented_total).
 // Owned copies rejected to keep the #145 zero-copy / JIT bridge contract.
 export struct ClosureView {
     std::span<const aura::ast::SymId> params;
@@ -13201,18 +13285,41 @@ export struct ClosureView {
     EnvId env_id = NULL_ENV_ID;
     const aura::ast::ASTArena* owner_arena = nullptr;
     std::string_view name;
+    // Issue #1888: snapshot of Closure::lifetime_version at view creation.
+    std::uint64_t source_lifetime_version = 0;
+    // False for make_invalid_closure_view / rejected make_closure_view.
+    bool live = false;
 
-    // Returns the i-th param's SymId, or NULL_SYM if out of range.
+    // Returns the i-th param's SymId, or NULL_SYM if out of range / invalid.
+    // Issue #1888: refuse to touch params span when view is not live.
     [[nodiscard]] aura::ast::SymId param_at(std::size_t i) const {
+        if (!live || source_lifetime_version == 0)
+            return aura::ast::SymId{};
         return i < params.size() ? params[i] : aura::ast::SymId{};
     }
-    [[nodiscard]] std::size_t arity() const { return params.size(); }
+    [[nodiscard]] std::size_t arity() const {
+        if (!live || source_lifetime_version == 0)
+            return 0;
+        return params.size();
+    }
 };
 
 // Factory functions (not members, to keep Env/Closure
 // header-light).
 export EnvView make_env_view(const Env& env);
 export ClosureView make_closure_view(const Closure& cl);
+export ClosureView make_invalid_closure_view() noexcept;
+// Soft check: view was stamped live (does not prove source still exists).
+export [[nodiscard]] bool is_closure_view_valid(const ClosureView& v) noexcept;
+// Strong check: view matches a live Closure's lifetime_version.
+export [[nodiscard]] bool is_closure_view_valid(const ClosureView& v, const Closure& cl) noexcept;
+// Tombstone Closure for views (free / erase / GC). Prefer over bare erase.
+export void invalidate_closure_lifetime(Closure& cl) noexcept;
+// Safe pointees — null if view soft-invalid (still revalidate vs live Closure).
+export [[nodiscard]] const aura::ast::FlatAST* closure_view_flat(const ClosureView& v) noexcept;
+export [[nodiscard]] const aura::ast::StringPool* closure_view_pool(const ClosureView& v) noexcept;
+export [[nodiscard]] const aura::ast::ASTArena*
+closure_view_owner_arena(const ClosureView& v) noexcept;
 
 // WorkspaceTree method bodies (declared above Evaluator).
 inline bool WorkspaceTree::ensure_local_flat(std::uint32_t idx) {
