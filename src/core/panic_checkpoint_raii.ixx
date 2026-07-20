@@ -3,6 +3,11 @@
 // Phase 2 (#1363): wired to Evaluator::save/restore_panic_checkpoint via
 // type-erased PanicCheckpointHost (void* + fn ptrs) so this core module
 // does not depend on aura.compiler.evaluator.
+//
+// Hot-Update MVP scope (Issue #1943): PanicCheckpointRAII is part of the
+// **in-scope** hot-update correctness contract for single-workspace
+// function-body replacement. Cross-workspace / cross-fiber steal paths
+// are **deferred** — see docs/hot-update.md.
 
 module;
 
