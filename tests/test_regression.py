@@ -19,8 +19,8 @@ def run(code, timeout=10):
     return r.stdout.strip(), r.stderr.strip(), r.returncode
 
 
-# Regression cases live in tests/fixtures/regression_tests.json
-# (loaded via tests/regression_cases.py).
+# Regression cases live in tests/fixtures/regression/*.json (#1962)
+# (loaded via tests/regression_cases.py → fixture_store).
 
 
 # Cleanup temp files

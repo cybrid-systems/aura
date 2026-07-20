@@ -1,0 +1,32 @@
+[
+  {
+    "name": "str_join",
+    "code": "(string-join (list \"a\" \"b\" \"c\") \",\")",
+    "pipeline": "eval",
+    "expected": "a,b,c"
+  },
+  {
+    "name": "str_num_only_space",
+    "code": "(string->number \"  \")",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "str_num_tab",
+    "code": "(string->number \"\t-7\n\")",
+    "pipeline": "eval",
+    "expected": "-7"
+  },
+  {
+    "name": "str_num_trim",
+    "code": "(string->number \" 42 \")",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "str_to_list",
+    "code": "(car (string->list \"ABC\"))",
+    "pipeline": "eval",
+    "expected": "65"
+  }
+]

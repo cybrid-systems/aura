@@ -1,0 +1,86 @@
+[
+  {
+    "name": "adt-bare-id-cons-only",
+    "code": "(define-type (List a) (Nil) (Cons a (List a)))(let ((xs (Cons 1 Nil))) (match xs ((Cons h t) h)))",
+    "expect_out": "1",
+    "expect_err": "unhandled"
+  },
+  {
+    "name": "adt-bare-id-cons-then-nil",
+    "code": "(define-type (List a) (Nil) (Cons a (List a)))(let ((xs (Cons 1 (Cons 2 Nil)))) (match xs ((Cons h t) h) (Nil 0)))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-bare-id-nil-only",
+    "code": "(define-type (List a) (Nil) (Cons a (List a)))(let ((xs Nil)) (match xs (Nil 0)))",
+    "expect_out": "0",
+    "expect_err": "unhandled"
+  },
+  {
+    "name": "adt-exhaustive-color",
+    "code": "(define-type (Color) (Red) (Green) (Blue)) (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3)))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-either",
+    "code": "(define-type (Either a b) (Left a) (Right b)) (let ((x (Left 1))) (match x ((Left v) v) ((Right v) 0)))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-list",
+    "code": "(define-type (List a) (Nil) (Cons a (List a)))(let ((xs (Cons 1 (Cons 2 (Cons 3 Nil)))))(match xs ((Cons h t) (display (+ h 1))) ((Nil) 0)))",
+    "expect_out": "2",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-nested",
+    "code": "(begin (define-type (Option a) (Some a) (None))(define-type (Result e v) (Ok v) (Err e))(let ((x (Ok (Some 42)))) (match x ((Ok y) (match y ((Some v) v) ((None) 0))) ((Err _) 0))))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-option",
+    "code": "(define-type (Option a) (Some a) (None)) (let ((x (Some 42))) (match x ((Some v) v) ((None) 0)))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-pair",
+    "code": "(define-type (Pair a b) (MkPair a b))(let ((p (MkPair 1 2)))(match p ((MkPair x y) (+ x y))))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-exhaustive-triple",
+    "code": "(define-type (Triple a b c) (MkTriple a b c))(let ((t (MkTriple 1 2 3)))(match t ((MkTriple x y z) (+ x (+ y z)))))",
+    "expect_out": "6",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-missing-multi",
+    "code": "(define-type (Color) (Red) (Green) (Blue)) (let ((x Red)) (match x ((Red) 1) ((Green) 2)))",
+    "expect_out": "1",
+    "expect_err": "unhandled"
+  },
+  {
+    "name": "adt-multi-adt-correct-target",
+    "code": "(begin (define-type (Shape) (Circle) (Square) (Triangle))(define-type (Color) (Red) (Green) (Blue))(let ((c Red)) (match c ((Red) 1) ((Green) 2) ((Blue) 3))))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "adt-multi-adt-warn-correct-target",
+    "code": "(begin (define-type (Shape) (Circle) (Square) (Triangle))(define-type (Color) (Red) (Green) (Blue))(let ((c Red)) (match c ((Red) 1) ((Green) 2))))",
+    "expect_out": "1",
+    "expect_err": "Blue"
+  },
+  {
+    "name": "adt-non-adt-subject",
+    "code": "(let ((n 1)) (match n (1 \"one\") (_ \"other\")))",
+    "expect_out": "one",
+    "expect_err": ""
+  }
+]

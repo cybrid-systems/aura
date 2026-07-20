@@ -1,0 +1,74 @@
+[
+  {
+    "name": "ir_add",
+    "code": "(+ 1 2)",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_chain",
+    "code": "(+ (: x Int 1) (: y Int 2))",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_expr",
+    "code": "(: x Int (+ 1 2))",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_if",
+    "code": "(if 1 (: a Int 42) (: b Int 0))",
+    "pipeline": "ir",
+    "expected": "42"
+  },
+  {
+    "name": "ir_annot_int",
+    "code": "(: x Int 42)",
+    "pipeline": "ir",
+    "expected": "42"
+  },
+  {
+    "name": "ir_annot_let",
+    "code": "(let ((x 10)) (: y Int x))",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_fact",
+    "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+    "pipeline": "ir",
+    "expected": "120"
+  },
+  {
+    "name": "ir_fib",
+    "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
+    "pipeline": "ir",
+    "expected": "55"
+  },
+  {
+    "name": "ir_fold_arith",
+    "code": "(+ (* 2 3) 4)",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_lambda",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_let_arith",
+    "code": "(let ((x (+ 1 2))) (* x 3))",
+    "pipeline": "ir",
+    "expected": "9"
+  },
+  {
+    "name": "ir_nested_arith",
+    "code": "(+ (* 2 3) (/ 10 2))",
+    "pipeline": "ir",
+    "expected": "11"
+  }
+]

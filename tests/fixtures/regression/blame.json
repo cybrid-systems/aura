@@ -1,0 +1,8 @@
+[
+  {
+    "name": "blame-add-str",
+    "code": "(+ 1 \"hello\")",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  }
+]

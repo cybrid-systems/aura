@@ -1,0 +1,206 @@
+[
+  {
+    "name": "add",
+    "code": "(+ 1 2)",
+    "pipeline": "eval",
+    "expected_val": 3
+  },
+  {
+    "name": "add_many",
+    "code": "(+ (+ (+ (+ 1 2) 3) 4) 5)",
+    "pipeline": "eval",
+    "expected_val": 15
+  },
+  {
+    "name": "adt_list_length",
+    "code": "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
+    "pipeline": "eval",
+    "expected_val": 10
+  },
+  {
+    "name": "closure",
+    "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+    "pipeline": "eval",
+    "expected_val": 42
+  },
+  {
+    "name": "coerce_arith",
+    "code": "(+ 1 \"2\")",
+    "pipeline": "eval",
+    "expected_val": 3
+  },
+  {
+    "name": "coerce_str_len",
+    "code": "(string-length 12345)",
+    "pipeline": "eval",
+    "expected_val": 5
+  },
+  {
+    "name": "cons_car",
+    "code": "(car (cons 1 2))",
+    "pipeline": "eval",
+    "expected_val": 1
+  },
+  {
+    "name": "cons_cdr",
+    "code": "(cdr (cons 1 2))",
+    "pipeline": "eval",
+    "expected_val": 2
+  },
+  {
+    "name": "div",
+    "code": "(/ 100 5)",
+    "pipeline": "eval",
+    "expected_val": 20
+  },
+  {
+    "name": "fib_20",
+    "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
+    "pipeline": "eval",
+    "expected_val": 6765
+  },
+  {
+    "name": "higher_order",
+    "code": "((lambda (f) (f 10)) (lambda (x) (* x x)))",
+    "pipeline": "eval",
+    "expected_val": 100
+  },
+  {
+    "name": "if_compare",
+    "code": "(if (< 3 5) 100 200)",
+    "pipeline": "eval",
+    "expected_val": 100
+  },
+  {
+    "name": "if_false",
+    "code": "(if 0 42 0)",
+    "pipeline": "eval",
+    "expected_val": 0
+  },
+  {
+    "name": "if_true",
+    "code": "(if 1 42 0)",
+    "pipeline": "eval",
+    "expected_val": 42
+  },
+  {
+    "name": "lambda_apply",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "eval",
+    "expected_val": 10
+  },
+  {
+    "name": "let_add",
+    "code": "(let ((x 1) (y 2)) (+ x y))",
+    "pipeline": "eval",
+    "expected_val": 3
+  },
+  {
+    "name": "let_simple",
+    "code": "(let ((x 10)) x)",
+    "pipeline": "eval",
+    "expected_val": 10
+  },
+  {
+    "name": "letrec_fact",
+    "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
+    "pipeline": "eval",
+    "expected_val": 3628800
+  },
+  {
+    "name": "literal_int",
+    "code": "42",
+    "pipeline": "eval",
+    "expected_val": 42
+  },
+  {
+    "name": "literal_neg",
+    "code": "-5",
+    "pipeline": "eval",
+    "expected_val": -5
+  },
+  {
+    "name": "literal_string",
+    "code": "\"hello\"",
+    "pipeline": "eval"
+  },
+  {
+    "name": "mul",
+    "code": "(* 6 7)",
+    "pipeline": "eval",
+    "expected_val": 42
+  },
+  {
+    "name": "multi_agent_pipeline",
+    "code": "(require \"std/orchestrator\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "nested_arith",
+    "code": "(+ (* 2 3) (/ 10 2))",
+    "pipeline": "eval",
+    "expected_val": 11
+  },
+  {
+    "name": "par_orch_3_agents",
+    "code": "(require \"std/orchestrator\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "par_orch_5_agents",
+    "code": "(require \"std/orchestrator\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "parallel_intend_small",
+    "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+    "pipeline": "eval",
+    "expected_val": 2
+  },
+  {
+    "name": "parallel_intend_with_gc",
+    "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+    "pipeline": "eval",
+    "expected_val": 2
+  },
+  {
+    "name": "query_pattern_simple",
+    "code": "(set-code \"(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))\") (length (query:pattern \"(fib ...)\"))",
+    "pipeline": "eval",
+    "expected_val": 5
+  },
+  {
+    "name": "query_pattern_with_let",
+    "code": "(set-code \"(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))\") (length (query:pattern \"(let ((x ...)) ...)\"))",
+    "pipeline": "eval",
+    "expected_val": 3
+  },
+  {
+    "name": "str_append",
+    "code": "(string-append \"a\" \"b\")",
+    "pipeline": "eval"
+  },
+  {
+    "name": "str_length",
+    "code": "(string-length \"hello\")",
+    "pipeline": "eval",
+    "expected_val": 5
+  },
+  {
+    "name": "sub",
+    "code": "(- 10 3)",
+    "pipeline": "eval",
+    "expected_val": 7
+  },
+  {
+    "name": "vec_basic",
+    "code": "(vector 1 2 3)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "vec_ref",
+    "code": "(vector-ref (vector 10 20 30) 1)",
+    "pipeline": "eval",
+    "expected_val": 20
+  }
+]

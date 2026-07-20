@@ -1,0 +1,14 @@
+[
+  {
+    "name": "match-missing",
+    "code": "(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((B) 2)))",
+    "expect_out": "1",
+    "expect_err": "match warning"
+  },
+  {
+    "name": "match-wildcard",
+    "code": "(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))",
+    "expect_out": "1",
+    "expect_err": ""
+  }
+]

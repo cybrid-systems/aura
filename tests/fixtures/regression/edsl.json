@@ -1,0 +1,50 @@
+[
+  {
+    "name": "edsl-err-inline-call",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:inline-call 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-query-children",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (query:children 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-query-node",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (query:node 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-query-parent",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (query:parent 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-query-siblings",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (query:children 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-rebind",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:rebind)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-remove-node",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:remove-node 999)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "edsl-err-tweak-literal",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:tweak-literal 999 1)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  }
+]

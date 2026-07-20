@@ -1,0 +1,8 @@
+[
+  {
+    "name": "tweak-lit-plus",
+    "code": "(begin (set-code \"(display (+ 1 42))\")(eval-current)(mutate:tweak-literal 3 1 \"\")(eval-current))",
+    "expect_out": "44",
+    "expect_err": ""
+  }
+]

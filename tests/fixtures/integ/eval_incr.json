@@ -1,0 +1,56 @@
+[
+  {
+    "name": "incr_double_typecheck",
+    "code": "(set-code \"(define (add x y) (+ x y))\")(typecheck-current)(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_extract_function",
+    "code": "(set-code \"(define (calc x) (+ (* x 3) 1))\")(typecheck-current)(define r (query:root))(define calc-def (car (query:children r)))(define calc-lam (car (query:children calc-def)))(define calc-body (car (query:children calc-lam)))(define mul-call (car (cdr (query:children calc-body))))(mutate:extract-function mul-call \"mul3\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_insert_child",
+    "code": "(set-code \"(define (f) 1)\")(typecheck-current)(mutate:insert-child 2 1 \"42\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_multi_mutate",
+    "code": "(set-code \"(define x 10)(define y 20)\")(typecheck-current)(mutate:tweak-literal 2 5)(mutate:tweak-literal 3 10)(mutate:replace-type 2 \"String\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_mutate_typecheck",
+    "code": "(set-code \"(define (add x y) (+ x y))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"test\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_replace_type",
+    "code": "(set-code \"(define x 42)\")(typecheck-current)(mutate:replace-type 2 \"String\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_replace_value_int",
+    "code": "(set-code \"(define x 10)\")(typecheck-current)(mutate:replace-value 2 \"99\" \"test\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_splice",
+    "code": "(set-code \"(begin 1)\")(typecheck-current)(mutate:splice 2 1 \"42\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_tweak_literal",
+    "code": "(set-code \"(define x 10)\")(typecheck-current)(mutate:tweak-literal 2 5)(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  }
+]

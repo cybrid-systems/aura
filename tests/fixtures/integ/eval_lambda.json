@@ -1,0 +1,32 @@
+[
+  {
+    "name": "lambda",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "eval",
+    "expected": "10"
+  },
+  {
+    "name": "lambda_annot_basic",
+    "code": "((lambda ((: x Int)) (+ x 1)) 41)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "lambda_annot_mixed",
+    "code": "((lambda ((: x Int) y) (+ x y)) 3 4)",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "lambda_annot_multi",
+    "code": "((lambda ((: x Int) (: y Int)) (+ x y)) 3 4)",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "lambda_annot_string",
+    "code": "((lambda ((: x String)) (string-append x \"!\")) \"hi\")",
+    "pipeline": "eval",
+    "expected": "hi!"
+  }
+]

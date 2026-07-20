@@ -1,0 +1,38 @@
+[
+  {
+    "name": "declare-type-basic",
+    "code": "(begin (declare-type \"mytest\" \"Int Int\" \"Int\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "declare-type-bool",
+    "code": "(begin (declare-type \"pred\" \"Int\" \"Bool\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "declare-type-mixed",
+    "code": "(begin (declare-type \"strlen\" \"String\" \"Int\")(declare-type \"double\" \"Int\" \"Int\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "declare-type-multi",
+    "code": "(begin (declare-type \"f1\" \"Int\" \"Int\")(declare-type \"f2\" \"Int\" \"Bool\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "declare-type-string",
+    "code": "(begin (declare-type \"greet\" \"String\" \"String\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "declare-type-void",
+    "code": "(begin (declare-type \"logfn\" \"String\" \"Void\")(display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  }
+]

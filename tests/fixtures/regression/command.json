@@ -1,0 +1,20 @@
+[
+  {
+    "name": "command-output",
+    "code": "(command-output \"echo 42\")",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "command-output-empty",
+    "code": "(command-output \"echo -n\")",
+    "expect_out": "",
+    "expect_err": ""
+  },
+  {
+    "name": "command-output-multi",
+    "code": "(command-output \"echo hello; echo world\")",
+    "expect_out": "hello\nworld",
+    "expect_err": ""
+  }
+]

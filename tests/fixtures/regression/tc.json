@@ -1,0 +1,26 @@
+[
+  {
+    "name": "tc-runtime-unbound-var-has-location",
+    "code": "(undefined-var-xyz)",
+    "expect_out": "",
+    "expect_err": "1:2: unbound variable"
+  },
+  {
+    "name": "tc-strict-pass-int-eq-int",
+    "code": "(+ 1 2)",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "tc-strict-runtime-typed-arg-mismatch",
+    "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  },
+  {
+    "name": "tc-type-var-name-from-param",
+    "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  }
+]

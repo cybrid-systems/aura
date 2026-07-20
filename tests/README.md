@@ -27,7 +27,7 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | **`domain/`** | **Preferred** theme suites | New ACs; theme pilots under `domain/<theme>/` (see `domain/arena/` #1959) |
 | `suite/` | Aura E2E (`.aura` scripts) | End-to-end language / stdlib behavior |
 | `regression/` | Curated regression fixtures | Known-bad programs, redlines |
-| `fixtures/` | Shared JSON / profiles / data | Bundle profiles, integ lists, golden inputs |
+| `fixtures/` | Shared case data (sharded JSON) + profiles | See [`fixtures/README.md`](fixtures/README.md) (#1962) |
 | `templates/` | Copy-paste starters (not built) | Scaffold a new domain suite |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
 | root `test_*_batch.cpp` | Intermediate family batches | Consolidating several related issue tests |
@@ -246,6 +246,12 @@ ninja -C build test_arena_batch           # domain/arena (#1959)
 | `tests/run-tests.sh` | `tests/run.py bash` |
 
 Shared colors/paths/report helpers: `tests/_aura_harness.py`.
+
+### Fixtures (#1962)
+
+Case matrices are **sharded** under `tests/fixtures/{regression,integ,benchmark,smoke}/`
+(not monolithic `*_tests.json`). Validate with `python3 tests/run.py fixtures` or
+`python3 scripts/fixtures_tool.py status`. Details: [`fixtures/README.md`](fixtures/README.md).
 
 ## Related
 

@@ -591,7 +591,7 @@ def test_unit():
 # ═══════════════════════════════════════════════════════════════
 
 
-# Integration cases live in tests/fixtures/integ_tests.json
+# Integration cases live in tests/fixtures/integ/*.json (#1962)
 # (loaded via tests/integ_cases.py).
 
 

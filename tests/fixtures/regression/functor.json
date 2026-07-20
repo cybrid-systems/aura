@@ -1,0 +1,128 @@
+[
+  {
+    "name": "functor-annot-define",
+    "code": "(begin (set-code \"(define-module (Wrap :T) (export f) (define (f (: x :T)) (+ x 1)))(Wrap Int)\")(display (typecheck-current)))",
+    "expect_out": "Int -> Int",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-eval",
+    "code": "(begin (define-module (Box :T) (export wrap) (define (wrap (: x :T)) x)) (Box Int) (display 42))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-identity",
+    "code": "(begin (set-code \"(define-module (Id :T) (export val) (define (val (: x :T)) x))(Id String)\")(display (typecheck-current)))",
+    "expect_out": "String -> String",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-multi",
+    "code": "(begin (set-code \"(define-module (Pair :A :B) (export make) (define (make (: x :A) (: y :B)) (cons x y)))(Pair Int String)\")(display (typecheck-current)))",
+    "expect_out": "Int String",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-ret",
+    "code": "(begin (set-code \"(define-module (Box :T) (export inc) (define (inc (: x :T)) (+ x 1)))(Box Int)\")(display (typecheck-current)))",
+    "expect_out": "Int -> Int",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-tc",
+    "code": "(begin (set-code \"(define-module (Stack :T) (export push) (define (push (: x :T)) (+ x 1)))(Stack Int)\")(display (typecheck-current)))",
+    "expect_out": "Int -> Int",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-annot-two-instances-tc",
+    "code": "(begin (define-module (Id :T) (export val) (define (val (: x :T)) x)) (Id Int) (Id String) (display 42))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-body",
+    "code": "(begin (define-module (Calc :T) (display (+ 40 2))) (Calc Int))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-cache",
+    "code": "(begin (define-module (C T) (display 1)) (C Int) (C Int) (C Int) (display \"ok\"))",
+    "expect_out": "1ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-define",
+    "code": "(begin (define-module (Stack :T) (export push)) (display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-export-tc",
+    "code": "(begin (define-module (S T) (export myfn) (define (myfn x) (* x 2))) (S Int) (display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-instance",
+    "code": "(begin (define-module (M :T) (+ 1 2)) (M Int) (display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-multi-cache",
+    "code": "(begin (define-module (M T) (display 1)) (M Int) (M String) (M Int) (M String) (display \"ok\"))",
+    "expect_out": "11ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-multi-fn",
+    "code": "(begin (set-code \"(define-module (Pair :T) (export first second) (define (first (: x :T)) x) (define (second (: y :T)) y))(Pair Int)\")(display (typecheck-current)))",
+    "expect_out": "first: (Int -> Int), second: (Int -> Int)",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-multi-instance",
+    "code": "(begin (define-module (W :T) (display 1)) (W Int) (W String) (display \"ok\"))",
+    "expect_out": "11ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-multi-param",
+    "code": "(begin (define-module (Pair :A :B) (display 1)) (Pair Int String) (display \"ok\"))",
+    "expect_out": "1ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-plain-AB",
+    "code": "(begin (define-module (Pair A B) (display A)(display B)) (Pair Int String))",
+    "expect_out": "IntString",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-plain-T",
+    "code": "(begin (define-module (Stack T) (display T)) (Stack Int))",
+    "expect_out": "Int",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-plain-body",
+    "code": "(begin (define-module (Box T) (+ 1 2)) (Box Int) (display \"ok\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-tc-defmodule",
+    "code": "(begin (set-code \"(define-module (Stack T) (export push pop) (define (push s x) (cons x s)) (define (pop s) (cdr s)))\")(display (typecheck-current)))",
+    "expect_out": "Module{push:",
+    "expect_err": ""
+  },
+  {
+    "name": "functor-two-instances",
+    "code": "(begin (define-module (Box :T) (export wrap) (define (wrap (: x :T)) x)) (Box Int) (Box String) (display 42))",
+    "expect_out": "42",
+    "expect_err": ""
+  }
+]

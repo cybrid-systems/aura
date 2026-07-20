@@ -1,0 +1,26 @@
+[
+  {
+    "name": "vec-argmin",
+    "code": "(require \"std/vector-math\" all:)(vec:argmin (vector 5 1 9 2))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-dot",
+    "code": "(require \"std/vector-math\" all:)(vec:dot (vector 1 2 3) (vector 4 5 6))",
+    "expect_out": "32",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-scale",
+    "code": "(require \"std/vector-math\" all:)(vec:sum (vec:scale (vector 1 2 3) 2))",
+    "expect_out": "12",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-sum",
+    "code": "(require \"std/vector-math\" all:)(vec:sum (vec:range 0 5))",
+    "expect_out": "10",
+    "expect_err": ""
+  }
+]

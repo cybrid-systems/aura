@@ -1,0 +1,26 @@
+[
+  {
+    "name": "serve_define",
+    "code": "{\"cmd\":\"define\",\"code\":\"(define add (lambda (x y) (+ x y)))\",\"name\":\"add\"}\n{\"cmd\":\"exec\",\"code\":\"(add 1 2)\"}",
+    "pipeline": "serve",
+    "expected": "\"3\""
+  },
+  {
+    "name": "serve_define_redefine",
+    "code": "{\"cmd\":\"define\",\"code\":\"(define mul (lambda (x y) (* x y)))\",\"name\":\"mul\"}\n{\"cmd\":\"exec\",\"code\":\"(mul 3 4)\"}\n{\"cmd\":\"redefine\",\"code\":\"(define mul (lambda (x y) (+ x y)))\",\"name\":\"mul\"}\n{\"cmd\":\"exec\",\"code\":\"(mul 3 4)\"}",
+    "pipeline": "serve",
+    "expected": "\"7\""
+  },
+  {
+    "name": "serve_plain_sexpr",
+    "code": "(+ 1 2)",
+    "pipeline": "serve",
+    "expected": "\"3\""
+  },
+  {
+    "name": "serve_unknown_cmd",
+    "code": "{\"cmd\":\"noop\",\"code\":\"(+ 1 2)\"}",
+    "pipeline": "serve",
+    "expected": "unknown command"
+  }
+]
