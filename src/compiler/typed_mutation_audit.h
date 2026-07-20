@@ -93,6 +93,9 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> typed_mutation_audit_triggered_total{0};
     std::atomic<std::uint64_t> typed_mutation_violations_caught_total{0};
     std::atomic<std::uint64_t> provenance_blame_chain_hits_total{0};
+    // Issue #1924: blame completeness under multi-round typed_mutate.
+    std::atomic<std::uint64_t> blame_chain_complete_total{0};
+    std::atomic<std::uint64_t> blame_propagation_miss_total{0};
     std::atomic<std::uint64_t> full_strategy_force_rollback_total{0};
     std::atomic<std::uint64_t> contextual_force_audit_total{0};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
@@ -437,6 +440,12 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
     correlate_invariant_with_type_system(r);
     if (r.all_ok()) {
         g_typed_mutation_audit_counters.invariant_all_pass.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1924: successful invariant suite with mutation_id ⇒
+        // blame chain considered complete for this audit sample.
+        if (mutation_id != 0) {
+            g_typed_mutation_audit_counters.blame_chain_complete_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
                             AuditOutcome::Success, target_node, r.notes_count, fiber_id,
                             r.notes_count);
@@ -448,6 +457,11 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
         // #1894: dual-record blame for forensic self-evo rollback trails.
         g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #1924: invariant fail under mutation ⇒ potential blame miss.
+        if (mutation_id != 0) {
+            g_typed_mutation_audit_counters.blame_propagation_miss_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         aura::core::provenance::record_macro_hygiene_provenance(
             target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
         capture_audit_event(mutation_id, "invariant-fail", MutationKind::Other, before_epoch,
@@ -529,6 +543,9 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.store(
         0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_chain_complete_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_propagation_miss_total.store(0,
+                                                                       std::memory_order_relaxed);
     g_typed_mutation_audit_counters.full_strategy_force_rollback_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.contextual_force_audit_total.store(0,

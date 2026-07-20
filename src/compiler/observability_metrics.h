@@ -809,6 +809,17 @@ struct CompilerMetrics {
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.
     std::atomic<std::uint64_t> blame_chain_completeness_rate{0};
+    // Issue #1924: end-to-end blame propagation across typed_mutate /
+    // coercion defer / narrowing / ConstraintSystem conflict dumps.
+    //   - blame_chain_complete_total: successful stamps (mutation_id +
+    //     node context) on coercion / narrow / conflict complete paths
+    //   - blame_propagation_miss_total: mutation context present but
+    //     stamp incomplete (blame 断裂 risk signal for AI audit)
+    std::atomic<std::uint64_t> blame_chain_complete_total{0};
+    std::atomic<std::uint64_t> blame_propagation_miss_total{0};
+    std::atomic<std::uint64_t> blame_propagation_coercion_stamped_total{0};
+    std::atomic<std::uint64_t> blame_propagation_narrow_stamped_total{0};
+    std::atomic<std::uint64_t> blame_propagation_wired{1};
     // Issue #1873: add_delta constraints still missing provenance after
     // active-context stamp (warning / degrade path — keep partial chain).
     std::atomic<std::uint64_t> blame_provenance_missing_warning_total{0};

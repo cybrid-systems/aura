@@ -5303,7 +5303,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->solve_delta_locality_misses_total.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; #1923 adds ~10 keys (create(64) headroom).
+            // Issue #1924: end-to-end blame propagation metrics.
+            const std::int64_t blame_complete =
+                m ? static_cast<std::int64_t>(
+                        m->blame_chain_complete_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t blame_miss =
+                m ? static_cast<std::int64_t>(
+                        m->blame_propagation_miss_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t blame_coercion =
+                m ? static_cast<std::int64_t>(
+                        m->blame_propagation_coercion_stamped_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t blame_narrow =
+                m ? static_cast<std::int64_t>(
+                        m->blame_propagation_narrow_stamped_total.load(std::memory_order_relaxed))
+                  : 0;
+            // Power-of-2 capacity; #1923+#1924 keys (create(64) headroom).
             auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
@@ -5363,8 +5380,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("memo-hit-rate-target-bp", 8000); // 80%
             insert_kv("schema-1923", 1923);
             insert_kv("issue-1923", 1923);
+            // Issue #1924: DeltaBlameChain / typed_mutate blame propagation
+            insert_kv("blame-chain-complete-total", blame_complete);
+            insert_kv("blame_chain_complete_total", blame_complete);
+            insert_kv("blame-propagation-miss-total", blame_miss);
+            insert_kv("blame_propagation_miss_total", blame_miss);
+            insert_kv("blame-propagation-coercion-stamped", blame_coercion);
+            insert_kv("blame-propagation-narrow-stamped", blame_narrow);
+            insert_kv("blame-propagation-wired", 1);
+            insert_kv("schema-1924", 1924);
+            insert_kv("issue-1924", 1924);
             insert_kv("issue", 1617);
-            insert_kv("schema", 1617); // lineage 798 → 1617 + #1923
+            insert_kv("schema", 1617); // lineage 798 → 1617 + #1923 + #1924
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

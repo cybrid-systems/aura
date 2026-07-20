@@ -283,9 +283,11 @@ public:
     // for incremental solve_delta paths (infer_flat_partial).
     void set_delta_record_mode(bool on) noexcept { delta_record_mode_ = on; }
     [[nodiscard]] bool delta_record_mode() const noexcept { return delta_record_mode_; }
-    // Issue #690: link cross-delta conflicts to the active mutation
-    // for blame-chain completeness metrics.
+    // Issue #690 / #1924: link cross-delta conflicts to the active mutation
+    // for blame-chain completeness metrics. typed_mutate / infer_flat_partial
+    // must set this before any add_delta / add_deferred_coercion.
     void set_active_mutation_id(std::uint64_t id) noexcept { active_mutation_id_ = id; }
+    [[nodiscard]] std::uint64_t active_mutation_id() const noexcept { return active_mutation_id_; }
     // Issue #1529: stamp occurrence predicate + primary affected node
     // onto subsequent add_delta constraints (and blame chain dump).
     void set_active_blame_context(std::uint32_t predicate_cond_node,
@@ -293,15 +295,24 @@ public:
         active_predicate_cond_node_ = predicate_cond_node;
         active_affected_node_ = affected_node;
     }
+    [[nodiscard]] std::uint32_t active_predicate_cond_node() const noexcept {
+        return active_predicate_cond_node_;
+    }
+    [[nodiscard]] std::uint32_t active_affected_node() const noexcept {
+        return active_affected_node_;
+    }
     void push_blame_affected_node(std::uint32_t node) noexcept {
         if (node != 0)
             blame_affected_nodes_.push_back(node);
     }
-    void clear_blame_context() noexcept {
+    // Issue #1924: clear active stamps but optionally keep last_blame_chain_
+    // dumpable for post-error diagnostics (preserve_last=true).
+    void clear_blame_context(bool preserve_last = false) noexcept {
         active_predicate_cond_node_ = 0;
         active_affected_node_ = 0;
         blame_affected_nodes_.clear();
-        last_blame_chain_ = {};
+        if (!preserve_last)
+            last_blame_chain_ = {};
     }
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return last_blame_chain_;
@@ -662,16 +673,28 @@ public:
                                              std::function<void()> on_conflict) {
         cs_.set_solve_delta_observability_hooks(std::move(on_snapshot), std::move(on_conflict));
     }
-    // Issue #690: mutation-scoped touched_roots seeding for
+    // Issue #690 / #1924: mutation-scoped touched_roots seeding for
     // infer_flat_partial structural typed mutation.
     void set_active_mutation_id(std::uint64_t id) noexcept { cs_.set_active_mutation_id(id); }
-    // Issue #1529: forward blame provenance context to ConstraintSystem.
+    [[nodiscard]] std::uint64_t active_mutation_id() const noexcept {
+        return cs_.active_mutation_id();
+    }
+    // Issue #1529 / #1924: forward blame provenance context to ConstraintSystem.
     void set_active_blame_context(std::uint32_t predicate_cond_node,
                                   std::uint32_t affected_node = 0) noexcept {
         cs_.set_active_blame_context(predicate_cond_node, affected_node);
     }
+    [[nodiscard]] std::uint32_t active_predicate_cond_node() const noexcept {
+        return cs_.active_predicate_cond_node();
+    }
+    [[nodiscard]] std::uint32_t active_affected_node() const noexcept {
+        return cs_.active_affected_node();
+    }
     void push_blame_affected_node(std::uint32_t node) noexcept {
         cs_.push_blame_affected_node(node);
+    }
+    void clear_blame_context(bool preserve_last = false) noexcept {
+        cs_.clear_blame_context(preserve_last);
     }
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return cs_.last_blame_chain();
