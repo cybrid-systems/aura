@@ -24,6 +24,7 @@ module;
 #include <mutex>
 #include <random>
 #include <thread>
+#include <unordered_map>
 
 module aura.compiler.evaluator;
 
@@ -2639,6 +2640,28 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     };
     static OrchSchedHolder orch_sched;
 
+    // Issue #1966: name→AgentHandle bookkeeping for MVP orch:spawn-agent /
+    // orch:agent-join. Formerly aura::orch::AgentRegistry (public deferred
+    // multi-agent surface); demoted to TU-local table so orch/ stays
+    // single-agent MVP only. Not a multi-agent coordination API.
+    struct OrchAgentNameTable {
+        aura::orch::AgentHandle& put(aura::orch::AgentHandle h) {
+            std::lock_guard lock(mu_);
+            auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
+            h.name = name;
+            agents_[name] = std::move(h);
+            return agents_[name];
+        }
+        [[nodiscard]] aura::orch::AgentHandle* find(const std::string& name) {
+            std::lock_guard lock(mu_);
+            auto it = agents_.find(name);
+            return it == agents_.end() ? nullptr : &it->second;
+        }
+        std::mutex mu_;
+        std::unordered_map<std::string, aura::orch::AgentHandle> agents_;
+    };
+    static OrchAgentNameTable orch_agent_names;
+
     add("orch:spawn-agent", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -2671,7 +2694,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto handle = aura::orch::spawn_agent_with_mailbox(
             *orch_sched.sched, aura::orch::AgentSpec{.name = name, .body = std::move(body)});
         if (handle.ok)
-            aura::orch::global_agent_registry().put(handle);
+            orch_agent_names.put(handle); // copy into table; keep local for response
 
         auto nidx = ev.string_heap_.size();
         ev.string_heap_.push_back(handle.name.empty() ? name : handle.name);
@@ -2710,9 +2733,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         aura::orch::AgentHandle* hp = nullptr;
         if (types::is_string(a[0])) {
             auto name = heap_str_from(ev.string_heap_, a[0]);
-            hp = aura::orch::global_agent_registry().find(name);
+            hp = orch_agent_names.find(name);
         }
-        // Join-by-id is intentionally not supported (registry is name-keyed).
+        // Join-by-id is intentionally not supported (name table is name-keyed).
         if (!hp) {
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(false)},

@@ -1,13 +1,15 @@
 // agent_spawn.h — Issue #1588 / #1879 / #1880: unified agent spawn.
 //
 // STATUS: Advanced / Experimental (Issue #1945, 2026-07 through 2026-10).
-// See docs/agent-orchestration-status.md for the full MVP vs deferred
-// scope + re-enable path. The single-agent MVP path (spawn +
-// join + send/recv + AgentHandle/AgentSpec + OrchModuleStats) is
-// production-safe. The multi-agent coordination surface
-// (AgentRegistry + conduct_parallel) is // DEFERRED per #1965
-// cycle 1 (commit bcb68c7c); tracked by
-// scripts/check_orch_mvp_scope.py.
+// See docs/agent-orchestration-status.md for MVP scope + status.
+// Single-agent MVP (spawn + join + send/recv + AgentHandle/AgentSpec +
+// OrchModuleStats) is production-safe.
+//
+// Issue #1966: multi-agent public surface removed from orch/:
+//   - AgentRegistry / global_agent_registry → evaluator-local name table
+//     (orch:spawn-agent / orch:agent-join bookkeeping only)
+//   - conduct_parallel → use serve::parallel_orch::parallel_intend
+// Linter: scripts/check_orch_mvp_scope.py --strict (reintroduction guard).
 // Header API under aura::orch; pairs with serve/parallel_orch and multi_fiber_mailbox.
 // Issue #1879: spawn body exit + join force StableNodeRef provenance refresh.
 // Issue #1880: ResourceQuota preflight (arena/mailbox/fibers) + try_acquire
@@ -26,11 +28,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -363,59 +363,11 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
     return m;
 }
 
-// Thin alias: parallel batch via serve::parallel_orch (counts as orch parallel).
-// DEFERRED (Issue #1965 cycle 1 — beyond MVP scope). New callers should use
-// serve::parallel_orch::parallel_intend directly. This alias exists only
-// for the legacy single-consumer in evaluator_primitives_agent.cpp; see
-// the orch-mvp-scope linter for the grandfather list.
-[[nodiscard]] inline serve::parallel_orch::BatchResult
-conduct_parallel(serve::Scheduler& sched, std::span<const serve::parallel_orch::TaskSpec> tasks,
-                 serve::parallel_orch::ParallelPolicy policy = {},
-                 serve::mf_mailbox::MultiFiberMailbox* mb = nullptr) {
-    g_orch_module_stats.parallel_batches.fetch_add(1, std::memory_order_relaxed);
-    return serve::parallel_orch::parallel_intend(sched, tasks, policy, mb);
-}
-
-// Named agent registry (process-local, for multi-agent coordination tests).
-// DEFERRED (Issue #1965 cycle 1 — beyond MVP scope). Single production
-// consumer in src/compiler/evaluator_primitives_agent.cpp (lines 2674,
-// 2713) is grandfathered. New callers should use serve::Fiber +
-// MultiFiberMailbox directly. See orch-mvp-scope linter for the list.
-class AgentRegistry {
-public:
-    AgentHandle& put(AgentHandle h) {
-        std::lock_guard lock(mu_);
-        auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
-        h.name = name;
-        agents_[name] = std::move(h);
-        return agents_[name];
-    }
-
-    [[nodiscard]] AgentHandle* find(const std::string& name) {
-        std::lock_guard lock(mu_);
-        auto it = agents_.find(name);
-        return it == agents_.end() ? nullptr : &it->second;
-    }
-
-    [[nodiscard]] std::size_t size() const {
-        std::lock_guard lock(mu_);
-        return agents_.size();
-    }
-
-    void clear() {
-        std::lock_guard lock(mu_);
-        agents_.clear();
-    }
-
-private:
-    mutable std::mutex mu_;
-    std::unordered_map<std::string, AgentHandle> agents_;
-};
-
-inline AgentRegistry& global_agent_registry() {
-    static AgentRegistry reg;
-    return reg;
-}
+// Note (Issue #1966): no multi-agent public API here.
+//   - Batch parallel work: serve::parallel_orch::parallel_intend (optionally
+//     bump g_orch_module_stats.parallel_batches at the call site).
+//   - Name→handle bookkeeping for Aura orch:spawn-agent / orch:agent-join
+//     lives in evaluator_primitives_agent.cpp (file-local table).
 
 } // namespace aura::orch
 

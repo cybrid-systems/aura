@@ -7,34 +7,26 @@
 //
 // This module is marked Advanced / Experimental for the next 2-3
 // months while the core mutation + hot-update MVP are being hardened.
-// New callers should prefer the MVP surface (spawn_agent_with_mailbox
-// + join_agent + agent_send + agent_recv + AgentHandle/AgentSpec).
-// The multi-agent coordination surface (AgentRegistry +
-// conduct_parallel) is // DEFERRED per #1965 cycle 1; see
-// docs/agent-orchestration-status.md for full status, deferred scope,
-// P0 stability guarantee, and re-enable path.
+// Callers should use the MVP surface (spawn_agent_with_mailbox +
+// join_agent + agent_send + agent_recv + AgentHandle/AgentSpec).
+// See docs/agent-orchestration-status.md for full status + P0 guarantee.
 //
 // ════════════════════════════════════════════════════════════════════
 //
-// Issue #1965 (Phase 3 scope deferral): MVP vs deferred scope.
-// MVP (single-agent primitives; safe to ship in production):
+// Issue #1965 / #1966: single-agent MVP only on the public orch surface.
+// MVP (safe to ship in production):
 //   - spawn_agent_with_mailbox  (orch/agent_spawn.h)
 //   - join_agent / join_agents
 //   - agent_send / agent_recv
 //   - AgentHandle / AgentSpec structs
 //   - OrchModuleStats (single-agent observability counters)
 //   - release_agent_memory_reservation
-// Deferred (multi-agent coordination; behind AURA_ORCH_DEFERRED guard or
-// tracked in scripts/check_orch_mvp_scope.py — see #1965 cycle 1 close
-// comment for the follow-up issue list):
-//   - AgentRegistry + global_agent_registry()   (named registry, single
-//     production consumer in evaluator_primitives_agent.cpp)
-//   - conduct_parallel                          (parallel batch alias;
-//     reach into serve::parallel_orch::parallel_intend directly)
+//   - parallel_intend / parallel_run (re-exports of serve::parallel_orch)
 //
-// New callers should use the MVP surface. Reach into deferred features
-// only when the orch-mvp-scope linter explicitly allows (test code + the
-// single evaluator_primitives_agent.cpp consumer are grandfathered).
+// Removed from public orch/ (#1966 — was // DEFERRED under #1965 cycle 1):
+//   - AgentRegistry / global_agent_registry — evaluator-local name table
+//   - conduct_parallel alias — use parallel_intend directly
+// Reintroduction is blocked by scripts/check_orch_mvp_scope.py --strict.
 
 #ifndef AURA_ORCH_ORCH_H
 #define AURA_ORCH_ORCH_H
@@ -44,7 +36,7 @@
 // Re-export serve orchestration building blocks into a single include surface.
 // Prefer:
 //   #include "orch/orch.h"
-// over reaching into serve/ for multi-agent work.
+// over reaching into serve/ for batch / mailbox work.
 
 namespace aura::orch {
 
@@ -60,7 +52,7 @@ using TaskResult = serve::parallel_orch::TaskResult;
 using BatchResult = serve::parallel_orch::BatchResult;
 using BatchStatus = serve::parallel_orch::BatchStatus;
 
-// parallel_intend is the primary batch API; conduct_parallel is the orch alias.
+// Primary batch API (re-export). No orch-specific parallel alias.
 using serve::parallel_orch::parallel_intend;
 using serve::parallel_orch::parallel_run;
 using serve::parallel_orch::sequential_run;
