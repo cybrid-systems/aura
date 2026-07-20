@@ -652,6 +652,11 @@ public:
     std::uint64_t predicate_memo_hits() const noexcept { return predicate_memo_hits_; }
     std::uint64_t predicate_memo_misses() const noexcept { return predicate_memo_misses_; }
     std::uint64_t predicate_memo_evictions() const noexcept { return predicate_memo_evictions_; }
+    // Issue #1872: partial LRU overflow evictions (vs epoch wholesale).
+    std::uint64_t predicate_memo_partial_evictions() const noexcept {
+        return predicate_memo_partial_evictions_;
+    }
+    std::size_t predicate_memo_size() const noexcept { return predicate_memo_.size(); }
     // Issue #434: per-node occurrence dirty recovery.
     // Returns the lifetime total of narrowing
     // re-analyses triggered by dirty If nodes.
@@ -826,15 +831,26 @@ public:
     // dirty mechanism: that's #262's job. We just want to skip
     // redundant work for the common case where the same
     // (string? x) predicate is analyzed N times in a row.
+    //
+    // Issue #1872: on size overflow (not epoch change) we do
+    // *partial* LRU eviction via last_used stamps instead of
+    // wholesale clear — preserves hot predicate entries under
+    // high-mutation workspaces that thrash the 4096 cap.
     struct PredicateMemoEntry {
         aura::ast::NodeId cond_id{};
         std::uint64_t epoch = 0;
         std::optional<OccurrenceInfoFlat> result; // nullopt = no narrowing found
+        std::uint64_t last_used = 0;              // #1872 LRU stamp (bounded_lru)
     };
     std::unordered_map<aura::ast::NodeId, PredicateMemoEntry> predicate_memo_;
     std::uint64_t predicate_memo_hits_ = 0;
     std::uint64_t predicate_memo_misses_ = 0;
-    std::uint64_t predicate_memo_evictions_ = 0; // cleared on epoch change
+    std::uint64_t predicate_memo_evictions_ = 0; // epoch clear + partial overflow events
+    // Issue #1872: overflow-only partial LRU eviction events
+    // (subset of predicate_memo_evictions_ that were not
+    // epoch wholesale clears).
+    std::uint64_t predicate_memo_partial_evictions_ = 0;
+    std::uint64_t predicate_memo_clock_ = 0; // monotonic access stamp for LRU
     // Issue #434: per-node occurrence dirty
     // tracking. The narrowing_dirty_recovery_total
     // counter bumps when the engine re-analyzes
@@ -847,16 +863,20 @@ public:
     // re-running narrowing analysis on dirty
     // nodes.
     std::uint64_t narrowing_dirty_recovery_ = 0;
-    // Issue #281 follow-up #5: bound the predicate memo. The
-    // memo is keyed by cond NodeId which is stable across
+    // Issue #281 follow-up #5 / #1872: bound the predicate memo.
+    // The memo is keyed by cond NodeId which is stable across
     // mutations within an epoch. Without a cap, a workspace
     // with many distinct (string? x) predicates across
-    // functions can grow the map unbounded. We evict the
-    // entire memo when it exceeds this threshold (cheap
-    // because the next call repopulates on demand).
+    // functions can grow the map unbounded. Pre-#1872 we
+    // cleared the entire memo when it exceeded this threshold;
+    // post-#1872 we LRU-evict down to half capacity so hot
+    // entries survive under high mutation.
     // 4096 entries ≈ a few hundred functions, well below
     // typical workspace sizes.
     static constexpr std::size_t PREDICATE_MEMO_MAX_ENTRIES = 4096;
+    // Issue #1872: when size > MAX, drop oldest until size <=
+    // MAX/2 (amortize O(n) victim scans across inserts).
+    void evict_predicate_memo_if_over_capacity();
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the
@@ -1085,6 +1105,8 @@ export struct TypeCheckResult {
     std::uint64_t predicate_memo_hits = 0;
     std::uint64_t predicate_memo_misses = 0;
     std::uint64_t predicate_memo_evictions = 0;
+    // Issue #1872: partial LRU overflow evictions only.
+    std::uint64_t predicate_memo_partial_evictions = 0;
 
     // Issue #386: narrowing observability (per-call
     // result). See InnerStats::narrowing_applied /
@@ -1197,6 +1219,8 @@ export struct TypeChecker {
         std::uint64_t predicate_memo_hits = 0;
         std::uint64_t predicate_memo_misses = 0;
         std::uint64_t predicate_memo_evictions = 0;
+        // Issue #1872: partial LRU overflow evictions.
+        std::uint64_t predicate_memo_partial_evictions = 0;
         // Issue #411 follow-up #1: per-symbol re-inference
         // path tracking. See InnerStats for the full
         // field-by-field rationale.

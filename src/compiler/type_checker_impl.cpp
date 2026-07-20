@@ -33,6 +33,8 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 // pointer, but the fetch_add on the atomic needs the
 // full type.
 #include "observability_metrics.h"
+// Issue #1872: shared LRU victim helper for predicate_memo_ overflow.
+#include "bounded_lru.h"
 
 namespace aura::compiler {
 
@@ -2761,7 +2763,18 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     // in infer_flat, the root's cache will be updated with the normalized type.
     // The cache read path skips TYPE_VAR entries, so stale vars cause a
     // re-compute which then stores the resolved type.
-    flat.set_type(id, result.index);
+    //
+    // Issue #1872: Variable nodes stamp (binding_gen(sym)+1) so
+    // try_cache can exact-compare after a global gen bump.
+    // +1 keeps 0 as the "no stamp" sentinel on the column
+    // (untouched / non-Variable). Stronger than pre-#1872
+    // "any non-zero stamp = hit" heuristic.
+    if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+        const auto stamp_bg = static_cast<std::uint32_t>(flat.binding_gen(v.sym_id)) + 1u;
+        flat.set_type_with_binding_gen(id, result.index, flat.type_cache_generation(), stamp_bg);
+    } else {
+        flat.set_type(id, result.index);
+    }
     flat.clear_dirty(id);
     return result;
 }
@@ -2975,48 +2988,31 @@ std::optional<TypeId> InferenceEngine::synthesize_flat_try_cache(FlatAST& flat, 
                 ++stats_.cache_hits;
                 return tid;
             }
-            // Issue #412 follow-up #1: per-binding gen
+            // Issue #412 follow-up #1 / #1872: per-binding gen
             // check. The global gen may have advanced (some
             // binding mutated, bumping the global gen) but
             // THIS cache entry's binding may not have
-            // changed. Check the per-binding gen: if the
-            // binding's gen matches, the entry is still
-            // fresh. This is finer-grained than the global
-            // gen alone — it rescues cache entries whose
-            // binding wasn't the one that mutated.
-            //
-            // The per-binding gen check is only meaningful
-            // when the cache entry has a binding context
-            // (type_cache_binding_gen_[id] != 0). For
-            // entries without a binding context (top-level
-            // expressions), only the global gen check
-            // applies (no per-binding gen to compare).
+            // changed. Issue #1872 strengthens the check:
+            // Variable nodes stamp (binding_gen(sym)+1) so
+            // 0 remains the "no stamp" sentinel; on hit we
+            // exact-compare against current (binding_gen+1).
+            // Pre-#1872 any non-zero stamp was treated as a
+            // hit (too optimistic — no compare).
             const auto cached_binding_gen = flat.type_cache_binding_gen(id);
             if (cached_binding_gen != 0) {
-                // Look up the sym_id of the binding this
-                // cache entry depends on. We don't have
-                // direct access here, but the per-binding
-                // gen stored at caching time tells us what
-                // gen the binding had then. Compare with
-                // the current per-binding gen. If they
-                // match, the binding hasn't changed since
-                // this entry was populated — entry is
-                // fresh regardless of the global gen
-                // bump.
-                // Issue #412 follow-up #1: this is a
-                // coarser check than the full per-binding
-                // gen (we don't have the sym_id of the
-                // binding at cache hit time without
-                // plumbing it through the cache entry).
-                // The follow-up will store sym_id per
-                // cache entry to enable exact per-binding
-                // gen comparison. For now, the
-                // per-binding gen just proves that the
-                // binding the entry depends on hasn't
-                // changed since caching.
-                ++stats_.per_binding_gen_hits;
-                ++stats_.cache_hits;
-                return tid;
+                const auto nv = flat.get(id);
+                if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM) {
+                    // +1 encoding matches synthesize_flat stamp.
+                    const auto cur_stamp =
+                        static_cast<std::uint32_t>(flat.binding_gen(nv.sym_id)) + 1u;
+                    if (cur_stamp == cached_binding_gen) {
+                        ++stats_.per_binding_gen_hits;
+                        ++stats_.cache_hits;
+                        return tid;
+                    }
+                }
+                // Non-Variable stamped entries or binding
+                // mismatch → fall through to stale_cache.
             }
             // Gen mismatched (or free_vars non-empty without
             // gen match) — treat as stale, recompute.
@@ -3856,11 +3852,10 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
             static_cast<struct CompilerMetrics*>(cs_.metrics_)
                 ->deep_narrow_refreshes_total.fetch_add(1, std::memory_order_relaxed);
         }
-        predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ};
-        if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
-            ++predicate_memo_evictions_;
-            predicate_memo_.clear();
-        }
+        // Issue #1872: stamp last_used for LRU partial eviction.
+        predicate_memo_[cond_id] =
+            PredicateMemoEntry{cond_id, cache_epoch_, occ, ++predicate_memo_clock_};
+        evict_predicate_memo_if_over_capacity();
 
         flat.clear_dirty_for(id, kOccurrenceBit);
         flat.clear_occurrence_stale(id);
@@ -3884,6 +3879,23 @@ InferenceEngine::reanalyze_occurrence_contexts(FlatAST& flat, StringPool& pool,
             on_selective_recheck_();
     }
     return refreshed;
+}
+
+// Issue #1872: partial LRU eviction when predicate_memo_ exceeds
+// PREDICATE_MEMO_MAX_ENTRIES. Pre-#1872 cleared the whole map on
+// overflow (hot entries lost under high-mutation thrash). Now we
+// drop oldest-by-last_used down to MAX/2 so subsequent inserts
+// amortize the O(n) victim scans and recent hits survive.
+void InferenceEngine::evict_predicate_memo_if_over_capacity() {
+    if (predicate_memo_.size() <= PREDICATE_MEMO_MAX_ENTRIES)
+        return;
+    const std::size_t target = PREDICATE_MEMO_MAX_ENTRIES / 2;
+    std::size_t n = 0;
+    util::evict_until(predicate_memo_, target, &n);
+    if (n > 0) {
+        ++predicate_memo_evictions_;
+        ++predicate_memo_partial_evictions_;
+    }
 }
 
 // Issue #518 P0 Phase 1: after occurrence refresh, ensure
@@ -4086,6 +4098,9 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
             memo_it->second.epoch == cache_epoch_) {
             occ = memo_it->second.result;
             ++predicate_memo_hits_;
+            // Issue #1872: touch LRU stamp so hot predicates survive
+            // partial overflow eviction.
+            memo_it->second.last_used = ++predicate_memo_clock_;
         } else {
             ++predicate_memo_misses_;
             ++stats_.narrowing_reanalyzed;
@@ -4098,11 +4113,11 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
             occ = analyze_predicate_flat(flat, pool, cond_id, reg_, meet_used, join_used);
             stats_.and_or_meet_uses += meet_used ? 1 : 0;
             stats_.and_or_join_uses += join_used ? 1 : 0;
-            predicate_memo_[cond_id] = PredicateMemoEntry{cond_id, cache_epoch_, occ};
-            if (predicate_memo_.size() > PREDICATE_MEMO_MAX_ENTRIES) {
-                ++predicate_memo_evictions_;
-                predicate_memo_.clear();
-            }
+            // Issue #1872: stamp last_used + partial LRU on overflow
+            // (replaces pre-#1872 wholesale clear when size > 4096).
+            predicate_memo_[cond_id] =
+                PredicateMemoEntry{cond_id, cache_epoch_, occ, ++predicate_memo_clock_};
+            evict_predicate_memo_if_over_capacity();
             // Issue #1455: after a forced re-walk from stale
             // provenance, clear historical stale flags so the next
             // resolve trusts the fresh analysis (and blame chain
@@ -5344,10 +5359,11 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // Issue #390: aggregate schema cache.
     stats_.schema_cache_lookups += r.schema_cache_lookups;
     stats_.schema_cache_hits += r.schema_cache_hits;
-    // Issue #281 / #340 / #1781: predicate_memo_ stats.
+    // Issue #281 / #340 / #1781 / #1872: predicate_memo_ stats.
     stats_.predicate_memo_hits += r.predicate_memo_hits;
     stats_.predicate_memo_misses += r.predicate_memo_misses;
     stats_.predicate_memo_evictions += r.predicate_memo_evictions;
+    stats_.predicate_memo_partial_evictions += r.predicate_memo_partial_evictions;
     last_coercions_ = std::move(r.coercions);
     // Issue #1407 R1: cache the outcome for next call. Only
     // cache when we have a stable epoch (cache_epoch_ > 0);
@@ -5411,10 +5427,11 @@ TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId roo
     // The engine is short-lived (per call) so we move-out here
     // to avoid an extra copy.
     result.coercions = engine.take_coercions();
-    // Issue #281: predicate memo stats from this call.
+    // Issue #281 / #1872: predicate memo stats from this call.
     result.predicate_memo_hits = engine.predicate_memo_hits();
     result.predicate_memo_misses = engine.predicate_memo_misses();
     result.predicate_memo_evictions = engine.predicate_memo_evictions();
+    result.predicate_memo_partial_evictions = engine.predicate_memo_partial_evictions();
     // Issue #386: narrowing observability
     // (per-call engine stats). The full #386 scope
     // wires narrowing into the let/if paths, this
@@ -5963,11 +5980,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // Issue #390: aggregate schema cache.
     stats_.schema_cache_lookups += es.schema_cache_lookups;
     stats_.schema_cache_hits += es.schema_cache_hits;
-    // Issue #281 / #340 / #1781: predicate_memo_ stats from
+    // Issue #281 / #340 / #1781 / #1872: predicate_memo_ stats from
     // the short-lived engine for this partial infer.
     stats_.predicate_memo_hits += engine.predicate_memo_hits();
     stats_.predicate_memo_misses += engine.predicate_memo_misses();
     stats_.predicate_memo_evictions += engine.predicate_memo_evictions();
+    stats_.predicate_memo_partial_evictions += engine.predicate_memo_partial_evictions();
     // Issue #411 follow-up #1: per_symbol / ancestor path
     // tracking already bumped on this infer_flat_partial
     // call (at the top of the function). The per-call
