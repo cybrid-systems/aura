@@ -127,7 +127,7 @@ def build_sbom(*, version: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate CycloneDX SBOM for Aura")
     parser.add_argument("--output", "-o", type=Path, default=ROOT / "dist" / "aura-sbom.json")
-    parser.add_argument("--version", default=os.environ.get("AURA_VERSION", "dev"))  # type: ignore[name-defined]
+    parser.add_argument("--version", default=os.environ.get("AURA_VERSION", "dev"))
     args = parser.parse_args()
 
     sbom = build_sbom(version=args.version)

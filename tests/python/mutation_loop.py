@@ -33,6 +33,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,7 +55,7 @@ class Mutation:
 
     name: str
     description: str
-    apply_fn: callable  # (code: str) → str | None (None if not applicable)
+    apply_fn: Callable[[str], str | None]  # None if mutation not applicable
 
 
 @dataclass

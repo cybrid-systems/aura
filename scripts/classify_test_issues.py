@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 # Use env var AURA_ROOT (set by caller) or auto-detect from /tmp/ placement.
-AURA_ROOT = Path(os.environ.get("AURA_ROOT", "/home/dev/code/aura"))
+AURA_ROOT = Path(os.environ.get("AURA_ROOT", str(Path(__file__).resolve().parents[1])))
 ISSUES_DIR = AURA_ROOT / "tests" / "issues"
 TESTS_DIR = AURA_ROOT / "tests"
 
