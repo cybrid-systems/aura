@@ -14,7 +14,7 @@
 //   AC5: 4 prod files wire restore_<event>_if_needed callsites
 //        (workspace_tree + fiber_mutation + primitives_types + aura_jit_bridge).
 //   AC6: 5 keys in query:mutation-boundary-coverage-stats primitive output
-//        (evaluator_primitives_obs_eval_05.cpp kv list).
+//        (evaluator_primitives_obs_eval.cpp kv list).
 //   AC7: 3 file-scope atomic fallbacks + 5 C accessors in aura_jit_bridge.cpp.
 //   AC8: hot-swap:fn callback wires panic restore after invocation
 //        (evaluator_primitives_types.cpp).
@@ -191,7 +191,7 @@ bool check_wires_ac5() {
 
 bool check_query_surface_ac6() {
     std::println("\n--- AC6: query:mutation-boundary-coverage-stats extended with 5 keys ---");
-    std::string prim = read_file("src/compiler/evaluator_primitives_obs_eval_05.cpp");
+    std::string prim = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     bool all = contains(prim, "\"post-steal-checkpoint-restore-total\"") &&
                contains(prim, "\"post-compact-checkpoint-restore-total\"") &&
                contains(prim, "\"post-hot-swap-checkpoint-restore-total\"") &&

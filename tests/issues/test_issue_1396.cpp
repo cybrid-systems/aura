@@ -8,8 +8,8 @@
 //   - 4 matching metric fields exist in
 //     src/compiler/observability_metrics.h:5232-5234, 5298
 //   - 2 query primitives read those fields in
-//     src/compiler/evaluator_primitives_obs_jit_01.cpp:850 +
-//     src/compiler/evaluator_primitives_obs_jit_03.cpp:692-700
+//     src/compiler/evaluator_primitives_obs_jit.cpp:850 +
+//     src/compiler/evaluator_primitives_obs_jit.cpp:692-700
 //   - **0 production call sites** — counters will always read 0 in
 //     a default-build, which makes the design look half-wired.
 //

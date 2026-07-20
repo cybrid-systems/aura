@@ -95,8 +95,8 @@ int main() {
         std::println("\n--- AC1: #1878 source surface ---");
         auto mut = read_first({"src/compiler/evaluator_primitives_mutate.cpp",
                                "../src/compiler/evaluator_primitives_mutate.cpp"});
-        auto obs = read_first({"src/compiler/evaluator_primitives_obs_eval_12.cpp",
-                               "../src/compiler/evaluator_primitives_obs_eval_12.cpp"});
+        auto obs = read_first({"src/compiler/evaluator_primitives_obs_eval.cpp",
+                               "../src/compiler/evaluator_primitives_obs_eval.cpp"});
         auto q = read_first({"src/compiler/evaluator_primitives_mutation.cpp",
                              "../src/compiler/evaluator_primitives_mutation.cpp"});
         auto hdr = read_first(

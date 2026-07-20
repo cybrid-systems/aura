@@ -418,8 +418,8 @@ static void run_1638_exit_compact() {
 static void run_1639_query_surface() {
     std::println("\n--- AC9 (#1638): query:mutation-boundary-coverage-stats extended ---");
     std::string prim;
-    for (const char* p : {"src/compiler/evaluator_primitives_obs_eval_05.cpp",
-                          "../src/compiler/evaluator_primitives_obs_eval_05.cpp"}) {
+    for (const char* p : {"src/compiler/evaluator_primitives_obs_eval.cpp",
+                          "../src/compiler/evaluator_primitives_obs_eval.cpp"}) {
         prim = read_file(p);
         if (!prim.empty())
             break;

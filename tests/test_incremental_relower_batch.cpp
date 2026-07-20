@@ -178,7 +178,7 @@ static void run_1639() {
     // AC5: query:incremental-relower-stats primitive extended
     {
         std::println("\n--- AC5: query:incremental-relower-stats extended ---");
-        std::string prim = read_file("src/compiler/evaluator_primitives_obs_eval_05.cpp");
+        std::string prim = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
         bool all = contains(prim, "\"full-relower-count\"") &&
                    contains(prim, "\"dirty-block-ratio-numerator-total\"") &&
                    contains(prim, "\"dirty-block-ratio-denominator-total\"") &&
