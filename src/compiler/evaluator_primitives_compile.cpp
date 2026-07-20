@@ -2,6 +2,10 @@
 // Consolidated from evaluator_primitives_compile_00..07.cpp (#1944 acceptance: split files
 // reduced). aura.compiler.evaluator module partition; registered via
 // evaluator_primitives_registry.cpp.
+//
+// Issue #1968: three eda:* adds live in register_compile_p34/p35 (verification
+// feedback + commercial stub + SV self-evolution demo). Gated by AURA_ENABLE_EDA
+// together with register_eda_primitives (see docs/eda.md).
 
 module;
 
@@ -12,6 +16,10 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "security_capabilities.h"
+
+#ifndef AURA_ENABLE_EDA
+#define AURA_ENABLE_EDA 1
+#endif
 
 module aura.compiler.evaluator;
 
@@ -3327,6 +3335,7 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         });
     });
 
+#if AURA_ENABLE_EDA
     // Issue #693: (eda:run-verification-feedback report-kind report-text)
     // — parse mock coverage/assert report, apply targeted SV mutate,
     // re-emit via hardware backend hook, and bump closed-loop metrics.
@@ -3335,6 +3344,7 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // hardware hooks + reemit) under try_acquire + try/catch. Pre-#1897
     // used RAII Guard with try only around the hardware hook — dirty
     // bits could still commit if a throw escaped elsewhere.
+    // Issue #1968: commercial EDA vertical (AURA_ENABLE_EDA).
     add("eda:run-verification-feedback", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
@@ -3447,11 +3457,15 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
             return make_bool(true);
         });
     });
+#endif // AURA_ENABLE_EDA
 }
 
 // Issue #909 compile part 35 (orig 2736-2875)
 void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
-
+#if !AURA_ENABLE_EDA
+    (void)add;
+    (void)ev;
+#else
     // Issue #698: (eda:run-commercial-simulator-stub simulator node-id)
     // — re-emit SV for node, validate emit, return commercial do-file stub.
     //
@@ -3459,6 +3473,7 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
     // throwable body (reemit_sv_node + on_structural_mutation) under
     // MutationBoundaryGuard::try_acquire + try/catch via
     // run_compile_dirty_under_guard (stale-IR prevention metrics).
+    // Issue #1968: commercial EDA vertical (AURA_ENABLE_EDA).
     add("eda:run-commercial-simulator-stub", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_bool(false);
@@ -3672,6 +3687,7 @@ void CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {
         }
         return make_int(static_cast<std::int64_t>(successes));
     });
+#endif // AURA_ENABLE_EDA
 }
 
 // Issue #909 compile part 36 (orig 2876-2965)

@@ -184,6 +184,11 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 # -DAURA_ENABLE_TUI=OFF to skip registration (see docs/tui.md).
 option(AURA_ENABLE_TUI "Register tui:* domain primitives (UI vertical, #1967)" ON)
 
+# Issue #1968: eda:* commercial EDA vertical (deferred). Default ON for
+# closed-loop SV / hardware-feedback tests; slim builds:
+# -DAURA_ENABLE_EDA=OFF (see docs/eda.md).
+option(AURA_ENABLE_EDA "Register eda:* domain primitives (EDA vertical, #1968)" ON)
+
 # GCC 16 ICE workaround (Issue #475): ealias pass ICE on memcpy-heavy TUs at
 # -O2/-O3 (tree-ssa-structalias / nonnull_arg_p). Track:
 #   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=122051
@@ -199,18 +204,28 @@ endif()
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
 
-# Issue #1967: per-source AURA_ENABLE_TUI (avoids PUBLIC recompile of the
-# entire aura_test_objects graph when the flag flips). Value is 1 or 0 so
-# #if AURA_ENABLE_TUI works in evaluator_primitives_tui.cpp.
+# Issue #1967 / #1968: per-source commercial vertical flags (avoids PUBLIC
+# recompile of the entire aura_test_objects graph when a flag flips).
 if(AURA_ENABLE_TUI)
     set(_AURA_ENABLE_TUI_VAL 1)
 else()
     set(_AURA_ENABLE_TUI_VAL 0)
 endif()
+if(AURA_ENABLE_EDA)
+    set(_AURA_ENABLE_EDA_VAL 1)
+else()
+    set(_AURA_ENABLE_EDA_VAL 0)
+endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
+# eda:* lives in evaluator_primitives_eda.cpp + 3 adds in compile.cpp (p34/p35).
+set_source_files_properties(
+    src/compiler/evaluator_primitives_eda.cpp
+    src/compiler/evaluator_primitives_compile.cpp
+    PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL}")
 message(STATUS "tui:* domain: AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL} (#1967)")
+message(STATUS "eda:* domain: AURA_ENABLE_EDA=${_AURA_ENABLE_EDA_VAL} (#1968)")
 
 # C++26 Contracts — use the native trailing `pre`/`post` function specifiers
 # and the `contract_assert()` statement. GCC 16.1 supports all three (and the

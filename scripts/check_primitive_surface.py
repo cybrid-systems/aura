@@ -90,7 +90,8 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 #   - channel:   cross-fiber messaging (agent framework, keep).
 #   - tui:       terminal UI (UI vertical) — KEEP deferred, #1967: gated by
 #                AURA_ENABLE_TUI + COMMERCIAL_DOMAIN_BUDGETS["tui:"].
-#   - eda:       electronic design automation (commercial vertical, defer).
+#   - eda:       electronic design automation — KEEP deferred, #1968: gated by
+#                AURA_ENABLE_EDA + COMMERCIAL_DOMAIN_BUDGETS["eda:"].
 #   - auto-evolve-: self-evolution AI feature (commercial vertical, defer).
 #   - git-:      git integration (integration, defer).
 #   - terminal:  terminal ops (UI/integration, defer).
@@ -120,6 +121,7 @@ DOMAIN_STATUS: dict[str, str] = {
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "tui:": 21,  # #1967 — terminal UI vertical; AURA_ENABLE_TUI build flag
+    "eda:": 13,  # #1968 — EDA vertical; AURA_ENABLE_EDA build flag
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -322,8 +324,8 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
         b = breakdown[p]
         print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
 
-    # Issue #1967: commercial UI / vertical budgets (kept deferred domains).
-    print("  commercial domain budgets (Issue #1967):")
+    # Issue #1967 / #1968: commercial UI / vertical budgets (kept deferred domains).
+    print("  commercial domain budgets (Issue #1967 / #1968):")
     commercial_counts = commercial_domain_counts(all_names)
     for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
         budget = COMMERCIAL_DOMAIN_BUDGETS[p]
