@@ -78,6 +78,19 @@
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
                 "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
             }
+        },
+        {
+            "name": "coverage",
+            "displayName": "LLVM source-based coverage (Clang) \u2014 Issue #1933",
+            "description": "Clang -fprofile-instr-generate -fcoverage-mapping. Report via ./build.py coverage --html. Binary dir: build_coverage.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build_coverage",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "AURA_ENABLE_COVERAGE": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -104,6 +117,10 @@
         {
             "name": "repro",
             "configurePreset": "repro"
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage"
         }
     ],
     "testPresets": [
