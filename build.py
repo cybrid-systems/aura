@@ -724,9 +724,11 @@ def test_typecheck():
 
 
 def test_bench():
-    """Benchmark 基线 + 回归检测（#1569: strict SLO gate).
+    """Benchmark 基线 + 回归检测（#1569 / #1936: statistical SLO gate).
 
     Path map (#1570): this is the benchmark gate — NOT src/test/benchmark_gate.ixx.
+    Forwards argv after `bench` / `test bench` to tests/bench/benchmark.py
+    (e.g. --strict --tolerance 5 --runs 3 --rationale "...").
     """
     print(f"{B}═══ Benchmark ═══{N}")
     if not AURA.exists():
@@ -734,6 +736,13 @@ def test_bench():
         return 1
     env = {**os.environ, "AURA_BIN": str(AURA)}
     args = [sys.executable, str(BENCH)]
+    # Forward flags after the "bench" token (or whole argv for `test bench ...`).
+    # Issue #1936: --tolerance / --runs / --mode / --rationale.
+    if "bench" in sys.argv:
+        i = sys.argv.index("bench")
+        fwd = sys.argv[i + 1 :]
+    else:
+        fwd = [a for a in sys.argv[2:] if a != "bench"]
     # Issue #1569: hard SLO gate when AURA_CI_STRICT_BENCH=1 or --strict.
     strict = (
         os.environ.get("AURA_CI_STRICT_BENCH", "0").strip()
@@ -745,20 +754,20 @@ def test_bench():
             "YES",
         )
         or "--strict" in sys.argv
+        or "--check" in sys.argv
     )
-    if strict:
+    if strict and "--strict" not in fwd and "--check" not in fwd:
         args.append("--strict")
+    args.extend(fwd)
+    if strict:
         print("  mode: STRICT SLO gate (AURA_CI_STRICT_BENCH / --strict)")
     else:
-        # Soft: default run prints regression warnings; hard-fail only
-        # functional FAIL cases. Use --strict / AURA_CI_STRICT_BENCH=1
-        # for CI hard exit on performance regression.
         print("  mode: soft (warn on regression; AURA_CI_STRICT_BENCH=1 for hard fail)")
     return run(args, env=env)
 
 
 def cmd_bench():
-    """Issue #1569: ./build.py bench [--strict] — run benchmark SLO gate."""
+    """Issue #1569 / #1936: ./build.py bench [--strict] [--tolerance N] [--runs N]."""
     return test_bench()
 
 

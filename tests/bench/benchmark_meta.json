@@ -1,0 +1,22 @@
+{
+  "schema": 1936,
+  "issue": 1936,
+  "description": "Per-benchmark SLO metadata for relative/statistical gate",
+  "defaults": {
+    "tolerance_percent": 20,
+    "min_delta_ms": 20,
+    "catastrophic_ratio": 3.0,
+    "owner": "compiler"
+  },
+  "cases": {
+    "literal_int": {
+      "tolerance_percent": 25,
+      "description": "Cold-start sensitive; allow more relative noise",
+      "owner": "runtime"
+    },
+    "add": {
+      "description": "Micro eval path",
+      "owner": "evaluator"
+    }
+  }
+}
