@@ -5809,6 +5809,19 @@ public:
     // and cow_boundary_pinned_refs_. Called from fiber steal / Guard
     // dtor / re_pin_cow_children_from_snapshot. Returns # refreshed.
     std::size_t restamp_pinned_stable_refs() noexcept;
+    // Issue #1912: public batch APIs for AI multi-round COW/sub-workspace
+    // StableNodeRef hygiene. refresh_stable_refs_batch validates/refreshes
+    // every ref in the span (optionally registry-pins for COW survival).
+    // pin_stable_refs_for_cow_boundary is pin-only (no refresh).
+    // children_stable_batch returns children as pinned StableNodeRefs.
+    // Metrics: stable_ref_batch_refresh_total, cow_pinned_across_layers_total,
+    // stale_ref_prevented_total, batch_refresh_latency_us_max (p99 proxy).
+    std::size_t refresh_stable_refs_batch(std::span<aura::ast::FlatAST::StableNodeRef> refs,
+                                          bool auto_pin = true) noexcept;
+    void pin_stable_refs_for_cow_boundary(
+        std::span<const aura::ast::FlatAST::StableNodeRef> refs) noexcept;
+    [[nodiscard]] std::vector<aura::ast::FlatAST::StableNodeRef>
+    children_stable_batch(aura::ast::NodeId id) noexcept;
     // Issue #1497: site tags for unified auto-restamp hooks on
     // GC compact / post-steal / safepoint / yield-resume paths.
     enum class StableRefRefreshSite : std::uint8_t {
@@ -11882,12 +11895,10 @@ public:
             return;
         atomic_batch_domain_.pinned_refs_total.fetch_add(atomic_batch_pinned_refs_.size(),
                                                          std::memory_order_relaxed);
-        // Issue #1500: full-provenance restamp (gen/wrap/cow/mutation_id),
-        // not gen-only — matches refresh_if_stale semantics.
-        for (auto& ref : atomic_batch_pinned_refs_) {
-            if (ref.id < workspace_flat_->size())
-                (void)ref.refresh_if_stale(*workspace_flat_);
-        }
+        // Issue #1500 / #1912: full-provenance batch restamp with metrics
+        // (gen/wrap/cow/mutation_id) — no re-pin (already in atomic list).
+        if (!atomic_batch_pinned_refs_.empty())
+            (void)refresh_stable_refs_batch(atomic_batch_pinned_refs_, /*auto_pin=*/false);
     }
     void rollback_atomic_batch_pinning() noexcept {
         atomic_batch_pinned_refs_.clear();

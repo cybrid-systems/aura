@@ -16,6 +16,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include <cassert>
+#include <chrono>
 #include <memory> // Issue #1880: unique_ptr for orch agent body guard
 
 module aura.compiler.evaluator;
@@ -355,13 +356,109 @@ void aura::compiler::Evaluator::checkpoint_yield_boundary(bool at_mutation_bound
 }
 
 
-// Issue #1500 / #1497 / #1564: batch refresh_if_stale over atomic-batch +
+// Issue #1912: record batch-refresh latency + success/fail into CompilerMetrics.
+// Shared by refresh_stable_refs_batch and restamp_pinned_stable_refs (Guard exit).
+static void record_stable_ref_batch_metrics(CompilerMetrics* m, std::size_t ok,
+                                            std::size_t stale_prevented, std::size_t fail,
+                                            std::uint64_t latency_us) noexcept {
+    if (!m)
+        return;
+    if (ok > 0)
+        m->stable_ref_batch_refresh_total.fetch_add(ok, std::memory_order_relaxed);
+    if (stale_prevented > 0)
+        m->stale_ref_prevented_total.fetch_add(stale_prevented, std::memory_order_relaxed);
+    if (fail > 0)
+        m->batch_refresh_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    m->batch_refresh_calls_total.fetch_add(1, std::memory_order_relaxed);
+    m->batch_refresh_latency_us_total.fetch_add(latency_us, std::memory_order_relaxed);
+    // p99 proxy: track max latency (same approach as self-evo hold max).
+    auto prev = m->batch_refresh_latency_us_max.load(std::memory_order_relaxed);
+    while (latency_us > prev && !m->batch_refresh_latency_us_max.compare_exchange_weak(
+                                    prev, latency_us, std::memory_order_relaxed)) {
+    }
+}
+
+// Issue #1912: public batch refresh for AI-held StableNodeRef spans.
+// auto_pin=true: pin_for_cow + registry pin before refresh so refs survive
+// subsequent COW / Guard / steal. Returns # of successfully refreshed refs.
+std::size_t aura::compiler::Evaluator::refresh_stable_refs_batch(
+    std::span<aura::ast::FlatAST::StableNodeRef> refs, bool auto_pin) noexcept {
+    const auto t0 = std::chrono::steady_clock::now();
+    auto* ws = workspace_flat();
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    if (!ws) {
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        record_stable_ref_batch_metrics(m, 0, 0, refs.size(), us);
+        return 0;
+    }
+    std::size_t ok = 0;
+    std::size_t stale_prevented = 0;
+    std::size_t fail = 0;
+    for (auto& ref : refs) {
+        if (auto_pin) {
+            ref.pin_for_cow();
+            pin_stable_ref_for_cow_boundary(ref);
+            if (m)
+                m->cow_pinned_across_layers_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        const bool was_valid = ref.is_valid_in(*ws);
+        if (ref.refresh_if_stale(*ws)) {
+            if (auto_pin)
+                ref.boundary_pinned = true;
+            ++ok;
+            if (!was_valid)
+                ++stale_prevented;
+        } else {
+            ++fail;
+        }
+    }
+    const auto us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    record_stable_ref_batch_metrics(m, ok, stale_prevented, fail, us);
+    return ok;
+}
+
+// Issue #1912: batch registry-pin only (no refresh). Each ref is copied into
+// cow_boundary_pinned_refs_ with boundary_pinned=true.
+void aura::compiler::Evaluator::pin_stable_refs_for_cow_boundary(
+    std::span<const aura::ast::FlatAST::StableNodeRef> refs) noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    for (const auto& ref : refs) {
+        pin_stable_ref_for_cow_boundary(ref);
+        if (m)
+            m->cow_pinned_across_layers_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #1912: children as StableNodeRef + registry pin for COW survival.
+std::vector<aura::ast::FlatAST::StableNodeRef>
+aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept {
+    std::vector<aura::ast::FlatAST::StableNodeRef> out;
+    auto* ws = workspace_flat();
+    if (!ws)
+        return out;
+    out = ws->children_stable(id);
+    if (out.empty())
+        return out;
+    pin_stable_refs_for_cow_boundary(out);
+    for (auto& r : out)
+        r.pin_for_cow();
+    return out;
+}
+
+// Issue #1500 / #1497 / #1564 / #1912: batch refresh_if_stale over atomic-batch +
 // COW-boundary pinned StableNodeRefs. Restamps full provenance
 // (gen/wrap/cow/mutation_id/subtree_gen) while preserving fiber_id,
 // workspace_id, and boundary_pinned. Called from fiber steal, Guard
 // dtor, re_pin, GC safepoint, and yield-resume (#1497 unified hooks).
 // #1564: also bumps process-wide provenance hot_path_auto_refresh counters.
+// #1912: also records stable_ref_batch_refresh_total / stale_ref_prevented.
 std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
+    const auto t0 = std::chrono::steady_clock::now();
     auto* ws = workspace_flat();
     if (!ws)
         return 0;
@@ -374,6 +471,7 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     }
     std::size_t refreshed = 0;
     std::size_t boundary_refreshed = 0;
+    std::size_t fail = 0;
     auto restamp_one = [&](aura::ast::FlatAST::StableNodeRef& ref) {
         if (current_fiber != 0 && ref.fiber_id != 0 && ref.fiber_id != current_fiber &&
             ref.boundary_pinned) {
@@ -390,6 +488,8 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
             ++refreshed;
             if (was_pinned && !was_valid)
                 ++boundary_refreshed;
+        } else {
+            ++fail;
         }
     };
     for (auto& ref : atomic_batch_pinned_refs_)
@@ -398,6 +498,15 @@ std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
         std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
         for (auto& ref : cow_boundary_pinned_refs_)
             restamp_one(ref);
+    }
+    // Issue #1912: Guard / steal auto-refresh surfaces batch metrics.
+    {
+        const auto us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        record_stable_ref_batch_metrics(static_cast<CompilerMetrics*>(compiler_metrics_), refreshed,
+                                        boundary_refreshed, fail, us);
     }
     if (refreshed > 0) {
         bump_stable_ref_steal_auto_refresh(refreshed);

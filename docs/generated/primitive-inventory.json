@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 521,
-  "frozen_count": 450,
+  "frozen_count": 451,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -386,6 +386,7 @@
     "query:stable-ref-stats-hash",
     "query:stable-ref-sv-scale-stats",
     "query:stable-ref-workspace-tree-stats",
+    "query:stable-refs-batch-health",
     "query:stale-ref-stats",
     "query:stats-builder-refactor-stats",
     "query:stdlib-production-review-stats",
@@ -988,7 +989,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 427,
+  "stats_count": 428,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1356,6 +1357,7 @@
     "query:stable-ref-stats-hash",
     "query:stable-ref-sv-scale-stats",
     "query:stable-ref-workspace-tree-stats",
+    "query:stable-refs-batch-health",
     "query:stale-ref-stats",
     "query:stats-builder-refactor-stats",
     "query:stdlib-production-review-stats",

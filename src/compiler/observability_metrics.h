@@ -928,6 +928,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_flat_pin_total{0};
     // Issue #1909: (query:self-evo-stats) unified health dashboard hits.
     std::atomic<std::uint64_t> self_evo_unified_health_queries_total{0};
+    // Issue #1912: StableNodeRef batch refresh/pin across COW + AI multi-round.
+    // stable_ref_batch_refresh_total: # of refs successfully validated/refreshed
+    //   via refresh_stable_refs_batch / Guard restamp / atomic-batch commit.
+    // cow_pinned_across_layers_total: # of refs registry-pinned via batch pin APIs.
+    // stale_ref_prevented_total: # of previously-invalid refs restamped to live.
+    // batch_refresh_latency_us_max: max batch-call latency (us) ≈ p99 proxy.
+    std::atomic<std::uint64_t> stable_ref_batch_refresh_total{0};
+    std::atomic<std::uint64_t> cow_pinned_across_layers_total{0};
+    std::atomic<std::uint64_t> stale_ref_prevented_total{0};
+    std::atomic<std::uint64_t> batch_refresh_calls_total{0};
+    std::atomic<std::uint64_t> batch_refresh_fail_total{0};
+    std::atomic<std::uint64_t> batch_refresh_latency_us_total{0};
+    std::atomic<std::uint64_t> batch_refresh_latency_us_max{0};
+    std::atomic<std::uint64_t> stable_refs_batch_health_queries_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
