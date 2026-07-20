@@ -83,8 +83,8 @@ static std::int64_t href(CompilerService& cs, const char* q, const char* key) {
 static void run_1842_source() {
     std::println("\n--- AC1 (#1842): Guard + try/catch on compact-env-frames ---");
     std::string src;
-    for (const char* p : {"src/compiler/evaluator_primitives_compile_07.cpp",
-                          "../src/compiler/evaluator_primitives_compile_07.cpp"}) {
+    for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                          "../src/compiler/evaluator_primitives_compile.cpp"}) {
         src = read_file(p);
         if (!src.empty())
             break;

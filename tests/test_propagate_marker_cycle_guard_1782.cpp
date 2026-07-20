@@ -58,8 +58,8 @@ int main() {
     // ── AC1: source ──
     {
         std::println("\n--- AC1: source has visited-set guard (#1782) ---");
-        auto src = read_first({"src/compiler/evaluator_primitives_compile_05.cpp",
-                               "../src/compiler/evaluator_primitives_compile_05.cpp"});
+        auto src = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                               "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!src.empty(), "read compile_05.cpp");
         CHECK(src.find("#1782") != std::string::npos, "cites #1782");
         auto pos = src.find("\"syntax:propagate-marker\"");

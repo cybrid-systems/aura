@@ -338,8 +338,8 @@ static void run_1772_from_feedback() {
     {
         std::println("\n--- AC1/AC2 (#1772): source + metric ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_04.cpp",
-                              "../src/compiler/evaluator_primitives_compile_04.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;

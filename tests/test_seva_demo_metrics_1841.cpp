@@ -41,8 +41,8 @@ int main() {
     {
         std::println("\n--- AC1/AC2: run-demo-with-metrics safety wiring ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_07.cpp",
-                              "../src/compiler/evaluator_primitives_compile_07.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;

@@ -68,10 +68,10 @@ int main() {
         CHECK(mh.find("snapshot_failures_total") != std::string::npos, "metric field");
         CHECK(mh.find("#1856") != std::string::npos, "metrics cites #1856");
 
-        for (const char* rel : {"src/compiler/evaluator_primitives_compile_01.cpp",
-                                "src/compiler/evaluator_primitives_compile_02.cpp",
-                                "src/compiler/evaluator_primitives_compile_03.cpp",
-                                "src/compiler/evaluator_primitives_compile_06.cpp"}) {
+        for (const char* rel : {"src/compiler/evaluator_primitives_compile.cpp",
+                                "src/compiler/evaluator_primitives_compile.cpp",
+                                "src/compiler/evaluator_primitives_compile.cpp",
+                                "src/compiler/evaluator_primitives_compile.cpp"}) {
             std::string p = rel;
             auto alt = std::string("../") + rel;
             auto src = read_first({p.c_str(), alt.c_str()});

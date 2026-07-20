@@ -60,8 +60,8 @@ int main() {
     // ── AC1: source unpack ──
     {
         std::println("\n--- AC1: compile_05 unpack via uint32_t ---");
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_05.cpp",
-                                "../src/compiler/evaluator_primitives_compile_05.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_05.cpp");
         CHECK(prim.find("#1784") != std::string::npos, "cites #1784");
         auto pos = prim.find("\"compile:inline-pass-stats\"");

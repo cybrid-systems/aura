@@ -69,8 +69,8 @@ int main() {
     // ── AC2: compile_07 wiring ──
     {
         std::println("\n--- AC2: SEVA sites use snapshot / #1840 ---");
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_07.cpp",
-                                "../src/compiler/evaluator_primitives_compile_07.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_07.cpp");
         CHECK(prim.find("#1840") != std::string::npos, "cites #1840");
         auto fix = prim.find("\"seva:fix-reset-bugs\"");

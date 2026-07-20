@@ -62,8 +62,8 @@ int main() {
     // ── AC1: source ──
     {
         std::println("\n--- AC1: source has visited-set on ancestor walk ---");
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_05.cpp",
-                                "../src/compiler/evaluator_primitives_compile_05.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_05.cpp");
         CHECK(prim.find("#1786") != std::string::npos, "cites #1786");
         auto pos = prim.find("add(\"compile:per-symbol-dirty-stats\"");

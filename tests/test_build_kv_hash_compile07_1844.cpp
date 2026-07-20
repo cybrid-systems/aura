@@ -40,8 +40,8 @@ int main() {
     {
         std::println("\n--- AC1/AC2: compile_07 uses shared build_kv_hash ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_07.cpp",
-                              "../src/compiler/evaluator_primitives_compile_07.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;
@@ -60,9 +60,9 @@ int main() {
         }
         CHECK(calls >= 7, std::format("build_kv_hash used enough times (got {})", calls));
 
-        auto c05 = read_file("src/compiler/evaluator_primitives_compile_05.cpp");
+        auto c05 = read_file("src/compiler/evaluator_primitives_compile.cpp");
         if (c05.empty())
-            c05 = read_file("../src/compiler/evaluator_primitives_compile_05.cpp");
+            c05 = read_file("../src/compiler/evaluator_primitives_compile.cpp");
         CHECK(!c05.empty(), "read compile_05.cpp");
         CHECK(c05.find("EvalValue build_kv_hash") != std::string::npos, "definition in compile_05");
         CHECK(c05.find("#1844") != std::string::npos, "compile_05 cites #1844");

@@ -76,8 +76,8 @@ int main() {
         CHECK(mut.find("bump_apply_mutation") != std::string::npos, "has bump helpers");
 
         std::string prim;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_06.cpp",
-                              "../src/compiler/evaluator_primitives_compile_06.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             prim = read_file(p);
             if (!prim.empty())
                 break;

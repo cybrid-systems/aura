@@ -40,14 +40,6 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_persist.cpp
     src/compiler/evaluator_primitives_ast.cpp
     src/compiler/evaluator_primitives_compile.cpp
-    src/compiler/evaluator_primitives_compile_00.cpp
-    src/compiler/evaluator_primitives_compile_01.cpp
-    src/compiler/evaluator_primitives_compile_02.cpp
-    src/compiler/evaluator_primitives_compile_03.cpp
-    src/compiler/evaluator_primitives_compile_04.cpp
-    src/compiler/evaluator_primitives_compile_05.cpp
-    src/compiler/evaluator_primitives_compile_06.cpp
-    src/compiler/evaluator_primitives_compile_07.cpp
     src/compiler/evaluator_primitives_observability.cpp
     src/compiler/evaluator_primitives_stdlib_review.cpp
     src/compiler/evaluator_primitives_obs_eval_00.cpp

@@ -188,8 +188,8 @@ static void run_1845_add_guard() {
     {
         std::println("\n--- AC1: Guard + try/catch on per-defuse-index-add ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_06.cpp",
-                              "../src/compiler/evaluator_primitives_compile_06.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;
@@ -264,8 +264,8 @@ static void run_1846_tracker_lock() {
         CHECK(h.find("add_caller") != std::string::npos, "add_caller present");
 
         std::string prim;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_06.cpp",
-                              "../src/compiler/evaluator_primitives_compile_06.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             prim = read_file(p);
             if (!prim.empty())
                 break;

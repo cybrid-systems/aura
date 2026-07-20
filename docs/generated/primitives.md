@@ -28,7 +28,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -64,7 +64,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 ## Mutate: (6)
 
 - `mutate:extract-function` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:query-and-replace` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
@@ -136,30 +136,30 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Compile: (24)
 
-- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-symbol-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-dirty-stats` *[mutation-safety]* **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## C FFI (15)
 
@@ -181,7 +181,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Core builtins (260)
 
-- `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `api-reference` *[mutation-safety]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -408,7 +408,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `suggest-annotation-at` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
-- `syntax-marker` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `sys-open` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `sys-read` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `sys-write` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
@@ -488,7 +488,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Eda: (13)
 
-- `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:ingest-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:invoke-simulator` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
@@ -496,9 +496,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `eda:parse-netlist` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-verification-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:query-nodes` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:run-hardware-feedback` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:validate-sv-emit-roundtrip` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 
@@ -517,7 +517,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Evaluator: (1)
 
-- `evaluator:compact-env-frames` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `evaluator:compact-env-frames` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Ffi: (1)
 
@@ -529,9 +529,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Hygiene: (3)
 
-- `hygiene:allow-macro-mutate?` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `hygiene:protected?` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `hygiene:set-allow-macro-mutate!` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:allow-macro-mutate?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:protected?` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:set-allow-macro-mutate!` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Ir-Cache-V2: (2)
 
@@ -596,11 +596,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Seva: (5)
 
-- `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:achieve-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:approve-mutation` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:fix-reset-bugs` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:generate-regression` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:run-demo-with-metrics` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Stats: (4)
 
@@ -622,10 +622,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Syntax: (4)
 
-- `syntax:get-provenance` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:propagate-marker` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax:get-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Terminal: (7)
 
@@ -667,13 +667,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Verify: (7)
 
-- `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `verify:coverage-holes` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-formal-cex` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `verify:suggest-constraint-refine` *[core]* — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:coverage-holes` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-assert-failure` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-coverage-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-formal-cex` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:report-coverage` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:suggest-constraint-refine` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Ws: (1)
 
@@ -714,30 +714,30 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
-- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:per-symbol-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `compile:snapshot` — `src/compiler/evaluator_primitives_compile_02.cpp`
-- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile_06.cpp`
-- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:per-symbol-dirty-stats` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile.cpp`
+- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `file-copy` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-delete` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-exists?` — `src/compiler/evaluator_primitives_file.cpp`
@@ -750,7 +750,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `git-stage` — `src/compiler/evaluator_primitives_io.cpp`
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
 - `mutate:extract-function` **deprecated** — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:query-and-replace` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
@@ -786,7 +786,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ### Core builtins (must remain primitive) (375)
 
-- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
@@ -873,7 +873,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
-- `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:ingest-result` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:invoke-simulator` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:load-sv` — `src/compiler/evaluator_primitives_eda.cpp`
@@ -881,9 +881,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `eda:parse-netlist` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:parse-verification-result` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:query-nodes` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:run-hardware-feedback` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:validate-sv-emit-roundtrip` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
@@ -896,7 +896,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `eval` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-expr` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval:async` — `src/compiler/evaluator_primitives_eval.cpp`
-- `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile.cpp`
 - `evolve-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `exp` — `src/compiler/evaluator_primitives_math.cpp`
 - `ffi:opaque-stats` **deprecated** — `src/compiler/ffi_primitives_impl.cpp`
@@ -932,9 +932,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
 - `http-get` — `src/compiler/evaluator_primitives_io.cpp`
 - `http-post` — `src/compiler/evaluator_primitives_io.cpp`
-- `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `hygiene:protected?` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:protected?` — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile.cpp`
 - `import` — `src/compiler/evaluator_primitives_module.cpp`
 - `inexact->exact` — `src/compiler/evaluator_primitives_math.cpp`
 - `integer->char` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1050,11 +1050,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
-- `seva:achieve-coverage` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:generate-regression` — `src/compiler/evaluator_primitives_compile_07.cpp`
-- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile_07.cpp`
+- `seva:achieve-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:approve-mutation` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:fix-reset-bugs` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:generate-regression` — `src/compiler/evaluator_primitives_compile.cpp`
+- `seva:run-demo-with-metrics` — `src/compiler/evaluator_primitives_compile.cpp`
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1086,11 +1086,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `suggest-annotation-at` — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol-append` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` — `src/compiler/evaluator_primitives_core.cpp`
-- `syntax-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:get-provenance` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:propagate-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:set-marker` — `src/compiler/evaluator_primitives_compile_05.cpp`
-- `syntax:set-provenance` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `syntax-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
 - `synthesize:define` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1146,13 +1146,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `vector-ref` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector?` — `src/compiler/evaluator_primitives_vector.cpp`
-- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `verify:coverage-holes` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:parse-formal-cex` — `src/compiler/evaluator_primitives_compile_04.cpp`
-- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile_03.cpp`
-- `verify:suggest-constraint-refine` — `src/compiler/evaluator_primitives_compile_04.cpp`
+- `verify:assertion-failed` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:coverage-holes` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-assert-failure` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-coverage-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:parse-formal-cex` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:report-coverage` — `src/compiler/evaluator_primitives_compile.cpp`
+- `verify:suggest-constraint-refine` — `src/compiler/evaluator_primitives_compile.cpp`
 - `void` — `src/compiler/evaluator_primitives_core.cpp`
 - `void?` — `src/compiler/evaluator_primitives_core.cpp`
 - `while` — `src/compiler/evaluator_primitives_control.cpp`
@@ -1175,7 +1175,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile_03.cpp`
+- `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-subtree` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1223,7 +1223,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **19** names:
 
-- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile_05.cpp`
+- `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
 - `mutate:extract-function` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` — `src/compiler/evaluator_primitives_query.cpp`

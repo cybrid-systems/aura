@@ -64,8 +64,8 @@ int main() {
         CHECK(om.find("snapshot_type_cache_stats") != std::string::npos, "snapshot method");
         CHECK(om.find("struct TypeCacheStatsSnapshot") != std::string::npos, "snapshot struct");
 
-        auto prim = read_first({"src/compiler/evaluator_primitives_compile_05.cpp",
-                                "../src/compiler/evaluator_primitives_compile_05.cpp"});
+        auto prim = read_first({"src/compiler/evaluator_primitives_compile.cpp",
+                                "../src/compiler/evaluator_primitives_compile.cpp"});
         CHECK(!prim.empty(), "read compile_05.cpp");
         auto pos = prim.find("\"compile:type-cache-stats\"");
         CHECK(pos != std::string::npos, "primitive present");

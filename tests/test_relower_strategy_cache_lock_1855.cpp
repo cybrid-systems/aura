@@ -40,8 +40,8 @@ int main() {
     {
         std::println("\n--- AC1: locked dirty snapshot + #1839 ---");
         std::string prim;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile_03.cpp",
-                              "../src/compiler/evaluator_primitives_compile_03.cpp"}) {
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
             prim = read_file(p);
             if (!prim.empty())
                 break;
