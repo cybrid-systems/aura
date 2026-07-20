@@ -1479,6 +1479,22 @@ void Evaluator::invalidate_post_rollback_env_frames() {
 // is paired with this bump + doomed-closure bridge_epoch=0 restamp.
 std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     const std::size_t checkpoint_size = panic_safe_env_frames_size_;
+    // Issue #1948: defensive Guard wrap on the truncate path. The
+    // panic-rollback path doesn't go through a primitive (no Guard),
+    // but record the violation metric if the Guard can't be acquired
+    // — the dual-epoch bump + doomed-closure restamp below still
+    // guarantee post-truncate state safety even without a Guard.
+    bool guard_ok = true;
+    auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, &guard_ok);
+    if (!gr) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->mutation_boundary_violation_on_env_truncate_total.fetch_add(
+                1, std::memory_order_relaxed);
+        // Continue with truncate anyway — the dual-epoch bump keeps
+        // post-truncate state safe (closure freshness check rejects
+        // pre-truncate stamps, doomed closures are restamped to
+        // bridge_epoch=0). See Issue #1889 dual-epoch contract.
+    }
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)

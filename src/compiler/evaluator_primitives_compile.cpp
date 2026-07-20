@@ -79,12 +79,17 @@ using types::make_void;
 // `on_fail` is returned for both try_acquire reject and caught exceptions
 // (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
 template <typename F>
-EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = make_bool(false)) {
+EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = make_bool(false),
+                                   bool track_env_compact_violation = false) {
     bool guard_ok = true;
     auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
     if (!gr) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            if (track_env_compact_violation)
+                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
         return on_fail;
     }
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -97,6 +102,9 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = 
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
             m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            if (track_env_compact_violation)
+                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
+                    1, std::memory_order_relaxed);
         }
         return on_fail;
     } catch (...) {
@@ -106,6 +114,9 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body, EvalValue on_fail = 
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
             m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
+            if (track_env_compact_violation)
+                m->mutation_boundary_violation_on_env_compact_total.fetch_add(
+                    1, std::memory_order_relaxed);
         }
         return on_fail;
     }
@@ -6124,7 +6135,8 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             [&]() -> EvalValue {
                 return types::make_int(static_cast<int64_t>(ev.compact_env_frames()));
             },
-            types::make_int(-1));
+            types::make_int(-1),
+            /*track_env_compact_violation=*/true);
     });
 
     // Issue #1420 AC3: (compile:bidirectional-stats)

@@ -4626,6 +4626,14 @@ add_dependencies(all_test_issue_targets test_closure_bridge_lifetime_safety)
 aura_add_issue_test(test_envframe_truncate_epoch_1889)
 aura_issue_test_link_llvm_jit(test_envframe_truncate_epoch_1889)
 add_dependencies(all_test_issue_targets test_envframe_truncate_epoch_1889)
+# Issue #1948: EnvFrame compact/truncate dual-epoch + MutationBoundaryGuard
+# consistency under panic rollback (refine of #1927/#1842/#1889/#1739).
+# Adds mutation_boundary_violation_on_env_compact_total +
+# mutation_boundary_violation_on_env_truncate_total metrics +
+# concurrent 4-thread × 5k-iteration stress test.
+aura_add_issue_test(test_envframe_truncate_guard_1948)
+aura_issue_test_link_llvm_jit(test_envframe_truncate_guard_1948)
+add_dependencies(all_test_issue_targets test_envframe_truncate_guard_1948)
 # Issue #1890: EnvFrame invalid vs stale + closure table multi-vector hygiene.
 aura_add_issue_test(test_envframe_resolve_distinction_1890)
 aura_issue_test_link_llvm_jit(test_envframe_resolve_distinction_1890)

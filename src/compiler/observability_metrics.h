@@ -324,6 +324,18 @@ struct CompilerMetrics {
     //     the checkpoint that were forced bridge_epoch=0 after truncate
     std::atomic<std::uint64_t> bridge_epoch_bump_on_truncate_total{0};
     std::atomic<std::uint64_t> envframe_truncate_doomed_closures_total{0};
+    // Issue #1948: MutationBoundaryGuard violation tracking for env
+    // compaction paths (compact_env_frames + truncate_env_frames_to_checkpoint).
+    //   - mutation_boundary_violation_on_env_compact_total: # of times
+    //     MutationBoundaryGuard::try_acquire rejected on the env-compact
+    //     primitive path (typed quota rejection, no panic).
+    //   - mutation_boundary_violation_on_env_truncate_total: # of times
+    //     the truncate path skipped the Guard (defensive: if a Guard is
+    //     not available, the operation still proceeds but records the
+    //     violation; the dual-epoch bump + doomed-closure restamp keeps
+    //     the post-truncate state safe).
+    std::atomic<std::uint64_t> mutation_boundary_violation_on_env_compact_total{0};
+    std::atomic<std::uint64_t> mutation_boundary_violation_on_env_truncate_total{0};
     // Issue #1890: EnvFrame invalid vs stale distinction + JIT closure table.
     //   - envframe_invalid_vs_stale_distinguished_total: resolve_env_frame_detailed
     //     / apply dual-path checks that separate OOB/NULL/INVALID from STALE
