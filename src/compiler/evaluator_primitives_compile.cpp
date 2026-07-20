@@ -2614,12 +2614,13 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // Issue #1897 / #1950 / #1931: query:mutation-systemic-guard-stats —
+    // Issue #1897 / #1950 / #1931 / #1953: query:mutation-systemic-guard-stats —
     // audit inventory for systemic MutationBoundaryGuard enforcement.
     // Schema lineage **1897**; **schema-1931** closes hot-update zero-downtime
     // reliability mandate (dtor ≤6 atomics + 100% compile/mutate Guard wrap +
     // AC metrics mutation_guard_exception_total /
-    // compile_primitive_stale_ir_prevented_total).
+    // compile_primitive_stale_ir_prevented_total). **schema-1953** is the
+    // re-audit refine of #1931 (same AC surface, explicit issue key).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-systemic-guard-stats", [&ev](const auto&) -> EvalValue {
             std::int64_t captures = 0, stale = 0, exceptions = 0, auto_rb = 0, wrapped = 0;
@@ -2687,16 +2688,20 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("uncaught-exceptions-dtor-wired", 1);
             insert_kv("schema", 1897);
             insert_kv("issue", 1897);
-            // Issue #1931 unified hot-update reliability surface.
+            // Issue #1931 / #1953 unified hot-update reliability surface.
             insert_kv("schema-1931", 1931);
             insert_kv("issue-1931", 1931);
+            insert_kv("schema-1953", 1953); // refine #1931 re-audit
+            insert_kv("issue-1953", 1953);
             insert_kv("schema-1950", 1950);
             insert_kv("schema-1747", 1747);
-            insert_kv("dtor-common-path-atomics-cap", 6); // #1747 / #1931 ≤6
+            insert_kv("dtor-common-path-atomics-cap", 6); // #1747 / #1931 / #1953 ≤6
             insert_kv("dtor-batch-metrics-wired", 1);
             insert_kv("compile-mutate-guard-coverage-100pct", 1); // linter --strict
             insert_kv("shared-helper-header-wired", 1);           // mutation_guard_helpers.hh
             insert_kv("coverage-linter-wired", 1); // scripts/check_mutation_guard_coverage.py
+            insert_kv("exception-auto-rollback-wired", 1); // uncaught_exceptions dtor flip
+            insert_kv("run-under-mutation-guard-helper", 1);
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
