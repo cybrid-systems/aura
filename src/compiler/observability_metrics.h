@@ -962,6 +962,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
     std::atomic<std::uint64_t> by_marker_where_filter_hits{0};
     std::atomic<std::uint64_t> hygiene_provenance_stats_queries_total{0};
+    // Issue #1915: fine-grained ir_cache_v2 block dirty / minimal re-lower.
+    // relower_block_count: # of basic blocks that took partial re-lower path.
+    // dirty_propagation_block_marks: per-block (not full-func) dirty stamps.
+    // dirty_propagation_full_func_marks: full-function mark_all_blocks_dirty.
+    // dirty_propagation_precision = block_marks / (block+full) in basis points.
+    // minimal_recompile_clean_funcs_saved: nested/clean funcs left un-relowered.
+    // invalidate_early_exit_clean_total: skip re-lower when hash match + clean.
+    std::atomic<std::uint64_t> relower_block_count{0};
+    std::atomic<std::uint64_t> dirty_propagation_block_marks{0};
+    std::atomic<std::uint64_t> dirty_propagation_full_func_marks{0};
+    std::atomic<std::uint64_t> minimal_recompile_clean_funcs_saved{0};
+    std::atomic<std::uint64_t> minimal_recompile_scope_samples{0};
+    std::atomic<std::uint64_t> invalidate_early_exit_clean_total{0};
     std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
     std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
     std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};

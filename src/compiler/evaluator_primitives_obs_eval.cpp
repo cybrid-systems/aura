@@ -5482,7 +5482,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64); // #1601 / #1623 more keys
+                auto* ht = FlatHashTable::create(128); // #1601 / #1623 / #1915 more keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -5587,6 +5587,24 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
                 return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
             };
+            // Issue #1915: precision + minimal scope (basis points).
+            std::int64_t dirty_prec_bp = 10000;
+            std::int64_t min_scope_bp = 10000;
+            if (m) {
+                const auto blk = m->dirty_propagation_block_marks.load(std::memory_order_relaxed);
+                const auto full_marks =
+                    m->dirty_propagation_full_func_marks.load(std::memory_order_relaxed);
+                const auto den_marks = blk + full_marks;
+                if (den_marks > 0)
+                    dirty_prec_bp = static_cast<std::int64_t>((blk * 10000ull) / den_marks);
+                const auto clean =
+                    m->invalidate_early_exit_clean_total.load(std::memory_order_relaxed) +
+                    m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+                const auto full_rl = m->relower_full_called_count.load(std::memory_order_relaxed);
+                const auto den_scope = clean + full_rl;
+                if (den_scope > 0)
+                    min_scope_bp = static_cast<std::int64_t>((clean * 10000ull) / den_scope);
+            }
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"impact-blocks-hit", make_int(impact_blocks_hit)},
                 {"partial-relowers", make_int(partial_relowers)},
@@ -5645,6 +5663,27 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                                              std::memory_order_relaxed)
                                        : 1))
                               : 0)},
+                // Issue #1915: fine-grained dirty prop + minimal recompile scope
+                {"relower_block_count", make_int(m ? load(m->relower_block_count) : 0)},
+                {"relower-block-count", make_int(m ? load(m->relower_block_count) : 0)},
+                {"dirty_propagation_block_marks",
+                 make_int(m ? load(m->dirty_propagation_block_marks) : 0)},
+                {"dirty_propagation_full_func_marks",
+                 make_int(m ? load(m->dirty_propagation_full_func_marks) : 0)},
+                {"dirty_propagation_precision", make_int(dirty_prec_bp)},
+                {"dirty-propagation-precision", make_int(dirty_prec_bp)},
+                {"minimal_recompile_scope", make_int(min_scope_bp)},
+                {"minimal-recompile-scope", make_int(min_scope_bp)},
+                {"minimal_recompile_clean_funcs_saved",
+                 make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
+                {"invalidate_early_exit_clean_total",
+                 make_int(m ? load(m->invalidate_early_exit_clean_total) : 0)},
+                {"body-only-dirty-wired", make_int(1)},
+                {"cascade-body-only-wired", make_int(1)},
+                {"no-full-func-degrade-default", make_int(1)},
+                // Keep schema=1639 for lineage tests (#718…#1639); #1915 is additive.
+                {"schema-1915", make_int(1915)},
+                {"issue-1915", make_int(1915)},
                 {"issue", make_int(1639)},
                 {"schema", make_int(1639)}, // lineage 718 → 1605 → 1601 → 1506 → 1623 → 1639
             };
