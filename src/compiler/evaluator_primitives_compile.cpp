@@ -6,6 +6,8 @@
 // Issue #1968: three eda:* adds live in register_compile_p34/p35 (verification
 // feedback + commercial stub + SV self-evolution demo). Gated by AURA_ENABLE_EDA
 // together with register_eda_primitives (see docs/eda.md).
+// Issue #1972: five seva:* adds in register_compile_p59–p62. Gated by
+// AURA_ENABLE_SEVA (see docs/seva.md). query:seva-audit-log stays always on.
 
 module;
 
@@ -19,6 +21,9 @@ module;
 
 #ifndef AURA_ENABLE_EDA
 #define AURA_ENABLE_EDA 1
+#endif
+#ifndef AURA_ENABLE_SEVA
+#define AURA_ENABLE_SEVA 1
 #endif
 
 module aura.compiler.evaluator;
@@ -5805,7 +5810,10 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 59 (orig 4947-5042)
 void CompilePrims::register_compile_p59(PrimRegistrar add, Evaluator& ev) {
-
+#if !AURA_ENABLE_SEVA
+    (void)add;
+    (void)ev;
+#else
     // ── Issue #445: SEVA high-level goal primitives ──────
     //
     // The SEVA demo (#442) is the Aura-side verification
@@ -5821,6 +5829,8 @@ void CompilePrims::register_compile_p59(PrimRegistrar add, Evaluator& ev) {
     // return hashes (not raw lists) so the audit log
     // can be replayed post-hoc, and they never call into
     // destructive operations without a guard.
+    //
+    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
     //
     // (seva:achieve-coverage name target-pct) — the
     // canonical SEVA goal. Reads the current coverage
@@ -5862,16 +5872,21 @@ void CompilePrims::register_compile_p59(PrimRegistrar add, Evaluator& ev) {
         };
         return build_kv_hash(ev, kv);
     });
+#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 60 (orig 5043-5111)
 void CompilePrims::register_compile_p60(PrimRegistrar add, Evaluator& ev) {
-
+#if !AURA_ENABLE_SEVA
+    (void)add;
+    (void)ev;
+#else
     // (seva:fix-reset-bugs) — read the current verify-
     // dirty state, identify reset-related holes, return
     // the list of node IDs the agent should target.
     // The actual mutate call is the agent's job; the
     // primitive just identifies the targets.
+    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
     add("seva:fix-reset-bugs", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat())
             return make_void();
@@ -5899,16 +5914,19 @@ void CompilePrims::register_compile_p60(PrimRegistrar add, Evaluator& ev) {
         };
         return build_kv_hash(ev, kv);
     });
+#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 61 (orig 5112-5221)
 void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
 
+#if AURA_ENABLE_SEVA
     // (seva:generate-regression) — emit a regression
     // script (in Aura syntax) from the current state.
     // For the MVP this returns a string with the
     // testbench skeleton; the agent fills in the
     // specifics. The string is in ev.string_heap_.
+    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
     add("seva:generate-regression", [&ev](const auto&) -> EvalValue {
         auto sidx = ev.string_heap_.size();
         std::string script = ";; Auto-generated regression script (seva:generate-regression)\n"
@@ -5944,6 +5962,7 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
         (void)nid;
         return make_bool(approved);
     });
+#endif // AURA_ENABLE_SEVA
 
     // (query:seva-audit-log) — Issue #445: the agent's
     // audit trail. Returns the recent mutations as a
@@ -5951,7 +5970,8 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
     // query:mutation-log-stats). For MVP: returns the
     // counts per category — agent calls this before
     // each major operation to confirm the audit log
-    // is consistent.
+    // is consistent. Always registered (not seva: prefix;
+    // #1972 only gates seva:*).
     ObservabilityPrims::register_stats_impl(
         "query:seva-audit-log", [&ev](const auto&) -> EvalValue {
             std::uint64_t mutations = 0;
@@ -5981,7 +6001,10 @@ void CompilePrims::register_compile_p61(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 62 (orig 5222-5318)
 void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
-
+#if !AURA_ENABLE_SEVA
+    (void)add;
+    (void)ev;
+#else
     // (seva:run-demo-with-metrics) — Issue #446: collect
     // standardized metrics for L4-L5 claims. Returns a
     // hash with 6 fields covering the 5 metrics from the
@@ -5992,6 +6015,7 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
     // auto-evolve-cycle-count (proxy for "iteration
     // time"); real wall-time measurement is a follow-up
     // (would need a start/end timestamp pair).
+    // Issue #1972: commercial SEVA vertical (AURA_ENABLE_SEVA).
     add("seva:run-demo-with-metrics", [&ev](const auto&) -> EvalValue {
         // Issue #1841: compiler_metrics_ is non-owning (#1835
         // ownership contract); active_strategy_ is under
@@ -6048,6 +6072,7 @@ void CompilePrims::register_compile_p62(PrimRegistrar add, Evaluator& ev) {
         };
         return build_kv_hash(ev, kv);
     });
+#endif // AURA_ENABLE_SEVA
 }
 
 // Issue #909 compile part 63 (orig 5319-5319)

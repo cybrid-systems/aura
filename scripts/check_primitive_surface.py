@@ -99,7 +99,8 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 #   - terminal:  terminal ops — KEEP deferred, #1971: gated by
 #                AURA_ENABLE_TERMINAL + COMMERCIAL_DOMAIN_BUDGETS["terminal:"]
 #                (Phase-A deprecated no-ops per #1351; real APIs are hyphenated).
-#   - seva:      service evaluation (commercial vertical, defer).
+#   - seva:      service evaluation — KEEP deferred, #1972: gated by
+#                AURA_ENABLE_SEVA + COMMERCIAL_DOMAIN_BUDGETS["seva:"].
 #   - strategy:  strategy DSL (commercial vertical, defer).
 #   - synthesize: synthesis (commercial vertical, defer).
 #   - tcp-:      TCP networking (integration, defer).
@@ -129,6 +130,7 @@ COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
     "terminal:": 7,  # #1971 — deprecated no-op terminal:*; AURA_ENABLE_TERMINAL
+    "seva:": 5,  # #1972 — SEVA / OpenClaw goal primitives; AURA_ENABLE_SEVA
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -331,8 +333,8 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
         b = breakdown[p]
         print(f"    {p:18s} core={b.get('core', 0):2d}  deferred={b.get('deferred', 0):2d}")
 
-    # Issue #1967–#1971: commercial / integration vertical budgets.
-    print("  commercial domain budgets (Issue #1967–#1971):")
+    # Issue #1967–#1972: commercial / integration vertical budgets.
+    print("  commercial domain budgets (Issue #1967–#1972):")
     commercial_counts = commercial_domain_counts(all_names)
     for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
         budget = COMMERCIAL_DOMAIN_BUDGETS[p]
