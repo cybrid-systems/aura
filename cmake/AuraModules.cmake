@@ -4,6 +4,9 @@
 set(AURA_CXX_MODULE_CORE
     src/core/arena.ixx
     src/core/concepts.ixx
+    # Issue #1885: layering / dependency DAG / cross-layer contracts
+    # (after concepts — imports StableNodeRefLike + DirtyPropagator).
+    src/core/module_boundary.ixx
     src/core/cxx26_invariants.ixx
     src/core/error.ixx
     # Issue #1579: multi-dimension ResourceQuota (after error for AuraError bridge).

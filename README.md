@@ -15,4 +15,6 @@ echo '(+ 1 2)' | ./build/aura   # → 3
 
 Testing / layout policy: [`tests/README.md`](tests/README.md) · [`docs/contributing.md`](docs/contributing.md)
 
+Module layering (Core ← Parser ← Compiler ← …): [`docs/architecture.md`](docs/architecture.md) · [`src/core/module_boundary.ixx`](src/core/module_boundary.ixx)
+
 License: Apache 2.0

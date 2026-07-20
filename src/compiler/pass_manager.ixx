@@ -42,6 +42,13 @@ import aura.compiler.dirty_propagation;
 export import aura.core.concept_constraints;
 import aura.diag;
 
+// Issue #1885: Compiler layer may depend on Core (+ Parser via other TUs).
+// Layering authority: src/core/module_boundary.ixx (aura.core.module_boundary).
+// Re-exported via import aura.core → aura::core::boundary::ModuleLayer.
+static_assert(aura::core::boundary::AllowedDependency<aura::core::boundary::ModuleLayer::Compiler,
+                                                      aura::core::boundary::ModuleLayer::Core>);
+static_assert(aura::core::boundary::kModuleBoundaryIssue == 1885);
+
 namespace aura::compiler {
 
 // Issue #1517 / #1619: forward declare so analysis/full pipelines can share

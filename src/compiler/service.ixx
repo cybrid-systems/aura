@@ -71,6 +71,17 @@ import aura.compiler.cache;
 import aura.diag;
 import aura.core.error; // Issue #807/#808: AuraResult bridge
 
+// Issue #1885: CompilerService is the primary Compiler-layer entry.
+// Dependency direction: Compiler → Core + Parser (not reverse).
+// Layering authority: src/core/module_boundary.ixx — update it when
+// adding new cross-layer edges (e.g. serve/fiber bridges below).
+static_assert(aura::core::boundary::AllowedDependency<aura::core::boundary::ModuleLayer::Compiler,
+                                                      aura::core::boundary::ModuleLayer::Core>);
+static_assert(aura::core::boundary::AllowedDependency<aura::core::boundary::ModuleLayer::Compiler,
+                                                      aura::core::boundary::ModuleLayer::Parser>);
+static_assert(!aura::core::boundary::layer_may_depend_on(
+    aura::core::boundary::ModuleLayer::Core, aura::core::boundary::ModuleLayer::Compiler));
+
 // ── JIT primitive call dispatcher ────────────────────────
 // Bridges OpPrimCall/OpPrimitive from JIT code to evaluator PrimFn table.
 // The PrimId enum value is used as an index into kPrimNames to find
