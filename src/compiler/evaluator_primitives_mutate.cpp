@@ -5671,7 +5671,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // truncate_env_frames_to_checkpoint dual-epoch + Guard observability.
     ObservabilityPrims::register_stats_impl(
         "query:envframe-truncate-epoch-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            // Power-of-2 capacity; #1927 adds AC keys (create(32) headroom).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5699,10 +5700,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             };
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            insert_kv("schema", 1889);
+            insert_kv("schema", 1889); // lineage 1889
             insert_kv("issue", 1889);
             insert_kv("active", 1);
             insert_kv("bridge-epoch-bump-on-truncate",
+                      m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            // AC name alias (#1927)
+            insert_kv("bridge_epoch_bump_on_truncate_total",
                       m ? static_cast<std::int64_t>(m->bridge_epoch_bump_on_truncate_total.load(
                               std::memory_order_relaxed))
                         : 0);
@@ -5718,9 +5724,28 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       m ? static_cast<std::int64_t>(
                               m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed))
                         : 0);
+            insert_kv("mutation-boundary-violation-on-env-compact",
+                      m ? static_cast<std::int64_t>(
+                              m->mutation_boundary_violation_on_env_compact_total.load(
+                                  std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mutation_boundary_violation_on_env_compact",
+                      m ? static_cast<std::int64_t>(
+                              m->mutation_boundary_violation_on_env_compact_total.load(
+                                  std::memory_order_relaxed))
+                        : 0);
+            insert_kv("mutation-boundary-violation-on-env-truncate",
+                      m ? static_cast<std::int64_t>(
+                              m->mutation_boundary_violation_on_env_truncate_total.load(
+                                  std::memory_order_relaxed))
+                        : 0);
             // Primitive path uses MutationBoundaryGuard (#1842 / #1889 AC).
             insert_kv("compact-primitive-guarded", 1);
             insert_kv("truncate-bumps-bridge-epoch", 1);
+            insert_kv("truncate-bumps-defuse-version", 1); // #1927 dual-epoch lockstep
+            insert_kv("nested-guard-skip-wired", 1);       // #1927 panic-restore safe
+            insert_kv("schema-1927", 1927);
+            insert_kv("issue-1927", 1927);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

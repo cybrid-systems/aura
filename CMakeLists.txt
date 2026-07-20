@@ -4740,6 +4740,10 @@ add_dependencies(all_test_issue_targets test_dead_coercion_elision_narrow_mutati
 aura_add_issue_test(test_closure_view_uaf_guard_1926)
 aura_issue_test_link_llvm_jit(test_closure_view_uaf_guard_1926)
 add_dependencies(all_test_issue_targets test_closure_view_uaf_guard_1926)
+# Issue #1927: truncate/compact env_frames dual-epoch + Guard under panic rollback.
+aura_add_issue_test(test_envframe_truncate_guard_dual_epoch_1927)
+aura_issue_test_link_llvm_jit(test_envframe_truncate_guard_dual_epoch_1927)
+add_dependencies(all_test_issue_targets test_envframe_truncate_guard_dual_epoch_1927)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
