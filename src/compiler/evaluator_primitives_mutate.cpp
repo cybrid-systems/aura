@@ -5552,6 +5552,54 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
+    // ── Issue #1888: query:closure-view-lifetime-stats ──
+    // ClosureView lifetime stamp / dangling-prevented surface.
+    ObservabilityPrims::register_stats_impl(
+        "query:closure-view-lifetime-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto prevented =
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed);
+            insert_kv("schema", 1888);
+            insert_kv("issue", 1888);
+            insert_kv("active", 1);
+            insert_kv("dangling-prevented", static_cast<std::int64_t>(prevented));
+            insert_kv("lifetime-guard", 1);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->closure_view_dangling_prevented_total.store(prevented,
+                                                               std::memory_order_relaxed);
+                insert_kv("metrics-mirror", 1);
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
     // Dedicated AOT hot-update TypedMutationAudit surface (sampled success,
     // always-on failures). Complements query:aot-hotupdate-stats (#590) and

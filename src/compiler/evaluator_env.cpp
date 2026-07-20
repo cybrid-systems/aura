@@ -1154,9 +1154,21 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
 // JIT runtime free uses aura_free_closure + g_closure_freed (#1361) —
 // that table is separate from Evaluator::closures_. Erasing here is the
 // TW equivalent so scan_live_closures never iterates dead entries.
+// Issue #1888: tombstone lifetime before erase so any view stamped from
+// this Closure fails is_closure_view_valid(view, cl) if cl was snapshotted.
 bool Evaluator::erase_active_closure(ClosureId id) noexcept {
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
-    return closures_.erase(id) > 0;
+    auto it = closures_.find(id);
+    if (it == closures_.end())
+        return false;
+    invalidate_closure_lifetime(it->second);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->closure_view_dangling_prevented_total.store(
+            g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+    }
+    closures_.erase(it);
+    return true;
 }
 
 std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
@@ -1910,11 +1922,62 @@ std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
     return parent ? parent->lookup_by_symid(s) : std::nullopt;
 }
 
-// Issue #1870: zero-copy ClosureView. params span + name string_view +
-// flat/pool/owner_arena raw pointers dangle if the Closure (or its
-// pointees) is mutated/freed. Same lifetime class as EnvView (#1868).
+// Issue #1870 / #1888: zero-copy ClosureView.
+// params span + name string_view + flat/pool/owner_arena raw pointers dangle
+// if the Closure is moved/freed. Same lifetime class as EnvView (#1868).
+// #1888: reject tombstoned sources; stamp source_lifetime_version for
+// is_closure_view_valid(view, cl) revalidation after concurrent GC/move.
 // See ClosureView comment in evaluator.ixx.
+ClosureView make_invalid_closure_view() noexcept {
+    return ClosureView{};
+}
+
+void invalidate_closure_lifetime(Closure& cl) noexcept {
+    cl.tombstone_for_views();
+}
+
+bool is_closure_view_valid(const ClosureView& v) noexcept {
+    return v.live && v.source_lifetime_version != 0;
+}
+
+bool is_closure_view_valid(const ClosureView& v, const Closure& cl) noexcept {
+    if (!v.live || v.source_lifetime_version == 0)
+        return false;
+    if (!cl.lifetime_valid_for_views())
+        return false;
+    return v.source_lifetime_version == cl.lifetime_version;
+}
+
+const aura::ast::FlatAST* closure_view_flat(const ClosureView& v) noexcept {
+    if (!is_closure_view_valid(v)) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+    }
+    return v.flat;
+}
+
+const aura::ast::StringPool* closure_view_pool(const ClosureView& v) noexcept {
+    if (!is_closure_view_valid(v)) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+    }
+    return v.pool;
+}
+
+const aura::ast::ASTArena* closure_view_owner_arena(const ClosureView& v) noexcept {
+    if (!is_closure_view_valid(v)) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+    }
+    return v.owner_arena;
+}
+
 ClosureView make_closure_view(const Closure& cl) {
+    // Issue #1888: no raw pointer view from a tombstoned / moved-from Closure.
+    if (!cl.lifetime_valid_for_views()) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        return make_invalid_closure_view();
+    }
     ClosureView v;
     v.params = std::span<const aura::ast::SymId>(cl.params.data(), cl.params.size());
     v.body_id = cl.body_id;
@@ -1925,6 +1988,8 @@ ClosureView make_closure_view(const Closure& cl) {
     v.env_id = cl.env_id;
     v.owner_arena = cl.owner_arena;
     v.name = cl.name;
+    v.source_lifetime_version = cl.lifetime_version;
+    v.live = true;
     return v;
 }
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────

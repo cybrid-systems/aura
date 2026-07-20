@@ -684,12 +684,20 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         for (auto it = closures_.begin(); it != closures_.end();) {
             int64_t id = static_cast<int64_t>(it->first);
             if (!marks->closure_marks->test(id)) {
+                // Issue #1888: tombstone before erase so ClosureView
+                // lifetime revalidation fails on moved-from / freed sources.
+                invalidate_closure_lifetime(it->second);
                 it = closures_.erase(it);
             } else {
                 ++it;
             }
         }
         result.closures_freed = before - closures_.size();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->closure_view_dangling_prevented_total.store(
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
     }
 
     // 2. string_heap_ — report dead count, no compaction.

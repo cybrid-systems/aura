@@ -4639,6 +4639,10 @@ add_dependencies(all_test_issue_targets test_module_boundary_1885)
 aura_add_issue_test(test_test_strategy_1887)
 aura_issue_test_link_llvm_jit(test_test_strategy_1887)
 add_dependencies(all_test_issue_targets test_test_strategy_1887)
+# Issue #1888: ClosureView lifetime stamp / UAF guards on move+GC free.
+aura_add_issue_test(test_closure_view_lifetime_1888)
+aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1888)
+add_dependencies(all_test_issue_targets test_closure_view_lifetime_1888)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)

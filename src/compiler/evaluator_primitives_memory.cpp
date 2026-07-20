@@ -213,10 +213,12 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return types::make_bool(false);
 
         // Erase closures in temp arena
+        // Issue #1888: tombstone lifetime before erase (ClosureView guard).
         for (auto it = ev.closures_.begin(); it != ev.closures_.end();) {
-            if (it->second.owner_arena == ev.temp_arena_)
+            if (it->second.owner_arena == ev.temp_arena_) {
+                invalidate_closure_lifetime(it->second);
                 it = ev.closures_.erase(it);
-            else
+            } else
                 ++it;
         }
 
