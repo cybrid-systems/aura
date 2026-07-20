@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-run_issue_tests.py — unified runner for all test_issue_*.cpp binaries.
+run_issue_tests.py — issue/domain/bundle C++ binary runner.
 
-Builds (or assumes built) all test_issue_* binaries via ninja, then runs
-each in parallel, aggregating pass/fail counts. Exits 0 on full pass,
-1 on any failure.
+Prefer the unified CLI (#1961):
+  python3 tests/run.py issues [--tier fast|full] …
+  python3 tests/run.py issues-fast
+
+This module remains the implementation (and a stable import path).
+Direct invocation still works for transition.
 
 Usage:
   python3 tests/run_issue_tests.py                # run all (full tier)
@@ -14,9 +17,11 @@ Usage:
   python3 tests/run_issue_tests.py --jobs 8       # parallel execution
   python3 tests/run_issue_tests.py --timeout 30   # per-test timeout (default 60)
   python3 tests/run_issue_tests.py --list         # list available tests
+  python3 tests/run_issue_tests.py --json         # machine-readable summary
 
 Wired into:
-  - build.py: cmd_test("issues") dispatches here
+  - tests/run.py issues / issues-fast
+  - build.py: cmd_test("issues") → tests/run.py issues
   - .github/workflows/ci.yml: PR uses AURA_ISSUES_TIER=fast
 """
 
@@ -100,6 +105,15 @@ def discover_test_issue_binaries() -> list[str]:
             or name.startswith("test_aura_result_")
             or (name.startswith("test_issue_") and name not in bundled)
             or name.startswith("test_primitives_hotpath")
+            # domain/<theme>/ pilots built as aura_add_issue_test targets (#1959)
+            or name
+            in {
+                "test_arena_batch",
+                "test_compact_batch",
+                "test_compact_sweep_batch",
+                "test_gc_batch",
+                "test_arena_defrag_concurrent",
+            }
         ):
             bins.append(name)
     return bins
@@ -335,8 +349,8 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
     return total_passed, total_failed, failures, pre_existing_failures, skipped
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="run_issue_tests.py")
     ap.add_argument("--build", action="store_true", help="build targets first")
     ap.add_argument("--tier", default=None, choices=["fast", "full"], help="issue test tier")
     ap.add_argument("--filter", default=None, help="only run tests matching substring")
@@ -360,7 +374,7 @@ def main():
         action="store_true",
         help="emit machine-readable JSON summary to stdout after the human report",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     tier = args.tier or issues_tier()
     jobs = args.jobs or int(os.environ.get("AURA_ISSUES_JOBS", str(min(8, os.cpu_count() or 4))))
     changed_only = args.changed

@@ -195,19 +195,57 @@ Optional headers for tooling:
 // @reason: domain fiber/orch gates; extends test_domain_fiber_orchestration
 ```
 
-## Run
+## Running tests (#1961)
+
+**Preferred entry points:**
+
+| How | What |
+|-----|------|
+| `./build.py check` | gate + build + default tests |
+| `./build.py test <suite>` | suite dispatch (unit, integ, issues, …) |
+| **`python3 tests/run.py <cmd>`** | unified Python runner (issues, fixtures, gradual, bench, mutation, bash) |
+| `ninja -C build <target> && ./build/<target>` | single C++ binary |
 
 ```bash
-./build.py check                          # gate + build + tests
-./build.py test unit                      # unit slice
-./build.py test integ                     # integration
-./build.py test issues                    # issue / domain targets
-./build.py test issues-fast               # fixtures/issues_fast.json subset
+# Categories
+python3 tests/run.py list
+python3 tests/run.py issues --tier fast
+python3 tests/run.py issues-fast
+python3 tests/run.py fixtures
+python3 tests/run.py gradual
+python3 tests/run.py bench -- --strict
+python3 tests/run.py mutation
+python3 tests/run.py bash
+
+# Machine-readable trailer (CI-friendly)
+python3 tests/run.py --json fixtures
+python3 tests/run.py issues --tier fast -- --json
+
+# Via build.py (CI / local)
+./build.py test unit
+./build.py test integ
+./build.py test issues
+./build.py test issues-fast
+./build.py gate                           # static only
+
+# Domain pilot
 ninja -C build test_domain_fiber_orchestration
 ./build/test_domain_fiber_orchestration
+ninja -C build test_arena_batch           # domain/arena (#1959)
 ```
 
-Static gate (no full build): `./build.py gate`.
+### Legacy scripts (still work; prefer `tests/run.py`)
+
+| Script | Equivalent |
+|--------|------------|
+| `tests/run_issue_tests.py` | `tests/run.py issues` |
+| `tests/fixture_check.py` | `tests/run.py fixtures` |
+| `tests/check_gradual.py` | `tests/run.py gradual` |
+| `tests/benchmark.py` | `tests/run.py bench` / `./build.py bench` |
+| `tests/mutation_loop.py` | `tests/run.py mutation` |
+| `tests/run-tests.sh` | `tests/run.py bash` |
+
+Shared colors/paths/report helpers: `tests/_aura_harness.py`.
 
 ## Related
 
