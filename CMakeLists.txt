@@ -5630,6 +5630,10 @@ aura_issue_test_link_llvm_jit(test_issue_1943)
 # helper header (mutation_guard_helpers.hh).
 aura_add_issue_test(test_issue_1950)
 aura_issue_test_link_llvm_jit(test_issue_1950)
+# Issue #1951: linear boundary closed-loop consolidation
+# (4-call pattern at evaluator.ixx:12800-12820 → enforce_linear_post_failure helper).
+aura_add_issue_test(test_issue_1951)
+aura_issue_test_link_llvm_jit(test_issue_1951)
 # Issue #485: multi-fiber + MutationBoundaryGuard + SoA EnvFrame close-out.
 # Issue #486: query:pattern MacroIntroduced filter + macro-hygiene-stats.
 # Issue #488: post-mutate reflect validation + Guard impact snapshot.
