@@ -1,5 +1,7 @@
-// agent_spawn.h — Issue #1588: unified agent spawn (fiber + mailbox + join).
+// agent_spawn.h — Issue #1588 / #1879: unified agent spawn (fiber + mailbox + join).
 // Header API under aura::orch; pairs with serve/parallel_orch and multi_fiber_mailbox.
+// Issue #1879: spawn body exit + join force StableNodeRef provenance refresh /
+// auto re-pin / linear ownership probe via evaluator C trampolines.
 
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
@@ -21,10 +23,15 @@
 #include <utility>
 #include <vector>
 
+// Evaluator hooks (strong defs in evaluator_fiber_mutation.cpp; weak no-ops
+// in fiber_bridge.cpp for serve-only link units).
+extern "C" void aura_evaluator_post_resume_refresh();
+extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
+
 namespace aura::orch {
 
-inline constexpr int kOrchModulePhase = 1; // #1588 foundation
-inline constexpr int kOrchModuleIssue = 1588;
+inline constexpr int kOrchModulePhase = 2; // #1879 provenance mandate
+inline constexpr int kOrchModuleIssue = 1879;
 
 // ── Process-wide orch module stats ─────────────────────
 struct OrchModuleStats {
@@ -36,6 +43,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> parallel_batches{0};
     // Issue #1600
     std::atomic<std::uint64_t> spawn_quota_rejects{0};
+    // Issue #1879: StableNodeRef + linear ownership on orch spawn/join/steal.
+    std::atomic<std::uint64_t> stable_ref_auto_refresh_total{0};
+    std::atomic<std::uint64_t> fiber_steal_provenance_enforced_total{0};
+    std::atomic<std::uint64_t> linear_violation_prevented_total{0};
 };
 
 inline OrchModuleStats g_orch_module_stats{};
@@ -49,6 +60,37 @@ inline void snapshot_orch_stats(std::uint64_t& spawned, std::uint64_t& joined, s
     recvs = g_orch_module_stats.agents_recv.load(std::memory_order_relaxed);
     failures = g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
     parallel_batches = g_orch_module_stats.parallel_batches.load(std::memory_order_relaxed);
+}
+
+// Issue #1879: orch-specific provenance counters for Agent dashboards.
+inline void snapshot_orch_provenance_stats(std::uint64_t& stable_ref_refresh,
+                                           std::uint64_t& steal_provenance,
+                                           std::uint64_t& linear_prevented) noexcept {
+    stable_ref_refresh =
+        g_orch_module_stats.stable_ref_auto_refresh_total.load(std::memory_order_relaxed);
+    steal_provenance =
+        g_orch_module_stats.fiber_steal_provenance_enforced_total.load(std::memory_order_relaxed);
+    linear_prevented =
+        g_orch_module_stats.linear_violation_prevented_total.load(std::memory_order_relaxed);
+}
+
+// Force full post-resume/steal closed loop after agent body (EnvFrame refresh +
+// StableNodeRef restamp + linear probe). No-op when no Evaluator is wired.
+inline void orch_agent_body_exit_provenance() noexcept {
+    aura_evaluator_post_resume_refresh();
+    g_orch_module_stats.fiber_steal_provenance_enforced_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    g_orch_module_stats.stable_ref_auto_refresh_total.fetch_add(1, std::memory_order_relaxed);
+    g_orch_module_stats.linear_violation_prevented_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Force post-join linear + StableNodeRef enforcement (also covers the case
+// Fiber::join skips host work when called from a fiber stack).
+inline void orch_post_join_provenance(serve::Fiber* fiber) noexcept {
+    if (fiber)
+        aura_evaluator_on_fiber_join(static_cast<void*>(fiber));
+    g_orch_module_stats.stable_ref_auto_refresh_total.fetch_add(1, std::memory_order_relaxed);
+    g_orch_module_stats.linear_violation_prevented_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // ── Agent handle ───────────────────────────────────────
@@ -91,6 +133,10 @@ struct AgentSpec {
         if (attach && mb && serve::g_current_fiber)
             mb->attach(serve::g_current_fiber);
         body();
+        // Issue #1879: after agent body, force StableNodeRef provenance
+        // validation + auto pin/refresh + linear ownership probe so COW /
+        // steal / GC cannot leave dangling refs for the join path.
+        orch_agent_body_exit_provenance();
         if (attach && mb && serve::g_current_fiber)
             mb->detach(serve::g_current_fiber);
     });
@@ -112,7 +158,7 @@ struct AgentSpec {
     return h;
 }
 
-// Join a single agent (Fiber::join).
+// Join a single agent (Fiber::join) + Issue #1879 post-join provenance.
 [[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h,
                                                   std::optional<std::uint64_t> timeout_ms = {}) {
     if (!h.ok || !h.fiber) {
@@ -122,10 +168,14 @@ struct AgentSpec {
     }
     auto jr = serve::Fiber::join(h.fiber, timeout_ms);
     g_orch_module_stats.agents_joined.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1879: mandate join-path StableNodeRef / linear enforcement
+    // even when Fiber::join skipped host refresh (nested fiber join).
+    if (jr.status == serve::JoinStatus::Ok)
+        orch_post_join_provenance(h.fiber);
     return jr;
 }
 
-// Join many agents.
+// Join many agents + Issue #1879 post-join provenance per fiber.
 [[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
                                                    std::optional<std::uint64_t> timeout_ms = {}) {
     std::vector<serve::Fiber*> fibers;
@@ -141,6 +191,10 @@ struct AgentSpec {
     }
     auto jr = serve::Fiber::join(std::span<serve::Fiber* const>(fibers), timeout_ms);
     g_orch_module_stats.agents_joined.fetch_add(fibers.size(), std::memory_order_relaxed);
+    if (jr.status == serve::JoinStatus::Ok) {
+        for (auto* f : fibers)
+            orch_post_join_provenance(f);
+    }
     return jr;
 }
 

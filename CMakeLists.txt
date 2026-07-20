@@ -5154,6 +5154,9 @@ aura_issue_test_link_llvm_jit(test_provenance_blame_hygiene_1877)
 # Issue #1878: atomic-batch strong atomicity + multi-tenant isolation.
 aura_add_issue_test(test_atomic_batch_tenant_1878)
 aura_issue_test_link_llvm_jit(test_atomic_batch_tenant_1878)
+# Issue #1879: orch spawn/join/steal StableNodeRef provenance mandate.
+aura_add_issue_test(test_orch_stable_ref_lifecycle_1879)
+aura_issue_test_link_llvm_jit(test_orch_stable_ref_lifecycle_1879)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)

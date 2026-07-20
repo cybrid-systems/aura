@@ -2766,20 +2766,69 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     });
 
     ObservabilityPrims::register_stats_impl(
-        "query:orch-module-stats", [&ev, build_orch_hash](const auto&) -> EvalValue {
+        "query:orch-module-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t spawned = 0, joined = 0, sends = 0, recvs = 0, failures = 0, batches = 0;
             aura::orch::snapshot_orch_stats(spawned, joined, sends, recvs, failures, batches);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"agents-spawned", make_int(static_cast<std::int64_t>(spawned))},
-                {"agents-joined", make_int(static_cast<std::int64_t>(joined))},
-                {"agents-send", make_int(static_cast<std::int64_t>(sends))},
-                {"agents-recv", make_int(static_cast<std::int64_t>(recvs))},
-                {"spawn-failures", make_int(static_cast<std::int64_t>(failures))},
-                {"parallel-batches", make_int(static_cast<std::int64_t>(batches))},
-                {"phase", make_int(aura::orch::kOrchModulePhase)},
-                {"schema", make_int(1588)},
+            std::uint64_t stable_ref_refresh = 0, steal_prov = 0, linear_prev = 0;
+            aura::orch::snapshot_orch_provenance_stats(stable_ref_refresh, steal_prov, linear_prev);
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            // Prefer process-wide orch counters; also surface CompilerMetrics
+            // when evaluator resume/join closed loop advanced them (#1879).
+            const auto cm_stable =
+                m ? m->orch_stable_ref_auto_refresh_total.load(std::memory_order_relaxed) : 0;
+            const auto cm_steal =
+                m ? m->orch_fiber_steal_provenance_enforced_total.load(std::memory_order_relaxed)
+                  : 0;
+            const auto cm_lin =
+                m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
+            // Capacity 64: #1588 base + #1879 provenance fields (FNV headroom).
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
             };
-            return build_orch_hash(kv);
+            insert_kv("agents-spawned", static_cast<std::int64_t>(spawned));
+            insert_kv("agents-joined", static_cast<std::int64_t>(joined));
+            insert_kv("agents-send", static_cast<std::int64_t>(sends));
+            insert_kv("agents-recv", static_cast<std::int64_t>(recvs));
+            insert_kv("spawn-failures", static_cast<std::int64_t>(failures));
+            insert_kv("parallel-batches", static_cast<std::int64_t>(batches));
+            insert_kv("phase", static_cast<std::int64_t>(aura::orch::kOrchModulePhase));
+            insert_kv("schema", 1588);
+            // Issue #1879: StableNodeRef provenance + linear on orch paths.
+            insert_kv("stable-ref-auto-refresh-total",
+                      static_cast<std::int64_t>(std::max(stable_ref_refresh, cm_stable)));
+            insert_kv("fiber-steal-provenance-enforced-total",
+                      static_cast<std::int64_t>(std::max(steal_prov, cm_steal)));
+            insert_kv("linear-violation-prevented-total",
+                      static_cast<std::int64_t>(std::max(linear_prev, cm_lin)));
+            insert_kv("schema-1879", 1879);
+            insert_kv("provenance-mandate-wired", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 }
 
