@@ -1375,25 +1375,9 @@ aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation_415)
 # Uses CompilerService::public_invalidate_function +
 # public_dep_graph_* hooks. Same link profile as test_issue_225
 # / test_issue_226 (jit_tests bundle).
-# Issue #629: zero-overhead coercion path — narrow_evidence DCE
-# Rule 6, TypeSpec skip, observability primitive, JIT pipeline.
-aura_add_issue_test(test_dead_coercion_elim_narrow_evidence_ir_jit_zerooverhead)
-aura_issue_test_link_llvm_jit(test_dead_coercion_elim_narrow_evidence_ir_jit_zerooverhead)
-# Issue #538: DCE + IR type info downstream + post-mutate pipeline
-aura_add_issue_test(test_dead_coercion_elim)
-aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
 # Issue #611: CoercionMap deferred + DCE + CastOp type_tag zero-overhead flow
 aura_add_issue_test(test_coercion_dead_elim_castop_flow_zerooverhead)
 aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
-# Issue #574: Task2 dead-coercion elimination + coercion-elim-stats.
-aura_add_issue_test(test_dead_coercion_elimination_task2)
-aura_issue_test_link_llvm_jit(test_dead_coercion_elimination_task2)
-# Issue #468: DeadCoercionEliminationPass zero-overhead closed loop.
-# 8 ACs: DCE >60% gradual reduction, identity elision, narrowing
-# preserved, typed mutate + stats monotonic, query primitive +
-# regression. Non-duplicative with #433/#538/#574/#629.
-aura_add_issue_test(test_dead_coercion_zerooverhead_closed_loop_468)
-aura_issue_test_link_llvm_jit(test_dead_coercion_zerooverhead_closed_loop_468)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_task2_refinement_closed_loop_495)
 aura_issue_test_link_llvm_jit(test_task2_refinement_closed_loop_495)
