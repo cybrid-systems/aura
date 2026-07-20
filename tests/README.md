@@ -50,8 +50,36 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | root `test_*.cpp` | Older focused binaries | Only when no domain suite fits (justify) |
 | root `*.py` thin entry | Stable CLI shims → `python/` / `bench/` | Do not put new drivers at root |
 
-Layout authority + migration: [`docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) (#1932).
-Idempotent mover: `python3 tests/migrate_test_layout.py --dry-run`.
+Layout authority + migration: [`docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) (#1932 / #1939).
+Idempotent mover / policy check:
+
+```bash
+python3 tests/migrate_test_layout.py --dry-run
+python3 tests/migrate_test_layout.py --status   # exit 1 if root policy unclean
+```
+
+### What changed (#1932 / #1937 / #1938 / #1939)
+
+| Before | After |
+|--------|--------|
+| Python drivers scattered at `tests/*.py` | Full drivers under **`tests/python/`** |
+| Bench scripts + baseline at root | **`tests/bench/`** (+ thin `tests/benchmark.py`) |
+| Fuzz / leak scripts mixed in | **`tests/fuzz/`**, **`tests/memory/`** |
+| Commercial .aura E2E loose | **`tests/e2e/`** (#1934) |
+| Docs only listed ad-hoc paths | This README + `docs/test_harness_pattern.md` |
+
+**Stable CLI:** keep using `python3 tests/run.py …`, `tests/run_issue_tests.py`,
+`tests/fixture_check.py`, `tests/benchmark.py` — these are **thin entrypoints**
+that forward into `python/` or `bench/`. Do **not** put new full drivers at the
+`tests/` root.
+
+**Still at root by design:** `test_*.cpp` (legacy + batch; migrate via #1957
+domain waves), `test_harness.hpp`, `test-binding-allowlist.txt`, strategy docs.
+
+**Non-C++ root policy:** thin entrypoints + harness headers + allowlist +
+README/STRATEGY + `migrate_test_layout.py` only. Enforced by
+`python3 tests/migrate_test_layout.py --status` and
+`tests/python/test_layout_1939.py`.
 
 CMake resolves sources in order (`aura_resolve_test_cpp`):
 

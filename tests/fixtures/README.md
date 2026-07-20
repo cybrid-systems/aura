@@ -4,11 +4,11 @@
 
 | Path | Kind | Maintained how | Consumers |
 |------|------|----------------|-----------|
-| **`regression/*.json`** | Hand-written regression cases | Edit the matching theme shard | `tests/regression_cases.py` → `test_regression.py` |
-| **`integ/*.json`** | Integration matrix | Split by pipeline + eval theme | `tests/integ_cases.py` → `build.py test integ` |
-| **`benchmark/*.json`** | Bench / typecheck suite | Split by pipeline | `tests/benchmark_cases.py` → `benchmark.py` |
-| **`smoke/*.json`** | Tiny CLI smoke | Single `all.json` | `tests/smoke_cases.py` |
-| `issues_fast.json` | PR fast-tier targets | Hand list | `issue_tier.py`, CI |
+| **`regression/*.json`** | Hand-written regression cases | Edit the matching theme shard | `tests/python/regression_cases.py` → `test_regression.py` |
+| **`integ/*.json`** | Integration matrix | Split by pipeline + eval theme | `tests/python/integ_cases.py` → `build.py test integ` |
+| **`benchmark/*.json`** | Bench / typecheck suite | Split by pipeline | `tests/bench/benchmark_cases.py` → `benchmark.py` |
+| **`smoke/*.json`** | Tiny CLI smoke | Single `all.json` | `tests/python/smoke_cases.py` |
+| `issues_fast.json` | PR fast-tier targets | Hand list | `tests/python/issue_tier.py`, CI |
 | `issue_link_profiles.json` | Bundle membership | Hand / gen_issue_bundles | CMake bundles |
 | `issue_bundle_extras.json` | Bundle CMake extras | Hand | `gen_issue_bundles.py` |
 | `issue_integ_migrated.json` | Migration notes | Hand | docs/history |
@@ -29,7 +29,7 @@ merge conflicts. Cases now live under `tests/fixtures/<kind>/*.json`:
 - **smoke/** — `all.json`
 
 Loaders merge all shards for a kind (sorted by filename). See
-`tests/fixture_store.py`.
+`tests/python/fixture_store.py` (#1932 layout).
 
 ## Soft budgets (enforced by `fixture_check`)
 
