@@ -33,7 +33,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -47,7 +47,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:parent` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` *[internal-observable]* **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -200,7 +200,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `auto-evolve-stop` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-tick` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `auto-evolve-total-fixed` *[convenience]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `auto-rollback-on-panic` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `auto-rollback-on-panic` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `caaar` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -343,10 +343,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `number->string` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `pair?` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `panic-auto-rollback?` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-auto-rollback?` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-checkpoint` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-safe-source` *[mutation-safety]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `pow` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -449,9 +449,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Aot: (3)
 
-- `aot:reload` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:reload` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Arena: (13)
 
@@ -504,12 +504,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Edsl: (1)
 
-- `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Engine: (2)
 
-- `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `engine:surface` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `engine:metrics` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `engine:surface` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Eval: (1)
 
@@ -540,8 +540,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Jit: (2)
 
-- `jit:deopt-fn?` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `jit:exception-fibers-clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:deopt-fn?` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `jit:exception-fibers-clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Mutation-Log: (2)
 
@@ -561,7 +561,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Primitives: (2)
 
-- `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` *[core]* — `src/compiler/evaluator_primitives_test.cpp`
 
 ## Reflect: (2)
@@ -571,12 +571,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Resource: (2)
 
-- `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `resource:quota-set` *[core]* — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `resource:quota-set` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 
 ## Runtime: (1)
 
-- `runtime:self-heal-on-drift` *[core]* — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `runtime:self-heal-on-drift` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Scheduler: (1)
 
@@ -604,10 +604,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Stats: (4)
 
-- `stats:count` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:get` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:list` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:prefix` *[core]* — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:count` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:get` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:list` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:prefix` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Strategy: (4)
 
@@ -629,13 +629,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Terminal: (7)
 
-- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
-- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
-- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:clear` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:draw-batch` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:mark-dirty-region` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:present` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:present-delta` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Thread_Pool: (1)
 
@@ -755,10 +755,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-against-schema` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
 - `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query.cpp`
-- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-restore` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `panic-safe-source` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-restore` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `panic-safe-source` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `workspace-persist-format-version` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -793,9 +793,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
 - `agent:running?` — `src/compiler/evaluator_primitives_agent.cpp`
 - `agent:tick` — `src/compiler/evaluator_primitives_agent.cpp`
-- `aot:reload` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `aot:set-module-version` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
-- `aot:set-region-mask` — `src/compiler/evaluator_primitives_obs_jit_03.cpp`
+- `aot:reload` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `aot:set-module-version` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `aot:set-region-mask` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `append` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
@@ -817,7 +817,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
-- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `caaar` — `src/compiler/evaluator_primitives_pair.cpp`
@@ -886,9 +886,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `eda:validate-sv-emit-roundtrip` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
-- `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
-- `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `engine:surface` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` — `src/compiler/evaluator_primitives_char.cpp`
 - `equal?` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `error` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -944,8 +944,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `intend-history` — `src/compiler/evaluator_primitives_agent.cpp`
 - `ir-cache-v2:dependents` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ir-cache-v2:dirty?` — `src/compiler/evaluator_primitives_eval.cpp`
-- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
-- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_obs_jit_00.cpp`
+- `jit:deopt-fn?` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `jit:exception-fibers-clear` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `json-encode` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-get-string` — `src/compiler/evaluator_primitives_json.cpp`
 - `json-parse` — `src/compiler/evaluator_primitives_json.cpp`
@@ -997,7 +997,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `pow` — `src/compiler/evaluator_primitives_math.cpp`
 - `prim-cold-dispatch-fallback` — `src/compiler/evaluator_primitives_memory.cpp`
 - `prim-hot-dispatch-hits` — `src/compiler/evaluator_primitives_memory.cpp`
-- `primitives:alias` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
+- `primitives:alias` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` — `src/compiler/evaluator_primitives_test.cpp`
 - `procedure?` — `src/compiler/evaluator_primitives_core.cpp`
 - `query` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1025,14 +1025,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `render-hotpath-enter` — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-exit` — `src/compiler/evaluator_primitives_memory.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
-- `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `reverse` — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `rollback-since` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` — `src/compiler/evaluator_primitives_math.cpp`
 - `run-tests` — `src/compiler/evaluator_primitives_test.cpp`
-- `runtime:self-heal-on-drift` — `src/compiler/evaluator_primitives_obs_jit_06.cpp`
+- `runtime:self-heal-on-drift` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `scheduler:pin` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `security:check-effect` — `src/compiler/evaluator_primitives_security.cpp`
 - `security:check-tenant-isolation` — `src/compiler/evaluator_primitives_security.cpp`
@@ -1058,10 +1058,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
-- `stats:count` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:get` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:list` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
-- `stats:prefix` — `src/compiler/evaluator_primitives_obs_jit_01.cpp`
+- `stats:count` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:get` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:list` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `stats:prefix` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `strategy-field` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-inspect` — `src/compiler/evaluator_primitives_agent.cpp`
 - `strategy-set-field!` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1104,13 +1104,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
-- `terminal:clear` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:create-buffer` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
-- `terminal:diff` — `src/compiler/evaluator_primitives_obs_jit_14.cpp`
-- `terminal:draw-batch` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:present` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
-- `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit_07.cpp`
+- `terminal:clear` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:create-buffer` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:diff` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:draw-batch` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:mark-dirty-region` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:present` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:present-delta` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `tui:cell` — `src/compiler/evaluator_primitives_tui.cpp`
 - `tui:clear` — `src/compiler/evaluator_primitives_tui.cpp`
@@ -1180,7 +1180,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:find` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval_00.cpp`
+- `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
@@ -1194,7 +1194,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `query:parent` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` **deprecated** — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval_01.cpp`
+- `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`

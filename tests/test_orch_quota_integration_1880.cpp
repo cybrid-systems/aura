@@ -104,8 +104,8 @@ int main() {
         auto rq = read_first({"src/core/resource_quota.hh", "../src/core/resource_quota.hh"});
         auto mut = read_first({"src/compiler/evaluator_fiber_mutation.cpp",
                                "../src/compiler/evaluator_fiber_mutation.cpp"});
-        auto stats = read_first({"src/compiler/evaluator_primitives_obs_jit_12.cpp",
-                                 "../src/compiler/evaluator_primitives_obs_jit_12.cpp"});
+        auto stats = read_first({"src/compiler/evaluator_primitives_obs_jit.cpp",
+                                 "../src/compiler/evaluator_primitives_obs_jit.cpp"});
         CHECK(!spawn.empty() && spawn.find("#1880") != std::string::npos,
               "agent_spawn cites #1880");
         CHECK(spawn.find("try_consume_agent_arena") != std::string::npos, "arena consume");

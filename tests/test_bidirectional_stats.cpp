@@ -172,7 +172,7 @@ int aura_issue_1420_run() {
     // ── AC4: (engine:metrics :group "compile") exposes the new fields ──
     //
     // The compile_bidirectional_* prefix matches the `compile_`
-    // rule in metrics_group_for_field (evaluator_primitives_obs_jit_01.cpp
+    // rule in metrics_group_for_field (evaluator_primitives_obs_jit.cpp
     // line ~432), so the new atomics land in the `compile`
     // group of the engine:metrics facade (#1433 schema 2).
     // spot-check one of the four fields plus verify the group
