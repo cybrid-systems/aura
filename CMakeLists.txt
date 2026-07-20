@@ -5055,27 +5055,17 @@ aura_add_issue_test(test_compile02_no_dup_imports_1857)
 aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports_1857)
 
 # Issue #1859: Env::lookup SoA parent_id_ walk is iterative (no tmp.lookup).
-aura_add_issue_test(test_env_soa_lookup_iter_1859)
-aura_issue_test_link_llvm_jit(test_env_soa_lookup_iter_1859)
 
 # Issue #1861: Env bind_with_linear_state single-writer; StringPool::intern not TS.
-aura_add_issue_test(test_env_bind_linear_race_1861)
-aura_issue_test_link_llvm_jit(test_env_bind_linear_race_1861)
 
 # Issue #1863: Env::bindings_with_names raw walk + resolve under single-writer.
-aura_add_issue_test(test_env_bindings_with_names_race_1863)
-aura_issue_test_link_llvm_jit(test_env_bindings_with_names_race_1863)
 
 
 # Issue #1867: record_linear_gc_probe violation counters use release; readers acquire.
 aura_add_issue_test(test_linear_gc_probe_memory_order_1867)
 aura_issue_test_link_llvm_jit(test_linear_gc_probe_memory_order_1867)
 # Issue #1868: EnvView zero-copy span lifetime (invalidate on Env bind/realloc).
-aura_add_issue_test(test_env_view_lifetime_1868)
-aura_issue_test_link_llvm_jit(test_env_view_lifetime_1868)
 # Issue #1869: EnvView::lookup* share MAX_ENV_DEPTH (cyclic parent safe).
-aura_add_issue_test(test_env_view_lookup_depth_1869)
-aura_issue_test_link_llvm_jit(test_env_view_lookup_depth_1869)
 # Issue #1871: solve_delta locality pending_full_solve + adaptive reverify metrics.
 aura_add_issue_test(test_solve_delta_locality_1871)
 aura_issue_test_link_llvm_jit(test_solve_delta_locality_1871)
@@ -5110,8 +5100,6 @@ aura_issue_test_link_llvm_jit(test_orch_quota_integration_1880)
 aura_add_issue_test(test_orch_observability_1881)
 aura_issue_test_link_llvm_jit(test_orch_observability_1881)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
-aura_add_issue_test(test_env_frame_stale_vs_invalid_id_1754)
-aura_issue_test_link_llvm_jit(test_env_frame_stale_vs_invalid_id_1754)
 # Issue #1755: validate_linear_ownership_state bridge_epoch drift metric.
 aura_add_issue_test(test_linear_validate_bridge_epoch_1755)
 aura_issue_test_link_llvm_jit(test_linear_validate_bridge_epoch_1755)
@@ -5853,7 +5841,6 @@ aura_issue_test_link_llvm_jit(test_quota_edge_cases)
 # added to test-binding-allowlist.txt in case the link hits the system
 # 5-min build timeout (per invariant #29). Verification deferred to
 # #1538 batch.
-aura_add_issue_test(test_env_symid_primary_path)
 # Issue #1483: per-fiber mutation_stack_depth metrics (C2 atomics +
 # bump helpers + wire at evaluator_fiber_mutation.cpp:316+:454) +
 # query:per-fiber-mutation-stack-stats primitive (C3) + adaptive

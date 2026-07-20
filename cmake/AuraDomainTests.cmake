@@ -172,6 +172,17 @@ aura_add_issue_test(test_arena_batch)
 aura_issue_test_link_llvm_jit(test_arena_batch)
 set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #1861 + #1863 + #1754 + #1859 + #1482 + #1868 + #1869: env family
+# batch (Env::bind_with_linear_state single-writer + Env::bindings_with_names
+# single-writer + is_env_frame_stale vs invalid_id split + SoA iterative
+# walk + SymId PRIMARY storage + EnvView zero-copy + EnvView depth guard).
+# test_env_lookup_batch.cpp NOT included — already a batch entry in
+# AuraDomainTests.cmake:32-34 from earlier waves. EXCLUDE_FROM_ALL per
+# AuraDomainTests.cmake legacy batch convention. On-demand 'ninja test_env_batch'.
+aura_add_issue_test(test_env_batch)
+aura_issue_test_link_llvm_jit(test_env_batch)
+set_target_properties(test_env_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # Bundle member / legacy alias — prefer test_obs_schema_matrix.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
