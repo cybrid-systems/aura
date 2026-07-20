@@ -5724,6 +5724,21 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ownership_dirty_revalidate_hits{0};
     std::atomic<std::uint64_t> linear_escape_while_borrowed_total{0};
     std::atomic<std::uint64_t> linear_escape_after_move_total{0};
+    // Issue #1875: post-mutation linear validation coverage.
+    //   - linear_post_mutation_checks_total: post_mutation_invariant_check runs
+    //   - linear_post_mutation_hits_total: runs that performed ownership/escape
+    //     validation on at least one linear binding (dirty or full)
+    //   - linear_post_mutation_validation_hit_rate: 0–100 =
+    //     hits * 100 / max(1, checks)
+    //   - linear_post_mutation_full_validate_total: full re-sim path runs
+    //   - escape_analysis_dirty_reruns_total: EscapeAnalysisPass dirty-mode
+    std::atomic<std::uint64_t> linear_post_mutation_checks_total{0};
+    std::atomic<std::uint64_t> linear_post_mutation_hits_total{0};
+    std::atomic<std::uint64_t> linear_post_mutation_validation_hit_rate{0};
+    std::atomic<std::uint64_t> linear_post_mutation_full_validate_total{0};
+    std::atomic<std::uint64_t> escape_analysis_dirty_reruns_total{0};
+    std::atomic<std::uint64_t> linear_ir_use_after_move_total{0};
+    std::atomic<std::uint64_t> linear_ir_double_consume_total{0};
     std::atomic<std::uint64_t> ir_escape_analysis_runs_total{0};
     std::atomic<std::uint64_t> ir_escape_slots_marked_total{0};
     // Issue #747: linear + Occurrence predicate-branch safety under typed mutate.

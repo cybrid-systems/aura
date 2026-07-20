@@ -681,22 +681,49 @@ export class LinearOwnershipWrap {
 public:
     void run(aura::ir::IRModule& module) const {
         use_after_move_count_ = 0;
+        double_consume_count_ = 0;
+        functions_scanned_ = 0;
+        blocks_scanned_ = 0;
         for (auto& func : module.functions) {
             walk_function_(func);
+            ++functions_scanned_;
         }
         pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1875: lifetime metrics for type-check / post-mutate dashboards.
+        lifetime_use_after_move_.fetch_add(use_after_move_count_, std::memory_order_relaxed);
+        lifetime_double_consume_.fetch_add(double_consume_count_, std::memory_order_relaxed);
+        lifetime_functions_scanned_.fetch_add(functions_scanned_, std::memory_order_relaxed);
     }
 
-    bool has_error() const { return use_after_move_count_ > 0; }
+    bool has_error() const { return use_after_move_count_ > 0 || double_consume_count_ > 0; }
     std::string_view name() const { return "linear-ownership"; }
     std::size_t use_after_move_count() const { return use_after_move_count_; }
+    // Issue #1875: extra IR-level counters for type-check layer.
+    std::size_t double_consume_count() const { return double_consume_count_; }
+    std::size_t functions_scanned() const { return functions_scanned_; }
+    std::size_t blocks_scanned() const { return blocks_scanned_; }
     static std::uint64_t pure_delegation_hits() noexcept {
         return pure_delegation_hits_.load(std::memory_order_relaxed);
+    }
+    static std::uint64_t lifetime_use_after_move() noexcept {
+        return lifetime_use_after_move_.load(std::memory_order_relaxed);
+    }
+    static std::uint64_t lifetime_double_consume() noexcept {
+        return lifetime_double_consume_.load(std::memory_order_relaxed);
+    }
+    static std::uint64_t lifetime_functions_scanned() noexcept {
+        return lifetime_functions_scanned_.load(std::memory_order_relaxed);
     }
 
 private:
     mutable std::size_t use_after_move_count_ = 0;
+    mutable std::size_t double_consume_count_ = 0; // Issue #1875
+    mutable std::size_t functions_scanned_ = 0;
+    mutable std::size_t blocks_scanned_ = 0;
     static inline std::atomic<std::uint64_t> pure_delegation_hits_{0};
+    static inline std::atomic<std::uint64_t> lifetime_use_after_move_{0};
+    static inline std::atomic<std::uint64_t> lifetime_double_consume_{0};
+    static inline std::atomic<std::uint64_t> lifetime_functions_scanned_{0};
 
     static bool is_consuming_(aura::ir::IROpcode op) {
         switch (op) {
@@ -727,11 +754,16 @@ private:
     void walk_function_(aura::ir::IRFunction& func) const {
         std::vector<std::uint8_t> moved(func.local_count, 0);
         for (auto& block : func.blocks) {
+            ++blocks_scanned_;
             for (auto& instr : block.instructions) {
                 if (is_consuming_(instr.opcode)) {
                     auto consumed = instr.operands[1];
-                    if (consumed < moved.size())
+                    if (consumed < moved.size()) {
+                        // Issue #1875: double consume (move/drop after already moved).
+                        if (moved[consumed])
+                            ++double_consume_count_;
                         moved[consumed] = 1;
+                    }
                 } else if (reads_input_(instr.opcode)) {
                     // Iterating operands[] directly (operand_count is
                     // the legacy 0-4 counter; .size() is the
@@ -2075,6 +2107,8 @@ public:
     void run(aura::ir::IRModule& module) {
         escaped_slots_total_ = 0;
         functions_analyzed_ = 0;
+        dirty_blocks_analyzed_ = 0;
+        dirty_reruns_ = 0;
         for (auto& func : module.functions) {
             run_on_function(func);
             ++functions_analyzed_;
@@ -2084,15 +2118,42 @@ public:
         }
     }
 
+    // Issue #1875: DirtyAware — only re-mark escape points in dirty
+    // blocks (backward prop still whole-function for soundness).
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+    void run(aura::ir::IRFunction& func) {
+        run_on_function(func);
+        ++functions_analyzed_;
+        for (auto b : func.escape_map)
+            if (b)
+                ++escaped_slots_total_;
+    }
+    void run(aura::ir::BasicBlock& /*block*/) {
+        // Escape analysis is whole-function; per-block is a no-op.
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "escape-analysis"; }
     // Issue #1531: observability for IR escape analysis.
     std::size_t escaped_slots_total() const { return escaped_slots_total_; }
     std::size_t functions_analyzed() const { return functions_analyzed_; }
+    // Issue #1875: dirty-scope incremental re-run counters.
+    std::size_t dirty_blocks_analyzed() const { return dirty_blocks_analyzed_; }
+    std::size_t dirty_reruns() const { return dirty_reruns_; }
 
 private:
     std::size_t escaped_slots_total_ = 0;
     std::size_t functions_analyzed_ = 0;
+    std::size_t dirty_blocks_analyzed_ = 0;
+    std::size_t dirty_reruns_ = 0;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
     // Returns true if the opcode is a "return" that escapes its
     // operand value to the caller. Mirrors the escape-point
     // list in the existing JIT implementation.
@@ -2238,10 +2299,22 @@ private:
 
     void run_on_function(aura::ir::IRFunction& func) {
         // Allocate the escape_map (size = local_count, default 0).
-        func.escape_map.assign(func.local_count, 0);
+        // Issue #1875: when dirty-aware, preserve non-dirty block
+        // escape marks by merging: start from existing map if sized,
+        // else zero. Full re-mark of dirty blocks only.
+        const bool dirty_mode = static_cast<bool>(block_dirty_fn_);
+        if (!dirty_mode || func.escape_map.size() != func.local_count)
+            func.escape_map.assign(func.local_count, 0);
+        else if (dirty_mode)
+            ++dirty_reruns_;
 
-        // Pass 1: mark direct escape points.
-        for (const auto& block : func.blocks) {
+        // Pass 1: mark direct escape points (dirty blocks only when set).
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (dirty_mode && !is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            if (dirty_mode)
+                ++dirty_blocks_analyzed_;
+            const auto& block = func.blocks[bi];
             for (const auto& instr : block.instructions) {
                 if (is_escape_point(instr.opcode)) {
                     mark_escape_point(instr, block, func.escape_map);
@@ -2249,7 +2322,9 @@ private:
             }
         }
 
-        // Pass 2: backward propagation until fixpoint.
+        // Pass 2: backward propagation until fixpoint (whole function
+        // for soundness — O(N) and bounded; dirty-mode only reduced
+        // the mark pass cost).
         bool changed = true;
         int max_iters = 100; // safety bound
         while (changed && max_iters-- > 0) {
@@ -2257,6 +2332,11 @@ private:
         }
     }
 };
+
+static_assert(DirtyAwarePass<EscapeAnalysisPass>,
+              "EscapeAnalysisPass is DirtyAware for dirty-scope re-run (#1875)");
+static_assert(IncrementalPass<EscapeAnalysisPass>,
+              "EscapeAnalysisPass is IncrementalPass for dirty pipeline (#1875)");
 
 // Issue #160: Linear Ownership Pass (validation).
 //
