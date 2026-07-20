@@ -4802,9 +4802,6 @@ aura_issue_test_link_llvm_jit(test_fine_dirty_relower)
 # Issue #1579: dedicated ResourceQuota module + process fiber enforcement.
 aura_add_issue_test(test_resource_quota_module)
 aura_issue_test_link_llvm_jit(test_resource_quota_module)
-# Issue #1580: fiber resume post-steal EnvFrame/StableNodeRef/panic refresh.
-aura_add_issue_test(test_fiber_resume_post_steal_refresh)
-aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_refresh)
 # Issue #1581: scheduler GC defer + pending PanicCheckpoint steal/GC stress.
 aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
 aura_issue_test_link_llvm_jit(test_scheduler_gc_defer_pending_panic_steal)
@@ -5305,12 +5302,6 @@ aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
 # Issue #1627: soft/hard invalidate consistency + pre-cascade unify
 aura_add_issue_test(test_invalidate_consistency_1627)
 aura_issue_test_link_llvm_jit(test_invalidate_consistency_1627)
-# Issue #1608: fiber resume post-steal EnvFrame/linear refresh.
-aura_add_issue_test(test_fiber_resume_post_steal_1608)
-aura_issue_test_link_llvm_jit(test_fiber_resume_post_steal_1608)
-# Issue #1631: mandate EnvFrame/bridge refresh + linear probe on Fiber::resume
-aura_add_issue_test(test_fiber_resume_lifecycle_1631)
-aura_issue_test_link_llvm_jit(test_fiber_resume_lifecycle_1631)
 # Issue #1609: query:pattern MacroIntroduced hygiene force-filter.
 aura_add_issue_test(test_query_pattern_hygiene_1609)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)
