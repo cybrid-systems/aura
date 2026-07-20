@@ -9940,6 +9940,48 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       stale_deopt));
         });
 
+    // Issue #1952: query:aot-incremental-reemit-stats.
+    // Returns observability for the aura_reemit_aot_for_dirty pipeline
+    // (build on #1480). 4 counters surfaced:
+    //   - aot_incremental_reemit_count: # of "would re-emit" candidates
+    //     (after region-mask filter; pairs with #1480).
+    //   - aot_incremental_reemit_success_total: # of actual successful
+    //     LLVM re-emits (host-wired aura_set_aot_emit_fn callback
+    //     returned true). Pairs with aot_incremental_reemit_count
+    //     (delta = failures). Issue #1952 AC: aura_reemit_aot_for_dirty
+    //     returns actual re-emit count (not "would re-emit"); this
+    //     counter is the per-call success metric that pairs with that
+    //     return value.
+    //   - stable_func_id_preserved_total: MVP stub bumping 1:1 with
+    //     aot_incremental_reemit_success_total. Full stable DefineId
+    //     persistence (cross-epoch func_id mapping that survives
+    //     re-emit) is deferred per #1952 Anqi comment — out-of-scope
+    //     for MVP. cycle 2 follow-up will replace this stub with a
+    //     real define_id → func_id mapping table.
+    //   - aot_closure_dependency_reemit_total: # of candidates that
+    //     came from closure-capture cascade dependents (from #1480).
+    //
+    // Returns -1 sentinel when stable_func_id_preserved_total !=
+    // aot_incremental_reemit_success_total (MVP stub invariant
+    // violation: stub should bump 1:1 with success). Otherwise returns
+    // the sum of all 4 counters (sum-path, like #1903/#1904/#1905/
+    // #1906/#1907 P0/P1 shape).
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-incremental-reemit-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            const std::uint64_t total = ev->get_aot_incremental_reemit_count();
+            const std::uint64_t success = ev->get_aot_incremental_reemit_success_total();
+            const std::uint64_t stable = ev->get_stable_func_id_preserved_total();
+            const std::uint64_t closure_dep = ev->get_aot_closure_dependency_reemit_total();
+            // MVP stub invariant: stable should equal success (1:1).
+            if (stable != success)
+                return make_int(-1); // regression sentinel
+            return make_int(static_cast<std::int64_t>(total + success + stable + closure_dep));
+        });
+
     // Issue #1907: query:reflect-schema.
     // Returns observability for the reflect/EDSL bridge hook. Counters
     // surfaced:

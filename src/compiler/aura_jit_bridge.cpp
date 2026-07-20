@@ -404,6 +404,18 @@ extern "C" void aura_set_is_define_dirty_fn(aura_is_define_dirty_fn_t fn, void* 
 static aura_reemit_candidate_fn_t g_reemit_candidate_fn = nullptr;
 static void* g_reemit_candidate_userdata = nullptr;
 
+// Issue #1952: actual LLVM re-emit callback (replaces the #1481 stub).
+// When null, aura_reemit_aot_for_dirty falls back to the Phase 1 skeleton
+// behavior (count + commit_func_table_swap gate). When wired, each
+// candidate that survives the region filter invokes the callback and
+// bumps aot_incremental_reemit_success_total + stable_func_id_preserved_total
+// on true. The callback is typically wired by CompilerService via the
+// relower_define_function_minimal + emit_native_object path (#1943 MVP
+// scope). Full stable DefineId persistence (cross-epoch func_id mapping
+// that survives re-emit) is deferred per #1952 Anqi comment.
+static aura_aot_emit_fn_t g_aot_emit_fn = nullptr;
+static void* g_aot_emit_userdata = nullptr;
+
 // Last-call stats for tests + EDSL observability primitives.
 static std::atomic<std::uint64_t> g_last_reemit_dirty_count{0};
 static std::atomic<std::uint64_t> g_last_reemit_region_skips{0};
@@ -412,6 +424,12 @@ static std::atomic<std::uint64_t> g_last_reemit_closure_dep_count{0};
 extern "C" void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata) {
     g_reemit_candidate_fn = fn;
     g_reemit_candidate_userdata = userdata;
+}
+
+// Issue #1952: set the actual LLVM re-emit callback.
+extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
+    g_aot_emit_fn = fn;
+    g_aot_emit_userdata = userdata;
 }
 
 extern "C" std::uint64_t aura_reemit_dirty_count(void) {
@@ -1570,9 +1588,35 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             }
         }
         ++to_re_emit;
-        // #1481 follow-up: actual LLVM re-emit goes here. For #1480
-        // we signal "would re-emit" via metric + atomic commit.
-        any_re_emit = true;
+        // Issue #1952: actual LLVM re-emit via host-wired callback
+        // (replaces the #1481 stub that only counted "would re-emit").
+        // When g_aot_emit_fn is wired, each region-filtered candidate
+        // invokes the callback. On true we bump
+        // aot_incremental_reemit_success_total + the MVP stub
+        // stable_func_id_preserved_total (1:1 with success per
+        // (query:aot-incremental-reemit-stats) invariant). On false
+        // we leave the func_table_epoch untouched (consistent with
+        // #1480 Phase 1: failed emit should not advance the table).
+        // When no emit callback is wired, fall back to skeleton
+        // behavior (count + commit_func_table_swap gate).
+        if (g_aot_emit_fn) {
+            const bool emitted = g_aot_emit_fn(name, region, g_aot_emit_userdata);
+            if (emitted) {
+                if (aot_metrics()) {
+                    aot_metrics()->aot_incremental_reemit_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // MVP stub: bumps 1:1 with success. Full stable DefineId
+                    // persistence (cross-epoch func_id mapping that
+                    // survives re-emit) is deferred per #1952 Anqi comment.
+                    aot_metrics()->stable_func_id_preserved_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                any_re_emit = true;
+            }
+        } else {
+            // Phase 1 skeleton fallback: count as "would re-emit".
+            any_re_emit = true;
+        }
     }
 
     // Atomic commit: bump func_table_epoch only if at least one
