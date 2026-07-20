@@ -2036,7 +2036,13 @@ bool is_closure_view_valid(const ClosureView& v, const Closure& cl) noexcept {
         return false;
     if (!cl.lifetime_valid_for_views())
         return false;
-    return v.source_lifetime_version == cl.lifetime_version;
+    if (v.source_lifetime_version != cl.lifetime_version) {
+        // Issue #1947: lifetime_version mismatch → concurrent move/GC/compact
+        // between view creation and access. Bump invalid-access counter.
+        g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
 }
 
 const aura::ast::FlatAST* closure_view_flat(const ClosureView& v) noexcept {
