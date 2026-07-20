@@ -151,6 +151,11 @@ export class ConstraintSystem {
     // occurrence (4) and plain touched (1); targeted reverify
     // fallback when the clean-scan is truncated.
     std::unordered_set<std::uint32_t> let_poly_dirty_roots_;
+    // Issue #1871: Union-Find roots of dirty constraints pruned from
+    // the local O(delta) worklist. Merged into the next solve_delta
+    // local-root collection so residual dirty is not silently
+    // starved after mark_clean of only the local subset.
+    std::unordered_set<std::uint32_t> pending_full_solve_roots_;
     // Issue #536: optional hooks for Evaluator observability
     // (touched_roots snapshot + cross-delta CONFLICT detection).
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
@@ -271,6 +276,10 @@ public:
     }
     [[nodiscard]] std::size_t occurrence_priority_roots_size() const noexcept {
         return occurrence_priority_roots_.size();
+    }
+    // Issue #1871: size of pending full-solve root backlog.
+    [[nodiscard]] std::size_t pending_full_solve_roots_size() const noexcept {
+        return pending_full_solve_roots_.size();
     }
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.

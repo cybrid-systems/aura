@@ -5244,6 +5244,9 @@ aura_issue_test_link_llvm_jit(test_env_view_lookup_depth_1869)
 # Issue #1870: ClosureView zero-copy span/pointer lifetime (invalidate on mutate).
 aura_add_issue_test(test_closure_view_lifetime_1870)
 aura_issue_test_link_llvm_jit(test_closure_view_lifetime_1870)
+# Issue #1871: solve_delta locality pending_full_solve + adaptive reverify metrics.
+aura_add_issue_test(test_solve_delta_locality_1871)
+aura_issue_test_link_llvm_jit(test_solve_delta_locality_1871)
 # Issue #1753: walk_env_frames uses static_assert for F signature.
 aura_add_issue_test(test_walk_env_frames_static_assert_1753)
 aura_issue_test_link_llvm_jit(test_walk_env_frames_static_assert_1753)
