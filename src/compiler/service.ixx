@@ -37,6 +37,7 @@ module;
 #include "messaging_bridge.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
+#include "core/workspace_epoch.hh" // Issue #1964 cycle 2b: current_mutation_epoch / bump_mutation_epoch
 #include "jit_typed_mutation_stats.h"
 #include "typed_mutation_audit.h" // Issue #1884: TypeProp ↔ invariant correlation
 #include "linear_occurrence_mutate_stats.h"
@@ -859,7 +860,7 @@ public:
                 if (e.dirty)
                     ++dirty_count;
             }
-            std::uint64_t epoch = mutation_epoch_.load(std::memory_order_acquire);
+            std::uint64_t epoch = aura::core::current_mutation_epoch();
             std::uint64_t edges = 0;
             {
                 std::shared_lock dep_read(dep_graph_mtx_);
@@ -1128,7 +1129,7 @@ public:
         // Issue #1262/#1264: acquire mutation epoch with fence before
         // hot-swap so concurrent invalidate_function / mutate cannot
         // tear bridge_epoch vs mutation_epoch observations.
-        const std::uint64_t epoch_at_entry = mutation_epoch_.load(std::memory_order_acquire);
+        const std::uint64_t epoch_at_entry = aura::core::current_mutation_epoch();
         std::atomic_thread_fence(std::memory_order_acq_rel);
         // Issue #1262: stamp AOT emit defuse_version for versioned mangle
         // so subsequent AOT reloads enforce current epoch in symbol names.
@@ -1175,7 +1176,7 @@ public:
 
         // Issue #1264: re-check epoch after lower; concurrent mutation
         // advanced epoch → race detected, refuse hot-swap (caller retries).
-        const std::uint64_t epoch_now = mutation_epoch_.load(std::memory_order_acquire);
+        const std::uint64_t epoch_now = aura::core::current_mutation_epoch();
         if (epoch_now != epoch_at_entry) {
             metrics_.hot_update_race_detected.fetch_add(1, std::memory_order_relaxed);
             std::atomic_thread_fence(std::memory_order_acq_rel);
@@ -1191,7 +1192,7 @@ public:
 
         // Bump epoch after successful invalidation so AOT mangle + JIT
         // caches observe the swap (#1262 versioned symbols).
-        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        aura::core::bump_mutation_epoch();
         metrics_.hot_swap_versioned_mangle_enforced.fetch_add(1, std::memory_order_relaxed);
 
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
@@ -1314,7 +1315,7 @@ public:
         // dangling (the arena was reset). The bridge falls back
         // to re-parse from body_source (or invalidates the closure).
         // Force-dirty was applied above before clear — no false-clean.
-        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        aura::core::bump_mutation_epoch();
         metrics_.ir_soa_cache_reset_epoch_bumps.fetch_add(1, std::memory_order_relaxed);
         metrics_.arena_reset_dirty_forced.fetch_add(1, std::memory_order_relaxed);
         // Re-install lowering hooks after reset so the live service
@@ -2190,7 +2191,7 @@ public:
         aura::diag::DiagnosticCollector diags;
         tc_pass.set_bidirectional_mode(bidirectional_mode_);
         tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags,
-                                      mutation_epoch_.load(std::memory_order_relaxed), &metrics_);
+                                      aura::core::current_mutation_epoch(), &metrics_);
         {
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
@@ -2625,8 +2626,7 @@ public:
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
             tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
-                                          diags, mutation_epoch_.load(std::memory_order_relaxed),
-                                          &metrics_);
+                                          diags, aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2674,7 +2674,7 @@ public:
         // pack — dead CastOps accumulated on --inspect / IR-direct.
         // Issue #1457: TypePropagation before DCE for CastOp elision.
         DeadCoercionEliminationPass dce(&type_registry_);
-        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
         ts.set_pipeline_epoch(pipeline_epoch);
         tprop.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
@@ -2847,8 +2847,7 @@ public:
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
             tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
-                                          diags, mutation_epoch_.load(std::memory_order_relaxed),
-                                          &metrics_);
+                                          diags, aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -2879,7 +2878,7 @@ public:
             // never compiles dead CastOps.
             // Issue #1457: TypePropagation before DCE.
             aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
-            const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+            const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
             ts.set_pipeline_epoch(pipeline_epoch);
             tprop.set_pipeline_epoch(pipeline_epoch);
             ar.set_pipeline_epoch(pipeline_epoch);
@@ -3083,7 +3082,7 @@ public:
                         // missed, or a mutation in a different function
                         // that the JIT code implicitly depends on).
                         // Treat as a cache miss and force re-compile.
-                        auto current_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+                        auto current_epoch = aura::core::current_mutation_epoch();
                         if (cache_it->second.last_seen_epoch_ != current_epoch) {
                             // Skip the cached entry — fall through to
                             // the compile path below. Don't erase here
@@ -3218,7 +3217,7 @@ public:
                     // Issue #166: stamp the entry with the current
                     // epoch. On the next access, if the epoch has
                     // changed, the entry is treated as stale.
-                    it->second.last_seen_epoch_ = mutation_epoch_.load(std::memory_order_relaxed);
+                    it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
                     it->second.local_count = ir_fn.local_count;
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
@@ -3451,7 +3450,7 @@ public:
         // set on the next call, forcing re-inference of every
         // node. Coarse but provably correct for the stale-cache
         // bug class.
-        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        tc.set_cache_epoch(aura::core::current_mutation_epoch());
         // Issue #258: plumb metrics so solve_delta timing
         // accumulates into CompilerMetrics::delta_solve_time_us.
         tc.set_metrics(&metrics_);
@@ -3585,7 +3584,7 @@ public:
         tc.set_strict(true); // match the typecheck() default
         // Issue #168: gate by global mutation epoch (same as
         // the typecheck() path).
-        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        tc.set_cache_epoch(aura::core::current_mutation_epoch());
         // Issue #258: plumb metrics for solve_delta timing.
         tc.set_metrics(&metrics_);
         tc.set_bidirectional_mode(bidirectional_mode_);
@@ -5842,7 +5841,7 @@ public:
         // live IR module.
         // Issue #1457: TypePropagation before DCE.
         DeadCoercionEliminationPass dce(&type_registry_);
-        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
         ts.set_pipeline_epoch(pipeline_epoch);
         tprop.set_pipeline_epoch(pipeline_epoch);
         ar.set_pipeline_epoch(pipeline_epoch);
@@ -6427,8 +6426,7 @@ public:
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
             tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags,
-                                          mutation_epoch_.load(std::memory_order_relaxed),
-                                          &metrics_);
+                                          aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -7501,7 +7499,7 @@ public:
         // (Issue #168): use the current mutation epoch so
         // cache entries captured under a prior epoch are
         // correctly rejected as stale.
-        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        tc.set_cache_epoch(aura::core::current_mutation_epoch());
         // Plumb the shared metrics so the per-call engine
         // stats (cache_hits / cache_misses / stale_cache)
         // accumulate into the lifetime totals (Issue #258 /
@@ -8556,7 +8554,7 @@ private:
         aura::compiler::TypeSpecializationWrap ts(&type_registry_);
         aura::compiler::TypePropagationPass tprop(&type_registry_);
         aura::compiler::DeadCoercionEliminationPass dce(&type_registry_);
-        const std::uint64_t pipeline_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+        const std::uint64_t pipeline_epoch = aura::core::current_mutation_epoch();
         ts.set_pipeline_epoch(pipeline_epoch);
         tprop.set_pipeline_epoch(pipeline_epoch);
         dce.set_pipeline_epoch(pipeline_epoch);
@@ -9862,7 +9860,7 @@ public:
 
     // Issue #1378: test accessors for cascade ordering / epoch accounting.
     [[nodiscard]] std::uint64_t public_mutation_epoch() const noexcept {
-        return mutation_epoch_.load(std::memory_order_acquire);
+        return aura::core::current_mutation_epoch();
     }
     [[nodiscard]] std::uint64_t public_invalidate_function_calls() const noexcept {
         return metrics_.invalidate_function_calls.load(std::memory_order_relaxed);
@@ -10101,7 +10099,7 @@ public:
     // via Evaluator::is_bridge_stale(). A bypass of either
     // invariant is a contract violation.
     [[nodiscard]] std::uint64_t bridge_epoch() const noexcept {
-        return mutation_epoch_.load(std::memory_order_acquire);
+        return aura::core::current_mutation_epoch();
     }
     // Issue #223: explicitly bump the bridge epoch. Called when
     // the bridge_epoch_ field on existing ClosureBridgeData should
@@ -10115,7 +10113,7 @@ public:
     // mutation_epoch_ which is bumped together with cache
     // invalidation in mark_define_dirty / mark_all_defines_dirty.
     void bump_bridge_epoch() noexcept {
-        mutation_epoch_.fetch_add(1, std::memory_order_release);
+        aura::core::bump_mutation_epoch();
         // Issue #1476: bump the bridge_epoch_bumps_total counter
         // alongside the atomic so observability tracks every epoch
         // advance. Pairs with mutation_epoch_ acquire-load counters
@@ -10130,7 +10128,7 @@ public:
         // the static init value forever and the 2-check always passes
         // vacuously. Acquire/release pairing with the fetch_add above
         // mirrors the #1476 dual-epoch protocol.
-        aura_set_current_bridge_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+        aura_set_current_bridge_epoch(aura::core::current_mutation_epoch());
     }
 
     // Issue #1414: invalidate the solved_delta_cache_ and

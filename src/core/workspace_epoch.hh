@@ -121,6 +121,29 @@ inline std::uint64_t fetch_add_workspace_epoch(WorkspaceEpochKind kind,
     return g_workspace_epoch_storage(kind).fetch_add(delta, std::memory_order_relaxed);
 }
 
+// ── Issue #1964 cycle 2b: mutation_epoch migration accessors ─────
+//
+// Replaces the legacy `service.ixx::mutation_epoch_` field with a
+// WorkspaceEpoch-canonical counter. All reads of "the current
+// mutation epoch" across the codebase should go through
+// `current_mutation_epoch()`; all writes should go through
+// `bump_mutation_epoch()`. Cycle 2b ships the API + service.ixx
+// migration; cycle 2d completes the legacy-field deletion in
+// service.ixx itself (after consumers are migrated).
+//
+// The function-pointer indirection via
+// `shape_jit_pass::g_mutation_epoch_fn` is no longer required once
+// consumers call `current_mutation_epoch()` directly; cycle 2d will
+// remove that indirection.
+
+[[nodiscard]] inline std::uint64_t current_mutation_epoch() noexcept {
+    return load_workspace_epoch(WorkspaceEpochKind::Mutation);
+}
+
+inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
+    fetch_add_workspace_epoch(WorkspaceEpochKind::Mutation, delta);
+}
+
 } // namespace aura::core
 
 #endif // AURA_CORE_WORKSPACE_EPOCH_HH
