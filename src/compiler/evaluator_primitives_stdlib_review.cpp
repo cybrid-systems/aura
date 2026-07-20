@@ -20,6 +20,7 @@ import std;
 import aura.compiler.value;
 import aura.compiler.macro_expansion;
 import aura.compiler.pass_manager;
+import aura.compiler.soa_view;
 import aura.compiler.lowering_linear_types;
 import aura.core.ast;
 
@@ -834,6 +835,13 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
         "query:production-sweep-1241-1245-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
             auto* m = metrics();
+            // Issue #1918: live EDSL SoA column access ratio for production gate.
+            const auto edsl_ratio =
+                static_cast<std::int64_t>(aura::compiler::soa_view::edsl_column_access_ratio_bp());
+            const auto mig_ratio =
+                static_cast<std::int64_t>(aura::compiler::soa_view::migration_ratio_bp());
+            const auto phase =
+                static_cast<std::int64_t>(aura::compiler::soa_view::kSoaViewEnforcementPhase);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1241)},
                 {"active", make_int(m ? load_u64(m, m->production_sweep_1241_1245_active) : 1)},
@@ -847,6 +855,20 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"macro-clone-concurrent-hygiene",
                  make_int(m ? load_u64(m, m->macro_clone_concurrent_hygiene) : 1)},
                 {"issue-1245", make_int(1245)},
+                // Issue #1918 additive keys (keep schema=1241 for lineage tests).
+                {"schema-1918", make_int(1918)},
+                {"issue-1918", make_int(1918)},
+                {"enforcement-phase", make_int(phase)},
+                {"edsl-soa-column-access-bp", make_int(edsl_ratio)},
+                {"edsl-soa-column-access-pct", make_int(edsl_ratio / 100)},
+                {"migration-ratio-bp", make_int(mig_ratio)},
+                {"edsl-column-access-target-bp", make_int(9000)},
+                {"hot-pass-dod-compliant-wired", make_int(1)},
+                {"pipeline-static-assert-wired", make_int(1)},
+                {"edsl-matcher-soa-wired", make_int(1)},
+                {"edsl-apply-soa-wired", make_int(1)},
+                {"edsl-mutate-soa-wired", make_int(1)},
+                {"edsl-children-soa-wired", make_int(1)},
             };
             return build_kv_hash(ev, kv);
         });

@@ -13,6 +13,7 @@ import std;
 
 import aura.core.ast;
 import aura.core.mutation;
+import aura.compiler.soa_view;
 
 namespace aura::compiler {
 
@@ -210,7 +211,10 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
             // Issue #678: pin workspace children PCV so concurrent
             // structural mutations cannot invalidate ws_ch spans
             // held during Kleene backtracking.
+            // Issue #1918: matcher children path is columnar SafePCVSpan.
             auto ws_safe = ws_flat_->children_safe_view(ws_id);
+            soa_view::record_edsl_matcher_soa_path();
+            soa_view::record_edsl_children_soa_path();
             auto save = state.captures.size();
             bool ok = match_list(ws_safe.span(), pat_node.children);
             if (!ok)

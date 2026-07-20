@@ -211,4 +211,13 @@ template <typename P>
 concept RequiresSoAViewPass =
     Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireSoAView == true; };
 
+// ── HotPassDodCompliant (#1918) ────────────────────────────────
+//
+// Production hot-path pass is either SoAViewAware (reports uses_soa_view)
+// or explicitly marked LegacyPass. Used by check_pass_dod_compliance
+// soft metrics + tests; hard static_assert for kRequireSoAView remains
+// RequiresSoAViewPass → SoAViewAwarePass.
+template <typename P>
+concept HotPassDodCompliant = SoAViewAwarePass<P> || LegacyPass<P>;
+
 } // namespace aura::compiler

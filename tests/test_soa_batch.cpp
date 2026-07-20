@@ -694,6 +694,7 @@ static void run_506_hotpath_matrix() {
 // ── Issue #1619 — SoAView enforcement + EDSL migration ──
 using aura::compiler::check_pass_dod_compliance;
 using aura::compiler::check_pipeline_dod_compliance;
+using aura::compiler::concept_enforcement_hits_total;
 using aura::compiler::ConstantFoldingWrap;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::IRFunctionSoA;
@@ -705,7 +706,6 @@ using aura::compiler::SoAViewAwarePass;
 using aura::compiler::TypePropagationPass;
 using aura::compiler::soa_view::assert_soa_view_compliant;
 using aura::compiler::soa_view::assert_soa_view_full_compliant;
-using aura::compiler::soa_view::concept_enforcement_hits_total;
 using aura::compiler::soa_view::consult_closure_shape_linear;
 using aura::compiler::soa_view::consult_tag_arity;
 using aura::compiler::soa_view::g_soa_view_hits;
@@ -835,9 +835,8 @@ static void run_1619_query_schema() {
           "columnar-accessor-required");
     CHECK(href(cs, "query:soa-view-enforcement-stats", "pipeline-pack-check") == 1,
           "pipeline-pack-check");
-    CHECK(href(cs, "query:soa-view-enforcement-stats", "enforcement-phase") == 2 ||
-              href(cs, "query:soa-view-enforcement-stats", "enforcement-phase") >= 1,
-          "enforcement-phase");
+    CHECK(href(cs, "query:soa-view-enforcement-stats", "enforcement-phase") >= 2,
+          "enforcement-phase >= 2 (phase 3 under #1918)");
 }
 
 static void run_1619_stress() {

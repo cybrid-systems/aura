@@ -18,8 +18,9 @@ using aura::compiler::types::is_int;
 
 namespace {
 
+// Stats are catalog-only (engine:metrics) after SlimSurface — not public add().
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

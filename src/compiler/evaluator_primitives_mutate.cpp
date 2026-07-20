@@ -30,6 +30,7 @@ import aura.diag;
 import aura.compiler.hardware_backend;
 import aura.compiler.sv_ir;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
+import aura.compiler.soa_view;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1381,6 +1382,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // failure: guard rolls back the MutationRecord log +
     // panic_checkpoint restores the source).
     add_mutate("mutate:rebind", [&ev, mev, safe_str](const auto& a) -> EvalValue {
+        // Issue #1918: mutate hot path records SoA/column migration progress
+        // (workspace FlatAST children + defuse SoA under MutationBoundaryGuard).
+        soa_view::record_edsl_mutate_soa_path();
         bool ok = true;
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent

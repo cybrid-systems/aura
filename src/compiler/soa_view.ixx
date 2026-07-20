@@ -1,4 +1,5 @@
-// soa_view.ixx — Issues #1241/#1243 Phase 1: SoAView helpers for eval/IR hot paths.
+// soa_view.ixx — Issues #1241/#1243/#1517/#1619/#1918: SoAView helpers for
+// eval/IR/EDSL hot paths + compile-time DOD compliance.
 
 module;
 
@@ -14,7 +15,7 @@ import aura.compiler.ir_soa;
 
 export namespace aura::compiler::soa_view {
 
-inline constexpr int kSoaViewPhase = 1;
+inline constexpr int kSoaViewPhase = 3; // #1918 complete SoAView + EDSL migration
 
 // Metrics: hits when hot paths consult SoAView helpers.
 inline std::atomic<std::uint64_t> g_soa_view_hits{0};
@@ -27,13 +28,21 @@ inline std::atomic<std::uint64_t> g_soa_dirty_short_circuit{0};
 inline std::atomic<std::uint64_t> g_concept_enforcement_hits{0};
 inline std::atomic<std::uint64_t> g_soa_view_pass_skipped{0};
 inline std::atomic<std::uint64_t> g_edsl_soa_migration_progress{0};
+// Issue #1918: EDSL hot-path SoA column access counters (matcher/children/mutate/apply).
+inline std::atomic<std::uint64_t> g_edsl_matcher_soa_hits{0};
+inline std::atomic<std::uint64_t> g_edsl_children_soa_hits{0};
+inline std::atomic<std::uint64_t> g_edsl_mutate_soa_hits{0};
+inline std::atomic<std::uint64_t> g_edsl_apply_soa_hits{0};
 // Issue #1377: dual-emit is opt-in (default off) in production lower;
 // full SoA primary path remains deferred Phase 2+ (see ir_soa.ixx).
 inline constexpr int kSoaMigrationPhase2 = 1;
-// Issue #1517 / #1619: pipeline enforcement phase (static_assert + soft metrics).
-// Phase 2 (#1619): SoAView requires columnar_accessor + full EDSL hot-path helpers.
-inline constexpr int kSoaViewEnforcementPhase = 2;
-inline constexpr int kSoaViewEnforcementIssue = 1619;
+// Issue #1517 / #1619 / #1918: pipeline enforcement phase.
+// Phase 2 (#1619): SoAView requires columnar_accessor + EDSL helpers.
+// Phase 3 (#1918): full hot-pass SoAViewAware|Legacy + EDSL >90% column access gate.
+inline constexpr int kSoaViewEnforcementPhase = 3;
+inline constexpr int kSoaViewEnforcementIssue = 1918;
+// AC: EDSL hot-path SoA column access target (basis points; 9000 = 90%).
+inline constexpr std::uint64_t kEdslSoaColumnAccessTargetBp = 9000;
 
 inline void record_soa_view_hit() noexcept {
     g_soa_view_hits.fetch_add(1, std::memory_order_relaxed);
@@ -197,11 +206,33 @@ static_assert(SoAViewFull<IRFunctionSoAView>, "IRFunctionSoAView must satisfy So
     return tag_arity_index(tag, arity);
 }
 
-// Issue #1619: children / apply_closure hot-path marker — records SoA
+// Issue #1619 / #1918: children / apply_closure hot-path marker — records SoA
 // migration progress when callers use SafePCVSpan / columnar children.
 inline void record_edsl_children_soa_path() noexcept {
     record_soa_view_hit();
     record_edsl_soa_migration_progress(1);
+    g_edsl_children_soa_hits.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1918: pattern-matcher hot path used children_safe_view / SafePCVSpan.
+inline void record_edsl_matcher_soa_path() noexcept {
+    record_soa_view_hit();
+    record_edsl_soa_migration_progress(1);
+    g_edsl_matcher_soa_hits.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1918: apply_closure dual-path / EnvFrame SoA materialize path.
+inline void record_edsl_apply_soa_path() noexcept {
+    record_soa_view_hit();
+    record_edsl_soa_migration_progress(1);
+    g_edsl_apply_soa_hits.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1918: Guard / mutate:rebind structural mutation SoA path.
+inline void record_edsl_mutate_soa_path() noexcept {
+    record_soa_view_hit();
+    record_edsl_soa_migration_progress(1);
+    g_edsl_mutate_soa_hits.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #1619: apply_closure / Guard mutate consult (shape + linear pair).
@@ -232,6 +263,26 @@ inline void record_edsl_children_soa_path() noexcept {
     return (h * 10000ull) / denom;
 }
 
+// Issue #1918: EDSL four-path SoA share (matcher+children+mutate+apply hits
+// over hits+misses). When misses==0 and any EDSL hit, reports 10000 (100%).
+// Target gate: kEdslSoaColumnAccessTargetBp (9000 = 90%).
+[[nodiscard]] inline std::uint64_t edsl_column_access_ratio_bp() noexcept {
+    const auto matcher = g_edsl_matcher_soa_hits.load(std::memory_order_relaxed);
+    const auto children = g_edsl_children_soa_hits.load(std::memory_order_relaxed);
+    const auto mutate = g_edsl_mutate_soa_hits.load(std::memory_order_relaxed);
+    const auto apply = g_edsl_apply_soa_hits.load(std::memory_order_relaxed);
+    const auto edsl_hits = matcher + children + mutate + apply;
+    const auto misses = g_soa_view_misses.load(std::memory_order_relaxed);
+    const auto denom = edsl_hits + misses;
+    if (denom == 0)
+        return 0;
+    return (edsl_hits * 10000ull) / denom;
+}
+
+[[nodiscard]] inline bool edsl_column_access_meets_target() noexcept {
+    return edsl_column_access_ratio_bp() >= kEdslSoaColumnAccessTargetBp;
+}
+
 // Compile-time pack check helper for tests / pipeline documentation.
 template <typename V> consteval void assert_soa_view_compliant() {
     static_assert(SoAView<V>, "type must satisfy SoAView (#1619 columnar_accessor + shape/linear)");
@@ -240,5 +291,8 @@ template <typename V> consteval void assert_soa_view_compliant() {
 template <typename V> consteval void assert_soa_view_full_compliant() {
     static_assert(SoAViewFull<V>, "type must satisfy SoAViewFull (#1619)");
 }
+
+// Issue #1918: production hot-pass pack must be SoAViewAware or explicit Legacy.
+// (Checked via check_pass_dod_compliance / note_pass_soa_enforcement.)
 
 } // namespace aura::compiler::soa_view

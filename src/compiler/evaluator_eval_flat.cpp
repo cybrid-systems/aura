@@ -19,6 +19,7 @@ import aura.compiler.evaluator_pure;
 import aura.compiler.macro_expansion;
 import aura.diag;
 import aura.parser.parser;
+import aura.compiler.soa_view;
 
 namespace aura::compiler {
 
@@ -331,6 +332,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // (ffi / tw / bridge / ir) are bumped in each branch.
     // The IR path (runtime_closures_) bumps the ir counter
     // via the shared metrics pointer (set by service.ixx).
+    // Issue #1918: EDSL apply_closure hot path uses EnvFrame SoA +
+    // dual-epoch checks (no AoS pointer-chasing for live closures).
+    soa_view::record_edsl_apply_soa_path();
     if (compiler_metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
         m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);

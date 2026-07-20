@@ -330,10 +330,10 @@ static_assert((kSpecialBoolFalse & 3) == kSpecialTagLow2,
 static_assert((kSpecialVoid & 3) == kSpecialTagLow2,
               "Issue #1620: void must have Special low2 bits");
 
-// SoAView enforcement phase (soa_view.ixx kSoaViewEnforcementPhase = 2).
-inline constexpr int kSoaViewEnforcementPhaseConsteval = 2;
-static_assert(kSoaViewEnforcementPhaseConsteval >= 2,
-              "Issue #1620: SoAView enforcement phase must be >= 2 after #1619");
+// SoAView enforcement phase (soa_view.ixx kSoaViewEnforcementPhase = 3 / #1918).
+inline constexpr int kSoaViewEnforcementPhaseConsteval = 3;
+static_assert(kSoaViewEnforcementPhaseConsteval >= 3,
+              "Issue #1918: SoAView enforcement phase must be >= 3 (EDSL full migration)");
 
 // Exported count for (query:cpp26-contracts-stats) consteval_checks field.
 // Bumped #1321 (+4), #1466 Phase 1 (+17), #1519 (+12), #1620 (+12 Arena/FlatAST/Value/SoA).
