@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // @category: integration
 // @reason: Issue #569 — arena-auto-compact-defrag-stats hash slice
 

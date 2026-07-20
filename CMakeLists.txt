@@ -621,11 +621,9 @@ endif()
 # only wires modules + the per-test sources a few callers still need
 # (observability headers; JIT is aura_jit_test_objects).
 function(aura_add_issue_test NAME)
-    # Source resolution order:
-    #   1. tests/issues/<NAME>.cpp    (legacy per-issue — do not grow)
-    #   2. tests/domain/<NAME>.cpp    (preferred for new theme suites)
-    #   3. tests/<NAME>.cpp           (fallback / batch drivers)
-    # Policy: tests/README.md · tests/domain/README.md (#1958)
+    # Source resolution: issues/ → domain/ → domain/<theme>/ → tests/
+    # (see aura_resolve_test_cpp in cmake/AuraTest.cmake).
+    # Policy: tests/README.md (#1958) · domain/arena pilot (#1959)
     # Inventory: tests/legacy_test_inventory.md (#1957)
     aura_resolve_test_cpp(${NAME} _aura_test_src)
     add_executable(${NAME} ${_aura_test_src})

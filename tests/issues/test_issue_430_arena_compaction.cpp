@@ -1,3 +1,6 @@
+// DEPRECATED location for new work (#1959): prefer tests/domain/arena/
+// (batch drivers + README). This file remains for bundle/history coverage.
+//
 // @category: integration
 // @reason: uses CompilerService to verify arena compaction policy
 //          + memory stability under heavy mutation

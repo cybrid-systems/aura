@@ -407,13 +407,16 @@ def collect() -> list[TestEntry]:
     for p in sorted(TESTS.glob("test_*.cpp")):
         if is_issue_oriented_root(p):
             entries.append(scan_file(p, "root"))
-    # Domain suites (preferred target — inventory as migration destinations).
+    # Domain suites + theme pilots (e.g. domain/arena/, #1959).
     domain = TESTS / "domain"
     if domain.is_dir():
-        for p in sorted(domain.glob("test_*.cpp")):
+        domain_files = list(domain.glob("test_*.cpp")) + list(domain.glob("*/test_*.cpp"))
+        for p in sorted(set(domain_files)):
             e = scan_file(p, "domain")
             if "domain_suite" not in e.flags:
                 e.flags.append("domain_suite")
+            if p.parent != domain:
+                e.flags.append(f"theme_{p.parent.name}")
             entries.append(e)
     return entries
 

@@ -43,8 +43,7 @@ set_target_properties(test_fiber_resume_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # Issue #1732 + #1865 + #1866: compact_sweep family batch (typed
 # CompactSweepResult, pair_remap_ clear, null-marks metric). EXCLUDE_FROM_ALL
-# per AuraDomainTests.cmake legacy batch convention. On-demand
-# `ninja test_compact_sweep_batch`.
+# Source: tests/domain/arena/ (#1959). On-demand `ninja test_compact_sweep_batch`.
 aura_add_issue_test(test_compact_sweep_batch)
 aura_issue_test_link_llvm_jit(test_compact_sweep_batch)
 set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -114,7 +113,7 @@ set_target_properties(test_walk_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # Issue #1842 + #1666 + #1362 + #1757: compact family batch
 # (compact_env_frames Guard + compact hook replace/chain +
 # mutation_log compact + compact_pairs size_t return).
-# EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch convention.
+# EXCLUDE_FROM_ALL. Source: tests/domain/arena/test_compact_batch.cpp (#1959).
 # On-demand `ninja test_compact_batch`.
 aura_add_issue_test(test_compact_batch)
 aura_issue_test_link_llvm_jit(test_compact_batch)
@@ -126,7 +125,7 @@ set_target_properties(test_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # integration.cpp NOT included — custom CMake integration test with
 # add_executable + add_test + custom contract_handler/stub target_sources
 # (CMakeLists.txt:725-803). EXCLUDE_FROM_ALL per AuraDomainTests.cmake
-# legacy batch convention. On-demand `ninja test_gc_batch`.
+# Source: tests/domain/arena/test_gc_batch.cpp (#1959). On-demand `ninja test_gc_batch`.
 aura_add_issue_test(test_gc_batch)
 aura_issue_test_link_llvm_jit(test_gc_batch)
 set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -166,7 +165,7 @@ set_target_properties(test_closure_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 # arena allocate_raw quota wiring). #743 NOT included — bundle member
 # via tests/bundles/test_issues_jit_late3_main.cpp; #1390 NOT included —
 # AuraDomainTests.cmake default-build with link_llvm_jit_minimal.
-# EXCLUDE_FROM_ALL per AuraDomainTests.cmake legacy batch convention.
+# EXCLUDE_FROM_ALL. Source: tests/domain/arena/test_arena_batch.cpp (#1959).
 # On-demand `ninja test_arena_batch`.
 aura_add_issue_test(test_arena_batch)
 aura_issue_test_link_llvm_jit(test_arena_batch)
@@ -555,6 +554,7 @@ add_dependencies(all_test_issue_targets test_mutation_log_query_race)
 # primitives, and that concurrent arena.create<T>() + defrag()
 # runs without UB. llvm_jit_minimal sufficient (uses Aura
 # primitives + direct C++ arena API).
+# Source: tests/domain/arena/test_arena_defrag_concurrent.cpp (#1959).
 aura_add_issue_test(test_arena_defrag_concurrent)
 aura_issue_test_link_llvm_jit_minimal(test_arena_defrag_concurrent)
 add_dependencies(all_test_issue_targets test_arena_defrag_concurrent)
