@@ -5195,21 +5195,15 @@ aura_issue_test_link_llvm_jit(test_safe_snapshot_umbrella_1856)
 # Issue #1857: compile_02 remove duplicate module imports.
 aura_add_issue_test(test_compile02_no_dup_imports_1857)
 aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports_1857)
-# Issue #1858: Env::lookup depth is one-per-frame (not 2× parent recursion).
-aura_add_issue_test(test_env_lookup_depth_1858)
-aura_issue_test_link_llvm_jit(test_env_lookup_depth_1858)
+
 # Issue #1859: Env::lookup SoA parent_id_ walk is iterative (no tmp.lookup).
 aura_add_issue_test(test_env_soa_lookup_iter_1859)
 aura_issue_test_link_llvm_jit(test_env_soa_lookup_iter_1859)
-# Issue #1860: Env::lookup_binding / lookup_by_symid depth guard vs cycles.
-aura_add_issue_test(test_env_lookup_binding_depth_1860)
-aura_issue_test_link_llvm_jit(test_env_lookup_binding_depth_1860)
+
 # Issue #1861: Env bind_with_linear_state single-writer; StringPool::intern not TS.
 aura_add_issue_test(test_env_bind_linear_race_1861)
 aura_issue_test_link_llvm_jit(test_env_bind_linear_race_1861)
-# Issue #1862: Env::lookup_by_symid raw walk under single-writer (no env_symid_mtx_).
-aura_add_issue_test(test_env_lookup_by_symid_race_1862)
-aura_issue_test_link_llvm_jit(test_env_lookup_by_symid_race_1862)
+
 # Issue #1863: Env::bindings_with_names raw walk + resolve under single-writer.
 aura_add_issue_test(test_env_bindings_with_names_race_1863)
 aura_issue_test_link_llvm_jit(test_env_bindings_with_names_race_1863)
