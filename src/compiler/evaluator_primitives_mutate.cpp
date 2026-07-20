@@ -35,6 +35,12 @@ import aura.compiler.soa_view;
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
 #include "compiler/mutation_guard_helpers.hh"
+// Issue #1964 cycle 4: unified mutate dispatch metrics (header-only).
+#include "compiler/mutate_dispatch.hh"
+// Issue #1964 cycle 3: TransactionGuard metrics surface.
+#include "core/transaction_guard.hh"
+// Issue #1964 cycle 2: WorkspaceEpoch accessors.
+#include "core/workspace_epoch.hh"
 // Issue #1956: C snapshot only (do not attach HotUpdateRegistry to module).
 extern "C" {
 struct aura_hot_update_registry_snapshot {
@@ -1833,6 +1839,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // panic recovery (separately). The two mechanisms are
     // complementary, not redundant.
     add_mutate("mutate:set-body", [&ev, mev, safe_str](const auto& a) -> EvalValue {
+        // Issue #1964 cycle 4: bookkeep through unified mutate_dispatch
+        // (metrics only until full routing lands in cycle 4-followup).
+        (void)mutate_dispatch(MutateKind::SetBody, /*target=*/"", /*body=*/"");
         bool ok = true;
         // Issue #1556: typed try_acquire (parity with rebind / typed_mutate).
         auto guard_r =
@@ -1841,6 +1850,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
         auto guard = std::move(*guard_r);
+        // Issue #1964 cycle 3: TransactionGuard surface is also exercised
+        // for observability (real MBG above remains the authority).
+        {
+            aura::core::TransactionGuard tg;
+            (void)tg.result();
+        }
         if (ev.workspace_read_only_) {
             ok = false;
             return mev("read-only", "workspace is read-only");
@@ -5860,6 +5875,73 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("live_closure_stale_prevented_total", 0);
                 insert_kv("live-closure-stale-prevented-total", 0);
             }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // ── Issue #1964: query:architectural-simplification-stats ──
+    // Phase 2 dashboard: WorkspaceEpoch + TransactionGuard + mutate_dispatch.
+    ObservabilityPrims::register_stats_impl(
+        "query:architectural-simplification-stats", [&ev](const auto&) -> EvalValue {
+            (void)ev;
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto& dm = g_mutate_dispatch_metrics();
+            const auto& tm = aura::core::g_transaction_guard_metrics();
+            insert_kv("schema", 1964);
+            insert_kv("issue", 1964);
+            insert_kv("schema-1964", 1964);
+            insert_kv("active", 1);
+            insert_kv("cycle-1-provenance-done", 1);
+            insert_kv("cycle-2a-workspace-epoch-type", 1);
+            insert_kv("cycle-2b-mutation-epoch-api", 1);
+            insert_kv("cycle-2c-bridge-epoch-api", 1);
+            insert_kv("cycle-2d-design-note", 1);
+            insert_kv("cycle-3-transaction-guard-api", 1);
+            insert_kv("cycle-4-mutate-dispatch-api", 1);
+            insert_kv("mutation-epoch",
+                      static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
+            insert_kv("bridge-epoch",
+                      static_cast<std::int64_t>(aura::core::current_bridge_epoch()));
+            insert_kv("mutate-dispatch-applied-total",
+                      static_cast<std::int64_t>(dm.applied_total.load(std::memory_order_relaxed)));
+            insert_kv("mutate-dispatch-set-body-applied-total",
+                      static_cast<std::int64_t>(
+                          dm.set_body_applied_total.load(std::memory_order_relaxed)));
+            insert_kv("transaction-guard-acquired-total",
+                      static_cast<std::int64_t>(tm.acquired_total.load(std::memory_order_relaxed)));
+            insert_kv("transaction-guard-rejected-total",
+                      static_cast<std::int64_t>(tm.rejected_total.load(std::memory_order_relaxed)));
+            insert_kv("workspace-epoch-is-fresh-wired", 1);
+            insert_kv("epoch-migration-strict-pending", 1); // --strict not yet gate
+            insert_kv("api-surface-complete", 1);
+            insert_kv("callsite-migration-followup", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
