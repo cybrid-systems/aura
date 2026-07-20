@@ -31,6 +31,10 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 [`legacy_test_inventory.md`](legacy_test_inventory.md)
 (`python3 scripts/inventory_legacy_tests.py`).
 
+**Root `test_*.cpp` classification** (theme → domain dest, near-dups, streamline waves):
+[`root_test_classification.md`](root_test_classification.md)
+(`python3 scripts/classify_root_tests.py`).
+
 ## Layout
 
 | Path | Role | When to use |

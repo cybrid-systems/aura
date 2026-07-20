@@ -941,33 +941,9 @@ endif()
 add_test(NAME ir_basic COMMAND ./test_ir
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# ── Phase 2 domain files (Anqi 2026-07-20 'ship in order' directive) ────
-# These 4 NEW domain files at tests/ root are the new home for
-# per-issue tests once they're migrated. Each one is a stub today
-# (Phase 4 multi-ship will physically migrate the per-issue bodies in
-# via AURA_ISSUE_TEST). add_executable + target_sources + add_test
-# are wired up here — previously missing from the Phase 2 commit
-# (created the .cpp files but didn't add to CMakeLists.txt).
-
-add_executable(test_fiber tests/test_fiber.cpp)
-target_include_directories(test_fiber PRIVATE tests)
-target_link_libraries(test_fiber PRIVATE aura_test_objects pthread)
-add_test(NAME test_fiber_verification COMMAND ./test_fiber)
-
-add_executable(test_mutation tests/test_mutation.cpp)
-target_include_directories(test_mutation PRIVATE tests)
-target_link_libraries(test_mutation PRIVATE aura_test_objects pthread)
-add_test(NAME test_mutation_verification COMMAND ./test_mutation)
-
-add_executable(test_observability tests/test_observability.cpp)
-target_include_directories(test_observability PRIVATE tests)
-target_link_libraries(test_observability PRIVATE aura_test_objects pthread)
-add_test(NAME test_observability_verification COMMAND ./test_observability)
-
-add_executable(test_persist tests/test_persist.cpp)
-target_include_directories(test_persist PRIVATE tests)
-target_link_libraries(test_persist PRIVATE aura_test_objects pthread)
-add_test(NAME test_persist_verification COMMAND ./test_persist)
+# Phase-2 empty root stubs (test_fiber / test_mutation / test_observability /
+# test_persist) removed — coverage lives in tests/domain/* suites
+# (see tests/root_test_classification.md Wave 0, scripts/classify_root_tests.py).
 
 # IR mode tests via --ir flag
 macro(IRT N I E)

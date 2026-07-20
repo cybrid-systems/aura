@@ -210,9 +210,13 @@ aura_add_issue_test(test_mutate_batch)
 aura_issue_test_link_llvm_jit(test_mutate_batch)
 set_target_properties(test_mutate_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-# Bundle member / legacy alias — prefer test_obs_schema_matrix.
+# Bundle member / legacy alias of domain/test_obs_schema_matrix.cpp.
+# Prefer the domain suite for default builds; keep this target for
+# jit_late3 bundle membership only (EXCLUDE_FROM_ALL).
+# See tests/root_test_classification.md Wave 0.
 aura_add_issue_test(test_open_issues_phase1_batch)
 aura_issue_test_link_llvm_jit(test_open_issues_phase1_batch)
+set_target_properties(test_open_issues_phase1_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # Preferred domain suites (in all_test_issue_targets + issues_fast.json).
 aura_add_issue_test(test_obs_schema_matrix)
