@@ -4661,6 +4661,11 @@ aura_issue_test_link_llvm_jit(test_orch_agent_spawn)
 # Issue #1589: TypedMutationAudit production trail + strategy gate.
 aura_add_issue_test(test_typed_mutation_audit)
 aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
+
+# Issue #1882: TypedMutationAudit AOT hot-update + AI mutate wire-up
+aura_add_issue_test(test_aot_hotupdate_typed_audit_1882)
+aura_issue_test_link_llvm_jit(test_aot_hotupdate_typed_audit_1882)
+add_dependencies(all_test_issue_targets test_aot_hotupdate_typed_audit_1882)
 # Issue #1590: ResourceQuota hot-path (arena + Guard + query schema 1590).
 aura_add_issue_test(test_resource_quota_hotpath)
 aura_issue_test_link_llvm_jit(test_resource_quota_hotpath)

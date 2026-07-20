@@ -5,6 +5,7 @@
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
+#include "typed_mutation_audit.h"  // Issue #1882: TypedMutationAudit on hot-update
 
 #include <atomic>
 #include <cstdarg>
@@ -1259,8 +1260,18 @@ static void aot_log(const char* fmt, ...) {
 extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
                                                 std::uint64_t version) {
     bump_reload_attempt();
+    // Issue #1271: capture pre-reload epoch so failed paths never
+    // advance table generation (atomic rollback of partial register).
+    // Also used as TypedMutationAudit before_epoch (#1882).
+    const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
+    auto audit_fail = [&](std::string_view reason) {
+        aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+            /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
+            reason);
+    };
     if (!path) {
         aot_log("aura_reload_aot_module: null path\n");
+        audit_fail("aot-hotupdate-null-path");
         return false;
     }
     AotState& st = aot_state_for(eval_ptr);
@@ -1271,14 +1282,12 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         return d != 0 ? d : g_aot_defuse_version;
     }();
 
-    // Issue #1271: capture pre-reload epoch so failed paths never
-    // advance table generation (atomic rollback of partial register).
-    const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
         if (aot_metrics())
             aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        audit_fail("aot-hotupdate-dlopen-fail");
         return false;
     }
     // Staleness check: compare the new binary's aot_emit_version
@@ -1286,13 +1295,14 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // `version != 0`, it must match. If `version == 0`, we trust
     // the binary's own aot_emit_version.
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
-    auto rollback_close = [&]() {
+    auto rollback_close = [&](std::string_view audit_reason) {
         ::dlclose(handle);
         // Ensure table epoch was not advanced (constructor may have
         // registered into slots; epoch_before remains authoritative).
         (void)epoch_before;
         if (aot_metrics())
             aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        audit_fail(audit_reason);
     };
     if (binary_version) {
         if (version != 0 && *binary_version != version) {
@@ -1300,7 +1310,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*binary_version),
                     static_cast<unsigned long long>(version), path);
-            rollback_close();
+            rollback_close("aot-hotupdate-version-mismatch");
             // Issue #452: bump stale-reject counter.
             if (aot_metrics())
                 aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1317,7 +1327,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             aot_log("aura_reload_aot_module: no aot_emit_version in %s, "
                     "but host specified version=%llu; refusing\n",
                     path, static_cast<unsigned long long>(version));
-            rollback_close();
+            rollback_close("aot-hotupdate-missing-emit-version");
             // Issue #452: pre-#243 binary with explicit version
             // requested counts as stale.
             if (aot_metrics())
@@ -1333,7 +1343,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s — FullReAOT required\n",
                     static_cast<unsigned long long>(*binary_region),
                     static_cast<unsigned long long>(host_region), path);
-            rollback_close();
+            rollback_close("aot-hotupdate-region-mismatch");
             if (aot_metrics())
                 aot_metrics()->aot_region_mismatch_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1348,7 +1358,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                     "(binary=%llu, host=%llu) for %s\n",
                     static_cast<unsigned long long>(*emit_ver),
                     static_cast<unsigned long long>(host_defuse), path);
-            rollback_close();
+            rollback_close("aot-hotupdate-stale-defuse");
             if (aot_metrics())
                 aot_metrics()->aot_stale_reject_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1383,7 +1393,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
                 aot_metrics()->aot_incremental_reemit_triggered.fetch_add(
                     1, std::memory_order_relaxed);
             }
-            rollback_close();
+            rollback_close("aot-hotupdate-env-frame-drift");
             return false;
         }
     }
@@ -1401,6 +1411,9 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         aot_metrics()->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
         aot_metrics()->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #1882: TypedMutationAudit trail for successful hot-update (sampled).
+    aura::compiler::typed_audit::capture_aot_hotupdate_audit(
+        /*success=*/true, epoch_before, g_aot_last_commit_epoch, "aot-hotupdate");
     return true;
 }
 

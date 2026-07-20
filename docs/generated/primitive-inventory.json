@@ -9,7 +9,7 @@
     "workspace": 24
   },
   "count": 521,
-  "frozen_count": 443,
+  "frozen_count": 444,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -54,6 +54,7 @@
     "query:aot-concurrent-hotupdate-stats",
     "query:aot-hot-reload-stats",
     "query:aot-hotswap-pipeline-stats",
+    "query:aot-hotupdate-audit-stats",
     "query:aot-production-reload-stats",
     "query:aot-reload-stats",
     "query:aot-safe-swap-boundary-stats",
@@ -455,7 +456,7 @@
     "vector-ref",
     "vector-set!"
   ],
-  "interim_hard_ceiling": 520,
+  "interim_hard_ceiling": 521,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",
@@ -981,7 +982,7 @@
   ],
   "public_stats_via_add": 1,
   "schema": 2,
-  "stats_count": 420,
+  "stats_count": 421,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1017,6 +1018,7 @@
     "query:aot-concurrent-hotupdate-stats",
     "query:aot-hot-reload-stats",
     "query:aot-hotswap-pipeline-stats",
+    "query:aot-hotupdate-audit-stats",
     "query:aot-production-reload-stats",
     "query:aot-reload-stats",
     "query:aot-safe-swap-boundary-stats",

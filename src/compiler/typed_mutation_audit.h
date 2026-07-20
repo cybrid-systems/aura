@@ -1,5 +1,6 @@
-// typed_mutation_audit.h — Issue #1589 / #1216: production TypedMutationAuditPass.
+// typed_mutation_audit.h — Issue #1589 / #1216 / #1882: production TypedMutationAuditPass.
 // Thread-safe strategy gate, contextual event capture, in-memory ring trail.
+// #1882: AOT hot-update + JIT hotpath audit capture (sampled by default).
 // Header form so serve/evaluator/tests can include without module churn.
 
 #ifndef AURA_COMPILER_TYPED_MUTATION_AUDIT_H
@@ -17,8 +18,8 @@
 
 namespace aura::compiler::typed_audit {
 
-inline constexpr int kTypedMutationAuditPassPhase = 3; // #1614 invariant enforcement
-inline constexpr int kTypedMutationAuditIssue = 1614;  // lineage 1589
+inline constexpr int kTypedMutationAuditPassPhase = 3; // #1614 invariant enforcement (+#1882 wire)
+inline constexpr int kTypedMutationAuditIssue = 1614;  // lineage 1589; AOT wire is #1882
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 inline constexpr std::size_t kAuditNameCap = 48;
 
@@ -36,6 +37,8 @@ enum class MutationKind : std::uint8_t {
     RecordPatch = 4,
     Other = 5,
     MacroHygiene = 6, // Issue #1613: hygiene-protected / macro-aware mutate
+    AotHotUpdate = 7, // Issue #1882: AOT module hot-reload boundary
+    JitHotpath = 8,   // Issue #1882: JIT L2 / apply hotpath sample
 };
 
 enum class AuditOutcome : std::uint8_t {
@@ -84,6 +87,14 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> provenance_invariant_fail{0};
     std::atomic<std::uint64_t> invariant_violations_caught{0};
     std::atomic<std::uint64_t> invariant_all_pass{0};
+    // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
+    std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
+    std::atomic<std::uint64_t> aot_hotupdate_audits{0};
+    std::atomic<std::uint64_t> aot_hotupdate_ok{0};
+    std::atomic<std::uint64_t> aot_hotupdate_fail{0};
+    std::atomic<std::uint64_t> aot_hotupdate_invariant_fail_total{0};
+    std::atomic<std::uint64_t> jit_hotpath_audits{0};
+    std::atomic<std::uint64_t> audit_mutation_id_gen{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -141,6 +152,11 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline MutationKind classify_kind(std::string_view op) noexcept {
     if (op.empty())
         return MutationKind::Unknown;
+    if (op.find("aot-hotupdate") != std::string_view::npos ||
+        op.find("aot_hotupdate") != std::string_view::npos)
+        return MutationKind::AotHotUpdate;
+    if (op.find("jit-") != std::string_view::npos || op.find("jit_") != std::string_view::npos)
+        return MutationKind::JitHotpath;
     if (op.find("hygiene") != std::string_view::npos || op.find("macro") != std::string_view::npos)
         return MutationKind::MacroHygiene;
     if (op.find("replace-type") != std::string_view::npos || op == "replace-type")
@@ -152,6 +168,12 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
     if (op == "structural" || op.find("mutate") != std::string_view::npos)
         return MutationKind::Structural;
     return MutationKind::Other;
+}
+
+[[nodiscard]] inline std::uint64_t next_audit_mutation_id() noexcept {
+    return g_typed_mutation_audit_counters.audit_mutation_id_gen.fetch_add(
+               1, std::memory_order_relaxed) +
+           1;
 }
 
 inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
@@ -195,6 +217,45 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
         g_typed_mutation_audit_counters.rollbacks.fetch_add(1, std::memory_order_relaxed);
     if (outcome == AuditOutcome::Error)
         g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #1882: AOT hot-update boundary audit. Sampled on success (should_audit);
+// failures always enter the trail (AI self-evolution must not drop reject/rollback).
+inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch,
+                                        std::uint64_t after_epoch,
+                                        std::string_view reason = "aot-hotupdate") noexcept {
+    g_typed_mutation_audit_counters.aot_hotupdate_attempts.fetch_add(1, std::memory_order_relaxed);
+    const std::uint64_t mid = next_audit_mutation_id();
+    if (success) {
+        if (!should_audit(mid))
+            return;
+        g_typed_mutation_audit_counters.aot_hotupdate_audits.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.aot_hotupdate_ok.fetch_add(1, std::memory_order_relaxed);
+        capture_audit_event(mid, reason, MutationKind::AotHotUpdate, before_epoch, after_epoch,
+                            AuditOutcome::Success);
+        return;
+    }
+    // Always-on failure path (mirrors capture_macro_hygiene_audit).
+    g_typed_mutation_audit_counters.aot_hotupdate_audits.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_fail.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_invariant_fail_total.fetch_add(
+        1, std::memory_order_relaxed);
+    const auto prev = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    capture_audit_event(mid, reason, MutationKind::AotHotUpdate, before_epoch, after_epoch,
+                        AuditOutcome::Error);
+    set_strategy(prev);
+}
+
+// Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
+inline void capture_jit_hotpath_audit(std::string_view tag) noexcept {
+    const std::uint64_t mid = next_audit_mutation_id();
+    if (!should_audit(mid))
+        return;
+    g_typed_mutation_audit_counters.jit_hotpath_audits.fetch_add(1, std::memory_order_relaxed);
+    capture_audit_event(mid, tag, MutationKind::JitHotpath, /*before_epoch=*/0, /*after_epoch=*/0,
+                        AuditOutcome::Success);
 }
 
 // Issue #1613: always-on macro hygiene audit (bypasses Sampled gate so
@@ -348,6 +409,14 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.provenance_invariant_fail.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_attempts.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_invariant_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.jit_hotpath_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mutation_id_gen.store(0, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     std::lock_guard lock(g_trail().mu);

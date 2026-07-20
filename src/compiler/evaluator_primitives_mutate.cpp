@@ -5349,13 +5349,100 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("type-check-wired", 1);
             insert_kv("linear-enforce-wired", 1);
             insert_kv("provenance-check-wired", 1);
-            insert_kv("issue", 1614);
-            insert_kv("schema", 1614); // lineage 1589
+            // #1882 AOT/JIT wire flags
+            insert_kv("aot-hotupdate-audit-wired", 1);
+            insert_kv("jit-hotpath-audit-wired", 1);
+            insert_kv(
+                "aot-hotupdate-audits",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.aot_hotupdate_audits.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "jit-hotpath-audits",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.jit_hotpath_audits.load(
+                    std::memory_order_relaxed)));
+            insert_kv("issue", 1614); // lineage 1589 / #1882 extends without schema bump
+            insert_kv("schema", 1614);
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {
                 insert_kv("latest-mutation-id", static_cast<std::int64_t>(latest.mutation_id));
                 insert_kv("latest-outcome", static_cast<std::int64_t>(latest.outcome));
                 insert_kv("latest-nodes-changed", static_cast<std::int64_t>(latest.nodes_changed));
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // ── Issue #1882: query:aot-hotupdate-audit-stats ──
+    // Dedicated AOT hot-update TypedMutationAudit surface (sampled success,
+    // always-on failures). Complements query:aot-hotupdate-stats (#590) and
+    // query:typed-mutation-audit-trail (#1589/#1614).
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-hotupdate-audit-stats", [&ev](const auto&) -> EvalValue {
+            using namespace aura::compiler::typed_audit;
+            auto* ht = FlatHashTable::create(24);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto& c = g_typed_mutation_audit_counters;
+            insert_kv("schema", 1882);
+            insert_kv("issue", 1882);
+            insert_kv("active", 1);
+            insert_kv("aot-hotupdate-attempts",
+                      static_cast<std::int64_t>(
+                          c.aot_hotupdate_attempts.load(std::memory_order_relaxed)));
+            insert_kv("aot-hotupdate-audits", static_cast<std::int64_t>(c.aot_hotupdate_audits.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv("aot-hotupdate-ok", static_cast<std::int64_t>(
+                                              c.aot_hotupdate_ok.load(std::memory_order_relaxed)));
+            insert_kv("aot-hotupdate-fail", static_cast<std::int64_t>(c.aot_hotupdate_fail.load(
+                                                std::memory_order_relaxed)));
+            insert_kv("aot-hotupdate-invariant-fail-total",
+                      static_cast<std::int64_t>(
+                          c.aot_hotupdate_invariant_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("trail-writes",
+                      static_cast<std::int64_t>(c.trail_writes.load(std::memory_order_relaxed)));
+            insert_kv("invariant-audits", static_cast<std::int64_t>(
+                                              c.invariant_audits.load(std::memory_order_relaxed)));
+            insert_kv("jit-hotpath-audits", static_cast<std::int64_t>(c.jit_hotpath_audits.load(
+                                                std::memory_order_relaxed)));
+            insert_kv("audits-considered", static_cast<std::int64_t>(c.audits_considered.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("samples-skipped",
+                      static_cast<std::int64_t>(c.samples_skipped.load(std::memory_order_relaxed)));
+            insert_kv("sample-ratio", static_cast<std::int64_t>(get_sample_ratio()));
+            insert_kv("strategy",
+                      static_cast<std::int64_t>(c.strategy.load(std::memory_order_relaxed)));
+            // Coverage ratio × 10000 for AI loops: audits / max(1, attempts)
+            {
+                const auto att = c.aot_hotupdate_attempts.load(std::memory_order_relaxed);
+                const auto aud = c.aot_hotupdate_audits.load(std::memory_order_relaxed);
+                const std::int64_t cov =
+                    att == 0 ? 10000 : static_cast<std::int64_t>((aud * 10000ull) / att);
+                insert_kv("audit-coverage-bp", cov); // basis points (10000 = 100%)
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

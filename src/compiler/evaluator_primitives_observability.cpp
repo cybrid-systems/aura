@@ -707,6 +707,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:orch-module-stats",
     // Issue #1589 — TypedMutationAudit production trail
     "query:typed-mutation-audit-trail",
+    // Issue #1882 — AOT hot-update TypedMutationAudit surface
+    "query:aot-hotupdate-audit-stats",
     // Issue #754 — LLM-bottleneck orchestration adaptive stats
     "query:orchestration-llm-bottleneck-stats",
     // Issue #755 — concurrent safety full-cycle integration stats
