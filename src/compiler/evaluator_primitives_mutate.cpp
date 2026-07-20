@@ -3258,13 +3258,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto pair_cdr = [&ev, safe_str](EvalValue v) -> EvalValue {
             return ev.pairs_[as_pair_idx(v)].cdr;
         };
-        // Issue #250: begin the atomic batch. This sets
+        // Issue #250 / #1893: begin the atomic batch. This sets
         // bump_generation_suppressed_ on the FlatAST, so all
         // per-op structural mutations (via the lockless helpers
         // below) skip their per-op generation bump. The batch
         // commits with a single bump at the end. We track the
         // saved-bumps count via ev.workspace_flat_->atomic_batch_bumps_saved().
+        // #1893 also snapshots marker/provenance/dirty metadata for
+        // rollback (hygiene self-evo audit) without requiring :snapshot? #t.
         ev.workspace_flat_->begin_atomic_batch();
+        ev.sync_atomic_batch_metadata_metrics();
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
@@ -3332,6 +3335,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.bump_atomic_batch_unsupported_op();
                 ev.workspace_flat_->rollback_since(initial_log_size);
                 ev.workspace_flat_->rollback_atomic_batch();
+                ev.sync_atomic_batch_metadata_metrics(); // #1893
                 ev.workspace_flat_->rebuild_parent_links_from_children();
                 (void)ev.linear_post_mutate_enforce_all();
                 ev.atomic_batch_domain_.rollbacks++;
@@ -3388,6 +3392,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     guard_ok = false;
                     ev.workspace_flat_->rollback_since(initial_log_size);
                     ev.workspace_flat_->rollback_atomic_batch();
+                    ev.sync_atomic_batch_metadata_metrics(); // #1893
                     ev.workspace_flat_->rebuild_parent_links_from_children();
                     (void)ev.linear_post_mutate_enforce_all();
                     ev.atomic_batch_domain_.rollbacks++;
@@ -3417,6 +3422,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // structural children_/parent_ via try_rollback_*).
             ev.workspace_flat_->rollback_since(initial_log_size);
             ev.workspace_flat_->rollback_atomic_batch();
+            ev.sync_atomic_batch_metadata_metrics(); // #1893
             // Issue #1502: MutationRecord inverse is best-effort for
             // some ops; rebuild parent_ from live children_ so
             // parent_of / children stay consistent even when a
@@ -3452,6 +3458,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // that were suppressed). Records the saved-bumps count.
         std::uint64_t saved = ev.workspace_flat_->atomic_batch_bumps_saved();
         ev.workspace_flat_->commit_atomic_batch();
+        ev.sync_atomic_batch_metadata_metrics(); // #1893
         ev.atomic_batch_domain_.count++;
         ev.atomic_batch_domain_.ops_total += op_count;
         ev.atomic_batch_domain_.bumps_saved_total += saved;

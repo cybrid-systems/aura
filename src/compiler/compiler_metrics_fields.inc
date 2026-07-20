@@ -1570,5 +1570,8 @@ AURA_COMPILER_METRICS_FIELD(lowering_marker_propagated_total)
 // observability (refine #1900 / #1502 / #1472 / #790 / #761 / #737 / #1908).
 AURA_COMPILER_METRICS_FIELD(atomic_batch_hygiene_violation_prevented_total)
 AURA_COMPILER_METRICS_FIELD(mutate_template_marker_propagated_total)
+// Issue #1893: atomic-batch metadata (marker/provenance/dirty) snapshot/restore.
+AURA_COMPILER_METRICS_FIELD(atomic_batch_metadata_restored_total)
+AURA_COMPILER_METRICS_FIELD(atomic_batch_metadata_captured_total)
 
 #undef AURA_COMPILER_METRICS_FIELD

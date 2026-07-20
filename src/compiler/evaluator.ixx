@@ -7459,6 +7459,17 @@ public:
                                                                         std::memory_order_relaxed);
         }
     }
+    // Issue #1893: fold FlatAST atomic-batch metadata counters into
+    // CompilerMetrics (call after begin/rollback_atomic_batch).
+    void sync_atomic_batch_metadata_metrics() const noexcept {
+        if (!compiler_metrics_ || !workspace_flat_)
+            return;
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        m->atomic_batch_metadata_captured_total.store(
+            workspace_flat_->atomic_batch_metadata_captured_total(), std::memory_order_relaxed);
+        m->atomic_batch_metadata_restored_total.store(
+            workspace_flat_->atomic_batch_metadata_restored_total(), std::memory_order_relaxed);
+    }
     void bump_mutate_template_marker_propagated_total() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);

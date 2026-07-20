@@ -2459,6 +2459,15 @@ public:
         , param_annot_data_(std::move(other.param_annot_data_))
         , line_(std::move(other.line_))
         , col_(std::move(other.col_))
+        // Issue #1893: hygiene / dirty metadata SoA columns (must track
+        // declaration order: marker_ → provenance_ → dirty_ family).
+        , marker_(std::move(other.marker_))
+        , provenance_(std::move(other.provenance_))
+        , dirty_(std::move(other.dirty_))
+        , ppa_dirty_(std::move(other.ppa_dirty_))
+        , verify_dirty_(std::move(other.verify_dirty_))
+        , verification_dirty_(std::move(other.verification_dirty_))
+        , macro_dirty_(std::move(other.macro_dirty_))
         , type_id_(std::move(other.type_id_))
         , type_cache_gen_(std::move(other.type_cache_gen_))
         , type_cache_binding_gen_(std::move(other.type_cache_binding_gen_))
@@ -2553,6 +2562,14 @@ public:
             param_annot_data_ = std::move(other.param_annot_data_);
             line_ = std::move(other.line_);
             col_ = std::move(other.col_);
+            // Issue #1893: hygiene / dirty metadata SoA columns.
+            marker_ = std::move(other.marker_);
+            provenance_ = std::move(other.provenance_);
+            dirty_ = std::move(other.dirty_);
+            ppa_dirty_ = std::move(other.ppa_dirty_);
+            verify_dirty_ = std::move(other.verify_dirty_);
+            verification_dirty_ = std::move(other.verification_dirty_);
+            macro_dirty_ = std::move(other.macro_dirty_);
             type_id_ = std::move(other.type_id_);
             type_cache_gen_ = std::move(other.type_cache_gen_);
             type_cache_binding_gen_ = std::move(other.type_cache_binding_gen_);
@@ -2638,6 +2655,7 @@ public:
         , line_(other.line_)
         , col_(other.col_)
         , marker_(other.marker_)
+        , provenance_(other.provenance_) // Issue #1893: was missing from copy path
         , dirty_(other.dirty_)
         , ppa_dirty_(other.ppa_dirty_)
         , verify_dirty_(other.verify_dirty_)
@@ -2728,6 +2746,16 @@ public:
             param_annot_data_ = other.param_annot_data_;
             line_ = other.line_;
             col_ = other.col_;
+            // Issue #1893: hygiene / dirty metadata SoA — required for
+            // capture_workspace_snapshot / atomic-batch :snapshot? restore
+            // to preserve MacroIntroduced + provenance after rollback.
+            marker_ = other.marker_;
+            provenance_ = other.provenance_;
+            dirty_ = other.dirty_;
+            ppa_dirty_ = other.ppa_dirty_;
+            verify_dirty_ = other.verify_dirty_;
+            verification_dirty_ = other.verification_dirty_;
+            macro_dirty_ = other.macro_dirty_;
             type_id_ = other.type_id_;
             type_cache_gen_ = other.type_cache_gen_;
             type_cache_binding_gen_ = other.type_cache_binding_gen_;
@@ -4317,6 +4345,26 @@ public:
         param_begin_ = std::move(snapshot.param_begin);
         param_count_ = std::move(snapshot.param_count);
         bump_generation();
+    }
+
+    // Issue #1893: hygiene + dirty metadata SoA snapshot for atomic-batch
+    // rollback without a full FlatAST deep-copy (:snapshot? #t path).
+    // Captures marker_ / provenance_ / dirty_ / macro_dirty_ so
+    // MacroIntroduced + expansion provenance survive partial-fail rollback.
+    struct MetadataColumnsSnapshot {
+        std::pmr::vector<SyntaxMarker> marker;
+        std::pmr::vector<std::uint32_t> provenance;
+        std::pmr::vector<std::uint8_t> dirty;
+        std::pmr::vector<std::uint8_t> macro_dirty;
+    };
+    [[nodiscard]] MetadataColumnsSnapshot snapshot_metadata_columns() const {
+        return {marker_, provenance_, dirty_, macro_dirty_};
+    }
+    void restore_metadata_columns(MetadataColumnsSnapshot&& snapshot) noexcept {
+        marker_ = std::move(snapshot.marker);
+        provenance_ = std::move(snapshot.provenance);
+        dirty_ = std::move(snapshot.dirty);
+        macro_dirty_ = std::move(snapshot.macro_dirty);
     }
 
     // ── Issue #261: NodeId lifecycle / SoA compaction ────────────
@@ -7060,12 +7108,21 @@ public:
     void begin_atomic_batch() noexcept {
         bump_generation_suppressed_ = true;
         atomic_batch_bumps_saved_ = 0; // reset counter for this batch
+        // Issue #1893: always capture hygiene/dirty metadata at batch
+        // open so rollback restores MacroIntroduced + provenance even
+        // without :snapshot? #t full-flat deep-copy.
+        atomic_batch_meta_snap_ = snapshot_metadata_columns();
+        atomic_batch_meta_snap_valid_ = true;
+        atomic_batch_metadata_captured_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Commit the batch. Calls bump_generation() once, marks
     // all batched nodes dirty, releases the suppression.
     void commit_atomic_batch() noexcept {
         bump_generation_suppressed_ = false;
+        // Discard metadata snapshot (committed state keeps live columns).
+        atomic_batch_meta_snap_valid_ = false;
+        atomic_batch_meta_snap_ = MetadataColumnsSnapshot{};
         ++generation_;
         if (generation_ == 0)
             generation_ = 1;
@@ -7109,12 +7166,26 @@ public:
 
     // Roll back the batch. No bump (the changes were never
     // visible — gen didn't change). Releases the suppression.
+    // Issue #1893: restore marker/provenance/dirty metadata snapshotted
+    // at begin_atomic_batch so MacroIntroduced protection is not lost.
     void rollback_atomic_batch() noexcept {
         bump_generation_suppressed_ = false;
-        // No bump. No dirty sweep. The lockless helper's
-        // own rollback_since() has already reverted the
+        // No generation bump. The lockless helper's own
+        // rollback_since() has already reverted the
         // mutation_log_ entries; readers holding the
-        // pre-batch generation_ see no change.
+        // pre-batch generation_ see no structural change.
+        if (atomic_batch_meta_snap_valid_) {
+            restore_metadata_columns(std::move(atomic_batch_meta_snap_));
+            atomic_batch_meta_snap_valid_ = false;
+            atomic_batch_metadata_restored_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    [[nodiscard]] std::uint64_t atomic_batch_metadata_restored_total() const noexcept {
+        return atomic_batch_metadata_restored_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t atomic_batch_metadata_captured_total() const noexcept {
+        return atomic_batch_metadata_captured_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #250: how many generation bumps the latest batch
@@ -7939,6 +8010,11 @@ public:
     // the most recent batch. Updated on commit; exposed via
     // atomic_batch_bumps_saved() and observability snapshot.
     std::uint64_t atomic_batch_bumps_saved_ = 0;
+    // Issue #1893: metadata columns captured at begin_atomic_batch.
+    MetadataColumnsSnapshot atomic_batch_meta_snap_{};
+    bool atomic_batch_meta_snap_valid_ = false;
+    mutable std::atomic<std::uint64_t> atomic_batch_metadata_restored_total_{0};
+    mutable std::atomic<std::uint64_t> atomic_batch_metadata_captured_total_{0};
 };
 
 // ── MutationVisitor concept (Issue #274) ─────────────────────
