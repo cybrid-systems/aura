@@ -105,6 +105,9 @@ extern "C" std::uint64_t aura_closure_reuse_total();
 extern "C" std::size_t aura_closure_live_count();
 extern "C" std::size_t aura_closure_slot_count();
 extern "C" int aura_closure_is_freed(std::int64_t closure_id);
+// Issue #1890: times multi-vector desync was detected and capture/free refused
+// or continued with a soft fail (process-wide, release-safe).
+extern "C" std::uint64_t aura_closure_table_vector_desync_prevented_total(void);
 // Issue #1706: 1 if closure_id indexes an allocated table slot
 // (may still be freed — use aura_closure_is_freed for live-call gate).
 // Disambiguates provenance accessors that return 0 for both OOR and epoch 0.

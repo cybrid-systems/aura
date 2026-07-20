@@ -5552,6 +5552,60 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_hash(hidx);
         });
 
+    // ── Issue #1890: query:envframe-resolve-distinction-stats ──
+    // Invalid vs stale distinction + JIT multi-vector desync prevented.
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-resolve-distinction-stats", [&ev](const auto&) -> EvalValue {
+            auto* ht = FlatHashTable::create(16);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            const auto desync = aura_closure_table_vector_desync_prevented_total();
+            if (m)
+                m->closure_table_vector_desync_prevented.store(desync, std::memory_order_relaxed);
+            insert_kv("schema", 1890);
+            insert_kv("issue", 1890);
+            insert_kv("active", 1);
+            insert_kv(
+                "invalid-vs-stale-distinguished",
+                m ? static_cast<std::int64_t>(m->envframe_invalid_vs_stale_distinguished_total.load(
+                        std::memory_order_relaxed))
+                  : 0);
+            insert_kv("closure-table-desync-prevented", static_cast<std::int64_t>(desync));
+            // API surface flags (callers can rely on these distinctions).
+            insert_kv("has-stale-version-status", 1);
+            insert_kv("has-invalid-id-predicate", 1);
+            insert_kv("free-list-push-before-freed", 1);
+            insert_kv("capture-multi-vector-bounds", 1);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // ── Issue #1889: query:envframe-truncate-epoch-stats ──
     // truncate_env_frames_to_checkpoint dual-epoch + Guard observability.
     ObservabilityPrims::register_stats_impl(

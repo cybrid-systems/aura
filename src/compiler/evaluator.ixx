@@ -695,12 +695,15 @@ export struct EnvFrame;
 // treat all nullptrs from resolve_env_frame as the same failure.
 // GENERATION_MISMATCH is reserved for free-list slot reuse (future
 // #1360 follow-up); today terminal post-rollback uses INVALID_VERSION.
+// Issue #1890 / #1756: STALE_VERSION = frame exists but version_ < defuse
+// (refreshable); distinct from INVALID_VERSION (terminal) and OOB/NULL.
 export enum class EnvFrameResolveStatus : std::uint8_t {
     OK = 0,
     NULL_ID = 1,             // id == NULL_ENV_ID
     OOB = 2,                 // id >= env_frames_.size()
     INVALID_VERSION = 3,     // live slot marked #356 INVALID_VERSION
     GENERATION_MISMATCH = 4, // reserved: freed slot reused under new gen
+    STALE_VERSION = 5,       // Issue #1890: exists, version_ < defuse (refreshable)
 };
 
 export struct EnvFrameResolveResult {

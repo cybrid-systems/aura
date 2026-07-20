@@ -4620,6 +4620,10 @@ add_dependencies(all_test_issue_targets test_closure_view_lifetime_1888)
 aura_add_issue_test(test_envframe_truncate_epoch_1889)
 aura_issue_test_link_llvm_jit(test_envframe_truncate_epoch_1889)
 add_dependencies(all_test_issue_targets test_envframe_truncate_epoch_1889)
+# Issue #1890: EnvFrame invalid vs stale + closure table multi-vector hygiene.
+aura_add_issue_test(test_envframe_resolve_distinction_1890)
+aura_issue_test_link_llvm_jit(test_envframe_resolve_distinction_1890)
+add_dependencies(all_test_issue_targets test_envframe_resolve_distinction_1890)
 # Issue #1578: RenderPass dirty-aware + shape_stable incremental render.
 aura_add_issue_test(test_render_pass_incremental)
 aura_issue_test_link_llvm_jit(test_render_pass_incremental)
