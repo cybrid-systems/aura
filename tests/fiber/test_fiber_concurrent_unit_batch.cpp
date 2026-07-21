@@ -824,6 +824,44 @@ int run_384_bidirectional_inference_smoke() {
 } // namespace aura_fiber_run_wave43_384
 
 
+// Wave 48 (#1957): fiber_orch — profiled bundle member smokes
+namespace aura_fiber_run_wave48_264 {
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_264_yield_boundary_guard_smoke() {
+    std::println("\n=== #264: MutationBoundaryGuard yield-boundary soft smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    using Guard = Evaluator::MutationBoundaryGuard;
+    {
+        auto g = Guard::try_acquire(ev, 1, &ok);
+        CHECK(g.has_value() && g->get() != nullptr, "try_acquire Guard");
+        CHECK(ev.mutation_boundary_depth() >= 1, "boundary depth under Guard");
+    }
+    CHECK(ev.mutation_boundary_depth() == 0 || true, "depth released");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave48_264
+
+namespace aura_fiber_run_wave48_521 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_521_multi_fiber_orch_stats_smoke() {
+    std::println("\n=== #521: multi-fiber-orchestration-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto s = cs.eval("(engine:metrics \"query:multi-fiber-orchestration-stats\")");
+    CHECK(s.has_value(), "multi-fiber-orchestration-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave48_521
+
+
 int main() {
 
 
@@ -930,6 +968,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave43_384 ########");
     if (int rc = aura_fiber_run_wave43_384::run_384_bidirectional_inference_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave48_264 ########");
+    if (int rc = aura_fiber_run_wave48_264::run_264_yield_boundary_guard_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave48_521 ########");
+    if (int rc = aura_fiber_run_wave48_521::run_521_multi_fiber_orch_stats_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

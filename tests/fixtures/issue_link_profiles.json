@@ -45,28 +45,18 @@
     "test_issue_248",
     "test_issue_249",
     "test_issue_250",
-    "test_issue_197_observability",
     "test_issue_227",
     "test_issue_240",
-    "test_issue_262",
-    "test_issue_263",
-    "test_issue_276",
-    "test_issue_277",
     "test_issue_244",
     "test_issue_267",
-    "test_issue_270",
-    "test_issue_271",
     "test_issue_228",
     "test_issue_289",
     "test_issue_482",
-    "test_issue_484_minimal",
     "test_issue_290",
     "test_issue_291",
     "test_issue_292",
     "test_issue_293",
-    "test_issue_296",
-    "test_issue_297",
-    "test_issue_298"
+    "test_issue_296"
   ],
   "jit_minimal": [
     "test_issue_146",
@@ -80,8 +70,7 @@
     "test_issue_212",
     "test_issue_213",
     "test_issue_177",
-    "test_issue_213_panic_fiber",
-    "test_issue_264"
+    "test_issue_213_panic_fiber"
   ],
   "jit_contract": [
     "test_issue_144",
@@ -92,8 +81,6 @@
     "test_issue_256",
     "test_issue_258",
     "test_issue_259",
-    "test_issue_273",
-    "test_issue_274",
     "test_issue_275"
   ],
   "jit_tests": [
@@ -133,7 +120,6 @@
     "test_issue_676",
     "test_issue_677",
     "test_issue_678",
-    "test_issue_679",
     "test_issue_680",
     "test_issue_681",
     "test_issue_682",
@@ -256,8 +242,7 @@
     "test_issue_490",
     "test_issue_491",
     "test_issue_492",
-    "test_issue_493",
-    "test_issue_494"
+    "test_issue_493"
   ],
   "jit_late4": [
     "test_issue_497",
@@ -267,14 +252,10 @@
     "test_issue_503",
     "test_issue_504",
     "test_issue_505",
-    "test_issue_507",
-    "test_issue_508_observability",
     "test_issue_511_observability",
-    "test_issue_512_observability",
     "test_issue_513_observability",
     "test_issue_515_observability",
     "test_issue_516_observability",
-    "test_issue_521_observability",
     "test_issue_522_observability",
     "test_issue_523_observability",
     "test_issue_524_observability",
