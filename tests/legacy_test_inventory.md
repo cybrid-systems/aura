@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 471 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 467 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **479** | |
+| **Total scanned** | **475** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 161 | 0 | 1 | 162 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 157 | 0 | 1 | 158 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,8 +47,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 427 | Integration path via `CompilerService` / eval |
-| `test_harness` | 264 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 423 | Integration path via `CompilerService` / eval |
+| `test_harness` | 260 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 120 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 26 | File defines `int main()` (standalone or bundle source) |
@@ -56,7 +56,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 310
+- `integration`: 306
 - `unknown`: 97
 - `unit`: 57
 - `issue_specific`: 6
@@ -64,12 +64,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 246
-- `compiler/observability_metrics.h` — 47
+- `test_harness.hpp` — 242
+- `compiler/observability_metrics.h` — 46
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 14
-- `serve/fiber.h` — 10
 - `compiler/aura_jit.h` — 10
+- `serve/fiber.h` — 9
 - `serve/worker.h` — 6
 - `compiler/shape_profiler.h` — 4
 - `reflect/reflect.hh` — 4
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 290
-- `aura.compiler.service` — 279
-- `aura.compiler.evaluator` — 260
-- `std` — 254
-- `aura.core.ast` — 168
+- `aura.compiler.value` — 286
+- `aura.compiler.service` — 275
+- `aura.compiler.evaluator` — 258
+- `std` — 250
+- `aura.core.ast` — 167
 - `aura.core.type` — 88
 - `aura.core.arena` — 86
 - `aura.compiler.ir` — 44
@@ -590,7 +590,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (162)
+### `observability` — Observability / metrics / query:*-stats (158)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -600,18 +600,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (161)
+#### issues/ (157)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
-- `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
-- `tests/issues/test_issue_1451.cpp` (#1451) — test_issue_1451.cpp — Issue #1451: Primitives Governance Policy +
 - `tests/issues/test_issue_1460.cpp` (#1460) — test_issue_1460.cpp — Issue #1460:
 - `tests/issues/test_issue_1461.cpp` (#1461) — test_issue_1461.cpp — Issue #1461:
 - `tests/issues/test_issue_1462.cpp` (#1462) — test_issue_1462.cpp — Issue #1462: Agent Migration Guide +
 - `tests/issues/test_issue_1487.cpp` (#1487) — AC1: allocate_raw / allocate_checked reject over memory quota
 - `tests/issues/test_issue_149.cpp` (#149) [early_issue] — test_issue_149.cpp — Verify Issue #149 acceptance criteria
 - `tests/issues/test_issue_1491.cpp` (#1491) — apply_closure paths + JIT aura_closure_call (closed-loop on #1475/#1477).
-- `tests/issues/test_issue_1493.cpp` (#1493) — + hold-time adaptive safepoint frequency (closed-loop on #1483).
 - `tests/issues/test_issue_1494.cpp` (#1494) — MutationBoundary / invalidate paths (parent closed-loop on #1478 / #1458).
 - `tests/issues/test_issue_1495.cpp` (#1495) — AC1: mark_define_dirty body-only for simple defines (irs.size==2)
 - `tests/issues/test_issue_1496.cpp` (#1496) — AC1: both paths call unified_invalidation_protocol (metric grows)
@@ -678,7 +675,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_443.cpp` (#443) — - query:verify-tool-stats returns an integer
 - `tests/issues/test_issue_444_strategy_evolution.cpp` (#444) — test_issue_444_strategy_evolution.cpp — Issue #444:
 - `tests/issues/test_issue_447.cpp` (#447) — query:pattern on large ASTs (P0). Validates:
-- `tests/issues/test_issue_448.cpp` (#448) — + GC safepoint + work-steal coordination for
 - `tests/issues/test_issue_457.cpp` (#457) — counters + StableNodeRef invalidation metrics
 - `tests/issues/test_issue_458.cpp` (#458) — + observability stats.
 - `tests/issues/test_issue_460.cpp` (#460) — dirty mask + dep_graph impact analysis.

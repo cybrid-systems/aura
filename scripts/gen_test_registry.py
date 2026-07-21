@@ -30,6 +30,8 @@ def scan() -> dict:
     # Phase 1 of the tests/ consolidation (Anqi 05:43 directive):
     # scan both tests/ root and tests/issues/ subdirectory so per-issue
     # tests moved into tests/issues/ are still picked up.
+    # #1957: also scan theme dirs (mutation/fiber/observability/…) where
+    # issue tests are folded into *_batch.cpp drivers.
     tests_dir = ROOT / "tests"
     issue_subdir = tests_dir / "issues"
     domain_dir = tests_dir / "domain"
@@ -41,6 +43,16 @@ def scan() -> dict:
     if domain_dir.is_dir():
         candidates.extend(sorted(domain_dir.glob("test_*.cpp")))
         candidates.extend(sorted(domain_dir.glob("*/test_*.cpp")))
+    # Theme family batches under tests/<theme>/test_*.cpp (#1957 folds)
+    for theme_dir in sorted(tests_dir.iterdir()):
+        if not theme_dir.is_dir():
+            continue
+        name = theme_dir.name
+        if name in {"issues", "domain", "python", "fixtures", "bundles", "cases"}:
+            continue
+        if name.startswith("."):
+            continue
+        candidates.extend(sorted(theme_dir.glob("test_*.cpp")))
     for path in sorted(set(candidates)):
         try:
             head = path.read_text(encoding="utf-8", errors="replace")[:4000]

@@ -176,9 +176,83 @@ int run_433_dead_coercion_stats_smoke() {
     CHECK(r2 && is_int(*r2), "dead-coercion-stats after eval");
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_obs_run_wave27_433
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 28 (#1957): observability — #448 #1493 #1450 #1451
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_obs_run_wave28_448 {
+int run_448_mutation_coordination_stats_smoke() {
+    std::println("\n=== #448: mutation-coordination-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
+    CHECK(r && is_int(*r), "mutation-coordination-stats int");
+    const auto baseline = as_int(*r);
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
+    CHECK(r1 && is_int(*r1) && as_int(*r1) >= baseline, "monotonic");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave28_448
+
+namespace aura_obs_run_wave28_1493 {
+int run_1493_per_fiber_stack_adaptive_smoke() {
+    std::println("\n=== #1493: per-fiber stack + adaptive safepoint schema smoke ===");
+    CompilerService cs;
+    auto h1 = cs.eval("(engine:metrics \"query:per-fiber-mutation-stack-stats\")");
+    CHECK(h1 && is_hash(*h1), "per-fiber-mutation-stack-stats hash");
+    CHECK(hash_int(cs, "query:per-fiber-mutation-stack-stats", "schema") == 1493, "schema 1493");
+    CHECK(hash_int(cs, "query:per-fiber-mutation-stack-stats", "lifetime-max") >= 0,
+          "lifetime-max");
+    auto h2 = cs.eval("(engine:metrics \"query:gc-safepoint-adaptive-stats\")");
+    CHECK(h2 && is_hash(*h2), "gc-safepoint-adaptive-stats hash");
+    {
+        const auto sch = hash_int(cs, "query:gc-safepoint-adaptive-stats", "schema");
+        CHECK(sch == 1493 || sch == 1599 || sch == 1483, "adaptive schema lineage");
+    }
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave28_1493
+
+namespace aura_obs_run_wave28_1450 {
+int run_1450_stats_facade_smoke() {
+    std::println("\n=== #1450: stats facade + engine:surface smoke ===");
+    CompilerService cs;
+    auto s = cs.eval("(stats:get \"query:query-stats\")");
+    CHECK(s.has_value(), "stats:get routes catalog name");
+    auto surf = cs.eval("(engine:surface)");
+    CHECK(surf && is_hash(*surf), "engine:surface hash");
+    auto pref = cs.eval("(stats:prefix \"query:\")");
+    CHECK(pref.has_value(), "stats:prefix query:");
+    auto cnt = cs.eval("(stats:count)");
+    CHECK(cnt && is_int(*cnt), "stats:count int");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave28_1450
+
+namespace aura_obs_run_wave28_1451 {
+int run_1451_primitive_validate_new_smoke() {
+    std::println("\n=== #1451: primitive:validate-new governance smoke ===");
+    CompilerService cs;
+    auto r1 = cs.eval("(primitive:validate-new \"string-fake-zzz\")");
+    CHECK(r1 && is_hash(*r1), "validate string-fake → hash");
+    auto blocked = cs.eval("(hash-ref (primitive:validate-new \"string-fake-zzz\") 'blocked)");
+    CHECK(blocked.has_value(), "blocked field present");
+    auto stats_block = cs.eval("(primitive:validate-new \"query:agent-hallucinated-stats\")");
+    CHECK(stats_block && is_hash(*stats_block), "stats name blocked shape");
+    auto plus = cs.eval("(primitive:validate-new \"+\")");
+    CHECK(plus && is_hash(*plus), "already-registered +");
+    auto free = cs.eval("(primitive:validate-new \"agent-proof-free-name-1451\")");
+    CHECK(free && is_hash(*free), "free name shape");
+    auto desc = cs.eval("(primitive:describe \"primitive:validate-new\")");
+    CHECK(desc.has_value(), "primitive:describe validate-new");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave28_1451
+
 int main() {
+
 
     std::println("=== test_obs_metrics_smoke_batch (wave 26) ===");
     if (int rc = aura_obs_run_wave26_478::run_478_primitive_error_stats_smoke(); rc != 0)
@@ -210,6 +284,22 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave27_433::run_433_dead_coercion_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave28_448::run_448_mutation_coordination_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave28_1493::run_1493_per_fiber_stack_adaptive_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave28_1450::run_1450_stats_facade_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave28_1451::run_1451_primitive_validate_new_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
