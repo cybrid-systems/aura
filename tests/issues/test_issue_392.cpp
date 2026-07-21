@@ -220,7 +220,9 @@ bool test_subtree_gen_at_capture_serialization_roundtrip() {
     CHECK(flat.kStableRefSerializedSize == static_cast<std::size_t>(24),
           "kStableRefSerializedSize == 24 (unchanged wire size)");
     aura::ast::FlatAST::StableNodeRef round{};
-    CHECK(flat.deserialize_stable_ref(buf, n, round), "deserialize_stable_ref succeeds");
+    CHECK(flat.deserialize_stable_ref(
+              std::span<const std::uint8_t>{buf, static_cast<std::size_t>(n)}, round),
+          "deserialize_stable_ref succeeds");
     CHECK(round.subtree_gen_at_capture == ref.subtree_gen_at_capture,
           "subtree_gen_at_capture round-trips through serialize/deserialize");
     CHECK(round.gen == ref.gen, "gen round-trips");

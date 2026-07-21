@@ -6607,7 +6607,7 @@ public:
     // checking is_valid() AFTER deserializing to confirm the
     // ref still points to a live node in the current flat.
     // Issue #379: body moved to src/core/ast_stability.cpp.
-    [[nodiscard]] bool deserialize_stable_ref(const std::uint8_t* buf, std::size_t buf_size,
+    [[nodiscard]] bool deserialize_stable_ref(std::span<const std::uint8_t> buf,
                                               StableNodeRef& out) const noexcept;
 
     // Issue #191: make a StableNodeRef capturing the current

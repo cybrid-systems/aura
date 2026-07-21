@@ -1020,7 +1020,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         aura::ast::FlatAST::StableNodeRef ref{};
         if (!ev.workspace_flat_->deserialize_stable_ref(
-                reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size(), ref))
+                std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(blob.data()),
+                                              blob.size()},
+                ref))
             return make_bool(false);
         // Return as a nested pair: ((id . gen) . (mut_id . ws_id))
         auto pair_id_gen = ev.pairs_.size();
