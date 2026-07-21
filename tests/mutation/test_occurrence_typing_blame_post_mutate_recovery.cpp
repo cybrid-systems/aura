@@ -1,3 +1,13 @@
+// test_occurrence_typing_blame_post_mutate_recovery.cpp — restored standalone (AC drift under batch
+// co-link)
+#include "test_harness.hpp"
+#include <cstdint>
+#include <print>
+#include <string>
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // test_occurrence_typing_blame_post_mutate_recovery.cpp
 // Issue #609: Occurrence Typing + blame/provenance post-mutate recovery.
 //
@@ -17,15 +27,6 @@
 // function creating/destroying a service leaves a dangling
 // g_query_evaluator and can segfault on the next case.
 
-#include "test_harness.hpp"
-
-#include <cstdint>
-#include <string>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_609_detail {
 

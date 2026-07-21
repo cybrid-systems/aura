@@ -1,3 +1,11 @@
+// test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
+#include "test_harness.hpp"
+#include <atomic>
+#include <cstdint>
+#include <print>
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
 // test_fine_dirty_relower.cpp — Issue #1657 P0 [Incremental] finer-grained
 // per-instruction dirty bitmask propagation and minimal re-lower
 // observability surface tests.
@@ -21,12 +29,6 @@
 // AC10: CompilerMetrics struct exposes all 4 new fields
 //      (regression guard — observability_metrics.h stays in sync)
 
-#include "test_harness.hpp"
-
-#include "compiler/observability_metrics.h"
-#include "compiler/evaluator.h"
-
-#include <cstdint>
 
 namespace aura_1657_detail {
 
@@ -41,8 +43,8 @@ int main() {
     // AC10: CompilerMetrics struct exposes all 4 new fields.
     // This is a compile-time check via the struct definition — if any
     // of the 4 atomic fields is missing, this TU will fail to compile.
-    static_assert(std::atomic<std::uint64_t>{0}.is_lock_free(),
-                  "std::atomic<uint64_t> must be lock-free for the metrics counters");
+    CHECK(std::atomic<std::uint64_t>{0}.is_lock_free(),
+          "std::atomic<uint64_t> must be lock-free for the metrics counters");
 
     CompilerMetrics m;
 

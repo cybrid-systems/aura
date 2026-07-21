@@ -1800,6 +1800,24 @@ aura_add_issue_test(test_jit_aot_hot_update_batch)
 aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_batch)
 add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
 
+# tests/mutation/ unit consolidations (unregistered standalones → theme batches).
+# Existing large family batches (mutate/linear/boundary/…) stay separate.
+aura_add_issue_test(test_mutation_guard_unit_batch)
+aura_issue_test_link_llvm_jit(test_mutation_guard_unit_batch)
+add_dependencies(all_test_issue_targets test_mutation_guard_unit_batch)
+
+aura_add_issue_test(test_mutation_occurrence_dirty_batch)
+aura_issue_test_link_llvm_jit(test_mutation_occurrence_dirty_batch)
+add_dependencies(all_test_issue_targets test_mutation_occurrence_dirty_batch)
+
+aura_add_issue_test(test_mutation_aot_unit_batch)
+aura_issue_test_link_llvm_jit(test_mutation_aot_unit_batch)
+add_dependencies(all_test_issue_targets test_mutation_aot_unit_batch)
+
+aura_add_issue_test(test_mutation_typed_audit_batch)
+aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
+add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
+
 # ── tests/domain/ suites (restored after AuraDomainTests.cmake removal) ──
 # Default-build: schema matrix + behavioral gates + concurrent defrag.
 # On-demand (EXCLUDE_FROM_ALL): arena family batches.
