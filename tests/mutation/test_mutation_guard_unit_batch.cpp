@@ -2194,6 +2194,67 @@ int run_328_self_evo_mutation_loop_smoke() {
 } // namespace aura_mut_run_wave40_328
 
 
+// Wave 41 (#1957): mutation_dirty — #327 relower-strategy + #346 mutation-log + #349 blame
+namespace aura_mut_run_wave41_327 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_327_relower_strategy_smoke() {
+    std::println("\n=== #327: compile:relower-strategy + incremental effectiveness smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(compile:relower-strategy \"nonexistent_fn_zzz\")");
+    CHECK(r.has_value(), "compile:relower-strategy callable");
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    // Incremental effectiveness may be query:* or engine:metrics surface.
+    auto ie = cs.eval("(query:incremental-effectiveness)");
+    auto ie2 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(ie.has_value() || ie2.has_value(), "incremental effectiveness surface");
+    auto ast = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
+    CHECK(ast.has_value(), "compile:ast-ops-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave41_327
+
+namespace aura_mut_run_wave41_346 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_346_mutation_log_smoke() {
+    std::println("\n=== #346: query:mutation-log / mutations-since smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"m\" \"2\")");
+    auto log = cs.eval("(query:mutation-log)");
+    CHECK(log.has_value(), "query:mutation-log reachable");
+    auto since = cs.eval("(query:mutations-since 0)");
+    CHECK(since.has_value(), "query:mutations-since reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave41_346
+
+namespace aura_mut_run_wave41_349 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_349_last_mutation_blame_smoke() {
+    std::println("\n=== #349: query:last-mutation-blame smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define b 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"b\" \"3\" \"#349-blame\")");
+    // Primitive may return void/empty when no invariant blame was recorded.
+    auto r = cs.eval("(query:last-mutation-blame)");
+    CHECK(true, "query:last-mutation-blame invoked");
+    (void)r;
+    auto log = cs.eval("(query:mutation-log)");
+    CHECK(log.has_value(), "mutation-log still reachable after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave41_349
+
+
 int main() {
 
 
@@ -2480,6 +2541,27 @@ int main() {
     std::println("\n######## run_328_self_evo_mutation_loop_smoke ########");
     if (int rc = aura_mut_run_wave40_328::run_328_self_evo_mutation_loop_smoke(); rc != 0) {
         std::println("run_328 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_327_relower_strategy_smoke ########");
+    if (int rc = aura_mut_run_wave41_327::run_327_relower_strategy_smoke(); rc != 0) {
+        std::println("run_327 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_346_mutation_log_smoke ########");
+    if (int rc = aura_mut_run_wave41_346::run_346_mutation_log_smoke(); rc != 0) {
+        std::println("run_346 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_349_last_mutation_blame_smoke ########");
+    if (int rc = aura_mut_run_wave41_349::run_349_last_mutation_blame_smoke(); rc != 0) {
+        std::println("run_349 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");

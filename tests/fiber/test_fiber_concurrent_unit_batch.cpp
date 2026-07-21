@@ -737,6 +737,51 @@ int run_363_orch_metrics_smoke() {
 } // namespace aura_fiber_run_wave40_363
 
 
+// Wave 41 (#1957): fiber_orch — #1544 linear+steal metrics + #321 multi-fiber soft
+namespace aura_fiber_run_wave41_1544 {
+using aura::compiler::CompilerMetrics;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1544_linear_safepoint_steal_smoke() {
+    std::println("\n=== #1544: linear post-mutate + GC safepoint + steal smoke ===");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto e0 = m->linear_post_mutate_enforcements.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    for (int i = 0; i < 20; ++i) {
+        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1544\")");
+        (void)cs.eval("(mutate:request-gc-safepoint)");
+        cs.evaluator().test_probe_linear_on_fiber_steal();
+    }
+    CHECK(m->linear_post_mutate_enforcements.load(std::memory_order_relaxed) >= e0,
+          "enforcements non-decreasing");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave41_1544
+
+namespace aura_fiber_run_wave41_321 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_321_multi_fiber_mutation_smoke() {
+    std::println("\n=== #321: multi-fiber mutation soft smoke ===");
+    CompilerService cs;
+    auto v = cs.eval("(let ((f1 (fiber:spawn (lambda () (define a 1) a))) "
+                     "      (f2 (fiber:spawn (lambda () (+ 2 3))))) "
+                     "  (+ (fiber:join f1) (fiber:join f2)))");
+    CHECK(v && is_int(*v), "two fibers join int");
+    auto d = cs.eval("(engine:metrics \"query:mutation-boundary-depth\")");
+    CHECK(d.has_value(), "mutation-boundary-depth reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave41_321
+
+
 int main() {
 
 
@@ -823,6 +868,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave40_363 ########");
     if (int rc = aura_fiber_run_wave40_363::run_363_orch_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave41_1544 ########");
+    if (int rc = aura_fiber_run_wave41_1544::run_1544_linear_safepoint_steal_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave41_321 ########");
+    if (int rc = aura_fiber_run_wave41_321::run_321_multi_fiber_mutation_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
