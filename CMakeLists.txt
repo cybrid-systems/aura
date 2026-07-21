@@ -1174,62 +1174,22 @@ target_compile_options(issue_307_bench PRIVATE -Wall
     -Wno-unused-but-set-variable -Wno-unused-parameter)
 target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect)
 
-# Issue #393 follow-up #249: StableNodeRef vs raw NodeId
-# 1000-round re-query benchmark. Compares the cost of
-# always re-querying (raw path) vs keeping StableNodeRef
-# handles and only re-querying on is_valid() == false
-# (stable path). AC: stable re-queries < 50% of raw OR
-# speedup >= 30%. Standalone TU that imports aura.core.ast
-# (no reflection) — same shape as issue_307_bench.
-add_executable(stable_ref_bench tests/bench/stable_ref_bench.cpp)
-set_property(TARGET stable_ref_bench PROPERTY CXX_MODULE_STD ON)
-target_include_directories(stable_ref_bench PRIVATE src)
-target_compile_options(stable_ref_bench PRIVATE -Wall
+# Consolidated FlatAST hot-path benches (#393/#398/#399):
+#   stable-ref (1k + 10k), children-stable, mark-dirty
+# Formerly four near-duplicate drivers under tests/bench/.
+add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
+set_property(TARGET ast_hotpath_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(ast_hotpath_bench PRIVATE src)
+target_compile_options(ast_hotpath_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(stable_ref_bench PRIVATE stdc++ aura_test_objects aura-reflect)
-add_test(NAME stable_ref_bench COMMAND ./stable_ref_bench)
-
-# Issue #398: bench for the new zero-alloc
-# for_each_stable_child callback vs the old allocating
-# children_stable. Same shape as stable_ref_bench
-# (no JIT, just C++ module imports).
-add_executable(children_stable_bench tests/bench/children_stable_bench.cpp)
-set_property(TARGET children_stable_bench PROPERTY CXX_MODULE_STD ON)
-target_include_directories(children_stable_bench PRIVATE src)
-target_compile_options(children_stable_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(children_stable_bench PRIVATE stdc++ aura_test_objects aura-reflect)
-add_test(NAME children_stable_bench COMMAND ./children_stable_bench)
-
-# Issue #399: bench for the mark_dirty no-resize strategy.
-# Measures wall-time stability of the mark_dirty hot path
-# after add_node's pre-reserve of the dirty side-table
-# columns. Pure AST bench, no JIT.
-add_executable(mark_dirty_bench tests/bench/mark_dirty_bench.cpp)
-set_property(TARGET mark_dirty_bench PROPERTY CXX_MODULE_STD ON)
-target_include_directories(mark_dirty_bench PRIVATE src)
-target_compile_options(mark_dirty_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(mark_dirty_bench PRIVATE stdc++ aura_test_objects aura-reflect)
-add_test(NAME mark_dirty_bench COMMAND ./mark_dirty_bench)
-
-# Issue #393 follow-up #3: production-scale variant of
-# stable_ref_bench. Same shape as the 1k bench, but
-# 10x the defines (1k → 10k nodes total) to verify the
-# scoped invalidation win holds at production-shaped
-# AST scale (typical EDA / AI agent workspaces).
-# 100 rounds × 10k refs should run in ~30s wall time.
-add_executable(stable_ref_bench_10k tests/bench/stable_ref_bench_10k.cpp)
-set_property(TARGET stable_ref_bench_10k PROPERTY CXX_MODULE_STD ON)
-target_include_directories(stable_ref_bench_10k PRIVATE src)
-target_compile_options(stable_ref_bench_10k PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
-target_link_libraries(stable_ref_bench_10k PRIVATE stdc++ aura_test_objects aura-reflect)
-add_test(NAME stable_ref_bench_10k COMMAND ./stable_ref_bench_10k)
+target_link_libraries(ast_hotpath_bench PRIVATE stdc++ aura_test_objects aura-reflect)
+add_test(NAME ast_hotpath_bench COMMAND ./ast_hotpath_bench)
+# Legacy ctest names (argv selects scenario / scale).
+add_test(NAME stable_ref_bench COMMAND ./ast_hotpath_bench stable-ref 1k)
+add_test(NAME stable_ref_bench_10k COMMAND ./ast_hotpath_bench stable-ref 10k)
+add_test(NAME children_stable_bench COMMAND ./ast_hotpath_bench children-stable)
+add_test(NAME mark_dirty_bench COMMAND ./ast_hotpath_bench mark-dirty)
 
 # Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
 # reflection + auto_serialize/auto_deserialize path. Measures
