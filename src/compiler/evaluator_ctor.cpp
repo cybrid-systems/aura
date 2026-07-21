@@ -97,6 +97,9 @@ Evaluator::Evaluator() {
     // deferred from SlimSurface core). When OFF, register is a no-op.
     primitives_detail::register_tui_primitives(prim_registrar(), *this);
 
+    // Issue #1986 / Epic #1979: render3d:* (gated with TUI commercial flag).
+    primitives_detail::register_render3d_primitives(prim_registrar(), *this);
+
     primitives_detail::register_type_primitives(prim_registrar(), *this);
 
     install_defuse_subsystem();

@@ -49,6 +49,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_messaging.cpp
     src/compiler/evaluator_primitives_io.cpp
     src/compiler/evaluator_primitives_tui.cpp
+    src/compiler/evaluator_primitives_render3d.cpp
     src/compiler/evaluator_primitives_agent.cpp
     src/compiler/evaluator_primitives_memory.cpp
     src/compiler/evaluator_primitives_policy.cpp
@@ -295,6 +296,7 @@ else()
 endif()
 set_source_files_properties(
     src/compiler/evaluator_primitives_tui.cpp
+    src/compiler/evaluator_primitives_render3d.cpp
     PROPERTIES COMPILE_DEFINITIONS "AURA_ENABLE_TUI=${_AURA_ENABLE_TUI_VAL}")
 # compile.cpp hosts both eda:* (p34/p35) and seva:* (p59–p62) — both flags.
 set_source_files_properties(
@@ -1814,6 +1816,11 @@ add_dependencies(all_test_issue_targets test_voxel_frame)
 aura_add_issue_test(demo_voxel_3d)
 # Demo is opt-in (not on all_test_issue_targets default stress path).
 set_target_properties(demo_voxel_3d PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+# Issue #1986 / Epic #1979: render3d:* Aura primitive surface.
+aura_add_issue_test(test_render3d_primitives)
+aura_issue_test_link_llvm_jit(test_render3d_primitives)
+add_dependencies(all_test_issue_targets test_render3d_primitives)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
