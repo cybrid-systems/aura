@@ -19,7 +19,6 @@ changes with tests next to the subsystem they protect.
 python3 tests/run.py list
 python3 tests/run.py issues-fast
 python3 tests/run.py fixtures
-python3 scripts/fixtures_tool.py status   # shard inventory (#1962)
 ```
 
 Commit style matches history: `fix(scope): summary (#issue)` (see `git log`).
