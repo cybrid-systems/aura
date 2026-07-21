@@ -2571,7 +2571,8 @@ struct AuraJIT::Impl {
     // successful compile, keyed by function name. Hot-swap
     // invalidates the entry (under the global lock).
     std::shared_mutex fn_compile_mtx_;
-    std::unordered_map<std::string, ScalarFn> compile_fns_{};
+    std::unordered_map<std::string, ScalarFn, aura::core::TransparentStringHash, std::equal_to<>>
+        compile_fns_{};
     // Issue #1522: tracker entry carries compile epoch + soft deopt flag.
     // deopt_pending: bridge epoch bumped for this name; refuse cache hits
     // until next recompile clears the flag.
@@ -2618,11 +2619,15 @@ struct AuraJIT::Impl {
     // compile() does, and it owns the lower() call). The map
     // is consulted by spec_jit_controller's deopt signal (which
     // becomes per-function instead of conservative-global).
-    std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_unhandled_counts_{};
+    std::unordered_map<std::string, std::atomic<std::uint64_t>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        fn_unhandled_counts_{};
     // Issue #1477: per-fn captured bridge_epoch (set at compile or via
     // capture_fn_epoch from service atomic_bump). Parallel to
     // fn_unhandled_counts_ — atomic per-entry; compile_mtx_ guards map.
-    std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_captured_epochs_{};
+    std::unordered_map<std::string, std::atomic<std::uint64_t>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        fn_captured_epochs_{};
     // Tracks the most recent function being compiled (set by
     // compile() before calling lower()).
     std::string current_compile_fn_{};
@@ -2645,7 +2650,9 @@ struct AuraJIT::Impl {
         return it->second.load(std::memory_order_relaxed);
     }
     // Issue #1522: trackers carry compile epoch + soft deopt flag.
-    std::unordered_map<std::string, FnTrackerEntry> fn_trackers_;
+    std::unordered_map<std::string, FnTrackerEntry, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        fn_trackers_;
 
     // Issue #170 Phase 1: most recently compiled LLVM module.
     // Held as a unique_ptr so we can release it when a new
@@ -2658,7 +2665,9 @@ struct AuraJIT::Impl {
     // Issue #1516: per-function AOT module snapshots (keyed by
     // function name). Survives subsequent compile() of other
     // functions so multi-function static-link AOT is selective.
-    std::unordered_map<std::string, std::unique_ptr<llvm::Module>> fn_aot_modules_;
+    std::unordered_map<std::string, std::unique_ptr<llvm::Module>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        fn_aot_modules_;
     // Issue #1516: IR func_id → function name (set by register_fn_func).
     std::unordered_map<std::uint32_t, std::string> fn_id_to_name_;
 
@@ -3805,6 +3814,7 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
 #else
 
 #include <cstdio>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::jit {
 

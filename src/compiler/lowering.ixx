@@ -65,18 +65,26 @@ export struct LoweringState {
     aura::ir::IRFunction* cur_func = nullptr;
     std::uint32_t cur_block = 0;
     std::uint32_t local_count = 0;
-    std::vector<std::unordered_map<std::string, Binding>> scopes;
+    std::vector<std::unordered_map<std::string, Binding, aura::core::TransparentStringHash,
+                                   std::equal_to<>>>
+        scopes;
     std::uint32_t env_slot = 0;
-    std::unordered_map<std::string, std::uint32_t> free_var_map;
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        free_var_map;
     std::unordered_set<std::string> cell_free_vars;
     const Primitives* primitives = nullptr;     // for loading primitive values
     const ast::FlatAST* current_flat = nullptr; // for closure bridge data
     const ast::StringPool* current_pool = nullptr;
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge =
         nullptr;
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr;
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings =
+        nullptr;
     // Issue #272 Cycle 3: top-level value defines bound via IR (name → cell index).
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr;
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells = nullptr;
 
     // Self-reference support: function name and its pre-allocated func_id
     // Used by cached define functions to emit correct MakeClosure for self-recursion.
@@ -331,13 +339,18 @@ export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat, ast::StringPool& pool,
 // actually inlined during lowering (for dependency tracking).
 export aura::ir::IRModule lower_to_ir_with_cache(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits = nullptr, const Primitives* primitives = nullptr,
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge =
         nullptr,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings =
+        nullptr,
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0);
 
 // Issue #657: install/clear lowering observability hooks (bridge epoch +
@@ -369,13 +382,18 @@ lower_to_ir_result(ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& are
 
 export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits = nullptr, const Primitives* primitives = nullptr,
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge =
         nullptr,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings =
+        nullptr,
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0);
 
 // ── Per-function lowering API (Issue #224 cycle 3) ──────────
@@ -409,7 +427,8 @@ export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result
 export aura::ir::IRFunction lower_function_at(
     ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena, ast::NodeId lambda_node_id,
     const Primitives* primitives = nullptr,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache = nullptr,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache = nullptr,
     std::vector<std::string>* cache_hits = nullptr);
 
 // Issue #684: snapshot of the last lower_to_ir dual-emit pass.
@@ -427,5 +446,6 @@ export struct LowerSoAEmitSnapshot {
 };
 
 export const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 } // namespace aura::compiler

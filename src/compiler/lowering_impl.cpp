@@ -8,6 +8,7 @@ import std;
 import aura.core.ast;
 import aura.compiler.lowering_linear_types;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler {
 
@@ -147,7 +148,8 @@ static void remap_func_ids(aura::ir::IRFunction& func, std::uint32_t base_fid) {
 
 static std::uint32_t lower_flat_expr(
     LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache = nullptr,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache = nullptr,
     std::vector<std::string>* cache_hits = nullptr) {
     // Track current flat/pool for closure bridge data
     state.current_flat = &flat;
@@ -648,58 +650,62 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // Check if callee is a known non-arithmetic primitive (string ops, etc.)
-                static const std::unordered_map<std::string, PrimId> prim_call_map = {
-                    {"hash", PrimId::Hash},
-                    {"hash-length", PrimId::HashLength},
-                    {"hash-has-key?", PrimId::HashHasKey},
-                    {"hash-keys", PrimId::HashKeys},
-                    {"hash-values", PrimId::HashValues},
-                    {"string-append", PrimId::StringAppend},
-                    {"string-length", PrimId::StringLength},
-                    {"string-ref", PrimId::StringRef},
-                    {"substring", PrimId::Substring},
-                    {"string=?", PrimId::StringEq},
-                    {"string<?", PrimId::StringLt},
-                    {"number->string", PrimId::NumberToString},
-                    {"string->number", PrimId::StringToNumber},
-                    {"display", PrimId::Display},
-                    {"write", PrimId::Write},
-                    {"newline", PrimId::Newline},
-                    {"error", PrimId::Error},
-                    {"assert", PrimId::Assert},
-                    {"raise", PrimId::Raise},
-                    {"error?", PrimId::ErrorP},
-                    {"read", PrimId::Read},
-                    {"read-file", PrimId::ReadFile},
-                    {"write-file", PrimId::WriteFile},
-                    {"file-exists?", PrimId::FileExists},
-                    {"gensym", PrimId::Gensym},
-                    {"apply", PrimId::Apply},
-                    {"vector", PrimId::Vector},
-                    {"vector-ref", PrimId::VectorRef},
-                    {"vector-set!", PrimId::VectorSet},
-                    {"vector-length", PrimId::VectorLength},
-                    {"vector?", PrimId::VectorP},
-                    {"make-vector", PrimId::MakeVector},
-                    {"import", PrimId::Import},
-                    {"char=?", PrimId::CharEq},
-                    {"char<?", PrimId::CharLt},
-                    {"char->integer", PrimId::CharToInteger},
-                    {"integer->char", PrimId::IntegerToChar},
-                    {"quotient", PrimId::Quotient},
-                    {"remainder", PrimId::Remainder},
-                    {"length", PrimId::ListLength},
-                    {"list-ref", PrimId::ListRef},
-                    {"reverse", PrimId::ListReverse},
-                    {"pair?", PrimId::PairP},
-                    {"null?", PrimId::NullP},
-                };
+                static const std::unordered_map<std::string, PrimId,
+                                                aura::core::TransparentStringHash, std::equal_to<>>
+                    prim_call_map = {
+                        {"hash", PrimId::Hash},
+                        {"hash-length", PrimId::HashLength},
+                        {"hash-has-key?", PrimId::HashHasKey},
+                        {"hash-keys", PrimId::HashKeys},
+                        {"hash-values", PrimId::HashValues},
+                        {"string-append", PrimId::StringAppend},
+                        {"string-length", PrimId::StringLength},
+                        {"string-ref", PrimId::StringRef},
+                        {"substring", PrimId::Substring},
+                        {"string=?", PrimId::StringEq},
+                        {"string<?", PrimId::StringLt},
+                        {"number->string", PrimId::NumberToString},
+                        {"string->number", PrimId::StringToNumber},
+                        {"display", PrimId::Display},
+                        {"write", PrimId::Write},
+                        {"newline", PrimId::Newline},
+                        {"error", PrimId::Error},
+                        {"assert", PrimId::Assert},
+                        {"raise", PrimId::Raise},
+                        {"error?", PrimId::ErrorP},
+                        {"read", PrimId::Read},
+                        {"read-file", PrimId::ReadFile},
+                        {"write-file", PrimId::WriteFile},
+                        {"file-exists?", PrimId::FileExists},
+                        {"gensym", PrimId::Gensym},
+                        {"apply", PrimId::Apply},
+                        {"vector", PrimId::Vector},
+                        {"vector-ref", PrimId::VectorRef},
+                        {"vector-set!", PrimId::VectorSet},
+                        {"vector-length", PrimId::VectorLength},
+                        {"vector?", PrimId::VectorP},
+                        {"make-vector", PrimId::MakeVector},
+                        {"import", PrimId::Import},
+                        {"char=?", PrimId::CharEq},
+                        {"char<?", PrimId::CharLt},
+                        {"char->integer", PrimId::CharToInteger},
+                        {"integer->char", PrimId::IntegerToChar},
+                        {"quotient", PrimId::Quotient},
+                        {"remainder", PrimId::Remainder},
+                        {"length", PrimId::ListLength},
+                        {"list-ref", PrimId::ListRef},
+                        {"reverse", PrimId::ListReverse},
+                        {"pair?", PrimId::PairP},
+                        {"null?", PrimId::NullP},
+                    };
                 // Hash operations: emit inline opcodes (avoid PrimCall dispatch)
-                static const std::unordered_map<std::string, IROpcode> hash_op_map = {
-                    {"hash-ref", IROpcode::HashRef},
-                    {"hash-set!", IROpcode::HashSet},
-                    {"hash-remove!", IROpcode::HashRemove},
-                };
+                static const std::unordered_map<std::string, IROpcode,
+                                                aura::core::TransparentStringHash, std::equal_to<>>
+                    hash_op_map = {
+                        {"hash-ref", IROpcode::HashRef},
+                        {"hash-set!", IROpcode::HashSet},
+                        {"hash-remove!", IROpcode::HashRemove},
+                    };
                 auto hop = hash_op_map.find(std::string(callee_name));
                 if (hop != hash_op_map.end()) {
                     auto result_slot = state.alloc_local();
@@ -1620,14 +1626,19 @@ static bool subtree_uses_node_memo(const FlatAST& flat, aura::ast::NodeId root,
 // ── Internal: lower_to_ir with optional cache ──────────────────
 static IRModule lower_to_ir_impl(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits = nullptr, const Primitives* primitives = nullptr,
     const aura::core::TypeRegistry* type_reg = nullptr,
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge =
         nullptr,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings =
+        nullptr,
     const std::string* self_name = nullptr,
-    const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells = nullptr,
     std::uint32_t narrowing_evidence = 0) { // Issue #280
     LoweringState state(arena);
     // Issue #684 dual-emit scaffold + #1318 bridge counter.
@@ -1801,12 +1812,16 @@ IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena, const Pri
 // ── lower_to_ir_with_cache ─────────────────────────────────────
 IRModule lower_to_ir_with_cache(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits, const Primitives* primitives,
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge,
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings,
     const std::string* self_name, const aura::core::TypeRegistry* type_reg,
-    const std::unordered_map<std::string, std::size_t>* value_cells,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells,
     std::uint32_t narrowing_evidence) { // Issue #280
     return lower_to_ir_with_cache_result(flat, pool, arena, cache, cache_hits, primitives,
                                          cache_bridge, cache_strings, self_name, type_reg,
@@ -1835,12 +1850,16 @@ aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& 
 
 aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
-    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
     std::vector<std::string>* cache_hits, const Primitives* primitives,
-    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge,
+    const std::unordered_map<std::string, std::vector<std::string>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache_strings,
     const std::string* self_name, const aura::core::TypeRegistry* type_reg,
-    const std::unordered_map<std::string, std::size_t>* value_cells,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>* value_cells,
     std::uint32_t narrowing_evidence) { // Issue #280
     return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, type_reg,
                             cache_bridge, cache_strings, self_name, value_cells,
@@ -1868,11 +1887,12 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
 //     NOT run here; the caller should run them after
 //     replacement, matching what cache_define does for the
 //     full-bundle path.
-IRFunction
-lower_function_at(FlatAST& flat, StringPool& pool, ASTArena& arena, NodeId lambda_node_id,
-                  const Primitives* primitives,
-                  const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
-                  std::vector<std::string>* cache_hits) {
+IRFunction lower_function_at(
+    FlatAST& flat, StringPool& pool, ASTArena& arena, NodeId lambda_node_id,
+    const Primitives* primitives,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
     if (lambda_node_id == NULL_NODE || lambda_node_id >= flat.size()) {
         return IRFunction{};
     }

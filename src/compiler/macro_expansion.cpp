@@ -12,6 +12,7 @@ module aura.compiler.macro_expansion;
 import std;
 import aura.core.ast;
 import aura.compiler.evaluator_pure;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
@@ -203,12 +204,14 @@ inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexc
 }
 } // extern "C"
 
-aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-                                   aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
-                                   aura::ast::NodeId body_id,
-                                   const std::unordered_map<std::string, aura::ast::NodeId>* subst,
-                                   std::unordered_map<std::string, std::string>* name_map,
-                                   aura::ast::SyntaxMarker cloned_marker) {
+aura::ast::NodeId clone_macro_body(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
     // Issue #1652: per-call success-path observability bump (fired once per
     // clone_macro_body invocation that survives the early-return hygiene
@@ -579,10 +582,10 @@ aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::String
 
 namespace detail {
 
-    aura::ast::NodeId
-    unwrap_cons_chain_to_call(aura::ast::FlatAST* flat, aura::ast::StringPool* pool,
-                              aura::ast::NodeId root,
-                              const std::unordered_map<std::string, MacroExpansionDef>& macros) {
+    aura::ast::NodeId unwrap_cons_chain_to_call(
+        aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+        const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                                 std::equal_to<>>& macros) {
         using namespace aura::ast;
         if (root == NULL_NODE)
             return NULL_NODE;
@@ -636,10 +639,11 @@ namespace detail {
 
 } // namespace detail
 
-aura::ast::NodeId
-expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
-                    int depth, int max_depth,
-                    const std::unordered_map<std::string, MacroExpansionDef>& macros) {
+aura::ast::NodeId expand_inner_macros(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
+    int max_depth,
+    const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                             std::equal_to<>>& macros) {
     using namespace aura::ast;
     if (root == NULL_NODE || depth >= max_depth)
         return root;
@@ -695,7 +699,9 @@ expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura:
                     // Clone the macro body into the current flat and
                     // re-intern sym_ids. Use the runtime registry's
                     // `flat` / `pool` pointers as the source.
-                    std::unordered_map<std::string, std::string> rename_map;
+                    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                       std::equal_to<>>
+                        rename_map;
                     auto* src_pool = md.pool ? md.pool : pool;
                     auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id,
                                                    &subst, &rename_map);
@@ -748,7 +754,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             bool hygienic;  // Issue #120
             bool preserved; // Issue #230 #2
         };
-        std::unordered_map<std::string, MD> local_macros;
+        std::unordered_map<std::string, MD, aura::core::TransparentStringHash, std::equal_to<>>
+            local_macros;
         bool has_macro_def = false;
 
         for (NodeId id = 0; id < flat.size(); ++id) {
@@ -834,7 +841,9 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                             // same-expression macros.
                         }
                         // Clone macro body with substitution
-                        std::unordered_map<std::string, std::string> rename_map;
+                        std::unordered_map<std::string, std::string,
+                                           aura::core::TransparentStringHash, std::equal_to<>>
+                            rename_map;
                         auto expanded = clone_macro_body(
                             flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst, &rename_map,
                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
