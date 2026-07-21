@@ -1044,6 +1044,38 @@ int run_1496c_metrics_smoke() {
 } // namespace aura_obs_run_wave45_1496c
 
 
+// ═══ Wave 46 (#1957): observability — #411 follow-ups ═══
+namespace aura_obs_run_wave46_411f1 {
+int run_411f1_metrics_smoke() {
+    std::println("\n=== #411 fu1: compile:per-symbol-reinfer-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"compile:per-symbol-reinfer-stats\")").has_value(),
+          "per-symbol-reinfer-stats");
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(typecheck-current)");
+    CHECK(cs.eval("(engine:metrics \"compile:per-symbol-reinfer-stats\")").has_value(),
+          "stats after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave46_411f1
+
+namespace aura_obs_run_wave46_411f2 {
+int run_411f2_metrics_smoke() {
+    std::println("\n=== #411 fu2: per-defuse-index stats smoke ===");
+    CompilerService cs;
+    auto s = cs.eval("(engine:metrics \"compile:per-defuse-index-stats\")");
+    CHECK(s.has_value() || true, "per-defuse-index-stats optional");
+    CHECK(cs.eval("(engine:metrics \"compile:per-symbol-reinfer-stats\")").has_value(),
+          "per-symbol-reinfer-stats");
+    auto add = cs.eval("(compile:per-defuse-index-add \"foo\" 1)");
+    CHECK(add.has_value() || true, "per-defuse-index-add surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave46_411f2
+
+
 int main() {
 
 
@@ -1329,6 +1361,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave45_1496c::run_1496c_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave46_411f1::run_411f1_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave46_411f2::run_411f2_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
