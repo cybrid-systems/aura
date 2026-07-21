@@ -150,7 +150,6 @@
 - `test_issue_284.cpp`
 - `test_issue_292.cpp`
 - `test_issue_293.cpp`
-- `test_issue_294.cpp`
 - `test_issue_297.cpp`
 - `test_issue_300.cpp`
 - `test_issue_301.cpp`
@@ -658,7 +657,6 @@
 - `test_issue_219.cpp`
 - `test_issue_237.cpp`
 - `test_issue_287.cpp`
-- `test_issue_295.cpp`
 - `test_issue_311.cpp`
 - `test_issue_501.cpp`
 - `test_issue_513_observability.cpp`
