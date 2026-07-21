@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 503 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 499 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **511** | |
+| **Total scanned** | **507** | |
 
 ### Related artifacts
 
@@ -35,7 +35,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 155 | 0 | 1 | 156 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 1 | 47 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 7 | 0 | 0 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
@@ -47,8 +47,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 457 | Integration path via `CompilerService` / eval |
-| `test_harness` | 289 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 454 | Integration path via `CompilerService` / eval |
+| `test_harness` | 285 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 127 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 41 | File defines `int main()` (standalone or bundle source) |
@@ -56,20 +56,20 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 333
-- `unknown`: 104
-- `unit`: 59
+- `integration`: 332
+- `unknown`: 102
+- `unit`: 58
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 271
-- `compiler/observability_metrics.h` — 51
-- `compiler/aura_jit_bridge.h` — 16
+- `test_harness.hpp` — 267
+- `compiler/observability_metrics.h` — 49
 - `serve/scheduler.h` — 15
-- `compiler/aura_jit.h` — 11
+- `compiler/aura_jit_bridge.h` — 15
 - `serve/fiber.h` — 10
+- `compiler/aura_jit.h` — 10
 - `serve/worker.h` — 6
 - `compiler/shape_profiler.h` — 4
 - `reflect/reflect.hh` — 4
@@ -82,19 +82,19 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 318
-- `aura.compiler.service` — 308
-- `aura.compiler.evaluator` — 284
-- `std` — 281
-- `aura.core.ast` — 181
-- `aura.core.type` — 95
-- `aura.core.arena` — 91
+- `aura.compiler.value` — 314
+- `aura.compiler.service` — 305
+- `aura.compiler.evaluator` — 282
+- `std` — 277
+- `aura.core.ast` — 178
+- `aura.core.type` — 92
+- `aura.core.arena` — 89
 - `aura.compiler.ir` — 44
 - `aura.core` — 34
-- `aura.compiler.type_checker` — 29
-- `aura.diag` — 27
+- `aura.compiler.type_checker` — 27
+- `aura.diag` — 26
 - `aura.parser.parser` — 18
-- `aura.core.mutation` — 17
+- `aura.core.mutation` — 16
 - `aura.compiler.pass_manager` — 15
 - `aura.compiler.ir_executor` — 8
 
@@ -447,21 +447,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_791.cpp` (#791) — test_issue_791.cpp — Issue #791: P0 exhaustive
 - `tests/issues/test_issue_803.cpp` (#803) — test_issue_803.cpp — Issue #803: P0 EDA-SV-
 
-### `linear_ownership` — Linear ownership / borrow / consume (11)
+### `linear_ownership` — Linear ownership / borrow / consume (7)
 
 **Target:** tests/test_linear_ownership_batch.cpp → domain/
 
 **Priority:** P1 — small, already partially batched
 
-#### issues/ (11)
+#### issues/ (7)
 
 - `tests/issues/test_issue_117.cpp` (#117) [early_issue] — test_issue_117.cpp — Verify linear ownership validation fixes
-- `tests/issues/test_issue_1410.cpp` (#1410) — tests/test_issue_1410.cpp — Issue #1410: Linear ∩ Refinement
 - `tests/issues/test_issue_1417.cpp` (#1417) — test_issue_1417.cpp — Issue #1417: Linear ∩ Refinement
-- `tests/issues/test_issue_1458_linear_ownership_post_mutate.cpp` (#1458) — test_issue_1458_linear_ownership_post_mutate.cpp
-- `tests/issues/test_issue_1535.cpp` (#1535) — AC1: Linear epoch safety check fresh after compile (no mutate)
 - `tests/issues/test_issue_253.cpp` (#253) — test_issue_253.cpp — Issue #253 scope-limited close:
-- `tests/issues/test_issue_283.cpp` (#283) — (Issue #283: bidirectional check-mode + OwnershipEnv
 - `tests/issues/test_issue_683.cpp` (#683) — Issue #683 linear ownership + GC safepoint / fiber-steal integration
 - `tests/issues/test_issue_688.cpp` (#688) — Issue #688 linear OwnershipEnv post-mutate typed-mutation wiring
 - `tests/issues/test_issue_763.cpp` (#763) — test_issue_763.cpp — Issue #763: Runtime linear_ownership_state

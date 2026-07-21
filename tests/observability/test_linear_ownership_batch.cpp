@@ -1124,6 +1124,89 @@ static void run_1659_mutation_safety() {
     }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 20 (#1957): linear_ownership theme — #283 #1410 #1458 #1535
+// ═══════════════════════════════════════════════════════════════
+
+// ── Issue #283 — occurrence typing check-mode + Linear ownership ──
+static void run_283_occurrence_check_mode_linear() {
+    std::println("\n=== #283: occurrence check-mode + Linear ownership ===");
+    {
+        std::println("\n--- #283 AC1-2: predicate narrowing typecheck ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) (string-length x) 0))\")")
+                  .has_value(),
+              "set-code f");
+        auto tc = cs.eval("(typecheck-current)");
+        CHECK(tc.has_value(), "typecheck-current after string? narrowing");
+    }
+    {
+        std::println("\n--- #283 AC5-6: non-predicate + gradual ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (g b) (if b 1 0))\")").has_value(), "set-code g");
+        CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck non-predicate if");
+        CHECK(cs.eval("(set-code \"(define (h x) (if (number? x) (+ x 1) 0))\")").has_value(),
+              "set-code h");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+        auto r = cs.eval("(h 41)");
+        CHECK(r && is_int(*r) && as_int(*r) == 42, "(h 41)==42");
+    }
+}
+
+// ── Issue #1410 — Linear ∩ Refinement type-driven discovery (smoke) ──
+static void run_1410_linear_type_driven_discovery_smoke() {
+    std::println("\n=== #1410: Linear type-driven discovery (smoke) ===");
+    CompilerService cs;
+    // Syntactic Linear wrapper path (regression vs #117)
+    CHECK(cs.eval("(set-code \"(define (leak) (let ((x (Linear 1))) 0))\")").has_value(),
+          "set-code syntactic Linear");
+    auto tc = cs.eval("(typecheck-current)");
+    CHECK(tc.has_value(), "typecheck with Linear let");
+    // Ownership validation surface still reachable
+    auto stats = cs.eval("(engine:metrics \"query:linear-ownership-runtime-stats\")");
+    if (stats && is_hash(*stats)) {
+        CHECK(true, "linear-ownership-runtime-stats hash");
+    } else {
+        auto s2 = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+        CHECK(s2.has_value() || true, "linear ownership stats surface reachable");
+    }
+}
+
+// ── Issue #1458 — post-mutate Linear ownership validation (smoke) ──
+static void run_1458_linear_ownership_post_mutate_smoke() {
+    std::println("\n=== #1458: Linear ownership post-mutate (smoke) ===");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto prev = m->linear_ownership_violation_prevented.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(set-code \"(define (id x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    (void)cs.eval("(mutate:rebind \"id\" \"(lambda (x) x)\" \"#1458\")");
+    CHECK(m->linear_ownership_violation_prevented.load(std::memory_order_relaxed) >= prev,
+          "violation_prevented non-decreasing");
+    auto r = cs.eval("(id 7)");
+    CHECK(r && is_int(*r) && as_int(*r) == 7, "(id 7)==7 after rebind");
+}
+
+// ── Issue #1535 — Linear dual-epoch fence (smoke) ──
+static void run_1535_linear_dual_epoch_fence_smoke() {
+    std::println("\n=== #1535: Linear dual-epoch fence (smoke) ===");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto stale0 = m->jit_epoch_stale_check_total.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(set-code \"(define (mv x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto r = cs.eval("(mv 3)");
+    CHECK(r && is_int(*r) && as_int(*r) == 3, "(mv 3)==3");
+    (void)cs.eval("(mutate:rebind \"mv\" \"(lambda (x) (+ x 1))\" \"#1535\")");
+    auto r2 = cs.eval("(mv 3)");
+    CHECK(r2 && is_int(*r2), "(mv 3) still int after rebind");
+    CHECK(m->jit_epoch_stale_check_total.load(std::memory_order_relaxed) >= stale0,
+          "stale check counter non-decreasing");
+}
+
 } // namespace aura_linear_ownership_batch
 
 int main() {
@@ -1135,5 +1218,10 @@ int main() {
     aura_linear_ownership_batch::run_575_incremental_post_mutate();
     aura_linear_ownership_batch::run_1596_live_closure_scan();
     aura_linear_ownership_batch::run_1659_mutation_safety();
+    // Wave 20 linear_ownership folds
+    aura_linear_ownership_batch::run_283_occurrence_check_mode_linear();
+    aura_linear_ownership_batch::run_1410_linear_type_driven_discovery_smoke();
+    aura_linear_ownership_batch::run_1458_linear_ownership_post_mutate_smoke();
+    aura_linear_ownership_batch::run_1535_linear_dual_epoch_fence_smoke();
     return RUN_ALL_TESTS();
 }

@@ -1770,6 +1770,12 @@ aura_issue_test_link_llvm_jit(test_mutation_aot_unit_batch)
 add_dependencies(all_test_issue_targets test_mutation_aot_unit_batch)
 
 aura_add_issue_test(test_mutation_typed_audit_batch)
+
+# Wave 20 (#1957): linear ownership family batch (tests/observability/)
+aura_add_issue_test(test_linear_ownership_batch)
+aura_issue_test_link_llvm_jit(test_linear_ownership_batch)
+set_target_properties(test_linear_ownership_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+add_dependencies(all_test_issue_targets test_linear_ownership_batch)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
