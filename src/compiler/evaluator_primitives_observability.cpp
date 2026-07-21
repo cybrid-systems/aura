@@ -286,7 +286,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:sv-backend-emit-bidirectional-stats",
     "query:large-sv-pattern-defuse-stats",
     "query:longrunning-stable-ref-dirty-stats",
-    "query:sv-eda-primitives-cluster-stats",
     "query:primitives-resource-quota-fiber-stats",
     "query:declarative-primitive-registry-stats",
     "query:primitives-namespace-alias-stats",
@@ -424,10 +423,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:stable-ref-lifecycle-stats",
     // Issue #498 — AI-native primitive metadata + skeleton ergonomics
     "query:primitive-metadata",
-    // Issue #499 — EDA foundation primitives module observability
-    "query:eda-foundation-stats",
-    // Issue #841 — EDA production infrastructure stats
-    "query:eda-infra-stats",
     // Issue #500 — Work-stealing + MutationBoundary depth observability
     "query:work-steal-stats",
     "query:fiber-migration-stats",
@@ -572,10 +567,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:hardware-backend-sv-closedloop-stats",
     // Issue #694 — SVA structured AST tags + mutate stats
     "query:sv-sva-structure-stats",
-    // Issue #695 — EDA-SV verification closed-loop stress
-    "query:eda-sv-closedloop-stress-stats",
-    // Issue #510 — EDA verification interop + feedback stats
-    "query:eda-verification-stats",
     // Issue #511 — Workspace snapshot + checkpoint persistence stats
     "query:workspace-snapshot-stats",
     // Issue #512 — Runtime orchestration production-readiness stats
@@ -604,8 +595,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:contracts-production-hotpath-stats",
     // Issue #539 — SV verification feedback → structured mutate closed loop
     "query:sv-production-verification-stats",
-    // Issue #540 — StableNodeRef + generation/mutation_log EDA stability
-    "query:eda-stability-stats",
     // Issue #541 — query:pattern + DefUseIndex + hygiene SV verification
     "query:pattern-sv-verification-stats",
     // Issue #557 — Top 5 commercial test-coverage cluster tracker
@@ -632,16 +621,12 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:hardware-backend-stats",
     // Issue #581 — StableNodeRef + dirty propagation SV SoC scalability
     "query:stable-ref-sv-scale-stats",
-    // Issue #582 — EDA SV concurrency + atomic batch + fiber safety
-    "query:eda-concurrency-stats",
     // Issue #583 — Registry + core primitives hot-path observability hash
     "query:primitives-registry-core-stats",
     // Issue #584 — Primitives hot-path AI-agent stress observability
     "query:primitives-hotpath-stats",
     // Issue #585 — Unified primitive error handling + recovery observability
     "query:primitives-error-stats",
-    // Issue #586 — EDA/infrastructure primitives registry extension observability
-    "query:eda-primitives-stats",
     // Issue #587 — AI-native primitives development support observability
     "query:primitives-ai-native-stats",
     // Issue #591 — Scheduler steal/GC safepoint mutation coordination observability
@@ -1016,19 +1001,6 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitives-hotpath-slo-stats",
     // Issue #777 — Consolidated EDA Infrastructure
     // Primitives Production Readiness Roadmap +
-    // Milestone Tracker with Measurable Fidelity/SLO
-    // Gates observability. Non-duplicative with #726
-    // /#748/#772/#774/#749/#738/#725/#724 individual
-    // EDA primitives — #777 is the FIRST observability
-    // surface that aggregates the EDA production
-    // readiness composite (4 milestone completeness
-    // pcts derived from primitive lookup + fixed
-    // blocking-issues-count + recommendation) as a
-    // single deployment-grade production-readiness
-    // dashboard the Agent reads to decide whether the
-    // EDA stdlib is production-ready for commercial
-    // verification self-evolution.
-    "query:eda-production-readiness",
     // Issue #778 — FFI call overhead observability
     // for batch terminal output + rendering engine
     // hot-path (P1 perf surface). Non-duplicative with
