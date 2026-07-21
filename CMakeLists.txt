@@ -1807,6 +1807,13 @@ add_dependencies(all_test_issue_targets test_voxel_raycast)
 # Issue #1984 / Epic #1979: materials / face shade / fog / sky (header-only).
 aura_add_issue_test(test_voxel_shade)
 add_dependencies(all_test_issue_targets test_voxel_shade)
+
+# Issue #1985 / Epic #1979: frame loop + headless CI test + demo binary.
+aura_add_issue_test(test_voxel_frame)
+add_dependencies(all_test_issue_targets test_voxel_frame)
+aura_add_issue_test(demo_voxel_3d)
+# Demo is opt-in (not on all_test_issue_targets default stress path).
+set_target_properties(demo_voxel_3d PROPERTIES EXCLUDE_FROM_ALL TRUE)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 

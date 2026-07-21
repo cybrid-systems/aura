@@ -79,12 +79,15 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
    `src/renderer/voxel_shade.hh` — `Material` / `ShadeParams` / `shade_hit` / `shade_sky` / `shade_ray`  
    Face factors (+Y 1.0 / sides 0.8 / −Y 0.6), exp fog, zenith→horizon sky, ambient.  
    Tests: `tests/arena/test_voxel_shade.cpp`
-6. Frame loop + Aura surface
+6. **#1985** frame loop + present_batch — landed  
+   `src/renderer/voxel_frame.hh` — `render_frame` / `build_demo_scene` / `FrameStats`  
+   Tests: `tests/arena/test_voxel_frame.cpp` · Demo: `demo_voxel_3d --headless --frames 3`  
+   Soft target: 80×48 cells ≥15–20 FPS (Phase 1). Aura surface → #1986.
 
 ## Related
 
 - SlimSurface: #1448 / #1449
 - TUI original series: #1331–#1343 / #1353
-- 3D rendering epic: #1979 / children #1980–#1984
+- 3D rendering epic: #1979 / children #1980–#1985 (Aura surface #1986)
 - Sibling deferred domains: #1968–#1976
 - Orch multi-agent remove (contrast): #1966
