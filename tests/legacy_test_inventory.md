@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 387 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 373 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **395** | |
+| **Total scanned** | **381** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 131 | 0 | 1 | 132 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 33 | 0 | 1 | 34 | P1 — domain suite already collapses many obs gates |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 128 | 0 | 1 | 129 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 31 | 0 | 1 | 32 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 6 | 0 | 0 | 6 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 49 | 0 | 0 | 49 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 28 | 0 | 0 | 28 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 24 | 0 | 0 | 24 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 115 | 0 | 1 | 116 | P2 — often thin schema probes; collapse into obs matrix |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 47 | 0 | 0 | 47 | P1 — domain hygiene suite exists |
+| `jit_incremental` | JIT / AOT / incremental relower | 25 | 0 | 0 | 25 | P2 — link-profile heavy; migrate AC smoke first |
+| `shape_soa` | Shape / SoA / column layout | 22 | 0 | 0 | 22 | P2 — small-medium; soa_batch precedent |
+| `observability` | Observability / metrics / query:*-stats | 113 | 0 | 1 | 114 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,32 +47,32 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 351 | Integration path via `CompilerService` / eval |
-| `test_harness` | 198 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 341 | Integration path via `CompilerService` / eval |
+| `test_harness` | 184 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 114 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 57 | Harness runner main |
-| `own_main` | 16 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 15 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 250
-- `unknown`: 82
-- `unit`: 48
+- `integration`: 243
+- `unknown`: 80
+- `unit`: 43
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 181
-- `compiler/observability_metrics.h` — 26
-- `serve/scheduler.h` — 14
-- `compiler/aura_jit_bridge.h` — 9
+- `test_harness.hpp` — 168
+- `compiler/observability_metrics.h` — 21
+- `serve/scheduler.h` — 12
 - `serve/fiber.h` — 8
-- `compiler/aura_jit.h` — 6
+- `compiler/aura_jit_bridge.h` — 7
 - `serve/worker.h` — 5
 - `reflect/reflect.hh` — 4
 - `compiler/shape_profiler.h` — 3
+- `compiler/aura_jit.h` — 3
 - `compiler/aot_mangle.h` — 2
 - `compiler/runtime_shared.h` — 2
 - `compiler/spec_jit_controller.h` — 2
@@ -82,21 +82,21 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 220
-- `aura.compiler.service` — 205
-- `aura.compiler.evaluator` — 198
-- `std` — 176
-- `aura.core.ast` — 126
-- `aura.core.type` — 69
-- `aura.core.arena` — 63
-- `aura.compiler.ir` — 36
-- `aura.core` — 30
+- `aura.compiler.value` — 214
+- `aura.compiler.service` — 198
+- `aura.compiler.evaluator` — 195
+- `std` — 164
+- `aura.core.ast` — 119
+- `aura.core.type` — 68
+- `aura.core.arena` — 62
+- `aura.compiler.ir` — 34
+- `aura.core` — 29
 - `aura.compiler.type_checker` — 24
 - `aura.diag` — 24
 - `aura.parser.parser` — 17
 - `aura.compiler.pass_manager` — 14
 - `aura.core.mutation` — 12
-- `aura.compiler.ir_executor` — 8
+- `aura.compiler.ir_executor` — 7
 
 ### Coupling notes
 
@@ -216,7 +216,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (132)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (129)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -226,7 +226,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (131)
+#### issues/ (128)
 
 - `tests/issues/test_issue_1396.cpp` (#1396) — test_issue_1396.cpp — Issue #1396: AOT hot-reload counter helpers —
 - `tests/issues/test_issue_1408_followup_rebind_rollback.cpp` (#1408) [followup] — AC1: bind x=1, rebind x=100, rollback, eval x → 1
@@ -271,7 +271,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_249.cpp` (#249) — test_issue_249.cpp — Issue #249: StableNodeRef ergonomics
 - `tests/issues/test_issue_250.cpp` (#250) — test_issue_250.cpp — Issue #250: mutate:atomic-batch truly atomic
 - `tests/issues/test_issue_266.cpp` (#266) — test_issue_266.cpp — Issue #266: finer-grained SoA rollback for
-- `tests/issues/test_issue_269.cpp` (#269) — test_issue_269.cpp — Issue #269: FlatAST wire format v2
 - `tests/issues/test_issue_270.cpp` (#270) — test_issue_270.cpp — Issue #270: end_id snapshot + StableNodeRef
 - `tests/issues/test_issue_274.cpp` (#274) — test_issue_274.cpp — Issue #274: MutationVisitor concept +
 - `tests/issues/test_issue_275.cpp` (#275) — test_issue_275.cpp — Issue #275: pure mutation / rollback module.
@@ -290,10 +289,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_318.cpp` (#318) — workspace mutation + verification-dirty helpers
 - `tests/issues/test_issue_319.cpp` (#319) — verification primitives) + multi-round
 - `tests/issues/test_issue_327.cpp` (#327) — test_issue_327.cpp — Issue #327: Incremental Compilation
-- `tests/issues/test_issue_328.cpp` (#328) — test_issue_328.cpp — Issue #328: Self-Evolution Mutation Loop
 - `tests/issues/test_issue_329.cpp` (#329) — test_issue_329.cpp — Issue #329: Explicit StableNodeRef /
 - `tests/issues/test_issue_336.cpp` (#336) — test_issue_336.cpp — Verify Issue #336 acceptance
-- `tests/issues/test_issue_344.cpp` (#344) — test_issue_344.cpp — Verify Issue #344 acceptance
 - `tests/issues/test_issue_345.cpp` (#345) — test_issue_345.cpp — Issue #345: Comprehensive stress testing
 - `tests/issues/test_issue_346.cpp` (#346) — test_issue_346.cpp — Verify Issue #346 acceptance
 - `tests/issues/test_issue_348.cpp` (#348) — test_issue_348.cpp — Verify Issue #348 acceptance
@@ -360,7 +357,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_792.cpp` (#792) — test_issue_792.cpp — Issue #792: P0
 - `tests/issues/test_issue_804.cpp` (#804) — test_issue_804.cpp — Issue #804: P0 stdlib error
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (34)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (32)
 
 **Target:** tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume batch
 
@@ -370,7 +367,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
 
-#### issues/ (33)
+#### issues/ (31)
 
 - `tests/issues/test_issue_115.cpp` (#115) [early_issue] — test_issue_115.cpp — Standalone tests for the Issue #115 follow-ups:
 - `tests/issues/test_issue_119.cpp` (#119) [early_issue] — test_issue_119.cpp — Verify the proper-blocking fiber:join fix
@@ -383,8 +380,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_292.cpp` (#292) — Issue #292 — guard predicates in query:pattern
 - `tests/issues/test_issue_321.cpp` (#321) — test_issue_321.cpp — Issue #321: P0 Multi-Fiber Mutation
 - `tests/issues/test_issue_353.cpp` (#353) — test_issue_353.cpp — Issue #353: Follow-up to #241 (scope-limited close).
-- `tests/issues/test_issue_362.cpp` (#362) — test_issue_362.cpp — Verify Issue #362 acceptance criteria
-- `tests/issues/test_issue_363.cpp` (#363) — test_issue_363.cpp — Verify Issue #363 acceptance criteria
 - `tests/issues/test_issue_384.cpp` (#384) — test_issue_384.cpp — Issue #384: Bidirectional inference engine
 - `tests/issues/test_issue_473.cpp` (#473) — test_issue_473.cpp — Verify Issue #473 Tier 1 security fixes
 - `tests/issues/test_issue_485.cpp` (#485) — SoA EnvFrame + AOT + scheduler/GC production-readiness close-out
@@ -421,13 +416,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_763.cpp` (#763) — test_issue_763.cpp — Issue #763: Runtime linear_ownership_state
 - `tests/issues/test_issue_765.cpp` (#765) — test_issue_765.cpp — Issue #765: Full DepEntry quote/lambda tracking +
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (49)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (47)
 
 **Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### issues/ (49)
+#### issues/ (47)
 
 - `tests/issues/test_issue_120.cpp` (#120) [early_issue] — test_issue_120.cpp — Verify the hygienic macro fix (Issue #120).
 - `tests/issues/test_issue_131.cpp` (#131) [early_issue] — test_issue_131.cpp — Verify the FFI primitives
@@ -440,7 +435,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_163.cpp` (#163) [early_issue] — test_issue_163.cpp — Issue #163: Expand Pass concept usage and
 - `tests/issues/test_issue_1644_ir_hygiene.cpp` (#1644) — test_issue_1644_ir_hygiene.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_165.cpp` (#165) [early_issue] — test_issue_165.cpp — Issue #165: macro re-expansion + SyntaxMarker
-- `tests/issues/test_issue_1650.cpp` (#1650) — tests/test_issue_1650.cpp — Issue #1650 (partial-redundant-ship)
 - `tests/issues/test_issue_1652.cpp` (#1652) — test_issue_1652.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_1653.cpp` (#1653) — test_issue_1653.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_174.cpp` (#174) [early_issue] — test_issue_174.cpp — Issue #174 Cycle 1 Env::bindings_
@@ -462,7 +456,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_248.cpp` (#248) — test_issue_248.cpp — Issue #248: SyntaxMarker + type schema
 - `tests/issues/test_issue_267.cpp` (#267) — uses CompilerService; tests #267 macro-introduced query opt-in
 - `tests/issues/test_issue_290.cpp` (#290) — Validates the macro_dirty_ column + 4 Aura primitives. Key design point:
-- `tests/issues/test_issue_316.cpp` (#316) — test_issue_316.cpp — Verify Issue #316 acceptance criteria
 - `tests/issues/test_issue_326.cpp` (#326) — test_issue_326.cpp — Issue #326: Hygienic Macros + EDSL Integration
 - `tests/issues/test_issue_373.cpp` (#373) — test_issue_373.cpp — Verify Issue #373 acceptance criteria
 - `tests/issues/test_issue_440_edsl_readiness.cpp` (#440) — test_issue_440_edsl_readiness.cpp — Issue #440:
@@ -479,22 +472,19 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_788.cpp` (#788) — test_issue_788.cpp — Issue #788: P0 first-class
 - `tests/issues/test_issue_edsl_hygiene_atomic.cpp` (—) — test_issue_edsl_hygiene_atomic.cpp — Issue #425: EDSL hygiene
 
-### `jit_incremental` — JIT / AOT / incremental relower (28)
+### `jit_incremental` — JIT / AOT / incremental relower (25)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### issues/ (28)
+#### issues/ (25)
 
 - `tests/issues/test_issue_136.cpp` (#136) [early_issue] — test_issue_136.cpp — Verify Issue #136 acceptance criteria
 - `tests/issues/test_issue_1418.cpp` (#1418) — test_issue_1418.cpp — Issue #1418: DeadCoercionEliminationPass
 - `tests/issues/test_issue_143.cpp` (#143) [early_issue] — test_issue_143.cpp — Verify Issue #143 partial deliverable
 - `tests/issues/test_issue_1485.cpp` (#1485) — test_issue_1485.cpp — Verify Issue #1485 acceptance criteria:
-- `tests/issues/test_issue_1516.cpp` (#1516) — AC1: exception_opcode_mask + coverage_count (0..4)
-- `tests/issues/test_issue_1536.cpp` (#1536) — AC1: walk at same epoch → 0 stale, no deopt_pending
 - `tests/issues/test_issue_1537.cpp` (#1537) — AC1: compile emits prologue helpers in LLVM IR
-- `tests/issues/test_issue_1540.cpp` (#1540) — AC1: aura_jit_linear_epoch_safety_check consults linear_post_mutate_enforce
 - `tests/issues/test_issue_170.cpp` (#170) [early_issue] — test_issue_170.cpp — Issue #170: Accelerate LLVM JIT Backend
 - `tests/issues/test_issue_171.cpp` (#171) [large, early_issue] — test_issue_171.cpp — Issue #171: High-Impact IR Optimization Passes
 - `tests/issues/test_issue_1905.cpp` (#1905) — test_issue_1905.cpp — orphan restored (AC drift; not in CI batch)
@@ -516,13 +506,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_793.cpp` (#793) — test_issue_793.cpp — Issue #793: P0 JIT/AOT
 - `tests/issues/test_issue_794.cpp` (#794) — test_issue_794.cpp — Issue #794: P0 unified
 
-### `shape_soa` — Shape / SoA / column layout (24)
+### `shape_soa` — Shape / SoA / column layout (22)
 
 **Target:** tests/test_soa_batch.cpp → domain/
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### issues/ (24)
+#### issues/ (22)
 
 - `tests/issues/test_issue_144.cpp` (#144) [early_issue] — test_issue_144.cpp — Verify Issue #144 acceptance criteria
 - `tests/issues/test_issue_145.cpp` (#145) [large, early_issue] — test_issue_145.cpp — Verify Issue #145 partial deliverable
@@ -531,8 +521,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_254.cpp` (#254) — test_issue_254.cpp — Issue #254 scope-limited close:
 - `tests/issues/test_issue_262.cpp` (#262) — uses CompilerService + FlatAST dirty/defuse propagation APIs
 - `tests/issues/test_issue_273.cpp` (#273) — test_issue_273.cpp — Issue #273: Contracts on FlatAST hot paths.
-- `tests/issues/test_issue_311.cpp` (#311) — test_issue_311.cpp — Verify Issue #311 acceptance criteria
-- `tests/issues/test_issue_320.cpp` (#320) — test_issue_320.cpp — Per-node epoch tracking for
 - `tests/issues/test_issue_355.cpp` (#355) — test_issue_355.cpp — Verify Issue #355 acceptance criteria
 - `tests/issues/test_issue_393.cpp` (#393) — test_issue_393.cpp — Issue #393: C++ API for explicit
 - `tests/issues/test_issue_431_cxx26.cpp` (#431) — test_issue_431_cxx26.cpp — Issue #431: deepen C++26 Contracts
@@ -549,7 +537,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (116)
+### `observability` — Observability / metrics / query:*-stats (114)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -559,7 +547,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (115)
+#### issues/ (113)
 
 - `tests/issues/test_issue_1460.cpp` (#1460) — test_issue_1460.cpp — Issue #1460:
 - `tests/issues/test_issue_1461.cpp` (#1461) — test_issue_1461.cpp — Issue #1461:
@@ -567,7 +555,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1491.cpp` (#1491) — apply_closure paths + JIT aura_closure_call (closed-loop on #1475/#1477).
 - `tests/issues/test_issue_1495.cpp` (#1495) — AC1: mark_define_dirty body-only for simple defines (irs.size==2)
 - `tests/issues/test_issue_1496_concurrent_epoch_safety.cpp` (#1496) — Complements test_issue_1496.cpp AC6 with explicit steal path and
-- `tests/issues/test_issue_1497.cpp` (#1497) — AC1: unified auto_restamp_pinned_stable_refs_at on all sites
 - `tests/issues/test_issue_1505.cpp` (#1505) — AC1: free-var scan of nested lambdas — free-ref nested marked
 - `tests/issues/test_issue_1509.cpp` (#1509) — #1508 (JIT dual check). This issue is the integration stress AC5.
 - `tests/issues/test_issue_1511.cpp` (#1511) — #1507/#1508 (IR/JIT dual check). This issue is the bridge-path AC1.
@@ -575,7 +562,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1528.cpp` (#1528) — AC1: multi-define rebind affected << total (locality regression)
 - `tests/issues/test_issue_1530.cpp` (#1530) — AC1: should_propagate covers extended ops (Eq..CellGet)
 - `tests/issues/test_issue_1532.cpp` (#1532) — AC1: exhaustive match → empty missing, checked=true
-- `tests/issues/test_issue_1555.cpp` (#1555) — AC1: re-eval same define → clean hit (relower_skipped_entirely grows;
 - `tests/issues/test_issue_1558.cpp` (#1558) — AC1: apply_closure after epoch bump → safe fallback metrics
 - `tests/issues/test_issue_1574.cpp` (#1574) — AC1: DefineDirtyMaskView any / is_block_dirty / is_instruction_dirty
 - `tests/issues/test_issue_1637.cpp` (#1637) — tests/test_issue_1637.cpp — Issue #1637

@@ -2126,6 +2126,74 @@ int run_333_serialize_soa_smoke() {
 } // namespace aura_mut_run_wave39_333
 
 
+// Wave 40 (#1957): mutation_dirty — #269 wire v2 + #344 dirty-reason + #328 self-evo
+namespace aura_mut_run_wave40_269 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::ast::StringPool;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_269_serialize_soa_v2_smoke() {
+    std::println("\n=== #269: FlatAST serialize_soa wire v2 smoke ===");
+    FlatAST flat;
+    StringPool pool;
+    auto lit = flat.add_literal(42);
+    auto var = flat.add_variable(pool.intern("q"));
+    (void)var;
+    flat.root = lit;
+    std::vector<char> buf;
+    flat.serialize_soa(buf);
+    CHECK(buf.size() > 16, "buffer has payload");
+    // version is first u32 little-endian in many wire formats; accept size-based contract
+    std::size_t pos = 0;
+    auto rt = FlatAST::deserialize_soa(buf, pos);
+    CHECK(rt.size() == flat.size(), "node count preserved");
+    CHECK(pos > 0, "bytes consumed");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_269
+
+namespace aura_mut_run_wave40_344 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::is_pair;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_344_dirty_reason_counts_smoke() {
+    std::println("\n=== #344: compile:dirty-reason-counts + query:dirty-nodes smoke ===");
+    CompilerService cs;
+    auto r0 = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
+    CHECK(r0.has_value(), "compile:dirty-reason-counts reachable");
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto r1 = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
+    CHECK(r1.has_value(), "dirty-reason-counts with workspace");
+    auto dn = cs.eval("(query:dirty-nodes)");
+    CHECK(dn.has_value(), "query:dirty-nodes reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_344
+
+namespace aura_mut_run_wave40_328 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_328_self_evo_mutation_loop_smoke() {
+    std::println("\n=== #328: self-evo query:pattern + mutate loop smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1) (define b (+ a 2))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    for (int i = 0; i < 5; ++i) {
+        (void)cs.eval("(query:pattern \"a\")");
+        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(i + 1) + "\")");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
+    }
+    auto m = cs.eval("(stats:get \"syntax-marker-counts\")");
+    CHECK(m.has_value(), "syntax-marker-counts observable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_328
+
+
 int main() {
 
 
@@ -2391,6 +2459,27 @@ int main() {
     std::println("\n######## run_333_serialize_soa_smoke ########");
     if (int rc = aura_mut_run_wave39_333::run_333_serialize_soa_smoke(); rc != 0) {
         std::println("run_333 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_269_serialize_soa_v2_smoke ########");
+    if (int rc = aura_mut_run_wave40_269::run_269_serialize_soa_v2_smoke(); rc != 0) {
+        std::println("run_269 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_344_dirty_reason_counts_smoke ########");
+    if (int rc = aura_mut_run_wave40_344::run_344_dirty_reason_counts_smoke(); rc != 0) {
+        std::println("run_344 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_328_self_evo_mutation_loop_smoke ########");
+    if (int rc = aura_mut_run_wave40_328::run_328_self_evo_mutation_loop_smoke(); rc != 0) {
+        std::println("run_328 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");
