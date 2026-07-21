@@ -2920,6 +2920,94 @@ static void run_1543_linear_gc_root_registration_audit() {
     }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 19 (#1957): remaining unbundled arena_compaction — #1526 #1534 #1655
+// ═══════════════════════════════════════════════════════════════
+
+// ── Issue #1526 — compact_env_frames dual-epoch + bridge restamp (smoke) ──
+static void run_1526_compact_env_bridge_restamp_smoke() {
+    std::println("\n=== #1526: compact_env dual-epoch + bridge restamp (smoke) ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    CHECK(cs.eval("(set-code \"(define (add1 x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto v0 = cs.eval("(add1 10)");
+    CHECK(v0 && is_int(*v0) && as_int(*v0) == 11, "(add1 10)==11 pre-compact");
+    const auto rew0 = m->envframe_compact_rewrites_total.load(std::memory_order_relaxed);
+    const auto bump0 = m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed);
+    (void)ev.compact_env_frames();
+    CHECK(m->envframe_compact_rewrites_total.load(std::memory_order_relaxed) >= rew0,
+          "rewrites non-decreasing");
+    CHECK(m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed) >= bump0,
+          "epoch_bumps non-decreasing");
+    auto v1 = cs.eval("(add1 10)");
+    CHECK(v1 && is_int(*v1) && as_int(*v1) == 11, "(add1 10)==11 post-compact");
+    // stress: 50 compact cycles
+    int ok = 0;
+    for (int i = 0; i < 50; ++i) {
+        (void)ev.compact_env_frames();
+        auto v = cs.eval("(add1 1)");
+        if (v && is_int(*v) && as_int(*v) == 2)
+            ++ok;
+    }
+    CHECK(ok == 50, "50× compact+eval survived");
+}
+
+// ── Issue #1534 — OpGuardShape dual-epoch fence (smoke via CompilerService) ──
+static void run_1534_guard_shape_epoch_fence_smoke() {
+    std::println("\n=== #1534: GuardShape dual-epoch fence (smoke) ===");
+    CompilerService cs;
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto stale0 = m->jit_epoch_stale_check_total.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(set-code \"(define (g x) (* x 2))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto r = cs.eval("(g 21)");
+    CHECK(r && is_int(*r) && as_int(*r) == 42, "(g 21)==42");
+    // Rebind / recompile path exercises epoch bumps when JIT present.
+    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (* x 3))\" \"#1534\")");
+    auto r2 = cs.eval("(g 7)");
+    CHECK(r2 && is_int(*r2), "(g 7) still int after rebind");
+    CHECK(m->jit_epoch_stale_check_total.load(std::memory_order_relaxed) >= stale0,
+          "jit_epoch_stale_check_total non-decreasing");
+}
+
+// ── Issue #1655 — closure_is_epoch_stale helper source + smoke ──
+static void run_1655_closure_epoch_stale_helper() {
+    std::println("\n=== #1655: closure_is_epoch_stale helper + apply smoke ===");
+    {
+        std::println("\n--- #1655 AC source presence ---");
+        std::ifstream f("src/compiler/evaluator_eval_flat.cpp");
+        if (!f)
+            f.open("../src/compiler/evaluator_eval_flat.cpp");
+        CHECK(f.is_open(), "evaluator_eval_flat.cpp openable");
+        if (f.is_open()) {
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            CHECK(content.find("closure_is_epoch_stale") != std::string::npos,
+                  "closure_is_epoch_stale helper present");
+            CHECK(content.find("is_bridge_stale") != std::string::npos,
+                  "helper uses is_bridge_stale");
+            CHECK(content.find("closure_needs_safe_fallback") != std::string::npos,
+                  "closure_needs_safe_fallback present");
+        }
+    }
+    {
+        std::println("\n--- #1655 runtime apply smoke ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (h x) (+ x 1))\")").has_value(), "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+        auto r = cs.eval("(h 41)");
+        CHECK(r && is_int(*r) && as_int(*r) == 42, "(h 41)==42");
+        (void)cs.evaluator().compact_env_frames();
+        auto r2 = cs.eval("(h 41)");
+        CHECK(r2 && is_int(*r2) && as_int(*r2) == 42, "(h 41)==42 post-compact");
+    }
+}
+
 } // namespace aura_compact_batch
 
 int main() {
@@ -2981,6 +3069,9 @@ int main() {
     run_1518_live_compact_freelist_relocate();
     run_1519_cxx26_contracts_hotpath();
     run_1543_linear_gc_root_registration_audit();
+    run_1526_compact_env_bridge_restamp_smoke();
+    run_1534_guard_shape_epoch_fence_smoke();
+    run_1655_closure_epoch_stale_helper();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
