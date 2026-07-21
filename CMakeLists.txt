@@ -1320,10 +1320,16 @@ aura_add_issue_test_reflect_standalone(test_issue_217)
 
 # Issue #268: production aura::ast::NodeView roundtrip (split TU:
 # module side uses real NodeView; reflect side uses nodeview_wire.hh).
+# Bridge header: tests/issues/test_issue_178_bridge.h
+# Only the reflect TU needs -freflection; applying it to the whole
+# target forces aura_test_objects BMI synth into a reflection partition
+# that conflicts with import std (GCC 16 modules).
 add_executable(test_issue_178 tests/issues/test_issue_178.cpp tests/issues/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
-aura_test_compile_options_reflect_minimal(test_issue_178)
+aura_test_compile_options(test_issue_178)
+set_source_files_properties(tests/issues/test_issue_178_reflect.cpp
+                            PROPERTIES COMPILE_OPTIONS "-freflection")
 target_compile_features(test_issue_178 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 

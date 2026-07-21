@@ -1,9 +1,22 @@
 #pragma once
 
+// Issue #178 / #268 — C ABI between the module TU (real NodeView) and the
+// non-module reflect TU (P2996 + reflect.hh).
+//
+// GCC 16.1 ICEs when one TU both `import aura.core.ast` and
+// `#include "reflect/reflect.hh"` (<meta>). Split:
+//   - test_issue_178.cpp          (module side, drives NodeView)
+//   - test_issue_178_reflect.cpp  (reflect side, implements these entry points)
+//
+// Lives next to the two TUs under tests/issues/ (not tests/ root).
+//
+// Include from the reflect TU only (after <cstdint>/<cstddef>).
+// The module TU (test_issue_178.cpp) re-declares these by hand —
+// #include under CXX_MODULE_STD + import std conflicts (GCC 16).
+
 #include <cstddef>
 #include <cstdint>
 
-// C ABI between the module TU (real NodeView) and the reflect TU.
 void issue178_reset_counters();
 int issue178_failed_count();
 
