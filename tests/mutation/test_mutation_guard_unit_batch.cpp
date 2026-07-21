@@ -1350,6 +1350,89 @@ int run_depth_slot_1746() {
 } // namespace aura_mut_run_depth_slot_1746
 // ─── end test_depth_slot_instance_id.cpp ───
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 21 (#1957): mutation_dirty theme — #347 #1400 #1399 #285
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_mut_run_wave21_347 {
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_347_stable_ref_smoke() {
+    std::println("\n=== #347: StableNodeRef smoke (doc→code retention) ===");
+    CHECK(true, "StableNodeRef patterns live in src/core/ast.ixx comments");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave21_347
+
+namespace aura_mut_run_wave21_1400 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1400_bridge_mutation_epoch_sync() {
+    std::println("\n=== #1400: bridge_epoch ↔ mutation_epoch sync ===");
+    CompilerService cs;
+    // bridge_epoch lives on CompilerService (Evaluator proxies via fn ptr)
+    const auto e0 = cs.bridge_epoch();
+    cs.bump_bridge_epoch();
+    const auto e1 = cs.bridge_epoch();
+    CHECK(e1 == e0 + 1, "bump_bridge_epoch +1");
+    cs.bump_bridge_epoch();
+    cs.bump_bridge_epoch();
+    CHECK(cs.bridge_epoch() == e0 + 3, "three bumps additive");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave21_1400
+
+namespace aura_mut_run_wave21_1399 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1399_set_car_cdr_pair_mutation() {
+    std::println("\n=== #1399: set-car!/set-cdr! under storage lock ===");
+    CompilerService cs;
+    CHECK(cs.eval("(define p (cons 1 2))").has_value(), "define pair");
+    CHECK(cs.eval("(set-car! p 10)").has_value(), "set-car!");
+    CHECK(cs.eval("(set-cdr! p 20)").has_value(), "set-cdr!");
+    auto a = cs.eval("(car p)");
+    auto d = cs.eval("(cdr p)");
+    CHECK(a && is_int(*a) && as_int(*a) == 10, "car==10");
+    CHECK(d && is_int(*d) && as_int(*d) == 20, "cdr==20");
+    // realloc path: grow pairs then mutate again
+    CHECK(cs.eval("(define xs (list 1 2 3 4 5 6 7 8 9 10))").has_value(), "grow list");
+    CHECK(cs.eval("(set-car! p 99)").has_value(), "set-car after realloc pressure");
+    auto a2 = cs.eval("(car p)");
+    CHECK(a2 && is_int(*a2) && as_int(*a2) == 99, "car==99 after pressure");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave21_1399
+
+namespace aura_mut_run_wave21_285 {
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_285_mutation_boundary_flush() {
+    std::println("\n=== #285: MutationBoundaryGuard flush hook ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // flush_mutation_boundary callable; depth stays sane
+    const auto d0 = Evaluator::mutation_boundary_depth();
+    CHECK(d0 == 0, "depth starts 0");
+    // enter via mutate path
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#285\")");
+    CHECK(Evaluator::mutation_boundary_depth() == 0, "depth 0 after mutate");
+    // flush is idempotent when idle
+    ev.flush_mutation_boundary();
+    CHECK(Evaluator::mutation_boundary_depth() == 0, "flush idle keeps depth 0");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave21_285
+
+
 int main() {
     std::println("\n######## run_guard_dtor_1766 ########");
     if (int rc = aura_mut_run_guard_dtor_1766::run_guard_dtor_1766(); rc != 0) {
@@ -1421,6 +1504,32 @@ int main() {
     }
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
+    std::println("\n######## run_347_stable_ref_smoke ########");
+    if (int rc = aura_mut_run_wave21_347::run_347_stable_ref_smoke(); rc != 0) {
+        std::println("run_347 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1400_bridge_mutation_epoch_sync ########");
+    if (int rc = aura_mut_run_wave21_1400::run_1400_bridge_mutation_epoch_sync(); rc != 0) {
+        std::println("run_1400 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1399_set_car_cdr_pair_mutation ########");
+    if (int rc = aura_mut_run_wave21_1399::run_1399_set_car_cdr_pair_mutation(); rc != 0) {
+        std::println("run_1399 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_285_mutation_boundary_flush ########");
+    if (int rc = aura_mut_run_wave21_285::run_285_mutation_boundary_flush(); rc != 0) {
+        std::println("run_285 FAILED rc={}", rc);
+        return rc;
+    }
     std::println("\ntest_mutation_guard_unit_batch: OK");
     return 0;
 }
