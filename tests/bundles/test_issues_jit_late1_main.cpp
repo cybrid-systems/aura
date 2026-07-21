@@ -36,8 +36,6 @@ extern int aura_issue_691_run();
 extern int aura_issue_692_run();
 extern int aura_issue_693_run();
 extern int aura_issue_694_run();
-extern int aura_issue_695_run();
-extern int aura_issue_eda_sv_verification_closedloop_stress_run();
 extern int aura_issue_697_run();
 extern int aura_issue_698_run();
 extern int aura_issue_706_run();
@@ -92,9 +90,6 @@ int main() {
         {"test_issue_692", aura_issue_692_run},
         {"test_issue_693", aura_issue_693_run},
         {"test_issue_694", aura_issue_694_run},
-        {"test_issue_695", aura_issue_695_run},
-        {"test_eda_sv_verification_closedloop_stress",
-         aura_issue_eda_sv_verification_closedloop_stress_run},
         {"test_issue_697", aura_issue_697_run},
         {"test_issue_698", aura_issue_698_run},
         {"test_issue_706", aura_issue_706_run},

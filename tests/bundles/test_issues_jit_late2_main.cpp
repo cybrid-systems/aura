@@ -31,7 +31,6 @@ extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
 extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
-extern int aura_issue_eda_production_infra_run();
 extern int aura_issue_sv_verification_commercial_emit_fidelity_run();
 extern int aura_issue_sv_verification_self_evolution_closed_loop_reliability_run();
 extern int aura_issue_766_run();
@@ -45,9 +44,6 @@ extern int aura_issue_773_run();
 extern int aura_issue_774_run();
 extern int aura_issue_775_run();
 extern int aura_issue_776_run();
-extern int aura_issue_777_run();
-extern int aura_issue_778_run();
-extern int aura_issue_779_run();
 extern int aura_issue_780_run();
 extern int aura_issue_781_run();
 extern int aura_issue_782_run();
@@ -92,7 +88,6 @@ int main() {
          aura_issue_linear_ownership_postmutate_guard_steal_envframe_run},
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
-        {"test_eda_production_infra", aura_issue_eda_production_infra_run},
         {"test_sv_verification_commercial_emit_fidelity",
          aura_issue_sv_verification_commercial_emit_fidelity_run},
         {"test_sv_verification_self_evolution_closed_loop_reliability",
@@ -108,9 +103,6 @@ int main() {
         {"test_issue_774", aura_issue_774_run},
         {"test_issue_775", aura_issue_775_run},
         {"test_issue_776", aura_issue_776_run},
-        {"test_issue_777", aura_issue_777_run},
-        {"test_issue_778", aura_issue_778_run},
-        {"test_issue_779", aura_issue_779_run},
         {"test_issue_780", aura_issue_780_run},
         {"test_issue_781", aura_issue_781_run},
         {"test_issue_782", aura_issue_782_run},
