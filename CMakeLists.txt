@@ -1791,6 +1791,10 @@ add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
 # Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
 aura_add_issue_test(test_pixel_framebuffer)
 add_dependencies(all_test_issue_targets test_pixel_framebuffer)
+
+# Issue #1981 / Epic #1979: camera + primary rays (header-only, headless).
+aura_add_issue_test(test_camera_rays)
+add_dependencies(all_test_issue_targets test_camera_rays)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 

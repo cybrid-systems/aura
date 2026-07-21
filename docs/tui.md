@@ -63,7 +63,10 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
    Each cell = two vertical pixels via U+2580 `▀` (upper=fg, lower=bg RGB).  
    View over `FramebufferSoA` + `DirtyRegion`; headless via `pixel_present_to_string`.  
    Tests: `tests/arena/test_pixel_framebuffer.cpp`
-2. Camera + primary rays
+2. **#1981** camera + primary rays — landed (header-only)  
+   `src/renderer/camera.hh` — `Vec3` / `Ray` / `Camera` / `camera_ray` / `generate_primary_rays`  
+   Right-handed Y-up; yaw=0,pitch=0 → forward −Z; pitch clamped ≈±89°.  
+   Tests: `tests/arena/test_camera_rays.cpp`
 3. Voxel volume / chunks
 4. DDA raycaster
 5. Shading / fog / sky
@@ -73,6 +76,6 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
 
 - SlimSurface: #1448 / #1449
 - TUI original series: #1331–#1343 / #1353
-- 3D rendering epic: #1979 / first child #1980
+- 3D rendering epic: #1979 / children #1980 #1981
 - Sibling deferred domains: #1968–#1976
 - Orch multi-agent remove (contrast): #1966
