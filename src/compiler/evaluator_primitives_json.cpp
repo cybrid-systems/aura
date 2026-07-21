@@ -344,7 +344,7 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
         };
 
-        auto parse_keyword = [&](const std::string& kw, EvalValue val) -> bool {
+        auto parse_keyword = [&](std::string_view kw, EvalValue val) -> bool {
             if (pos + kw.size() <= json_str.size() && json_str.substr(pos, kw.size()) == kw) {
                 pos += kw.size();
                 return true;

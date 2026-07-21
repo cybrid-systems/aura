@@ -54,7 +54,7 @@ namespace aura::compiler {
 // signature (env_frame_version=0 + linear_state=0 produce the
 // same suffix as before); callers that have live env frames must
 // thread both values through `generate_registration_c`.
-inline std::string mangle_aot_name(const std::string& original, std::uint32_t disambiguator,
+inline std::string mangle_aot_name(std::string_view original, std::uint32_t disambiguator,
                                    std::uint64_t defuse_version = 0,
                                    std::uint64_t env_frame_version = 0,
                                    std::uint8_t linear_state = 0) {

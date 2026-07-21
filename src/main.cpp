@@ -1997,7 +1997,7 @@ int main(int argc, char* argv[]) {
             };
 
             // Resolve "std/name" or sym-like-name to a file path.
-            auto resolve_path = [&](const std::string& name) -> std::string {
+            auto resolve_path = [&](std::string_view name) -> std::string {
                 if (name.starts_with("std/"))
                     return std_root + name.substr(4) + ".aura";
                 return name + ".aura";

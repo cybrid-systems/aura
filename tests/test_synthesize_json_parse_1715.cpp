@@ -8,6 +8,14 @@
 //   AC4: json-parse \uXXXX unicode (λ = U+03BB)
 //   AC5: null content → non-string (void)
 
+// Compatibility note: parse_keyword lambda in
+// src/compiler/evaluator_primitives_json.cpp takes std::string_view
+// (migrated from const std::string& per the core string_view pass).
+// This test exercises the JSON parsing path that calls parse_keyword;
+// the type change is behavior-neutral because string_view auto-binds
+// from std::string/std::string literal/const char* and parse_keyword
+// only reads kw.size() + substr() + compare — all string_view ops.
+
 #include "test_harness.hpp"
 
 #include <fstream>
