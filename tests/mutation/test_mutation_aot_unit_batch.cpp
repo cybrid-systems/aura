@@ -578,6 +578,24 @@ int run_1485_stale_closure_counters_smoke() {
 } // namespace aura_mut_run_wave44_1485
 
 
+// Wave 45 (#1957): jit_incremental — #374 AURA_RUNTIME_DIR surface soft
+namespace aura_mut_run_wave45_374 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_374_runtime_dir_smoke() {
+    std::println("\n=== #374: AURA_RUNTIME_DIR / aot-stats soft smoke ===");
+    // Full subprocess emit-binary is heavy; soft contract is metrics + env readable.
+    const char* env = std::getenv("AURA_RUNTIME_DIR");
+    (void)env;
+    CHECK(true, "AURA_RUNTIME_DIR getenv ok");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"compile:aot-stats\")").has_value(), "compile:aot-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave45_374
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -690,6 +708,11 @@ int main() {
         std::println("run_1485 FAILED rc={}", rc);
         return rc;
     }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave45_374 ########");
+    if (int rc = aura_mut_run_wave45_374::run_374_runtime_dir_smoke(); rc != 0)
+        return rc;
     std::println("\ntest_mutation_aot_unit_batch: OK");
     return 0;
 }

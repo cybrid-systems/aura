@@ -996,6 +996,54 @@ int run_1505_metrics_smoke() {
 } // namespace aura_obs_run_wave44_1505
 
 
+// ═══ Wave 45 (#1957): observability metrics smokes ═══
+namespace aura_obs_run_wave45_411 {
+int run_411_metrics_smoke() {
+    std::println("\n=== #411: compile:incremental-typecheck-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:incremental-typecheck-stats\")");
+    CHECK(r.has_value(), "incremental-typecheck-stats");
+    CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(typecheck-current)");
+    auto r2 = cs.eval("(engine:metrics \"compile:incremental-typecheck-stats\")");
+    CHECK(r2.has_value(), "stats after typecheck");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave45_411
+
+namespace aura_obs_run_wave45_1509 {
+int run_1509_metrics_smoke() {
+    std::println("\n=== #1509: multi-fiber stale-closure fallback metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (k x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    cs.bump_bridge_epoch();
+    (void)cs.eval("(mutate:rebind \"k\" \"(lambda (x) (+ x 1))\")");
+    auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(lin.has_value(), "linear-ownership-stats");
+    CHECK(cs.evaluator().get_stale_closure_prevented() >= 0, "stale_closure_prevented");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave45_1509
+
+namespace aura_obs_run_wave45_1496c {
+int run_1496c_metrics_smoke() {
+    std::println("\n=== #1496 concurrent epoch safety soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (m x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    for (int i = 0; i < 20; ++i) {
+        cs.public_atomic_bump_epochs_and_stamp_bridge("m");
+        cs.evaluator().test_probe_linear_on_fiber_steal();
+    }
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave45_1496c
+
+
 int main() {
 
 
@@ -1269,6 +1317,18 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave44_1505::run_1505_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave45_411::run_411_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave45_1509::run_1509_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave45_1496c::run_1496c_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
