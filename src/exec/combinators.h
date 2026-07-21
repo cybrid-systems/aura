@@ -17,7 +17,6 @@
 #include "execution_adapter.h"
 
 #include <functional>
-#include <utility> // std::move_only_function (C++23)
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -41,7 +40,7 @@ namespace aura::exec {
 
 class when_all_sender {
 public:
-    using Fn = std::move_only_function<void()>;
+    using Fn = std::function<void()>;
 
     when_all_sender(fiber_scheduler& sched, std::vector<Fn> fns)
         : sched_(&sched)
@@ -69,7 +68,7 @@ private:
 
 class let_value_sender {
 public:
-    using Fn = std::move_only_function<void()>;
+    using Fn = std::function<void()>;
 
     let_value_sender(fiber_scheduler& sched, std::vector<Fn> fns)
         : sched_(&sched)
@@ -97,7 +96,7 @@ private:
 
 class with_timeout_sender {
 public:
-    using Fn = std::move_only_function<void()>;
+    using Fn = std::function<void()>;
 
     with_timeout_sender(fiber_scheduler& sched, Fn fn, std::chrono::milliseconds timeout)
         : sched_(&sched)
@@ -125,7 +124,7 @@ private:
 
 class retry_sender {
 public:
-    using Fn = std::move_only_function<void()>;
+    using Fn = std::function<void()>;
 
     retry_sender(fiber_scheduler& sched, Fn fn, int max_attempts)
         : sched_(&sched)
@@ -142,23 +141,20 @@ private:
 
 // ── Free-function wrappers ───────────────────────────
 
-inline when_all_sender when_all(fiber_scheduler& sched,
-                                std::vector<std::move_only_function<void()>> fns) {
+inline when_all_sender when_all(fiber_scheduler& sched, std::vector<std::function<void()>> fns) {
     return when_all_sender(sched, std::move(fns));
 }
 
-inline let_value_sender let_value(fiber_scheduler& sched,
-                                  std::vector<std::move_only_function<void()>> fns) {
+inline let_value_sender let_value(fiber_scheduler& sched, std::vector<std::function<void()>> fns) {
     return let_value_sender(sched, std::move(fns));
 }
 
-inline with_timeout_sender with_timeout(fiber_scheduler& sched, std::move_only_function<void()> fn,
+inline with_timeout_sender with_timeout(fiber_scheduler& sched, std::function<void()> fn,
                                         std::chrono::milliseconds timeout) {
     return with_timeout_sender(sched, std::move(fn), timeout);
 }
 
-inline retry_sender retry(fiber_scheduler& sched, std::move_only_function<void()> fn,
-                          int max_attempts) {
+inline retry_sender retry(fiber_scheduler& sched, std::function<void()> fn, int max_attempts) {
     return retry_sender(sched, std::move(fn), max_attempts);
 }
 

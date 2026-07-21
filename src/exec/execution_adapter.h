@@ -25,7 +25,6 @@
 #define AURA_EXEC_EXECUTION_ADAPTER_H
 
 #include <functional>
-#include <utility> // std::move_only_function (C++23)
 #include <memory>
 #include <chrono>
 #include <exception>
@@ -59,9 +58,9 @@ inline constexpr set_stopped_t set_stopped{};
 // For simplicity, we use a std::function-based receiver.
 class fiber_receiver {
 public:
-    using value_fn = std::move_only_function<void()>;
+    using value_fn = std::function<void()>;
     using error_fn = std::function<void(std::exception_ptr)>;
-    using stopped_fn = std::move_only_function<void()>;
+    using stopped_fn = std::function<void()>;
 
     fiber_receiver() = default;
 
@@ -124,7 +123,7 @@ private:
     friend class fiber_scheduler;
 
     aura::serve::Scheduler* scheduler_ = nullptr;
-    std::move_only_function<void()> fn_;
+    std::function<void()> fn_;
     fiber_receiver receiver_;
     int64_t fiber_id_ = -1;
     bool started_ = false;
@@ -137,7 +136,7 @@ class fiber_sender {
 public:
     fiber_sender() = default;
 
-    fiber_sender(aura::serve::Scheduler* sched, std::move_only_function<void()> fn)
+    fiber_sender(aura::serve::Scheduler* sched, std::function<void()> fn)
         : scheduler_(sched)
         , fn_(std::move(fn)) {}
 
@@ -154,7 +153,7 @@ public:
 private:
     friend class fiber_scheduler;
     aura::serve::Scheduler* scheduler_ = nullptr;
-    std::move_only_function<void()> fn_;
+    std::function<void()> fn_;
 };
 
 // ── fiber_scheduler — std::execution::scheduler-like wrapper ──
@@ -165,9 +164,7 @@ public:
         : sched_(&sched) {}
 
     // Create a sender that will schedule fn on the fiber scheduler.
-    fiber_sender schedule(std::move_only_function<void()> fn) {
-        return fiber_sender(sched_, std::move(fn));
-    }
+    fiber_sender schedule(std::function<void()> fn) { return fiber_sender(sched_, std::move(fn)); }
 
     // Access the underlying scheduler
     aura::serve::Scheduler& underlying() { return *sched_; }
