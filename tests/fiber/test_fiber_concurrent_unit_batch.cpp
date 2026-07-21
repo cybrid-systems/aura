@@ -627,6 +627,71 @@ int run_164_fiber_join_smoke() {
 }
 } // namespace aura_fiber_run_wave38_164
 
+
+// Wave 39 (#1957): fiber_orch — #1403 yield-hook stack + #1525 multifiber + #1500 cow_epoch
+namespace aura_fiber_run_wave39_1403 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1403_yield_hook_stack_smoke() {
+    std::println("\n=== #1403: yield-hook evaluator stack smoke ===");
+    CompilerService a;
+    CompilerService b;
+    auto& ea = a.evaluator();
+    auto& eb = b.evaluator();
+    ea.bind_yield_hook_evaluator();
+    eb.bind_yield_hook_evaluator();
+    // LIFO unbind: b then a
+    eb.unbind_yield_hook_evaluator();
+    ea.unbind_yield_hook_evaluator();
+    CHECK(true, "bind/unbind LIFO stack no crash");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave39_1403
+
+namespace aura_fiber_run_wave39_1525 {
+using aura::compiler::CompilerMetrics;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1525_multifiber_metrics_smoke() {
+    std::println("\n=== #1525: multifiber_mutate_races metrics smoke ===");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto r0 = m->multifiber_mutate_races_detected_total.load(std::memory_order_relaxed);
+    const auto s0 = m->multifiber_safe_fallback_total.load(std::memory_order_relaxed);
+    CHECK(r0 >= 0 && s0 >= 0, "counters readable");
+    m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
+    CHECK(m->multifiber_mutate_races_detected_total.load(std::memory_order_relaxed) == r0 + 1,
+          "races bumpable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave39_1525
+
+namespace aura_fiber_run_wave39_1500 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1500_cow_epoch_is_valid_smoke() {
+    std::println("\n=== #1500: StableNodeRef cow_epoch is_valid smoke ===");
+    FlatAST ast;
+    auto n = ast.add_raw_node(NodeTag::LiteralInt);
+    auto ref = ast.make_ref(n);
+    CHECK(ref.cow_epoch_at_capture == ast.workspace_cow_epoch(), "captures cow_epoch");
+    CHECK(ast.is_valid(ref), "valid at capture");
+    ast.set_workspace_cow_epoch(ast.workspace_cow_epoch() + 1);
+    CHECK(!ast.is_valid(ref), "invalid after cow advance unpinned");
+    (void)ref.refresh_if_stale(ast);
+    ref.pin_for_cow();
+    ast.set_workspace_cow_epoch(ast.workspace_cow_epoch() + 3);
+    CHECK(ast.is_valid(ref), "pinned survives cow advance");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave39_1500
+
+
 int main() {
 
 
@@ -688,6 +753,21 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave38_164 ########");
     if (int rc = aura_fiber_run_wave38_164::run_164_fiber_join_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave39_1403 ########");
+    if (int rc = aura_fiber_run_wave39_1403::run_1403_yield_hook_stack_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave39_1525 ########");
+    if (int rc = aura_fiber_run_wave39_1525::run_1525_multifiber_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave39_1500 ########");
+    if (int rc = aura_fiber_run_wave39_1500::run_1500_cow_epoch_is_valid_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

@@ -1230,6 +1230,21 @@ static void run_1539_linear_soa_bind_smoke() {
     CHECK(!ev.linear_post_mutate_enforce(id), "Moved binding → enforce false");
 }
 
+
+// Wave 39 (#1957): #1417 Linear ∩ Refinement discovery smoke
+static void run_1417_linear_refinement_smoke() {
+    std::println("\n=== #1417: Linear ∩ Refinement type-driven discovery smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (leak) (let ((x (Linear 1))) 0))\")").has_value(),
+          "set-code leak Linear");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck Linear let");
+    CHECK(cs.eval("(set-code \"(define (ok) (let ((x (Linear 1))) (move x)))\")").has_value(),
+          "set-code move path");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck move path");
+    auto s = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(s.has_value(), "linear-ownership-stats reachable");
+}
+
 } // namespace aura_linear_ownership_batch
 
 int main() {
@@ -1247,5 +1262,6 @@ int main() {
     aura_linear_ownership_batch::run_1458_linear_ownership_post_mutate_smoke();
     aura_linear_ownership_batch::run_1535_linear_dual_epoch_fence_smoke();
     aura_linear_ownership_batch::run_1539_linear_soa_bind_smoke();
+    aura_linear_ownership_batch::run_1417_linear_refinement_smoke();
     return RUN_ALL_TESTS();
 }

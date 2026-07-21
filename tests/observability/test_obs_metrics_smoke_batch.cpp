@@ -667,6 +667,41 @@ int run_1514_metrics_smoke() {
 }
 } // namespace aura_obs_run_wave38_1514
 
+
+// ═══ Wave 39 (#1957): observability metrics smokes ═══
+namespace aura_obs_run_wave39_1496 {
+int run_1496_metrics_smoke() {
+    std::println("\n=== #1496: unified invalidation dual-epoch metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1496\")");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats reachable");
+    auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(lin.has_value(), "linear-ownership-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave39_1496
+
+namespace aura_obs_run_wave39_1506 {
+int run_1506_metrics_smoke() {
+    std::println("\n=== #1506: relower define path metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (g x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto r = cs.eval("(g 4)");
+    CHECK(r.has_value(), "(g 4)");
+    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x 2))\" \"#1506\")");
+    auto r2 = cs.eval("(g 4)");
+    CHECK(r2.has_value(), "(g 4) after rebind");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats after re-lower path");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave39_1506
+
+
 int main() {
 
 
@@ -856,6 +891,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave38_1514::run_1514_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave39_1496::run_1496_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave39_1506::run_1506_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
