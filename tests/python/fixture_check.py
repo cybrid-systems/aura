@@ -2,7 +2,6 @@
 """Validate tests/fixtures shards and cross-file invariants (#1962).
 
 Prefer: python3 tests/run.py fixtures  (#1961)
-Also:   python3 scripts/fixtures_tool.py validate
 
 Direct invocation of this script remains supported.
 """

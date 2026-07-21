@@ -313,8 +313,8 @@ Shared colors/paths/report helpers: `tests/python/_aura_harness.py`.
 ### Fixtures (#1962)
 
 Case matrices are **sharded** under `tests/fixtures/{regression,integ,benchmark,smoke}/`
-(not monolithic `*_tests.json`). Validate with `python3 tests/run.py fixtures` or
-`python3 scripts/fixtures_tool.py status`. Details: [`fixtures/README.md`](fixtures/README.md).
+(not monolithic `*_tests.json`). Validate with `python3 tests/run.py fixtures`.
+Details: [`fixtures/README.md`](fixtures/README.md).
 
 ## Related
 
