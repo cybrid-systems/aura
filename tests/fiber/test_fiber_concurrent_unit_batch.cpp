@@ -586,6 +586,29 @@ int run_1402_privileged_cap_gate_smoke() {
 }
 } // namespace aura_fiber_run_wave33_1402
 
+// Wave 37 (#1957): fiber_orch — #1404 restamp_yield_checkpoint_top contract smoke
+namespace aura_fiber_run_wave37_1404 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1404_restamp_checkpoint_contract_smoke() {
+    std::println("\n=== #1404: restamp_yield_checkpoint_top contract smoke ===");
+    // Full mismatch integration needs Fiber internals; smoke = public path
+    // still works after bool-return restamp change (evaluator_fiber_mutation).
+    CompilerService cs;
+    auto r = cs.eval("(define test-var-1404 42)");
+    CHECK(r.has_value(), "define works post-restamp-bool change");
+    auto v = cs.eval("test-var-1404");
+    CHECK(v && is_int(*v) && as_int(*v) == 42, "eval binding 42");
+    // Boundary/orchestration surfaces remain reachable (yield checkpoint path).
+    auto d = cs.eval("(engine:metrics \"query:mutation-boundary-depth\")");
+    CHECK(d.has_value(), "mutation-boundary-depth reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave37_1404
+
 int main() {
 
 
@@ -637,6 +660,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave33_1402 ########");
     if (int rc = aura_fiber_run_wave33_1402::run_1402_privileged_cap_gate_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave37_1404 ########");
+    if (int rc = aura_fiber_run_wave37_1404::run_1404_restamp_checkpoint_contract_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

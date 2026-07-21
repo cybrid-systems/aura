@@ -56,13 +56,52 @@ int run_437_verify_dirty_reason_smoke() {
 }
 } // namespace aura_shape_run_wave36_437
 
+// Wave 37 (#1957): shape_soa — #1520 children-column + #1521 shape-arena-compact stats
+namespace aura_shape_run_wave37_1520 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1520_children_column_stats_smoke() {
+    std::println("\n=== #1520: query:children-column-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (g x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto r = cs.eval("(engine:metrics \"query:children-column-stats\")");
+    CHECK(r.has_value(), "query:children-column-stats reachable");
+    auto mig = cs.eval("(engine:metrics \"query:soa-children-columnar-migration-stats\")");
+    CHECK(mig.has_value(), "soa-children-columnar-migration-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave37_1520
+
+namespace aura_shape_run_wave37_1521 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1521_shape_arena_compact_stats_smoke() {
+    std::println("\n=== #1521: query:shape-arena-compact-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:shape-arena-compact-stats\")");
+    CHECK(r.has_value(), "query:shape-arena-compact-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave37_1521
+
 int main() {
-    std::println("=== test_shape_soa_unit_batch (wave 36) ===");
+    std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
         return rc;
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave36_437::run_437_verify_dirty_reason_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave37_1520::run_1520_children_column_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave37_1521::run_1521_shape_arena_compact_stats_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;
