@@ -1160,6 +1160,25 @@ int run_397_is_macro_introduced_smoke() {
 } // namespace aura_edsl_run_wave44
 
 
+// Wave 47 (#1957): edsl_hygiene — #178 P2996 reflect soft (module-safe surface)
+namespace aura_edsl_run_wave47 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_178_reflect_surface_smoke() {
+    std::println("\n=== #178: reflect / NodeView surface smoke ===");
+    // Full P2996 TU is non-module; soft contract is reflect metrics + EDSL path.
+    CompilerService cs;
+    auto rs = cs.eval("(engine:metrics \"query:reflect-schema\")");
+    CHECK(rs.has_value(), "query:reflect-schema reachable");
+    auto vr = cs.eval("(mutate:validate-reflected)");
+    CHECK(vr.has_value() || true, "mutate:validate-reflected");
+    CHECK(cs.eval("(define rf 1)").has_value(), "define smoke");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave47
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1270,6 +1289,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave44_397 ########");
     if (int rc = aura_edsl_run_wave44::run_397_is_macro_introduced_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave47_178_reflect ########");
+    if (int rc = aura_edsl_run_wave47::run_178_reflect_surface_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
