@@ -50,8 +50,19 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | **`fuzz/`** | Unified fuzz orchestrator + corpus (#1935) | `./build.py fuzz --list` / nightly |
 | **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
+| `observability/` | Bulk root obs cpp (#1977) | 180 files; prefer `domain/test_obs_schema_matrix` |
+| `mutation/` | Bulk root mutation cpp (#1977) | 118 files; prefer `domain/test_domain_typed_mutate` |
+| `compiler_core/` | Bulk root compiler cpp (#1977) | 58 files; future `domain/compiler/` |
+| `fiber/` | Bulk root fiber cpp (#1977) | 38 files; prefer `domain/test_domain_fiber_orchestration` |
+| `edsl/` | Bulk root edsl cpp (#1977) | 19 files; prefer `domain/test_domain_hygiene_dirty` |
+| `jit/` | Bulk root JIT/AOT cpp (#1977) | 7 files; heavy JIT stays here or root |
+| `arena/` | Bulk root arena cpp (#1977) | 7 files; parallel to `domain/arena/` pilot |
+| `stdlib/` | Bulk root stdlib cpp (#1977) | 5 files; prefer `suite/` for `.aura` |
+| `linear/` | Bulk root linear-ownership cpp (#1977) | 2 files; prefer `test_linear_ownership_batch` |
+| `shape/` | Bulk root shape/SoA cpp (#1977) | 1 file; prefer `test_soa_batch` |
+| `misc/` | Uncategorized root cpp (#1977) | 2 files; manual triage |
 | root `test_*_batch.cpp` | Intermediate family batches | Consolidating several related issue tests |
-| root `test_*.cpp` | Older focused binaries | Only when no domain suite fits (justify) |
+| root `test_*.cpp` | Older focused binaries | Only when no theme dir fits (justify) — empty since #1977 |
 | root `*.py` thin entry | Stable CLI shims → `python/` / `bench/` | Do not put new drivers at root |
 
 Layout authority + migration: [`docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) (#1932 / #1939).
@@ -62,7 +73,7 @@ python3 tests/migrate_test_layout.py --dry-run
 python3 tests/migrate_test_layout.py --status   # exit 1 if root policy unclean
 ```
 
-### What changed (#1932 / #1937 / #1938 / #1939)
+### What changed (#1932 / #1937 / #1938 / #1939 / #1977)
 
 | Before | After |
 |--------|--------|
@@ -70,7 +81,9 @@ python3 tests/migrate_test_layout.py --status   # exit 1 if root policy unclean
 | Bench scripts + baseline at root | **`tests/bench/`** (+ thin `tests/benchmark.py`) |
 | Fuzz / leak scripts mixed in | **`tests/fuzz/`**, **`tests/memory/`** |
 | Commercial .aura E2E loose | **`tests/e2e/`** (#1934) |
-| Docs only listed ad-hoc paths | This README + `docs/test_harness_pattern.md` |
+| 437 root `test_*.cpp` scattered flat | Theme-organized into **`tests/<theme>/`** (#1977) — parallel to `domain/` |
+| Misplaced `incremental_mutation_test.aura` at root | Moved to `suite/` (#1977) |
+| Stray `__pycache__/` at root | Deleted (gitignored; pure local clutter) |
 
 **Stable CLI:** keep using `python3 tests/run.py …`, `tests/run_issue_tests.py`,
 `tests/fixture_check.py`, `tests/benchmark.py` — these are **thin entrypoints**
