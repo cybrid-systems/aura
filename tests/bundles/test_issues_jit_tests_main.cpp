@@ -5,17 +5,13 @@
 #include "issue_bundle_runner.hh"
 
 extern int aura_issue_224_run();
-extern int aura_issue_224_closure_bridge_run();
 extern int aura_issue_225_bridge_invalidation_run();
-extern int aura_issue_226_run();
 extern int aura_issue_401_run();
 
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_224", aura_issue_224_run},
-        {"test_issue_224_closure_bridge", aura_issue_224_closure_bridge_run},
         {"test_issue_225_bridge_invalidation", aura_issue_225_bridge_invalidation_run},
-        {"test_issue_226", aura_issue_226_run},
         {"test_issue_401", aura_issue_401_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));

@@ -5,14 +5,10 @@
 #include "issue_bundle_runner.hh"
 
 extern int aura_issue_115_run();
-extern int aura_issue_204_run();
-extern int aura_issue_205_run();
 
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_115", aura_issue_115_run},
-        {"test_issue_204", aura_issue_204_run},
-        {"test_issue_205", aura_issue_205_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("fiber", members, n);

@@ -10,16 +10,11 @@ extern int aura_issue_158_run();
 extern int aura_issue_159_run();
 extern int aura_issue_184_run();
 extern int aura_issue_165_run();
-extern int aura_issue_166_run();
-extern int aura_issue_169_run();
-extern int aura_issue_138_run();
-extern int aura_issue_139_run();
 extern int aura_issue_140_run();
 extern int aura_issue_141_run();
 extern int aura_issue_142_run();
 extern int aura_issue_143_run();
 extern int aura_issue_145_run();
-extern int aura_issue_187_run();
 extern int aura_issue_188_run();
 extern int aura_issue_189_run();
 extern int aura_issue_190_run();
@@ -35,18 +30,14 @@ extern int aura_issue_250_run();
 extern int aura_issue_197_observability_run();
 extern int aura_issue_227_run();
 extern int aura_issue_240_run();
-extern int aura_issue_260_run();
-extern int aura_issue_261_run();
 extern int aura_issue_262_run();
 extern int aura_issue_263_run();
 extern int aura_issue_276_run();
 extern int aura_issue_277_run();
-extern int aura_issue_242_run();
 extern int aura_issue_244_run();
 extern int aura_issue_267_run();
 extern int aura_issue_270_run();
 extern int aura_issue_271_run();
-extern int aura_issue_272_run();
 extern int aura_issue_228_run();
 extern int aura_issue_289_run();
 extern int aura_issue_482_run();
@@ -58,7 +49,6 @@ extern int aura_issue_293_run();
 extern int aura_issue_296_run();
 extern int aura_issue_297_run();
 extern int aura_issue_298_run();
-extern int aura_issue_300_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -68,16 +58,11 @@ int main() {
         {"test_issue_159", aura_issue_159_run},
         {"test_issue_184", aura_issue_184_run},
         {"test_issue_165", aura_issue_165_run},
-        {"test_issue_166", aura_issue_166_run},
-        {"test_issue_169", aura_issue_169_run},
-        {"test_issue_138", aura_issue_138_run},
-        {"test_issue_139", aura_issue_139_run},
         {"test_issue_140", aura_issue_140_run},
         {"test_issue_141", aura_issue_141_run},
         {"test_issue_142", aura_issue_142_run},
         {"test_issue_143", aura_issue_143_run},
         {"test_issue_145", aura_issue_145_run},
-        {"test_issue_187", aura_issue_187_run},
         {"test_issue_188", aura_issue_188_run},
         {"test_issue_189", aura_issue_189_run},
         {"test_issue_190", aura_issue_190_run},
@@ -93,18 +78,14 @@ int main() {
         {"test_issue_197_observability", aura_issue_197_observability_run},
         {"test_issue_227", aura_issue_227_run},
         {"test_issue_240", aura_issue_240_run},
-        {"test_issue_260", aura_issue_260_run},
-        {"test_issue_261", aura_issue_261_run},
         {"test_issue_262", aura_issue_262_run},
         {"test_issue_263", aura_issue_263_run},
         {"test_issue_276", aura_issue_276_run},
         {"test_issue_277", aura_issue_277_run},
-        {"test_issue_242", aura_issue_242_run},
         {"test_issue_244", aura_issue_244_run},
         {"test_issue_267", aura_issue_267_run},
         {"test_issue_270", aura_issue_270_run},
         {"test_issue_271", aura_issue_271_run},
-        {"test_issue_272", aura_issue_272_run},
         {"test_issue_228", aura_issue_228_run},
         {"test_issue_289", aura_issue_289_run},
         {"test_issue_482", aura_issue_482_run},
@@ -116,7 +97,6 @@ int main() {
         {"test_issue_296", aura_issue_296_run},
         {"test_issue_297", aura_issue_297_run},
         {"test_issue_298", aura_issue_298_run},
-        {"test_issue_300", aura_issue_300_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit", members, n);

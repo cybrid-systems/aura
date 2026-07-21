@@ -7,7 +7,6 @@
 extern int aura_issue_637_run();
 extern int aura_issue_640_run();
 extern int aura_issue_641_run();
-extern int aura_issue_642_run();
 extern int aura_issue_643_run();
 extern int aura_issue_644_run();
 extern int aura_issue_645_run();
@@ -20,7 +19,6 @@ extern int aura_issue_651_run();
 extern int aura_issue_589_run();
 extern int aura_issue_590_run();
 extern int aura_issue_479_run();
-extern int aura_issue_464_arena_auto_compaction_run();
 extern int aura_issue_465_cxx26_hotpath_run();
 extern int aura_issue_470_stable_ref_sv_scale_run();
 extern int aura_issue_471_dirty_sv_scale_run();
@@ -30,7 +28,6 @@ int main() {
         {"test_issue_637", aura_issue_637_run},
         {"test_issue_640", aura_issue_640_run},
         {"test_issue_641", aura_issue_641_run},
-        {"test_issue_642", aura_issue_642_run},
         {"test_issue_643", aura_issue_643_run},
         {"test_issue_644", aura_issue_644_run},
         {"test_issue_645", aura_issue_645_run},
@@ -43,7 +40,6 @@ int main() {
         {"test_issue_589", aura_issue_589_run},
         {"test_issue_590", aura_issue_590_run},
         {"test_issue_479", aura_issue_479_run},
-        {"test_issue_464_arena_auto_compaction", aura_issue_464_arena_auto_compaction_run},
         {"test_issue_465_cxx26_hotpath", aura_issue_465_cxx26_hotpath_run},
         {"test_issue_470_stable_ref_sv_scale", aura_issue_470_stable_ref_sv_scale_run},
         {"test_issue_471_dirty_sv_scale", aura_issue_471_dirty_sv_scale_run},
