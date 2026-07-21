@@ -456,11 +456,112 @@ static void run_1757_unsigned() {
     CHECK(true, "return type is unsigned size_t");
 }
 
+// ── Issue #261 — FlatAST NodeId lifecycle (ast:recycle / ast:compact / ast:snapshot+restore) ──
+// Folded from tests/issues/test_issue_261.cpp via #1957.
+
+static int64_t run_261_int(aura::compiler::CompilerService& cs, const std::string& src) {
+    auto r = cs.eval(src);
+    if (!r || !aura::compiler::types::is_int(*r))
+        return -1;
+    return aura::compiler::types::as_int(*r);
+}
+
+static bool run_261_bool(aura::compiler::CompilerService& cs, const std::string& src) {
+    auto r = cs.eval(src);
+    return r && aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
+}
+
+static void run_261_recycle_primitive() {
+    std::println("\n--- #261: ast:recycle-nodes primitive ---");
+    aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "seed set-code");
+    CHECK(run_261_int(cs, "(ast:recycle-nodes)") >= 0,
+          "ast:recycle-nodes returns non-negative int");
+}
+
+static void run_261_compact_primitive() {
+    std::println("\n--- #261: ast:compact-nodes primitive ---");
+    aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(set-code \"(begin (define x 1) (define y 2))\")").has_value(), "seed set-code");
+    CHECK(run_261_int(cs, "(ast:compact-nodes)") >= 0,
+          "ast:compact-nodes returns non-negative int");
+}
+
+static void run_261_snapshot_restore_hook() {
+    std::println("\n--- #261: ast:snapshot / ast:restore recycle hooks ---");
+    aura::compiler::CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 42)\")").has_value(), "seed set-code");
+    auto snap_id = run_261_int(cs, "(ast:snapshot \"s261\")");
+    CHECK(snap_id >= 0, "snapshot created");
+    std::string restore_src = "(ast:restore " + std::to_string(snap_id) + ")";
+    CHECK(run_261_bool(cs, restore_src), "restore succeeds");
+}
+
+// ── Issue #324 — Arena/pmr::vector yield-safe compaction observability + safety ──
+// Folded from tests/issues/test_issue_324.cpp via #1957.
+// AC #1 (source fiber-yield check) + AC #4 (CI stress) + AC #5 (GC integration) deferred.
+
+static void run_324_workspace_integrity() {
+    std::println("\n--- #324: workspace integrity across mutations ---");
+    aura::compiler::CompilerService cs;
+    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
+    (void)cs.eval("(eval-current)");
+    auto r = cs.eval("(eval-current)");
+    CHECK(r.has_value(), "eval succeeds with bindings");
+}
+
+static void run_324_flatast_compact() {
+    std::println("\n--- #324: FlatAST compaction via (ast:compact-nodes) ---");
+    aura::compiler::CompilerService cs;
+    (void)cs.eval(
+        "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+    (void)cs.eval("(eval-current)");
+    auto r = cs.eval("(ast:compact-nodes)");
+    CHECK(r.has_value(), "(ast:compact-nodes) callable");
+    auto q = cs.eval("(query:pattern \"a\")");
+    CHECK(q.has_value(), "query:pattern works post-compact");
+}
+
+static void run_324_arena_stats_accessible() {
+    std::println("\n--- #324: (stats:get \"arena:stats-json\") accessible ---");
+    aura::compiler::CompilerService cs;
+    (void)cs.eval("(set-code \"(define a 1)\")");
+    (void)cs.eval("(eval-current)");
+    auto r = cs.eval("(stats:get \"arena:stats-json\")");
+    CHECK(r.has_value(), "(stats:get \"arena:stats-json\") returns a value");
+}
+
+static void run_324_dual_path_consistency() {
+    std::println("\n--- #324: lookup consistency across mutations ---");
+    aura::compiler::CompilerService cs;
+    (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
+    (void)cs.eval("(eval-current)");
+    for (int i = 0; i < 5; ++i) {
+        std::string code = "(mutate:replace-value (define a " + std::to_string(100 + i * 11) +
+                           ") (define a " + std::to_string(100 + i * 11) + "))";
+        auto r = cs.eval(code);
+        CHECK(r.has_value(), std::string("mutate #") + std::to_string(i) + " succeeds");
+    }
+    auto re = cs.eval("(eval-current)");
+    CHECK(re.has_value(), "eval succeeds after 5 mutations");
+}
+
+static void run_324_yield_field() {
+    std::println("\n--- #324: ArenaStats.compaction_yield_checks field exists ---");
+    aura::ast::ArenaStats s;
+    s.compaction_count = 5;
+    s.compaction_yield_checks = 0; // field exists; stays 0 in current build
+    CHECK(s.compaction_count == 5, "compaction_count settable");
+    CHECK(s.compaction_yield_checks == 0,
+          "compaction_yield_checks field exists (always 0 until fiber hook lands)");
+}
+
 } // namespace aura_compact_batch
 
 int main() {
     using namespace aura_compact_batch;
-    std::println("=== Compact batch: #1842 + #1666 + #1362 + #1757 (22 ACs total) ===");
+    std::println(
+        "=== Compact batch: #1842 + #1666 + #1362 + #1757 + #261 + #324 (28 ACs total) ===");
     run_1842_source();
     run_1842_runtime();
     run_1842_nested_guard();
@@ -483,6 +584,14 @@ int main() {
     run_1757_selective();
     run_1757_all_dead();
     run_1757_unsigned();
+    run_261_recycle_primitive();
+    run_261_compact_primitive();
+    run_261_snapshot_restore_hook();
+    run_324_workspace_integrity();
+    run_324_flatast_compact();
+    run_324_arena_stats_accessible();
+    run_324_dual_path_consistency();
+    run_324_yield_field();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

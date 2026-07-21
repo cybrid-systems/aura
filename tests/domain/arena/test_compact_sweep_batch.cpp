@@ -245,11 +245,135 @@ static void run_1866_null_marks_metric() {
     }
 }
 
+// ── Issue #206 — GC sweep compact_pairs + resolve_pair (folded from
+// tests/issues/test_issue_206.cpp via #1957) ── Verifies the Evaluator's compact_pairs() /
+// resolve_pair() / clear_pair_remap() contract: live pairs move to the front, dead pairs get remap
+// entry -1, stale PairIds from before the compact resolve to the latest remap.
+
+static void alloc_pairs_206(aura::compiler::CompilerService& cs, int n) {
+    for (int i = 0; i < n; ++i) {
+        std::string src = "(cons " + std::to_string(i) + " " + std::to_string(i + 1) + ")";
+        (void)cs.eval(src);
+    }
+}
+
+static void run_206_resolve_identity() {
+    std::println("\n--- #206: resolve_pair identity before any compact ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 5);
+    auto& ev = cs.evaluator();
+    CHECK(ev.pair_remap_size() == 0, "remap is empty (no compact yet)");
+    for (std::uint64_t i = 0; i < 5; ++i) {
+        CHECK(ev.resolve_pair(i) == static_cast<std::int64_t>(i),
+              "resolve_pair returns identity for id " + std::to_string(i));
+    }
+}
+
+static void run_206_empty_mask_all_live() {
+    std::println("\n--- #206: compact_pairs empty live_mask = all-live ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 5);
+    auto& ev = cs.evaluator();
+    std::vector<bool> empty_mask;
+    std::size_t n_after = ev.compact_pairs(empty_mask);
+    CHECK(n_after == 5, "5 pairs remain after compact (all live)");
+    for (std::uint64_t i = 0; i < 5; ++i) {
+        CHECK(ev.resolve_pair(i) == static_cast<std::int64_t>(i),
+              "resolve_pair(" + std::to_string(i) + ") is identity after all-live compact");
+    }
+}
+
+static void run_206_selective_mask() {
+    std::println("\n--- #206: compact_pairs selective live_mask (some dead) ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 5);
+    auto& ev = cs.evaluator();
+    // Live: 0, 2, 4; dead: 1, 3.
+    std::vector<bool> mask = {true, false, true, false, true};
+    std::size_t n_after = ev.compact_pairs(mask);
+    CHECK(n_after == 3, "3 pairs remain after compact (5 - 2 dead)");
+    CHECK(ev.resolve_pair(0) == 0, "old 0 (live) -> new 0");
+    CHECK(ev.resolve_pair(1) == -1, "old 1 (dead) -> -1");
+    CHECK(ev.resolve_pair(2) == 1, "old 2 (live) -> new 1");
+    CHECK(ev.resolve_pair(3) == -1, "old 3 (dead) -> -1");
+    CHECK(ev.resolve_pair(4) == 2, "old 4 (live) -> new 2");
+}
+
+static void run_206_multi_step() {
+    std::println("\n--- #206: multi-step compact rebuilds the remap ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 6);
+    auto& ev = cs.evaluator();
+    // First compact: dead = 1, 4. Live: 0, 2, 3, 5.
+    std::vector<bool> mask1 = {true, false, true, true, false, true};
+    ev.compact_pairs(mask1);
+    CHECK(ev.resolve_pair(0) == 0, "after compact1: old 0 -> new 0");
+    CHECK(ev.resolve_pair(1) == -1, "after compact1: old 1 -> -1");
+    CHECK(ev.resolve_pair(2) == 1, "after compact1: old 2 -> new 1");
+    // Add 2 more pairs; arena is now 4 + 2 = 6.
+    alloc_pairs_206(cs, 2);
+    // Second compact: dead at index 4 of the new arena.
+    std::vector<bool> mask2 = {true, true, true, true, false, true};
+    ev.compact_pairs(mask2);
+    CHECK(ev.resolve_pair(0) == 0, "after compact2: old 0 -> new 0");
+    CHECK(ev.resolve_pair(1) == 1, "after compact2: old 1 -> new 1");
+    CHECK(ev.resolve_pair(4) == -1, "after compact2: old 4 -> -1");
+    CHECK(ev.resolve_pair(5) == 4, "after compact2: old 5 -> new 4");
+}
+
+static void run_206_clear_remap() {
+    std::println("\n--- #206: clear_pair_remap resets to identity ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 3);
+    auto& ev = cs.evaluator();
+    std::vector<bool> mask = {true, false, true};
+    ev.compact_pairs(mask);
+    CHECK(ev.resolve_pair(1) == -1, "before clear: old 1 -> -1");
+    ev.clear_pair_remap();
+    CHECK(ev.pair_remap_size() == 0, "remap is empty after clear");
+    CHECK(ev.resolve_pair(0) == 0, "after clear: resolve_pair(0) is identity");
+    CHECK(ev.resolve_pair(1) == 1, "after clear: resolve_pair(1) is identity");
+    CHECK(ev.resolve_pair(2) == 2, "after clear: resolve_pair(2) is identity");
+}
+
+static void run_206_out_of_range() {
+    std::println("\n--- #206: resolve_pair handles out-of-range ids ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 3);
+    auto& ev = cs.evaluator();
+    CHECK(ev.resolve_pair(999) == 999,
+          "resolve_pair(999) is identity when no compact has happened");
+    std::vector<bool> empty_mask;
+    ev.compact_pairs(empty_mask);
+    CHECK(ev.resolve_pair(999) == -1, "resolve_pair(999) returns -1 (out of remap range)");
+    CHECK(ev.resolve_pair(2) == 2, "resolve_pair(2) is in range, identity");
+}
+
+static void run_206_all_dead() {
+    std::println("\n--- #206: compact_pairs with all-dead mask ---");
+    aura::compiler::CompilerService cs;
+    alloc_pairs_206(cs, 4);
+    auto& ev = cs.evaluator();
+    std::vector<bool> mask = {false, false, false, false};
+    std::size_t n_after = ev.compact_pairs(mask);
+    CHECK(n_after == 0, "0 pairs remain after all-dead compact");
+    for (std::uint64_t i = 0; i < 4; ++i) {
+        CHECK(ev.resolve_pair(i) == -1, "resolve_pair(" + std::to_string(i) + ") is -1 (all dead)");
+    }
+}
+
 } // namespace aura_compact_sweep_batch
 
 int main() {
     aura_compact_sweep_batch::run_1732_typed_result();
     aura_compact_sweep_batch::run_1865_pair_remap_clear();
     aura_compact_sweep_batch::run_1866_null_marks_metric();
+    aura_compact_sweep_batch::run_206_resolve_identity();
+    aura_compact_sweep_batch::run_206_empty_mask_all_live();
+    aura_compact_sweep_batch::run_206_selective_mask();
+    aura_compact_sweep_batch::run_206_multi_step();
+    aura_compact_sweep_batch::run_206_clear_remap();
+    aura_compact_sweep_batch::run_206_out_of_range();
+    aura_compact_sweep_batch::run_206_all_dead();
     return RUN_ALL_TESTS();
 }
