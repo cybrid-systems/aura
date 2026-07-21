@@ -4999,8 +4999,8 @@ aura_issue_test_link_llvm_jit(test_terminal_render_production_1673)
 aura_add_issue_test(test_render_hotpath_observability_1674)
 aura_issue_test_link_llvm_jit(test_render_hotpath_observability_1674)
 # Issue #1675: render memory predictability (frame arena, GC hotpath defer).
-aura_add_issue_test(test_render_memory_predictability_1675)
-aura_issue_test_link_llvm_jit(test_render_memory_predictability_1675)
+aura_add_issue_test(test_render_memory_predictability)
+aura_issue_test_link_llvm_jit(test_render_memory_predictability)
 # Issue #1676: render-tier fast dispatch + linear/epoch TUI/render fences.
 aura_add_issue_test(test_render_dispatch_linear_epoch_1676)
 aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
