@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1950.cpp — Wave 4 relocate from tests/test_issue_1950.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // test_issue_1950.cpp — Issue #1950: MutationBoundaryGuard dtor batching
 // + 100% Guard wrap on compile:*/mutate:* primitives.
 //

@@ -1,7 +1,7 @@
 # Root test classification
 
 **Generated:** 2026-07-21 by `scripts/classify_root_tests.py`
-**Content hash:** `212649583f97322c`
+**Content hash:** `3be7599554a56e98`
 **Companion:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957 issues/)
 
 ## Purpose
@@ -12,9 +12,9 @@ Probe `tests/test_*.cpp` (root), classify into theme buckets that match `tests/d
 
 | Location | Count |
 |----------|------:|
-| `tests/test_*.cpp` (root) | 445 |
-| `tests/domain/**/test_*.cpp` | 9 |
-| Near-dup name clusters (≥2) | 11 |
+| `tests/test_*.cpp` (root) | 437 |
+| `tests/domain/**/test_*.cpp` | 18 |
+| Near-dup name clusters (≥2) | 10 |
 
 ### Domain suite anchors (coverage homes)
 
@@ -33,15 +33,15 @@ Probe `tests/test_*.cpp` (root), classify into theme buckets that match `tests/d
 | Theme | Count | Preferred destination |
 |-------|------:|------------------------|
 | `arena_compaction` | 7 | tests/domain/arena/ (batch pilots already live) |
-| `mutation_dirty` | 121 | tests/domain/test_domain_typed_mutate.cpp + mutation_boundary_batch |
+| `mutation_dirty` | 118 | tests/domain/test_domain_typed_mutate.cpp + mutation_boundary_batch |
 | `fiber_orch` | 38 | tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume_batch |
 | `linear_ownership` | 2 | tests/test_linear_ownership_batch.cpp → domain/ |
 | `edsl_hygiene` | 19 | tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect_batch |
-| `jit_incremental` | 8 | future domain/jit/ (heavy JIT stays EXCLUDE or root) |
+| `jit_incremental` | 7 | future domain/jit/ (heavy JIT stays EXCLUDE or root) |
 | `shape_soa` | 1 | tests/test_soa_batch.cpp → domain/ |
-| `observability` | 183 | tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp |
+| `observability` | 180 | tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp |
 | `stdlib` | 5 | tests/suite/ + focused root integration (datetime, hot-update) |
-| `compiler_core` | 59 | keep root or future domain/compiler/ |
+| `compiler_core` | 58 | keep root or future domain/compiler/ |
 | `uncategorized` | 2 | manual triage |
 
 ## Action summary (streamline plan)
@@ -53,33 +53,24 @@ Probe `tests/test_*.cpp` (root), classify into theme buckets that match `tests/d
 | `keep_behavioral` | 17 | Has behavioral ACs beyond schema flags |
 | `fold_obs_fieldlist` | 13 | Pure production flag gate → FieldListCase |
 | `candidate_obs_fold` | 12 | Thin schema probe → fold into obs matrix cases |
-| `relocate_or_domain` | 8 | Root `test_issue_*` — promote ACs into domain, do not grow issues/ |
 | `keep_link_stub` | 1 | Link-only helper (not a test suite) |
 | `superseded_exclude` | 1 | Covered by domain suite / later issue — exclude or delete |
 
-## Wave 0 — safe streamline (no coverage loss)
+## Wave status (streamline implementation)
 
-**Status: applied** (classification tooling + stub cleanup).
+| Wave | Status | What shipped |
+|------|--------|--------------|
+| 0 | **done** | Empty Phase-2 stubs deleted; `open_issues_phase1_batch` EXCLUDE |
+| 1 | **done** | Thin probes → `obs_schema_cases.hpp` FieldList; selfevo/stdlib EXCLUDE |
+| 2 | **done** | `test_domain_production_sweep` + `production_sweep_cases.hpp`; ~27 prod EXCLUDE |
+| 3 | **done** | Near-dup supersession EXCLUDE (1636, fine_dirty, 1622, …) |
+| 4 | **done** | Root `test_issue_1943…1956` → `tests/domain/` |
 
-1. ~~Delete empty Phase-2 stubs~~ → removed `test_fiber` / `test_mutation` /
-   `test_observability` / `test_persist` (coverage in `tests/domain/*`)
-2. ~~EXCLUDE_FROM_ALL~~ `test_open_issues_phase1_batch` (alias of `test_obs_schema_matrix`;
-   kept for `jit_late3` bundle membership only)
-3. Prefer **extend domain/** over new root binaries (see tests/README.md)
+Prefer **extend domain/** over new root binaries (see tests/README.md).
 
 ## Near-dup name clusters
 
 Name-normalized groups (strip issue suffix / task / closed_loop). Not always redundant — inspect AC headers before merging.
-
-### `test_issue` (8)
-- `test_issue_1943.cpp` — theme=`compiler_core` action=`relocate_or_domain` (152L)
-- `test_issue_1950.cpp` — theme=`mutation_dirty` action=`relocate_or_domain` (72L)
-- `test_issue_1951.cpp` — theme=`mutation_dirty` action=`relocate_or_domain` (55L)
-- `test_issue_1952.cpp` — theme=`jit_incremental` action=`relocate_or_domain` (57L)
-- `test_issue_1953.cpp` — theme=`observability` action=`relocate_or_domain` (183L)
-- `test_issue_1954.cpp` — theme=`observability` action=`relocate_or_domain` (214L)
-- `test_issue_1955.cpp` — theme=`mutation_dirty` action=`relocate_or_domain` (202L)
-- `test_issue_1956.cpp` — theme=`observability` action=`relocate_or_domain` (227L)
 
 ### `test_ai` (2)
 - `test_ai_closedloop_orch_readiness_1597.cpp` — theme=`fiber_orch` action=`keep` (230L)
@@ -141,7 +132,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_terminal_lifecycle.cpp` | 164 | `keep` | no automatic streamline |
 | `test_tl_arena_capacity.cpp` | 180 | `keep` | no automatic streamline |
 
-### mutation_dirty (121)
+### mutation_dirty (118)
 
 | File | Lines | Action | Notes |
 |------|------:|--------|-------|
@@ -194,9 +185,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_incremental_typed_selfmod_dirty_narrowing_task1.cpp` | 291 | `keep` | no automatic streamline |
 | `test_invalidate_cascade_order.cpp` | 194 | `keep` | no automatic streamline |
 | `test_ir_soa_dual_emit.cpp` | 138 | `keep` | no automatic streamline |
-| `test_issue_1950.cpp` | 72 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
-| `test_issue_1951.cpp` | 55 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
-| `test_issue_1955.cpp` | 202 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
 | `test_issues_809_817_batch.cpp` | 178 | `keep_batch_exclude` | family batch driver (EXCLUDE_FROM_ALL convention) |
 | `test_issues_819_829_batch.cpp` | 205 | `keep_batch_exclude` | family batch driver (EXCLUDE_FROM_ALL convention) |
 | `test_let_poly_solve_delta_1617.cpp` | 204 | `keep` | no automatic streamline |
@@ -341,7 +329,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_tag_arity_index_perf.cpp` | 171 | `keep` | no automatic streamline |
 | `test_workspace_marker_macro_max_1678.cpp` | 98 | `keep` | no automatic streamline |
 
-### jit_incremental (8)
+### jit_incremental (7)
 
 | File | Lines | Action | Notes |
 |------|------:|--------|-------|
@@ -349,7 +337,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_aot_hotupdate_versioning.cpp` | 283 | `keep` | no automatic streamline |
 | `test_hot_update_stdlib.cpp` | 181 | `keep` | no automatic streamline |
 | `test_incremental_aot_closure_deps.cpp` | 352 | `keep` | no automatic streamline |
-| `test_issue_1952.cpp` | 57 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
 | `test_jit_metrics.cpp` | 227 | `keep` | no automatic streamline |
 | `test_jit_metrics_stub.cpp` | 16 | `keep_link_stub` | link-only stub (16L) |
 | `test_orchestration_steal_boundary.cpp` | 208 | `keep` | no automatic streamline |
@@ -360,7 +347,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 |------|------:|--------|-------|
 | `test_shape.cpp` | 782 | `keep` | no automatic streamline |
 
-### observability (183)
+### observability (180)
 
 | File | Lines | Action | Notes |
 |------|------:|--------|-------|
@@ -427,9 +414,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_ir_soa_dual_emit_flag_1629.cpp` | 184 | `keep` | no automatic streamline |
 | `test_ir_soa_incremental_closed_loop_404.cpp` | 105 | `keep` | no automatic streamline |
 | `test_ir_soa_phase2_adoption_1920.cpp` | 228 | `keep` | no automatic streamline |
-| `test_issue_1953.cpp` | 183 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
-| `test_issue_1954.cpp` | 214 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
-| `test_issue_1956.cpp` | 227 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
 | `test_jit_consistency.cpp` | 297 | `keep` | no automatic streamline |
 | `test_jit_critical_coverage_1917.cpp` | 221 | `keep` | no automatic streamline |
 | `test_jit_full_opcode_coverage_1658.cpp` | 172 | `keep` | no automatic streamline |
@@ -558,7 +542,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_spec_runtime.cpp` | 183 | `keep` | no automatic streamline |
 | `test_synthesize_namespace_demotion.cpp` | 258 | `keep` | no automatic streamline |
 
-### compiler_core (59)
+### compiler_core (58)
 
 | File | Lines | Action | Notes |
 |------|------:|--------|-------|
@@ -587,7 +571,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_hash_iter_invalidation.cpp` | 134 | `keep` | no automatic streamline |
 | `test_inline_pass_stats_unpack_1784.cpp` | 145 | `keep` | no automatic streamline |
 | `test_inline_typecheck_exception_1769.cpp` | 116 | `keep` | no automatic streamline |
-| `test_issue_1943.cpp` | 152 | `relocate_or_domain` | misplaced test_issue_* at root — prefer domain suite, not issues/ |
 | `test_jit_closure_cache_race_1707.cpp` | 155 | `keep` | no automatic streamline |
 | `test_lock_hierarchy.cpp` | 312 | `keep` | no automatic streamline |
 | `test_matcher_stable_captures_1695.cpp` | 125 | `keep` | no automatic streamline |
@@ -629,15 +612,11 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_harness_pilot.cpp` | 20 | `keep` | no automatic streamline |
 | `test_primitives_init.cpp` | 31 | `keep` | no automatic streamline |
 
-## Streamline roadmap
+## Streamline roadmap (historical)
 
-| Wave | Focus | Expected reduction |
-|------|-------|-------------------:|
-| 0 | Empty stubs + obs alias EXCLUDE | 4–5 binaries off default path |
-| 1 | Thin schema probes → `obs_schema_cases.hpp` | 20–40 root targets |
-| 2 | Production family → one domain matrix + keep hard mixed | 20–26 EXCLUDE |
-| 3 | Near-dup task pairs merge into domain theme suites | 10–20 files |
-| 4 | Promote root `test_issue_19xx` ACs into domain/ | 8 renames |
+Waves 0–4 applied — see **Wave status** above. Further reductions:
+fold remaining `candidate_obs_fold` keepers; rename `domain/test_issue_*`
+to `test_domain_<theme>_*.cpp`; promote more root keeps into theme suites.
 
 ## Related
 

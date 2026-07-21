@@ -1760,6 +1760,7 @@ aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6_594)
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
 aura_issue_test_link_llvm_jit(test_incremental_typed_selfmod_dirty_narrowing)
+set_target_properties(test_incremental_typed_selfmod_dirty_narrowing PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #608: dependency-tracked solve_delta + occurrence-dirty
 # + per-symbol post-mutate incremental type reliability matrix.
 aura_add_issue_test(test_typechecker_incremental_dependency_occurrence_dirty_post_mutate)
@@ -1801,6 +1802,7 @@ aura_issue_test_link_llvm_jit(test_occurrence_typing_blame_post_mutate_task2)
 # with #540/#527/#497/#457 (prior stable-ref work).
 aura_add_issue_test(test_stable_ref_provenance_fiber_cow)
 aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
+set_target_properties(test_stable_ref_provenance_fiber_cow PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #527: StableNodeRef cross-COW/fiber closed-loop observability.
 aura_add_issue_test(test_stable_ref_cow_fiber_closed_loop_527)
 aura_issue_test_link_llvm_jit(test_stable_ref_cow_fiber_closed_loop_527)
@@ -4912,6 +4914,7 @@ aura_issue_test_link_llvm_jit(test_render_pass_incremental)
 # bitmask propagation and minimal re-lower observability surface.
 aura_add_issue_test(test_fine_dirty_relower)
 aura_issue_test_link_llvm_jit(test_fine_dirty_relower)
+set_target_properties(test_fine_dirty_relower PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #1579: dedicated ResourceQuota module + process fiber enforcement.
 aura_add_issue_test(test_resource_quota_module)
 aura_issue_test_link_llvm_jit(test_resource_quota_module)
@@ -4942,6 +4945,7 @@ aura_issue_test_link_llvm_jit(test_orch_agent_spawn)
 # Issue #1589: TypedMutationAudit production trail + strategy gate.
 aura_add_issue_test(test_typed_mutation_audit)
 aura_issue_test_link_llvm_jit(test_typed_mutation_audit)
+set_target_properties(test_typed_mutation_audit PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 
 # Issue #1882: TypedMutationAudit AOT hot-update + AI mutate wire-up
 aura_add_issue_test(test_aot_hotupdate_typed_audit_1882)
@@ -5344,6 +5348,7 @@ aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)
 # Issue #1636: mandate MacroIntroduced hygiene + marker dimension via tag_arity.
 aura_add_issue_test(test_query_pattern_hygiene_mandate_1636)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate_1636)
+set_target_properties(test_query_pattern_hygiene_mandate_1636 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #1610: IR/JIT/AOT MacroIntroduced + provenance propagation.
 aura_add_issue_test(test_ir_hygiene_propagation_1610)
 aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation_1610)
@@ -5383,6 +5388,7 @@ aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_1620)
 
 aura_add_issue_test(test_value_encoding_v2_dispatch_contracts_1622)
 aura_issue_test_link_llvm_jit(test_value_encoding_v2_dispatch_contracts_1622)
+set_target_properties(test_value_encoding_v2_dispatch_contracts_1622 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 
 aura_add_issue_test(test_eval_relower_hotpath_1623)
 aura_issue_test_link_llvm_jit(test_eval_relower_hotpath_1623)
@@ -5743,6 +5749,7 @@ aura_issue_test_link_llvm_jit(test_prompt2_6_impact_scope_quote_lambda_bridge_en
 # Issue #742: C++26 Contracts + consteval hot-path invariants.
 aura_add_issue_test(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
 aura_issue_test_link_llvm_jit(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass)
+set_target_properties(test_cpp26_contracts_hotpath_arena_soa_value_shape_pass PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #743: Arena auto-compact + defrag + fiber safepoint + dirty/Shape closed loop.
 aura_add_issue_test(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
 aura_issue_test_link_llvm_jit(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop)
