@@ -11,14 +11,10 @@ extern int aura_issue_502_run();
 extern int aura_issue_503_run();
 extern int aura_issue_504_run();
 extern int aura_issue_505_run();
-extern int aura_issue_507_run();
-extern int aura_issue_508_observability_run();
 extern int aura_issue_511_observability_run();
-extern int aura_issue_512_observability_run();
 extern int aura_issue_513_observability_run();
 extern int aura_issue_515_observability_run();
 extern int aura_issue_516_observability_run();
-extern int aura_issue_521_observability_run();
 extern int aura_issue_522_observability_run();
 extern int aura_issue_523_observability_run();
 extern int aura_issue_524_observability_run();
@@ -55,14 +51,10 @@ int main() {
         {"test_issue_503", aura_issue_503_run},
         {"test_issue_504", aura_issue_504_run},
         {"test_issue_505", aura_issue_505_run},
-        {"test_issue_507", aura_issue_507_run},
-        {"test_issue_508_observability", aura_issue_508_observability_run},
         {"test_issue_511_observability", aura_issue_511_observability_run},
-        {"test_issue_512_observability", aura_issue_512_observability_run},
         {"test_issue_513_observability", aura_issue_513_observability_run},
         {"test_issue_515_observability", aura_issue_515_observability_run},
         {"test_issue_516_observability", aura_issue_516_observability_run},
-        {"test_issue_521_observability", aura_issue_521_observability_run},
         {"test_issue_522_observability", aura_issue_522_observability_run},
         {"test_issue_523_observability", aura_issue_523_observability_run},
         {"test_issue_524_observability", aura_issue_524_observability_run},

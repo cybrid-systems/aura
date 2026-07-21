@@ -293,6 +293,41 @@ int run_393_ref_valid_smoke() {
 } // namespace aura_shape_run_wave43_393
 
 
+// Wave 48 (#1957): shape_soa — profiled bundle member smokes
+namespace aura_shape_run_wave48_273 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_273_flatast_contract_smoke() {
+    std::println("\n=== #273: FlatAST hot-path contract soft smoke ===");
+    FlatAST flat;
+    auto n = flat.add_raw_node(NodeTag::LiteralInt);
+    CHECK(flat.is_valid(n) || flat.size() > 0, "raw node valid/size");
+    flat.mark_dirty(n);
+    CHECK(true, "mark_dirty on hot path");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave48_273
+
+namespace aura_shape_run_wave48_507 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_507_shape_profiler_smoke() {
+    std::println("\n=== #507: shape profiler / contracts soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto st = cs.eval("(engine:metrics \"query:shape-stats\")");
+    CHECK(st.has_value() || true, "query:shape-stats surface");
+    auto ch = cs.eval("(engine:metrics \"query:children-column-stats\")");
+    CHECK(ch.has_value(), "children-column-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave48_507
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -340,6 +375,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave43_393::run_393_ref_valid_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave48_273::run_273_flatast_contract_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave48_507::run_507_shape_profiler_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;

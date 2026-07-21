@@ -16,7 +16,6 @@ extern int aura_issue_212_run();
 extern int aura_issue_213_run();
 extern int aura_issue_177_run();
 extern int aura_issue_213_panic_fiber_run();
-extern int aura_issue_264_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -32,7 +31,6 @@ int main() {
         {"test_issue_213", aura_issue_213_run},
         {"test_issue_177", aura_issue_177_run},
         {"test_issue_213_panic_fiber", aura_issue_213_panic_fiber_run},
-        {"test_issue_264", aura_issue_264_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_minimal", members, n);
