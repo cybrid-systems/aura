@@ -39,6 +39,7 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "core/gc_hooks.h"
+#include "serve/gc_coordinator.h"
 
 #include <atomic>
 #include <chrono>
@@ -318,6 +319,120 @@ static void run_1864_concurrent() {
     CHECK(true, "post-stress gc_root_count ok");
 }
 
+// ── Wave 5 (#204 GC mark_env_frame_roots + #205 caller-side env_frames_ walk) ──
+
+static void run_204_mark_env_frame_roots() {
+    std::println("\n=== #204: GCCollector::mark_env_frame_roots (EnvFrame SoA arena) ===");
+    // T1: mark_env_frame_roots sets bits for env-walk pair/closure indices
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_from_roots({}, /*string_heap_size=*/10, /*pairs_size=*/20, /*closures_size=*/30);
+        gc.mark_env_frame_roots({3, 7, 15}, {5, 10, 25});
+        CHECK(gc.pair_mark(3) && gc.pair_mark(7) && gc.pair_mark(15),
+              "#204 T1: pair_marks_ bits 3/7/15 set via env walk");
+        CHECK(gc.closure_mark(5) && gc.closure_mark(10) && gc.closure_mark(25),
+              "#204 T1: closure_marks_ bits 5/10/25 set via env walk");
+        CHECK(!gc.pair_mark(0) && !gc.pair_mark(4), "#204 T1: unwalked pair indices NOT marked");
+    }
+    // T2: empty lists = no-op
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_from_roots({}, 5, 5, 5);
+        gc.mark_env_frame_roots({}, {});
+        CHECK(!gc.pair_mark(0) && !gc.pair_mark(4), "#204 T2: empty env walk is a no-op");
+    }
+    // T3: negative indices ignored (defensive)
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_from_roots({}, 10, 10, 10);
+        std::vector<int64_t> bad = {-1, -2, 5, -100};
+        gc.mark_env_frame_roots(bad, bad);
+        CHECK(gc.pair_mark(5), "#204 T3: valid index 5 still marked");
+        CHECK(!gc.pair_mark(0), "#204 T3: negative indices ignored");
+    }
+    // T4: env walk is additive to mark_from_roots
+    {
+        aura::serve::GCCollector gc(nullptr);
+        aura::serve::GCRootSet roots;
+        roots.pair_roots.push_back(0);
+        roots.pair_roots.push_back(1);
+        roots.closure_roots.push_back(2);
+        gc.mark_from_roots(roots, 0, 10, 10);
+        CHECK(gc.pair_mark(0) && gc.pair_mark(1) && gc.closure_mark(2),
+              "#204 T4: explicit root marks 0/1/2");
+        gc.mark_env_frame_roots({3, 4}, {5, 6});
+        CHECK(gc.pair_mark(0) && gc.pair_mark(1) && gc.closure_mark(2),
+              "#204 T4: explicit root marks persist (additive)");
+        CHECK(gc.pair_mark(3) && gc.pair_mark(4) && gc.closure_mark(5) && gc.closure_mark(6),
+              "#204 T4: env-walk marks added");
+    }
+    // T5: pre-resize env walk is silent no-op
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_env_frame_roots({0, 1, 2}, {0, 1});
+        gc.mark_from_roots({}, 5, 5, 5);
+        CHECK(!gc.pair_mark(0) && !gc.pair_mark(1) && !gc.closure_mark(0),
+              "#204 T5: pre-resize env walk is a silent no-op");
+    }
+}
+
+static void run_205_env_walk_callback() {
+    std::println("\n=== #205: GCCollector::register_env_walk_fn callback wire-up ===");
+    // T1: register_env_walk_fn compiles + stores callback (not invoked yet)
+    {
+        aura::serve::GCCollector gc(nullptr);
+        bool called = false;
+        gc.register_env_walk_fn([&called](aura::serve::EnvFrameRoots&) { called = true; });
+        CHECK(!called, "#205 T1: callback stored, not invoked at register time");
+    }
+    // T2: callback not invoked without collect() (full invocation tested by run-tests.sh)
+    {
+        aura::serve::GCCollector gc(nullptr);
+        int n = 0;
+        gc.register_env_walk_fn([&n](aura::serve::EnvFrameRoots&) { ++n; });
+        CHECK(n == 0, "#205 T2: callback not invoked without collect()");
+    }
+    // T3: EnvFrameRoots default-constructs with empty vectors
+    {
+        aura::serve::EnvFrameRoots r;
+        CHECK(r.pair_roots.empty() && r.closure_roots.empty(),
+              "#205 T3: EnvFrameRoots default-constructs empty");
+    }
+    // T4: simulated walk + mark_env_frame_roots sets bits
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_from_roots({}, /*string=*/10, /*pairs=*/20, /*closures=*/30);
+        aura::serve::EnvFrameRoots env_roots;
+        env_roots.pair_roots = {3, 7, 15};
+        env_roots.closure_roots = {5, 10, 25};
+        gc.mark_env_frame_roots(env_roots.pair_roots, env_roots.closure_roots);
+        CHECK(gc.pair_mark(3) && gc.pair_mark(7) && gc.pair_mark(15),
+              "#205 T4: pair_marks_ bits 3/7/15 set");
+        CHECK(gc.closure_mark(5) && gc.closure_mark(10) && gc.closure_mark(25),
+              "#205 T4: closure_marks_ bits 5/10/25 set");
+    }
+    // T5: env walk additive with explicit roots
+    {
+        aura::serve::GCCollector gc(nullptr);
+        aura::serve::GCRootSet roots;
+        roots.pair_roots = {1, 2};
+        roots.closure_roots = {11, 12};
+        gc.mark_from_roots(roots, 10, 20, 30);
+        gc.mark_env_frame_roots({3, 4}, {13, 14});
+        CHECK(gc.pair_mark(1) && gc.pair_mark(2) && gc.closure_mark(11) && gc.closure_mark(12),
+              "#205 T5: explicit root marks persist");
+        CHECK(gc.pair_mark(3) && gc.pair_mark(4) && gc.closure_mark(13) && gc.closure_mark(14),
+              "#205 T5: env-walk marks added");
+    }
+    // T6: empty env walk no-op
+    {
+        aura::serve::GCCollector gc(nullptr);
+        gc.mark_from_roots({}, 10, 20, 30);
+        gc.mark_env_frame_roots({}, {});
+        CHECK(!gc.pair_mark(0), "#205 T6: empty env walk is a no-op");
+    }
+}
+
 } // namespace aura_gc_batch
 
 int main() {
@@ -338,6 +453,8 @@ int main() {
     run_1864_source();
     run_1864_sequential();
     run_1864_concurrent();
+    run_204_mark_env_frame_roots();
+    run_205_env_walk_callback();
     std::println("\n=== GC batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -760,6 +760,103 @@ static void run_166_cache_invalidation() {
     }
 }
 
+// ── Wave 5 (#168 incremental type cache epoch / #169 IncrementalStrictness config) ──
+
+static void run_168_incremental_type_cache_epoch() {
+    std::println("\n=== #168: TypeChecker.set_cache_epoch + infer_flat epoch gate ===");
+    // T1: set_cache_epoch accepts any value
+    {
+        aura::core::TypeRegistry reg;
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_cache_epoch(0);
+        tc.set_cache_epoch(1);
+        tc.set_cache_epoch(42);
+        CHECK(true, "#168 T1: set_cache_epoch accepts any value, no crash");
+    }
+    // T2: epoch gate in infer_flat (same epoch → same type, new epoch → invalidate)
+    {
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(42);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+
+        tc.set_cache_epoch(100);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "#168 T2: first infer_flat (epoch=100) → valid type");
+
+        tc.set_cache_epoch(100);
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "#168 T2: same epoch → same type");
+
+        tc.set_cache_epoch(101);
+        auto r3 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r3.index == r1.index, "#168 T2: new epoch → invalidate but same result");
+    }
+    // T3: literal typecheck regression (no crash after epoch bump)
+    {
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(42);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(1);
+        auto r = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r.index > 0, "#168 T3: literal 42 → valid type after epoch bump");
+    }
+}
+
+static void run_169_incremental_strictness_flag() {
+    std::println("\n=== #169: IncrementalStrictness enum + CompilerService set/get ===");
+    // T1: enum values are 0/1/2 + distinct
+    {
+        CHECK(static_cast<std::uint8_t>(aura::compiler::IncrementalStrictness::Conservative) == 0,
+              "#169 T1: Conservative = 0");
+        CHECK(static_cast<std::uint8_t>(aura::compiler::IncrementalStrictness::Balanced) == 1,
+              "#169 T1: Balanced = 1");
+        CHECK(static_cast<std::uint8_t>(aura::compiler::IncrementalStrictness::Aggressive) == 2,
+              "#169 T1: Aggressive = 2");
+        CHECK(aura::compiler::IncrementalStrictness::Conservative !=
+                  aura::compiler::IncrementalStrictness::Balanced,
+              "#169 T1: Conservative != Balanced");
+    }
+    // T2: CompilerService set/get round-trip
+    {
+        aura::compiler::CompilerService cs;
+        CHECK(cs.incremental_strictness() == aura::compiler::IncrementalStrictness::Balanced,
+              "#169 T2: default = Balanced");
+        cs.set_incremental_strictness(aura::compiler::IncrementalStrictness::Conservative);
+        CHECK(cs.incremental_strictness() == aura::compiler::IncrementalStrictness::Conservative,
+              "#169 T2: set Conservative → getter returns Conservative");
+        cs.set_incremental_strictness(aura::compiler::IncrementalStrictness::Aggressive);
+        CHECK(cs.incremental_strictness() == aura::compiler::IncrementalStrictness::Aggressive,
+              "#169 T2: set Aggressive → getter returns Aggressive");
+        cs.set_incremental_strictness(aura::compiler::IncrementalStrictness::Balanced);
+        CHECK(cs.incremental_strictness() == aura::compiler::IncrementalStrictness::Balanced,
+              "#169 T2: set back to Balanced");
+    }
+    // T3: setting the flag doesn't change eval behavior
+    {
+        aura::compiler::CompilerService cs;
+        cs.set_incremental_strictness(aura::compiler::IncrementalStrictness::Conservative);
+        auto r1 = cs.eval("(+ 1 2)");
+        CHECK(r1.has_value(), "#169 T3: Conservative mode eval(+ 1 2) returns a value");
+        cs.set_incremental_strictness(aura::compiler::IncrementalStrictness::Aggressive);
+        auto r2 = cs.eval("(+ 3 4)");
+        CHECK(r2.has_value(), "#169 T3: Aggressive mode eval(+ 3 4) returns a value");
+    }
+}
+
 static void run_typechecker_unit_tests() {
     run_116_deferred_coercion_node();
     run_118_unbound_var_tags_node();
@@ -784,6 +881,8 @@ static void run_typechecker_unit_tests() {
     run_132_ast_walker_extractions();
     run_134_parse_datatype();
     run_166_cache_invalidation();
+    run_168_incremental_type_cache_epoch();
+    run_169_incremental_strictness_flag();
 }
 
 } // namespace aura_domain_gates_batch
