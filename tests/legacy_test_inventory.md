@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 441 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 437 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **449** | |
+| **Total scanned** | **445** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 139 | 0 | 1 | 140 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 42 | 0 | 1 | 43 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 38 | 0 | 1 | 39 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 7 | 0 | 0 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
@@ -47,46 +47,46 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 397 | Integration path via `CompilerService` / eval |
-| `test_harness` | 243 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 119 | `aura_issue_*_run()` entry for issue bundles |
+| `CompilerService` | 393 | Integration path via `CompilerService` / eval |
+| `test_harness` | 239 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 118 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
-| `own_main` | 25 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 24 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 283
-- `unknown`: 94
+- `integration`: 280
+- `unknown`: 93
 - `unit`: 57
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 225
+- `test_harness.hpp` — 221
 - `compiler/observability_metrics.h` — 41
-- `serve/scheduler.h` — 15
+- `serve/scheduler.h` — 14
 - `compiler/aura_jit_bridge.h` — 14
 - `compiler/aura_jit.h` — 10
-- `serve/fiber.h` — 9
-- `serve/worker.h` — 6
+- `serve/fiber.h` — 8
+- `serve/worker.h` — 5
 - `compiler/shape_profiler.h` — 4
 - `reflect/reflect.hh` — 4
 - `compiler/aot_mangle.h` — 3
 - `compiler/runtime_shared.h` — 2
-- `serve/metrics.h` — 2
 - `compiler/spec_jit_controller.h` — 2
 - `compiler/messaging_bridge.h` — 2
 - `../src/core/persistent_child_vector.hh` — 2
+- `compiler/evaluator.ixx` — 1
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 262
-- `aura.compiler.service` — 250
-- `aura.compiler.evaluator` — 237
-- `std` — 224
-- `aura.core.ast` — 150
+- `aura.compiler.value` — 258
+- `aura.compiler.service` — 246
+- `aura.compiler.evaluator` — 233
+- `std` — 220
+- `aura.core.ast` — 149
 - `aura.core.type` — 79
 - `aura.core.arena` — 75
 - `aura.compiler.ir` — 41
@@ -145,7 +145,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_273.cpp` (5201 B) → `shape_soa` — test_issue_273.cpp — Issue #273: Contracts on FlatAST hot paths.
 - `test_issue_679.cpp` (5242 B) → `observability` — 
 - `test_issue_494.cpp` (5390 B) → `observability` — 
-- `test_issue_1402.cpp` (5466 B) → `fiber_orch` — test_issue_1402.cpp — Issue #1402: Primitive security-tier
+- `test_issue_271.cpp` (5467 B) → `jit_incremental` — test_issue_271.cpp — Issue #271: incremental tag_arity_index_
 
 ### Batch drivers already present
 
@@ -369,7 +369,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_792.cpp` (#792) — test_issue_792.cpp — Issue #792: P0
 - `tests/issues/test_issue_804.cpp` (#804) — test_issue_804.cpp — Issue #804: P0 stdlib error
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (43)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (39)
 
 **Target:** tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume batch
 
@@ -379,17 +379,14 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
 
-#### issues/ (42)
+#### issues/ (38)
 
 - `tests/issues/test_issue_115.cpp` (#115) [early_issue] — test_issue_115.cpp — Standalone tests for the Issue #115 follow-ups:
 - `tests/issues/test_issue_119.cpp` (#119) [early_issue] — test_issue_119.cpp — Verify the proper-blocking fiber:join fix
 - `tests/issues/test_issue_135.cpp` (#135) [large, early_issue] — test_issue_135.cpp — Verify Issue #135 acceptance criteria:
-- `tests/issues/test_issue_1402.cpp` (#1402) — test_issue_1402.cpp — Issue #1402: Primitive security-tier
 - `tests/issues/test_issue_1403.cpp` (#1403) — test_issue_1403.cpp — Issue #1403:
 - `tests/issues/test_issue_1404.cpp` (#1404) — test_issue_1404.cpp — Issue #1404: restamp_yield_checkpoint_top
-- `tests/issues/test_issue_1492.cpp` (#1492) — AC1: is_at_inner_mutation_boundary defers steal (depth>0)
 - `tests/issues/test_issue_1500.cpp` (#1500) — is_valid cow_epoch enforcement + Guard/steal batch restamp of pinned refs.
-- `tests/issues/test_issue_1504.cpp` (#1504) — AC1: query:mutation-boundary-depth returns int (>= 0)
 - `tests/issues/test_issue_1525.cpp` (#1525) — AC1: metrics multifiber_mutate_races / multifiber_safe_fallback surface
 - `tests/issues/test_issue_1544.cpp` (#1544) — AC1: 10K+ iter loop: mutation + GC safepoint + fiber steal per iter
 - `tests/issues/test_issue_164.cpp` (#164) [early_issue] — test_issue_164.cpp — Issue #164: fiber:join spin-fallback elimination.
@@ -403,7 +400,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_362.cpp` (#362) — test_issue_362.cpp — Verify Issue #362 acceptance criteria
 - `tests/issues/test_issue_363.cpp` (#363) — test_issue_363.cpp — Verify Issue #363 acceptance criteria
 - `tests/issues/test_issue_384.cpp` (#384) — test_issue_384.cpp — Issue #384: Bidirectional inference engine
-- `tests/issues/test_issue_439.cpp` (#439) — MutationBoundary coordination in
 - `tests/issues/test_issue_473.cpp` (#473) — test_issue_473.cpp — Verify Issue #473 Tier 1 security fixes
 - `tests/issues/test_issue_485.cpp` (#485) — SoA EnvFrame + AOT + scheduler/GC production-readiness close-out
 - `tests/issues/test_issue_521_observability.cpp` (#521) [obs_named] — Issue #521 — multi-fiber-orchestration-stats hash slice
