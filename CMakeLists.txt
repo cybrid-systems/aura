@@ -1279,12 +1279,9 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # stress loop is in test_issue_178; TSan/ASan:
 # tests/run_issue_218_tsan.sh
 
-# Issue #219: gap-buffer child_data_ for O(1) insert/remove
-# in FlatAST. Tests the GapBuffer<T> template defined in
-# src/core/gap_buffer.hh. Standalone test (no production
-# module imports), so it doesn't trigger the GCC 16.1
-# std module + P2996 reflection conflict.
-aura_add_issue_test_standalone(test_issue_219)
+# Issue #219 migrated to tests/domain/arena/test_arena_batch.cpp
+# (run_219_gap_buffer_child_data) — Wave 6 (#1957). Standalone
+# test entry removed; gap-buffer tests run via the arena batch.
 
 # Issue #220: per-node children linked list (Issue #179 Cycle 2).
 # Replaces FlatAST's std::pmr::vector<NodeId> child_data_ (with
@@ -1313,14 +1310,10 @@ aura_add_issue_test_standalone(test_issue_221)
 # stub that mirrors the production API for testing purposes.
 aura_add_issue_test_standalone(test_issue_222)
 
-# Issue #223: closure-bridge epoch counter for lifetime tracking
-# (Issue #180 Cycle 1). Tests bridge_epoch_ on ClosureBridgeData +
-# IRClosure + the bridge_epoch() / bump_bridge_epoch() / reset()
-# epoch tracking on CompilerService. Standalone test (no module
-# imports — avoids the GCC 16.1 std module + P2996 reflection
-# conflict). Uses a MockEpochTracker that mirrors the production
-# mutation_epoch_ / bridge_epoch() semantics.
-aura_add_issue_test_standalone(test_issue_223)
+# Issue #223 migrated to tests/domain/test_compact_batch.cpp
+# (run_223_bridge_epoch_tracking) — Wave 6 (#1957). Standalone
+# test entry removed; closure-bridge epoch tests run via the
+# compact batch.
 
 # Issue #224 cycle 2: shared_ptr-based bridge ownership.
 # Tests verify the new std::shared_ptr<const T> fields

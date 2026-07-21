@@ -16,8 +16,8 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 510 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **517** | |
+| `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
+| **Total scanned** | **518** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 8 | 0 | 5 | 13 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 155 | 0 | 1 | 156 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 1 | 47 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
@@ -111,7 +111,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **10**
 - Phase-slice files (`*_phase*`): **9**
 - Small files (< 4 KiB, possible thin probes): **6**
-- Existing `*_batch` drivers (migration milestones): **6**
+- Existing `*_batch` drivers (migration milestones): **7**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -155,6 +155,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/arena/test_compact_batch.cpp` → theme `arena_compaction`
 - `tests/domain/arena/test_compact_sweep_batch.cpp` → theme `arena_compaction`
 - `tests/domain/test_domain_gates_batch.cpp` → theme `mutation_dirty`
+- `tests/domain/test_fiber_integration_batch.cpp` → theme `fiber_orch`
 - `tests/domain/arena/test_gc_batch.cpp` → theme `arena_compaction`
 - `tests/issues/test_issue_1449_demotion_batch.cpp` → theme `observability`
 
@@ -165,6 +166,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/arena/test_compact_batch.cpp`
 - `tests/domain/arena/test_compact_sweep_batch.cpp`
 - `tests/domain/test_domain_gates_batch.cpp`
+- `tests/domain/test_fiber_integration_batch.cpp`
 - `tests/domain/arena/test_gc_batch.cpp`
 - `tests/domain/test_obs_schema_matrix.cpp`
 
@@ -393,11 +395,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_792.cpp` (#792) — test_issue_792.cpp — Issue #792: P0
 - `tests/issues/test_issue_804.cpp` (#804) — test_issue_804.cpp — Issue #804: P0 stdlib error
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (46)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (47)
 
 **Target:** tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume batch
 
 **Priority:** P1 — domain suite already collapses many obs gates
+
+#### domain/ (1)
+
+- `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — Consolidated closure-bridge Cycle-4 integration (Issue #226).
 
 #### issues/ (46)
 
