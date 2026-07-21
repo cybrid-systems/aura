@@ -109,7 +109,7 @@ ALLOWED_ROOT_OTHER = frozenset(
         "test-binding-allowlist.txt",
         "test_harness.hpp",
         "nodeview_wire.hh",
-        "test_issue_178_bridge.h",
+        # test_issue_178_bridge.h lives under tests/issues/ (next to the two TUs)
         "runtime_test_harness.c",
     }
 )

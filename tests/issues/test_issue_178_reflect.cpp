@@ -1,6 +1,7 @@
 // Non-module TU: P2996 reflection (Issue #268).
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -8,7 +9,7 @@
 
 #include "reflect/reflect.hh"
 #include "nodeview_wire.hh"
-#include "test_issue_178_bridge.h"
+#include "issues/test_issue_178_bridge.h"
 
 namespace {
 
