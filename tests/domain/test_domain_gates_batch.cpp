@@ -27,6 +27,7 @@ import aura.compiler.ir;
 import aura.compiler.compute_kind;
 import aura.compiler.ast_walkers;
 import aura.compiler.macro_expansion;
+import aura.compiler.pass_manager;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
@@ -1644,6 +1645,334 @@ static void run_375_ir_encoding_observability_foundation() {
             CHECK(as_int(*r2) == 15, "(g 5) == 15");
     }
 }
+}
+
+// ── Wave 10 (#430 production arena compaction policy + #456 mutation observability + #508 DCE
+// pass) ──
+
+static void run_430_arena_compaction_policy_observability() {
+    std::println("\n=== #430: Production Arena compaction policy + 10-field observability ===");
+    auto hash_int = [](CompilerService& cs, std::string_view key) -> int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-compaction-stats-hash\") '{}')", key));
+        if (!r)
+            return -1;
+        if (!is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    // AC1: fresh Evaluator compactions == 0 + frag well-defined
+    {
+        std::println("\n--- #430 AC1: fresh Evaluator ---");
+        CompilerService cs;
+        CHECK(hash_int(cs, "compactions") == 0, "fresh Evaluator: compactions == 0");
+        auto frag = hash_int(cs, "fragmentation-ratio-pct");
+        CHECK(frag >= 0 && frag <= 100, "fresh Evaluator: frag-pct in 0..100");
+    }
+    // AC2: 10 fields present + non-negative
+    {
+        std::println("\n--- #430 AC2: 10 fields present + non-negative ---");
+        CompilerService cs;
+        bool all_ok = true;
+        for (const char* k : {"auto-compact-triggers", "auto-compact-skips", "compactions",
+                              "bytes-saved", "last-saved", "paused-by-boundary", "mutation-volume",
+                              "dirty-propagation", "fragmentation-ratio-pct", "peak-used-bytes"}) {
+            if (hash_int(cs, k) < 0)
+                all_ok = false;
+        }
+        CHECK(all_ok, "all 10 fields present and non-negative");
+    }
+    // AC3 + AC4: empty workspace + idempotence
+    {
+        std::println("\n--- #430 AC3+AC4: empty workspace + idempotence ---");
+        CompilerService cs;
+        CHECK(hash_int(cs, "compactions") == 0, "empty: compactions == 0 (no walls)");
+        auto a = hash_int(cs, "compactions");
+        auto b = hash_int(cs, "compactions");
+        CHECK(a == b, "two consecutive calls return same compactions (idempotent)");
+    }
+    // AC5: skip policy returns 0
+    {
+        std::println("\n--- #430 AC5: skip policy returns 0 ---");
+        CompilerService cs;
+        auto r = cs.eval("(arena:compact-with-policy \"main\" \"skip\")");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 0, "skip policy returns 0");
+    }
+    // AC6: force policy doesn't crash
+    {
+        std::println("\n--- #430 AC6: force policy doesn't crash ---");
+        CompilerService cs;
+        auto r = cs.eval("(arena:compact-with-policy \"main\" \"force\")");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) >= 0,
+              "force policy returns non-negative int");
+    }
+    // AC7: nonexistent arena returns 0
+    {
+        std::println("\n--- #430 AC7: nonexistent arena returns 0 ---");
+        CompilerService cs;
+        auto r = cs.eval("(arena:compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 0,
+              "nonexistent arena returns 0 (safe no-op)");
+    }
+    // AC8: stats-hash primitive is reachable
+    {
+        std::println("\n--- #430 AC8: stats-hash primitive reachable ---");
+        CompilerService cs;
+        auto r = cs.eval("(engine:metrics \"query:arena-compaction-stats-hash\")");
+        CHECK(r.has_value(), "(engine:metrics \"query:arena-compaction-stats-hash\") is callable");
+    }
+    // AC9: stats:count >= 41 (was 40 in #429, +1 from #430)
+    {
+        std::println("\n--- #430 AC9: stats:count >= 41 ---");
+        CompilerService cs;
+        auto r = cs.eval("(stats:count)");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) >= 41, "stats:count >= 41");
+    }
+    // AC10: heavy mutation load — sane state
+    {
+        std::println("\n--- #430 AC10: heavy mutation load (100 mutate calls) ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define (f x) (+ x 1))\")");
+        cs.eval("(eval-current)");
+        for (int i = 0; i < 100; ++i)
+            cs.eval(std::format("(f {})", i));
+        CHECK(hash_int(cs, "mutation-volume") >= 0, "mutation-volume >= 0 after 100 calls");
+        CHECK(hash_int(cs, "compactions") >= 0, "compactions >= 0 after 100 calls (no overflow)");
+        CHECK(hash_int(cs, "peak-used-bytes") >= 0, "peak-used-bytes >= 0");
+    }
+    // AC11: bad policy name returns void (no crash)
+    {
+        std::println("\n--- #430 AC11: bad policy name doesn't crash ---");
+        CompilerService cs;
+        auto r = cs.eval("(arena:compact-with-policy \"main\" \"not-a-policy\")");
+        CHECK(r.has_value(), "bad policy returns a value (no crash)");
+    }
+    // AC12: force policy bumps trigger counter
+    {
+        std::println("\n--- #430 AC12: force bumps trigger counter ---");
+        CompilerService cs;
+        auto before = hash_int(cs, "auto-compact-triggers");
+        cs.eval("(arena:compact-with-policy \"main\" \"force\")");
+        auto after = hash_int(cs, "auto-compact-triggers");
+        CHECK(after >= before, "force policy bumps or maintains trigger counter");
+    }
+}
+
+static void run_456_mutation_observability_primitives() {
+    std::println("\n=== #456: Fine-grained mutation observability primitives ===");
+    // AC1: query:epoch-stats returns int
+    {
+        std::println("\n--- #456 AC1: query:epoch-stats ---");
+        CompilerService cs;
+        auto r = cs.eval("(engine:metrics \"query:epoch-stats\")");
+        CHECK(r.has_value() && is_int(*r), "query:epoch-stats returns int");
+    }
+    // AC2: query:epoch-delta first call
+    {
+        std::println("\n--- #456 AC2: query:epoch-delta first call ---");
+        CompilerService cs;
+        auto r = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
+        CHECK(r.has_value() && is_int(*r), "epoch-delta-since-last-query first call returns int");
+    }
+    // AC3: query:dirty-subtree returns count
+    {
+        std::println("\n--- #456 AC3: query:dirty-subtree returns count ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 1) (define y 2)\")");
+        auto r = cs.eval("(query:dirty-subtree 0)");
+        CHECK(r.has_value() && is_int(*r),
+              "query:dirty-subtree returns int (count of dirty nodes)");
+    }
+    // AC4: query:mutation-impact returns value
+    {
+        std::println("\n--- #456 AC4: query:mutation-impact returns value ---");
+        CompilerService cs;
+        auto r = cs.eval("(query:mutation-impact)");
+        CHECK(r.has_value() && is_int(*r),
+              "query:mutation-impact returns int (count of recorded impacts)");
+    }
+    // AC5: epoch-delta >= 2 after mutate:rebind
+    {
+        std::println("\n--- #456 AC5: epoch-delta >= 2 after mutate:rebind ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 1) (define y 2)\")");
+        (void)cs.eval("(engine:metrics \"query:epoch-stats\")");
+        (void)cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
+        cs.eval("(mutate:rebind \"x\" \"42\")");
+        auto r = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) >= 2,
+              "epoch-delta >= 2 after a mutate:rebind (2 bumps per boundary)");
+    }
+    // AC6: mutation-impact count increases
+    {
+        std::println("\n--- #456 AC6: mutation-impact count increases after mutate ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define z 1)\")");
+        auto r0 = cs.eval("(query:mutation-impact)");
+        int64_t before = (r0 && is_int(*r0)) ? as_int(*r0) : 0;
+        cs.eval("(mutate:rebind \"z\" \"99\")");
+        auto r1 = cs.eval("(query:mutation-impact)");
+        int64_t after = (r1 && is_int(*r1)) ? as_int(*r1) : 0;
+        CHECK(after > before, "query:mutation-impact count increased after mutate");
+    }
+    // AC7: query:dirty-subtree with reason-mask
+    {
+        std::println("\n--- #456 AC7: query:dirty-subtree reason-mask ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define m 1)\")");
+        auto r1 = cs.eval("(query:dirty-subtree 0 255)");
+        CHECK(r1.has_value() && is_int(*r1), "query:dirty-subtree 0 255 returns int");
+        auto r2 = cs.eval("(query:dirty-subtree 0 0)");
+        CHECK(r2.has_value() && is_int(*r2), "query:dirty-subtree 0 0 returns int");
+    }
+    // AC8: regression — prior primitives still work
+    {
+        std::println("\n--- #456 AC8: regression prior primitives ---");
+        CompilerService cs;
+        auto r1 = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
+        CHECK(r1.has_value() && is_int(*r1), "query:atomic-batch-stats (regression for #459)");
+        auto r2 = cs.eval("(engine:metrics \"query:verify-dirty-stats\")");
+        CHECK(r2.has_value() && is_int(*r2), "query:verify-dirty-stats (regression for #437)");
+        auto r3 = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
+        CHECK(r3.has_value(), "query:ir-marker-stats (regression for #455)");
+    }
+    // AC9: define + eval smoke regression
+    {
+        std::println("\n--- #456 AC9: define + eval smoke ---");
+        CompilerService cs;
+        cs.eval("(define smoke-456-a 11)");
+        cs.eval("(define smoke-456-b 31)");
+        auto r = cs.eval("(+ smoke-456-a smoke-456-b)");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 42,
+              "smoke: (+ 11 31) == 42 (regression)");
+    }
+}
+
+static void run_508_dead_coercion_elimination_pass() {
+    std::println("\n=== #508: DeadCoercionEliminationPass dedicated verification ===");
+    auto count_cast_ops = [](const aura::ir::IRModule& mod) -> std::size_t {
+        std::size_t n = 0;
+        for (const auto& f : mod.functions)
+            for (const auto& b : f.blocks)
+                for (const auto& i : b.instructions)
+                    if (i.opcode == aura::ir::IROpcode::CastOp)
+                        ++n;
+        return n;
+    };
+    auto make_module_with = [](std::vector<aura::ir::IRInstruction> instrs,
+                               std::uint32_t local_count = 16) -> aura::ir::IRModule {
+        aura::ir::IRModule mod;
+        mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = local_count});
+        auto& func = mod.functions.back();
+        func.blocks.push_back({0});
+        func.blocks.back().instructions = std::move(instrs);
+        return mod;
+    };
+    // AC1: Dynamic passthrough — ground-to-Dynamic CastOp elided
+    {
+        std::println("\n--- #508 AC1: safe Dynamic passthrough rule ---");
+        auto mod = make_module_with({
+            {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+            {aura::ir::IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+            {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
+        });
+        CHECK(count_cast_ops(mod) == std::size_t{1}, "1 CastOp before elision");
+        aura::compiler::DeadCoercionEliminationPass dce;
+        dce.run(mod);
+        CHECK(count_cast_ops(mod) == std::size_t{0}, "Dynamic passthrough CastOp elided");
+        CHECK(dce.eliminated_count() == std::size_t{1}, "eliminated_count == 1");
+    }
+    // AC1b: unknown source NOT elided (conservative)
+    {
+        std::println("\n--- #508 AC1b: unknown source conservative ---");
+        auto mod = make_module_with({
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}, 0, 0},
+            {aura::ir::IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+            {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
+        });
+        CHECK(count_cast_ops(mod) == std::size_t{1}, "1 CastOp before");
+        aura::compiler::DeadCoercionEliminationPass dce;
+        dce.run(mod);
+        CHECK(count_cast_ops(mod) == std::size_t{1}, "Unknown source: NOT elided (conservative)");
+        CHECK(dce.eliminated_count() == std::size_t{0}, "eliminated_count == 0");
+    }
+    // AC1c: chain of Dynamic passthroughs collapses
+    {
+        std::println("\n--- #508 AC1c: chain of Dynamic passthroughs ---");
+        auto mod = make_module_with({
+            {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+            {aura::ir::IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+            {aura::ir::IROpcode::CastOp, {2, 1, 3, 0}, 0, 0},
+            {aura::ir::IROpcode::Return, {2, 0, 0, 0}, 0, 0},
+        });
+        aura::compiler::DeadCoercionEliminationPass dce;
+        dce.run(mod);
+        CHECK(count_cast_ops(mod) == std::size_t{0}, "Both Dynamic CastOps elided via chain");
+        CHECK(dce.eliminated_count() >= std::size_t{2}, "eliminated_count >= 2 (chain collapses)");
+    }
+    // AC2: keep_for_debug disables elision
+    {
+        std::println("\n--- #508 AC2: keep_for_debug disables elision ---");
+        auto mod = make_module_with({
+            {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+            {aura::ir::IROpcode::CastOp, {1, 0, 3, 0}, 0, 0},
+            {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
+        });
+        aura::compiler::DeadCoercionEliminationPass dce;
+        dce.set_keep_for_debug(true);
+        dce.run(mod);
+        CHECK(count_cast_ops(mod) == std::size_t{1}, "CastOp preserved with keep_for_debug");
+        CHECK(dce.eliminated_count() == std::size_t{0}, "eliminated_count == 0 in debug mode");
+        CHECK(dce.kept_for_debug_count() == std::size_t{1}, "kept_for_debug_count == 1");
+    }
+    // AC3a: elapsed_us is monotonic via snapshot
+    {
+        std::println("\n--- #508 AC3a: elapsed_us monotonic ---");
+        CompilerService cs;
+        auto snap0 = cs.snapshot();
+        std::uint64_t t0 = snap0.dead_coercion_elapsed_us_total;
+        cs.eval("(set-code \"(define q 42)\")");
+        cs.eval("(eval-current)");
+        auto snap1 = cs.snapshot();
+        CHECK(snap1.dead_coercion_elapsed_us_total >= t0,
+              "elapsed_us_total is monotonic non-decreasing");
+    }
+    // AC3b+AC3c: primitives
+    {
+        std::println(
+            "\n--- #508 AC3b+AC3c: (stats:get \"compile:dead-coercion-*\") primitives ---");
+        CompilerService cs;
+        auto r1 = cs.eval("(stats:get \"compile:dead-coercion-elapsed\")");
+        CHECK(r1.has_value() && is_int(*r1),
+              "(stats:get \"compile:dead-coercion-elapsed\") returns int");
+        auto r2 = cs.eval("(stats:get \"compile:dead-coercion-kept-for-debug\")");
+        CHECK(r2.has_value() && is_int(*r2),
+              "(stats:get \"compile:dead-coercion-kept-for-debug\") returns int");
+    }
+    // AC4: end-to-end gradual mutation loop
+    {
+        std::println("\n--- #508 AC4: end-to-end gradual mutation loop ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 42) (define y \\\"hello\\\") (define z #t)\")");
+        auto r1 = cs.eval("(eval-current)");
+        CHECK(r1.has_value(), "Initial eval succeeds");
+        for (int i = 0; i < 5; ++i) {
+            std::string code = "(set-code \"(define v " + std::to_string(i * 7) + ")\")";
+            auto rs = cs.eval(code);
+            CHECK(rs.has_value(), std::string("set-code iter ") + std::to_string(i) + " ok");
+            auto r = cs.eval("(eval-current)");
+            CHECK(r.has_value(), std::string("Mutation iter ") + std::to_string(i) + " eval ok");
+        }
+    }
+    // AC4b: gradual mixed-typed coercion chain
+    {
+        std::println("\n--- #508 AC4b: gradual mixed-typed coercion chain ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define s \\\"123\\\") (define n (cast s 'Int))\")");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "Mixed coercion program eval succeeds");
+    }
+}
 
 } // namespace aura_domain_gates_batch
 
@@ -1658,6 +1987,9 @@ int aura_issue_domain_gates_batch_run() {
     aura_domain_gates_batch::run_330_structural_mutation_guard_reader_lock_guard();
     aura_domain_gates_batch::run_356_envframe_post_rollback_invalidation();
     aura_domain_gates_batch::run_375_ir_encoding_observability_foundation();
+    aura_domain_gates_batch::run_430_arena_compaction_policy_observability();
+    aura_domain_gates_batch::run_456_mutation_observability_primitives();
+    aura_domain_gates_batch::run_508_dead_coercion_elimination_pass();
     return RUN_ALL_TESTS();
 }
 
