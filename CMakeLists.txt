@@ -1803,6 +1803,10 @@ add_dependencies(all_test_issue_targets test_voxel_volume)
 # Issue #1983 / Epic #1979: Amanatides–Woo DDA voxel raycast (header-only).
 aura_add_issue_test(test_voxel_raycast)
 add_dependencies(all_test_issue_targets test_voxel_raycast)
+
+# Issue #1984 / Epic #1979: materials / face shade / fog / sky (header-only).
+aura_add_issue_test(test_voxel_shade)
+add_dependencies(all_test_issue_targets test_voxel_shade)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 

@@ -75,13 +75,16 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
    `src/renderer/voxel_raycast.hh` — `Hit` / `raycast_voxel` / `raycast_frame` / counters  
    Amanatides–Woo; solid = non-air; start-inside → `VoxelFace::Inside`; no heap.  
    Tests: `tests/arena/test_voxel_raycast.cpp`
-5. Shading / fog / sky
+5. **#1984** shading / fog / sky — landed (header-only)  
+   `src/renderer/voxel_shade.hh` — `Material` / `ShadeParams` / `shade_hit` / `shade_sky` / `shade_ray`  
+   Face factors (+Y 1.0 / sides 0.8 / −Y 0.6), exp fog, zenith→horizon sky, ambient.  
+   Tests: `tests/arena/test_voxel_shade.cpp`
 6. Frame loop + Aura surface
 
 ## Related
 
 - SlimSurface: #1448 / #1449
 - TUI original series: #1331–#1343 / #1353
-- 3D rendering epic: #1979 / children #1980–#1983
+- 3D rendering epic: #1979 / children #1980–#1984
 - Sibling deferred domains: #1968–#1976
 - Orch multi-agent remove (contrast): #1966
