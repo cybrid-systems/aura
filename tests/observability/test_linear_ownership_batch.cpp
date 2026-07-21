@@ -1245,6 +1245,39 @@ static void run_1417_linear_refinement_smoke() {
     CHECK(s.has_value(), "linear-ownership-stats reachable");
 }
 
+
+// Wave 58 (#1957): #1383 #1387 #1478 from orphan range batches
+static void run_1383_disabled_mode_warn_smoke() {
+    std::println("\n=== #1383: linear disabled-mode warn soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (leak) (let ((x (Linear 1))) 0))\")").has_value(),
+          "set-code Linear");
+    (void)cs.eval("(typecheck-current)");
+    auto s = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(s.has_value(), "linear-ownership-stats reachable");
+}
+
+static void run_1387_type_driven_linear_smoke() {
+    std::println("\n=== #1387: type-driven linear discovery soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (ok) (let ((x (Linear 1))) (move x)))\")").has_value(),
+          "set-code move");
+    (void)cs.eval("(typecheck-current)");
+    auto s = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(s.has_value(), "linear-ownership-stats after type-driven path");
+}
+
+static void run_1478_linear_post_mutate_smoke() {
+    std::println("\n=== #1478: linear_post_mutate_enforce soft smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // NULL_ENV_ID safety net (AC3-style soft)
+    CHECK(ev.linear_post_mutate_enforce(aura::compiler::NULL_ENV_ID),
+          "NULL_ENV_ID enforce true (safety)");
+    auto s = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(s.has_value(), "linear-ownership-stats");
+}
+
 } // namespace aura_linear_ownership_batch
 
 int main() {
@@ -1263,5 +1296,9 @@ int main() {
     aura_linear_ownership_batch::run_1535_linear_dual_epoch_fence_smoke();
     aura_linear_ownership_batch::run_1539_linear_soa_bind_smoke();
     aura_linear_ownership_batch::run_1417_linear_refinement_smoke();
+    // Wave 58 linear_ownership folds (orphan range batches)
+    aura_linear_ownership_batch::run_1383_disabled_mode_warn_smoke();
+    aura_linear_ownership_batch::run_1387_type_driven_linear_smoke();
+    aura_linear_ownership_batch::run_1478_linear_post_mutate_smoke();
     return RUN_ALL_TESTS();
 }

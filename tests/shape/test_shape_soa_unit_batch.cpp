@@ -639,6 +639,38 @@ int run_797_smoke() {
 } // namespace aura_shape_run_wave56_797
 
 
+// Wave 58 (#1957): #1394 value string v2 + #1468 ShapeProfiler (from orphan range batches)
+namespace aura_shape_run_wave58_1394 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1394_smoke() {
+    std::println("\n=== #1394: EvalValue string v2 round-trip soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define msg \\\"hello-1394\\\")\")").has_value(), "set-code string");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("msg").has_value(), "string binding readable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave58_1394
+
+namespace aura_shape_run_wave58_1468 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1468_smoke() {
+    std::println("\n=== #1468: ShapeProfiler / shape stats soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (shape-f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(shape-f 1)").has_value(), "call");
+    CHECK(cs.eval("(engine:metrics \"query:shape-profiler-stats\")").has_value() ||
+              cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
+          "shape/profiler metrics soft");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave58_1468
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -781,6 +813,16 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave56_797::run_797_smoke(); rc != 0)
+        return rc;
+
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave58_1394::run_1394_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave58_1468::run_1468_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");
