@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 611 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 610 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **618** | |
+| **Total scanned** | **617** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 57 | 0 | 0 | 57 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 200 | 0 | 1 | 201 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 199 | 0 | 1 | 200 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 558 | Integration path via `CompilerService` / eval |
+| `CompilerService` | 557 | Integration path via `CompilerService` / eval |
 | `test_harness` | 351 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 160 | `aura_issue_*_run()` entry for issue bundles |
+| `bundle_run_fn` | 159 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
 | `own_main` | 55 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 400
+- `integration`: 399
 - `unknown`: 118
 - `unit`: 84
 - `issue_specific`: 7
@@ -82,9 +82,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 398
-- `aura.compiler.service` — 374
-- `aura.compiler.evaluator` — 346
+- `aura.compiler.value` — 397
+- `aura.compiler.service` — 373
+- `aura.compiler.evaluator` — 345
 - `std` — 341
 - `aura.core.ast` — 245
 - `aura.core.arena` — 127
@@ -689,7 +689,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (201)
+### `observability` — Observability / metrics / query:*-stats (200)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -699,7 +699,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (200)
+#### issues/ (199)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -844,7 +844,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_606.cpp` (#606) — concept-constrained visitor refactor + hot-path Contracts adoption
 - `tests/issues/test_issue_614.cpp` (#614) — Scope-limited close matching the #601 / #491 / #479 / #604 / #606 pattern:
 - `tests/issues/test_issue_615.cpp` (#615) — Scope-limited close matching the #601 / #491 / #479 / #604 / #606 / #614
-- `tests/issues/test_issue_616.cpp` (#616) — parse-verification-result, query:eda-hw-stats)
 - `tests/issues/test_issue_621.cpp` (#621) — query:pattern-index-stats-hash primitive
 - `tests/issues/test_issue_622.cpp` (#622) — query:atomic-batch-stats-hash structured companion
 - `tests/issues/test_issue_624.cpp` (#624) — shape-stability + JIT observability surface that #624 AC4 lists,
