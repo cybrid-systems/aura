@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 449 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 441 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **457** | |
+| **Total scanned** | **449** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 139 | 0 | 1 | 140 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 131 | 0 | 1 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 405 | Integration path via `CompilerService` / eval |
-| `test_harness` | 249 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 120 | `aura_issue_*_run()` entry for issue bundles |
+| `CompilerService` | 397 | Integration path via `CompilerService` / eval |
+| `test_harness` | 243 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 119 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 25 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 291
+- `integration`: 283
 - `unknown`: 94
 - `unit`: 57
 - `issue_specific`: 6
@@ -64,7 +64,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 231
+- `test_harness.hpp` — 225
 - `compiler/observability_metrics.h` — 41
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 14
@@ -82,13 +82,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 270
-- `aura.compiler.service` — 258
-- `aura.compiler.evaluator` — 245
-- `std` — 232
-- `aura.core.ast` — 158
-- `aura.core.type` — 81
-- `aura.core.arena` — 77
+- `aura.compiler.value` — 262
+- `aura.compiler.service` — 250
+- `aura.compiler.evaluator` — 237
+- `std` — 224
+- `aura.core.ast` — 150
+- `aura.core.type` — 79
+- `aura.core.arena` — 75
 - `aura.compiler.ir` — 41
 - `aura.core` — 31
 - `aura.compiler.type_checker` — 27
@@ -108,7 +108,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ## Multi-file issues, phase slices, low-value signals
 
-- Issue numbers with **multiple** `tests/issues/` files: **9**
+- Issue numbers with **multiple** `tests/issues/` files: **8**
 - Phase-slice files (`*_phase*`): **9**
 - Small files (< 4 KiB, possible thin probes): **5**
 - Existing `*_batch` drivers (migration milestones): **6**
@@ -122,7 +122,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - **#159** (2): `test_issue_159.cpp`, `test_issue_159_bench.cpp`
 - **#197** (2): `test_issue_197.cpp`, `test_issue_197_observability.cpp`
 - **#213** (2): `test_issue_213.cpp`, `test_issue_213_panic_fiber.cpp`
-- **#412** (2): `test_issue_412.cpp`, `test_issue_412_followup_1.cpp`
 - **#1496** (2): `test_issue_1496.cpp`, `test_issue_1496_concurrent_epoch_safety.cpp`
 
 ### Smallest issue tests (triage for obs-matrix fold or drop)
@@ -589,7 +588,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (140)
+### `observability` — Observability / metrics / query:*-stats (132)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -599,7 +598,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (139)
+#### issues/ (131)
 
 - `tests/issues/test_issue_1460.cpp` (#1460) — test_issue_1460.cpp — Issue #1460:
 - `tests/issues/test_issue_1461.cpp` (#1461) — test_issue_1461.cpp — Issue #1461:
@@ -644,21 +643,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_387.cpp` (#387) — test_issue_387.cpp — Issue #387: Type Dependency Graph
 - `tests/issues/test_issue_389.cpp` (#389) — test_issue_389.cpp — Issue #389: `(compile:snapshot)` Aura
 - `tests/issues/test_issue_390.cpp` (#390) — test_issue_390.cpp — Issue #390: Auto-populate schema in
-- `tests/issues/test_issue_409.cpp` (#409) — test_issue_409.cpp — Issue #409: Fine-grained constraint
 - `tests/issues/test_issue_411.cpp` (#411) — test_issue_411.cpp — Issue #411 scope-limited close:
 - `tests/issues/test_issue_411_followup_1.cpp` (#411) [followup] — test_issue_411_followup_1.cpp — Issue #411 follow-up #1
 - `tests/issues/test_issue_411_followup_2.cpp` (#411) [followup] — test_issue_411_followup_2.cpp — Issue #411 fu1
 - `tests/issues/test_issue_411_followup_3.cpp` (#411) [followup] — test_issue_411_followup_3.cpp — Issue #411 fu1
 - `tests/issues/test_issue_412.cpp` (#412) — test_issue_412.cpp — Issue #412 scope-limited close:
-- `tests/issues/test_issue_412_followup_1.cpp` (#412) [followup] — test_issue_412_followup_1.cpp — Issue #412 follow-up
-- `tests/issues/test_issue_426.cpp` (#426) — minimal re-lower for AI mutate:rebind/set-body
 - `tests/issues/test_issue_428_closure.cpp` (#428) — test_issue_428_closure.cpp — Issue #428: Strengthen Closure
-- `tests/issues/test_issue_443.cpp` (#443) — - query:verify-tool-stats returns an integer
 - `tests/issues/test_issue_444_strategy_evolution.cpp` (#444) — test_issue_444_strategy_evolution.cpp — Issue #444:
-- `tests/issues/test_issue_447.cpp` (#447) — query:pattern on large ASTs (P0). Validates:
-- `tests/issues/test_issue_457.cpp` (#457) — counters + StableNodeRef invalidation metrics
-- `tests/issues/test_issue_458.cpp` (#458) — + observability stats.
-- `tests/issues/test_issue_460.cpp` (#460) — dirty mask + dep_graph impact analysis.
 - `tests/issues/test_issue_462_shape_aware_folding.cpp` (#462) — test_issue_462_shape_aware_folding.cpp — Issue #462:
 - `tests/issues/test_issue_465_cxx26_hotpath.cpp` (#465) — test_issue_465_cxx26_hotpath.cpp — Issue #465:
 - `tests/issues/test_issue_469.cpp` (#469) — - verify:parse-coverage-feedback marks
