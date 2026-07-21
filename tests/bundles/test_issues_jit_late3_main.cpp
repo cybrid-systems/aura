@@ -19,12 +19,10 @@ extern int aura_issue_aura_result_error_policy_run();
 extern int aura_issue_open_issues_phase1_batch_run();
 extern int aura_issue_804_run();
 extern int aura_issue_760_run();
-extern int aura_issue_660_cache_define_bundle_run();
 extern int aura_issue_667_primitives_apply_stats_run();
 extern int aura_issue_668_run();
 extern int aura_issue_669_run();
 extern int aura_issue_670_run();
-extern int aura_issue_671_run();
 extern int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run();
 extern int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run();
 extern int aura_issue_672_run();
@@ -43,7 +41,6 @@ extern int aura_issue_longrunning_infra_primitives_run();
 extern int aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run();
 extern int aura_issue_runtime_concurrent_full_cycle_chaos_run();
 extern int aura_issue_485_run();
-extern int aura_issue_489_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -63,12 +60,10 @@ int main() {
         {"test_open_issues_phase1_batch", aura_issue_open_issues_phase1_batch_run},
         {"test_issue_804", aura_issue_804_run},
         {"test_issue_760", aura_issue_760_run},
-        {"test_issue_660_cache_define_bundle", aura_issue_660_cache_define_bundle_run},
         {"test_issue_667_primitives_apply_stats", aura_issue_667_primitives_apply_stats_run},
         {"test_issue_668", aura_issue_668_run},
         {"test_issue_669", aura_issue_669_run},
         {"test_issue_670", aura_issue_670_run},
-        {"test_issue_671", aura_issue_671_run},
         {"test_atomic_batch_snapshot_stable_ref_ai_loops",
          aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run},
         {"test_stable_ref_cow_subworkspace_concurrent_ai",
@@ -100,7 +95,6 @@ int main() {
         {"test_runtime_concurrent_full_cycle_chaos",
          aura_issue_runtime_concurrent_full_cycle_chaos_run},
         {"test_issue_485", aura_issue_485_run},
-        {"test_issue_489", aura_issue_489_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late3", members, n);
