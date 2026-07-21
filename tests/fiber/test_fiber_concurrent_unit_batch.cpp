@@ -609,6 +609,24 @@ int run_1404_restamp_checkpoint_contract_smoke() {
 }
 } // namespace aura_fiber_run_wave37_1404
 
+// Wave 38 (#1957): fiber_orch — #164 fiber:join spin-fallback elimination smoke
+namespace aura_fiber_run_wave38_164 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_164_fiber_join_smoke() {
+    std::println("\n=== #164: fiber:join basic smoke ===");
+    CompilerService cs;
+    auto v = cs.eval("(fiber:join (fiber:spawn (lambda () (+ 1 2))))");
+    CHECK(v && is_int(*v) && as_int(*v) == 3, "fiber:join spawn (+ 1 2) → 3");
+    auto done = cs.eval("(let ((f (fiber:spawn (lambda () 42)))) (fiber:join f))");
+    CHECK(done && is_int(*done) && as_int(*done) == 42, "join already-done target → 42");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave38_164
+
 int main() {
 
 
@@ -665,6 +683,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave37_1404 ########");
     if (int rc = aura_fiber_run_wave37_1404::run_1404_restamp_checkpoint_contract_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave38_164 ########");
+    if (int rc = aura_fiber_run_wave38_164::run_164_fiber_join_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

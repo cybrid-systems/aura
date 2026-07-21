@@ -1207,6 +1207,29 @@ static void run_1535_linear_dual_epoch_fence_smoke() {
           "stale check counter non-decreasing");
 }
 
+// Wave 38 (#1957): #1539 linear ownership SoA parallel bindings smoke
+static void run_1539_linear_soa_bind_smoke() {
+    std::println("\n=== #1539: bindings_linear_ownership_state_ SoA smoke ===");
+    constexpr std::uint8_t kBorrowed = 2;
+    aura::compiler::EnvFrame fr;
+    fr.bind_symid_with_linear_state(1, make_int(10), kOwned);
+    fr.bind_symid_with_linear_state(2, make_int(20), kBorrowed);
+    CHECK(fr.bindings_symid_.size() == 2, "2 symid bindings");
+    CHECK(fr.bindings_linear_ownership_state_.size() == 2, "2 linear states");
+    CHECK(fr.bindings_linear_ownership_state_[0] == kOwned, "state[0]=Owned");
+    CHECK(fr.bindings_linear_ownership_state_[1] == kBorrowed, "state[1]=Borrowed");
+    CHECK(fr.set_linear_ownership_state(1, kMoved), "set Moved on 1");
+    CHECK(fr.bindings_linear_ownership_state_[0] == kMoved, "state is Moved");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    aura::compiler::Env src;
+    src.bind_symid_with_linear_state(100, make_int(1), kOwned);
+    src.set_linear_ownership_state(100, kMoved);
+    auto id = ev.alloc_env_frame_from_env(src);
+    CHECK(id != NULL_ENV_ID, "frame from env");
+    CHECK(!ev.linear_post_mutate_enforce(id), "Moved binding → enforce false");
+}
+
 } // namespace aura_linear_ownership_batch
 
 int main() {
@@ -1223,5 +1246,6 @@ int main() {
     aura_linear_ownership_batch::run_1410_linear_type_driven_discovery_smoke();
     aura_linear_ownership_batch::run_1458_linear_ownership_post_mutate_smoke();
     aura_linear_ownership_batch::run_1535_linear_dual_epoch_fence_smoke();
+    aura_linear_ownership_batch::run_1539_linear_soa_bind_smoke();
     return RUN_ALL_TESTS();
 }

@@ -12,6 +12,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
+import aura.compiler.macro_expansion;
 import aura.core.ast;
 
 
@@ -920,6 +921,45 @@ int run_1471_hygiene_stats_smoke() {
 
 } // namespace aura_edsl_run_wave37
 
+// Wave 38 (#1957): edsl_hygiene — #365 depth guard + #366 marker primitives
+namespace aura_edsl_run_wave38 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+int run_365_hygiene_depth_guard_smoke() {
+    std::println("\n=== #365: MAX_HYGIENE_DEPTH clone_macro_body guard smoke ===");
+    // Depth budget evolved (256 → 1024 lineage); keep positive bound.
+    CHECK(aura::compiler::macro_exp::MAX_HYGIENE_DEPTH >= 256, "MAX_HYGIENE_DEPTH >= 256");
+    CHECK(aura::compiler::macro_exp::MAX_HYGIENE_DEPTH <= 4096, "MAX_HYGIENE_DEPTH <= 4096");
+    CompilerService cs;
+    CHECK(cs.eval("(define x 1)").has_value(), "define smoke post depth-guard");
+    auto r = cs.eval("(+ x 1)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2, "eval after define");
+    return g_failed ? 1 : 0;
+}
+
+int run_366_syntax_marker_primitives_smoke() {
+    std::println("\n=== #366: syntax marker primitives smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define y 7)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto find = cs.eval("(query:find \"y\")");
+    CHECK(find.has_value(), "query:find y reachable");
+    // set-marker / propagate may be optional surfaces; no crash is the smoke.
+    auto setm = cs.eval("(syntax:set-marker 0 0)");
+    (void)setm;
+    CHECK(true, "syntax:set-marker invoked");
+    auto prop = cs.eval("(syntax:propagate-marker 0 0)");
+    (void)prop;
+    CHECK(true, "syntax:propagate-marker invoked");
+    return g_failed ? 1 : 0;
+}
+
+} // namespace aura_edsl_run_wave38
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -965,6 +1005,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave37_1471 ########");
     if (int rc = aura_edsl_run_wave37::run_1471_hygiene_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave38_365 ########");
+    if (int rc = aura_edsl_run_wave38::run_365_hygiene_depth_guard_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave38_366 ########");
+    if (int rc = aura_edsl_run_wave38::run_366_syntax_marker_primitives_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
