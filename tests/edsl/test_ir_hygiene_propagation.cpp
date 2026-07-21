@@ -1,3 +1,4 @@
+// Issue #1610 (#1978 renamed): issue# moved from filename to header.
 // @category: integration
 // @reason: Issue #1610 — SyntaxMarker::MacroIntroduced full propagation
 // AST→IR→JIT/AOT + provenance stamp + authoritative ir-hygiene-stats

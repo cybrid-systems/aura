@@ -1,3 +1,4 @@
+// Issue #422 (#1978 renamed): issue# moved from filename to header.
 // test_hygiene_violation_closed_loop_422.cpp
 // Issue #422: Hygiene violation metrics + automatic
 // detection in MutationBoundaryGuard mutate paths.

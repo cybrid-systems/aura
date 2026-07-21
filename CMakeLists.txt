@@ -1972,14 +1972,14 @@ aura_issue_test_link_llvm_jit(test_envframe_dualpath_stale_closed_loop_418)
 aura_add_issue_test(test_defuse_version_closed_loop_419)
 aura_issue_test_link_llvm_jit(test_defuse_version_closed_loop_419)
 # Issue #420: MacroIntroduced end-to-end hygiene contract closed loop.
-aura_add_issue_test(test_macro_hygiene_contract_closed_loop_420)
-aura_issue_test_link_llvm_jit(test_macro_hygiene_contract_closed_loop_420)
+aura_add_issue_test(test_macro_hygiene_contract_closed_loop)
+aura_issue_test_link_llvm_jit(test_macro_hygiene_contract_closed_loop)
 # Issue #421: query:pattern recursive MacroIntroduced filter closed loop.
-aura_add_issue_test(test_pattern_macro_filter_closed_loop_421)
-aura_issue_test_link_llvm_jit(test_pattern_macro_filter_closed_loop_421)
+aura_add_issue_test(test_pattern_macro_filter_closed_loop)
+aura_issue_test_link_llvm_jit(test_pattern_macro_filter_closed_loop)
 # Issue #422: Hygiene violation detection in mutate/Guard paths.
-aura_add_issue_test(test_hygiene_violation_closed_loop_422)
-aura_issue_test_link_llvm_jit(test_hygiene_violation_closed_loop_422)
+aura_add_issue_test(test_hygiene_violation_closed_loop)
+aura_issue_test_link_llvm_jit(test_hygiene_violation_closed_loop)
 # Issue #423: query:pattern structural pre-index closed loop.
 aura_add_issue_test(test_pattern_structural_index_closed_loop_423)
 aura_issue_test_link_llvm_jit(test_pattern_structural_index_closed_loop_423)
@@ -2174,7 +2174,7 @@ aura_issue_test_link_llvm_jit(test_orchestration_steal_boundary)
 # pass_manager.ixx 3 paired bumps + lowering.ixx 2 paired bumps) are fresh
 # work; AC1/AC2/AC5/AC6 verify predecessor coverage. Complements the
 # existing IR hygiene test suite (test_production_safety_1047_1071.cpp +
-# test_ir_hygiene_propagation_1610.cpp + test_fiber_macro_hygiene_refresh_
+# test_ir_hygiene_propagation.cpp + test_fiber_macro_hygiene_refresh_
 # 1612.cpp + test_macro_hygiene_closedloop_health_1613.cpp + test_macro_
 # hygiene_contract_closed_loop_420.cpp + test_hygiene_violation_closed_loop_
 # 422.cpp) by adding the per-CompilerMetrics IR-hygiene observability hooks.
@@ -4788,13 +4788,10 @@ aura_add_issue_test(test_envframe_resolve_distinction_1890)
 aura_issue_test_link_llvm_jit(test_envframe_resolve_distinction_1890)
 add_dependencies(all_test_issue_targets test_envframe_resolve_distinction_1890)
 # Issue #1891: MacroIntroduced e2e AST→IR→JIT/ClosureBridge hygiene propagation.
-aura_add_issue_test(test_ir_macro_hygiene_e2e_1891)
-aura_issue_test_link_llvm_jit(test_ir_macro_hygiene_e2e_1891)
-add_dependencies(all_test_issue_targets test_ir_macro_hygiene_e2e_1891)
+aura_add_issue_test(test_ir_macro_hygiene_e2e)
+aura_issue_test_link_llvm_jit(test_ir_macro_hygiene_e2e)
+add_dependencies(all_test_issue_targets test_ir_macro_hygiene_e2e)
 # Issue #1892: query:pattern default MacroIntroduced hygiene mandate (self-evo).
-aura_add_issue_test(test_query_pattern_hygiene_mandate_1892)
-aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate_1892)
-add_dependencies(all_test_issue_targets test_query_pattern_hygiene_mandate_1892)
 # Issue #1893: atomic-batch marker/provenance/dirty metadata snapshot+restore.
 aura_add_issue_test(test_atomic_batch_metadata_1893)
 aura_issue_test_link_llvm_jit(test_atomic_batch_metadata_1893)
@@ -4842,9 +4839,9 @@ aura_add_issue_test(test_atomic_batch_pattern_1913)
 aura_issue_test_link_llvm_jit(test_atomic_batch_pattern_1913)
 add_dependencies(all_test_issue_targets test_atomic_batch_pattern_1913)
 # Issue #1914: query hygiene/provenance diagnostics + by-marker :where.
-aura_add_issue_test(test_query_hygiene_provenance_1914)
-aura_issue_test_link_llvm_jit(test_query_hygiene_provenance_1914)
-add_dependencies(all_test_issue_targets test_query_hygiene_provenance_1914)
+aura_add_issue_test(test_query_hygiene_provenance)
+aura_issue_test_link_llvm_jit(test_query_hygiene_provenance)
+add_dependencies(all_test_issue_targets test_query_hygiene_provenance)
 # Issue #1915: fine-grained ir_cache_v2 block dirty + minimal re-lower.
 aura_add_issue_test(test_fine_dirty_relower_1915)
 aura_issue_test_link_llvm_jit(test_fine_dirty_relower_1915)
@@ -5008,8 +5005,8 @@ aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
 aura_add_issue_test(test_render_ai_native_template_1677)
 aura_issue_test_link_llvm_jit(test_render_ai_native_template_1677)
 # Issue #1678: workspace_marker_macro_introduced max(walk, snapshot).
-aura_add_issue_test(test_workspace_marker_macro_max_1678)
-aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max_1678)
+aura_add_issue_test(test_workspace_marker_macro_max)
+aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max)
 
 # Issue #1680: query:module-exports mtime cache.
 aura_add_issue_test(test_module_export_cache_1680)
@@ -5162,8 +5159,8 @@ aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard_1774)
 aura_add_issue_test(test_narrowing_dirty_query_1779)
 aura_issue_test_link_llvm_jit(test_narrowing_dirty_query_1779)
 # Issue #1780: *allow-macro-inline* per-Evaluator (not InlinePass process static).
-aura_add_issue_test(test_allow_macro_inline_per_eval_1780)
-aura_issue_test_link_llvm_jit(test_allow_macro_inline_per_eval_1780)
+aura_add_issue_test(test_allow_macro_inline_per_eval)
+aura_issue_test_link_llvm_jit(test_allow_macro_inline_per_eval)
 # Issue #1781: compile:occ-cache-stats wires real predicate_memo_ totals.
 aura_add_issue_test(test_occ_cache_stats_wired_1781)
 aura_issue_test_link_llvm_jit(test_occ_cache_stats_wired_1781)
@@ -5204,8 +5201,8 @@ aura_issue_test_link_llvm_jit(test_compiler_metrics_ownership_1835)
 aura_add_issue_test(test_type_registry_ownership_1837)
 aura_issue_test_link_llvm_jit(test_type_registry_ownership_1837)
 # Issue #1838: hygiene:protected? metadata reader lock vs set-marker.
-aura_add_issue_test(test_hygiene_protected_metadata_lock_1838)
-aura_issue_test_link_llvm_jit(test_hygiene_protected_metadata_lock_1838)
+aura_add_issue_test(test_hygiene_protected_metadata_lock)
+aura_issue_test_link_llvm_jit(test_hygiene_protected_metadata_lock)
 # Issue #1839: document compiler_service_ non-owning back-pointer contract.
 aura_add_issue_test(test_compiler_service_ownership_1839)
 aura_issue_test_link_llvm_jit(test_compiler_service_ownership_1839)
@@ -5226,8 +5223,8 @@ aura_issue_test_link_llvm_jit(test_build_kv_hash_compile07_1844)
 aura_add_issue_test(test_subtree_bump_guard_1847)
 aura_issue_test_link_llvm_jit(test_subtree_bump_guard_1847)
 # Issue #1848: subtree-generation / subtree-bump-count shared_lock vs bump.
-aura_add_issue_test(test_subtree_counter_shared_lock_1848)
-aura_issue_test_link_llvm_jit(test_subtree_counter_shared_lock_1848)
+aura_add_issue_test(test_subtree_counter_shared_lock)
+aura_issue_test_link_llvm_jit(test_subtree_counter_shared_lock)
 # Issue #1849: MutatorDispatchStats capture under shared_mutex vs bumps.
 aura_add_issue_test(test_mutator_dispatch_stats_lock_1849)
 aura_issue_test_link_llvm_jit(test_mutator_dispatch_stats_lock_1849)
@@ -5344,12 +5341,12 @@ aura_issue_test_link_llvm_jit(test_invalidate_consistency_1627)
 aura_add_issue_test(test_query_pattern_hygiene_1609)
 aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_1609)
 # Issue #1636: mandate MacroIntroduced hygiene + marker dimension via tag_arity.
-aura_add_issue_test(test_query_pattern_hygiene_mandate_1636)
-aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate_1636)
-set_target_properties(test_query_pattern_hygiene_mandate_1636 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
+aura_add_issue_test(test_query_pattern_hygiene_mandate)
+aura_issue_test_link_llvm_jit(test_query_pattern_hygiene_mandate)
+set_target_properties(test_query_pattern_hygiene_mandate PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave3: superseded near-dup
 # Issue #1610: IR/JIT/AOT MacroIntroduced + provenance propagation.
-aura_add_issue_test(test_ir_hygiene_propagation_1610)
-aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation_1610)
+aura_add_issue_test(test_ir_hygiene_propagation)
+aura_issue_test_link_llvm_jit(test_ir_hygiene_propagation)
 
 # Issue #1612: fiber resume/steal/GC MacroIntroduced marker + provenance.
 aura_add_issue_test(test_fiber_macro_hygiene_refresh_1612)
@@ -5362,8 +5359,8 @@ aura_add_issue_test(test_typed_mutation_invariant_audit_1614)
 aura_issue_test_link_llvm_jit(test_typed_mutation_invariant_audit_1614)
 # Issue #1615: linear ownership + coercion synergy / post-coercion reval.
 # Issue #1616: IRClosure/ClosureBridge MacroIntroduced provenance (refine #1047).
-aura_add_issue_test(test_ir_closure_provenance_1616)
-aura_issue_test_link_llvm_jit(test_ir_closure_provenance_1616)
+aura_add_issue_test(test_ir_closure_provenance)
+aura_issue_test_link_llvm_jit(test_ir_closure_provenance)
 
 aura_add_issue_test(test_let_poly_solve_delta_1617)
 aura_issue_test_link_llvm_jit(test_let_poly_solve_delta_1617)

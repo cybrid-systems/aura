@@ -1,3 +1,4 @@
+// Issue #420 (#1978 renamed): issue# moved from filename to header.
 // test_macro_hygiene_contract_closed_loop_420.cpp
 // Issue #420: Post P1/P2 split end-to-end MacroIntroduced
 // hygiene contract across clone/expand/query/mutate/IR.
