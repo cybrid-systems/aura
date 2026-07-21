@@ -1,0 +1,141 @@
+{
+  "schema": 1934,
+  "issue": 1934,
+  "suites": {
+    "commercial_readiness_concurrency": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_concurrency.aura",
+      "pass_labels": [
+        "fiber-lambda-36",
+        "fiber-lambda-42",
+        "fiber-yield"
+      ],
+      "min_passes": 3
+    },
+    "commercial_readiness_core": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_core.aura",
+      "pass_labels": [
+        "add",
+        "mul",
+        "abs",
+        "eq42",
+        "lt",
+        "true",
+        "not-false",
+        "bool-t",
+        "pair",
+        "car",
+        "cdr",
+        "len3"
+      ],
+      "min_passes": 12
+    },
+    "commercial_readiness_edsl": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_edsl.aura",
+      "pass_labels": [
+        "set-code-add",
+        "query-root",
+        "query-children",
+        "query-node"
+      ],
+      "min_passes": 4
+    },
+    "commercial_readiness_eval_paths": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_eval_paths.aura",
+      "pass_labels": [
+        "if-t",
+        "if-f",
+        "begin",
+        "let",
+        "fact5",
+        "fact0",
+        "cond"
+      ],
+      "min_passes": 7
+    },
+    "commercial_readiness_io_json_persist": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_io_json_persist.aura",
+      "pass_labels": [
+        "json-encode-42",
+        "json-parse-42",
+        "json-stringify-alias",
+        "str-append",
+        "str-len"
+      ],
+      "min_passes": 5
+    },
+    "commercial_readiness_macros": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_macros.aura",
+      "pass_labels": [
+        "quote-list",
+        "quote-nested",
+        "pair-quote",
+        "car-quote",
+        "cadr-quote"
+      ],
+      "min_passes": 5
+    },
+    "commercial_readiness_stdlib_hash": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_hash.aura",
+      "pass_labels": [
+        "href-a",
+        "href-b",
+        "href-c",
+        "hash?"
+      ],
+      "min_passes": 4
+    },
+    "commercial_readiness_stdlib_json": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_json.aura",
+      "pass_labels": [
+        "enc1",
+        "parse1",
+        "roundtrip",
+        "parse-true",
+        "parse-false",
+        "list-parse"
+      ],
+      "min_passes": 6
+    },
+    "commercial_readiness_stdlib_list": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_list.aura",
+      "pass_labels": [
+        "len0",
+        "len3",
+        "car1",
+        "map-double",
+        "filter-gt1",
+        "foldl-sum"
+      ],
+      "min_passes": 6
+    },
+    "commercial_readiness_stdlib_string": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_string.aura",
+      "pass_labels": [
+        "append",
+        "length",
+        "prefix",
+        "suffix",
+        "contains",
+        "split",
+        "join"
+      ],
+      "min_passes": 7
+    },
+    "commercial_readiness_stdlib_surface": {
+      "source": "tests/e2e/commercial_readiness/commercial_readiness_stdlib_surface.aura",
+      "pass_labels": [
+        "number?",
+        "string?",
+        "proc?",
+        "list?",
+        "pair?",
+        "equal-list",
+        "apply-sum",
+        "map-sq",
+        "null?",
+        "not-null"
+      ],
+      "min_passes": 10
+    }
+  }
+}

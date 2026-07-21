@@ -57,7 +57,9 @@ lines and `E2E-PASS` markers. Python helpers:
 | `check_golden` / `check_pass_labels` | golden PASS labels |
 | `./build.py test e2e` | full suite + goldens |
 
-Goldens: `tests/fixtures/e2e_golden/*.json`. Update with:
+Goldens: `tests/fixtures/e2e_golden/all.json` (single consolidated file;
+suite entries are keyed by `commercial_readiness_<name>` stem).
+Update with:
 
 ```bash
 python3 tests/python/run_e2e.py --update-golden

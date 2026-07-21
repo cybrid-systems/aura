@@ -87,20 +87,37 @@ class E2EHarness1934(unittest.TestCase):
             stdout="PASS: add\nPASS: mul\nE2E-PASS\n",
         )
         with tempfile.TemporaryDirectory() as td:
-            g = Path(td) / "g.json"
+            g = Path(td) / "all.json"
             g.write_text(
-                json.dumps({"pass_labels": ["add", "mul"], "min_passes": 2}),
+                json.dumps(
+                    {
+                        "schema": 1934,
+                        "issue": 1934,
+                        "suites": {
+                            "commercial_readiness_core": {
+                                "source": "tests/e2e/commercial_readiness/commercial_readiness_core.aura",
+                                "pass_labels": ["add", "mul"],
+                                "min_passes": 2,
+                            }
+                        },
+                    }
+                ),
                 encoding="utf-8",
             )
-            check_golden(r, g)
+            check_golden(r, g)  # auto-derives suite_name from r.path.stem
 
     def test_goldens_exist_for_suite(self) -> None:
-        for script in discover_commercial_readiness():
-            g = golden_for(script)
-            self.assertTrue(g.is_file(), f"missing golden {g}")
-            data = json.loads(g.read_text(encoding="utf-8"))
-            self.assertIn("pass_labels", data)
-            self.assertGreaterEqual(len(data["pass_labels"]), 1)
+        scripts = discover_commercial_readiness()
+        self.assertGreater(len(scripts), 0)
+        g = golden_for(scripts[0])
+        self.assertTrue(g.is_file(), f"missing golden {g}")
+        data = json.loads(g.read_text(encoding="utf-8"))
+        suites = data.get("suites") or {}
+        for script in scripts:
+            self.assertIn(script.stem, suites, f"no golden entry for {script.name}")
+            entry = suites[script.stem]
+            self.assertIn("pass_labels", entry)
+            self.assertGreaterEqual(len(entry["pass_labels"]), 1)
 
     def test_docs(self) -> None:
         readme = (ROOT / "tests" / "e2e" / "README.md").read_text(encoding="utf-8")
