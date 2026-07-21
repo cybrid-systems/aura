@@ -4,6 +4,17 @@
 // @category: integration
 // @reason: Issue #569 — arena-auto-compact-defrag-stats hash slice
 
+// Paired note (transparent hash consolidation): this test exercises the
+// observability stats catalog (src/compiler/evaluator_primitives_observability.cpp)
+// which uses aura::core::TransparentStringMap<PrimFn> (defined in
+// src/core/transparent_string_hash.hh) for LegacyStatsMap. The transparent
+// hash + std::equal_to<> comparator enable string_view-keyed .find() /
+// .count() / .contains() lookups without allocating a temporary std::string
+// per call — see #1671 (the rationale for the observability-specific
+// consolidation; #891/#914 was the original pattern in
+// src/compiler/evaluator.ixx Primitives::StringHash, now also migrated to
+// the shared aura::core::TransparentStringHash).
+
 #include <iostream>
 #include <print>
 #include <string>

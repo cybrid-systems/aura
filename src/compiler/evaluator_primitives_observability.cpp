@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/transparent_string_hash.hh" // Issue #1671 — shared transparent hash for string-keyed stats catalog
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
@@ -1330,20 +1331,7 @@ const std::vector<std::string>& ObservabilityPrims::stats_primitives() {
 // engine:metrics :all / :prefix iterate the catalog — 400+ lookups).
 // Same pattern as Primitives::StringHash / StringEq (#891/#914).
 namespace {
-    struct StatsNameHash {
-        using is_transparent = void;
-        std::size_t operator()(std::string_view s) const noexcept {
-            return std::hash<std::string_view>{}(s);
-        }
-        std::size_t operator()(const std::string& s) const noexcept {
-            return std::hash<std::string_view>{}(s);
-        }
-    };
-    struct StatsNameEq {
-        using is_transparent = void;
-        bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
-    };
-    using LegacyStatsMap = std::unordered_map<std::string, PrimFn, StatsNameHash, StatsNameEq>;
+    using LegacyStatsMap = aura::core::TransparentStringMap<PrimFn>;
 
     LegacyStatsMap& legacy_stats_impls() {
         static LegacyStatsMap m;
