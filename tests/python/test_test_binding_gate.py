@@ -88,7 +88,13 @@ class TestRegistryGen(unittest.TestCase):
         self.assertGreater(data["count"], 100)
         self.assertIn("integration", data["by_category"])
         files = {t["file"] for t in data["tests"]}
-        self.assertIn("tests/issues/test_issue_1451.cpp", files)
+        # Prefer theme batch after #1957 folds; fall back to residual issues/.
+        self.assertTrue(
+            "tests/observability/test_obs_metrics_smoke_batch.cpp" in files
+            or "tests/mutation/test_mutation_guard_unit_batch.cpp" in files
+            or any(f.startswith("tests/issues/test_issue_") for f in files),
+            "registry must include theme batch or issues/ tests",
+        )
 
 
 def main() -> int:
