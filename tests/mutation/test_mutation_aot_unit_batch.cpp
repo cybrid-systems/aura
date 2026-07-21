@@ -751,6 +751,53 @@ int run_237_jit_soft_smoke() {
 } // namespace aura_mut_run_wave53_237
 
 
+// Wave 54 (#1957): jit_incremental
+namespace aura_mut_run_wave54_780 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_780_smoke() {
+    std::println("\n=== #780: jit-rendering-coverage-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:jit-rendering-coverage-stats\")").has_value(),
+          "jit-rendering-coverage-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_780
+
+namespace aura_mut_run_wave54_720 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_720_smoke() {
+    std::println("\n=== #720: jit-interpreter-parity-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (g x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:jit-interpreter-parity-stats\")").has_value(),
+          "jit-interpreter-parity-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_720
+
+namespace aura_mut_run_wave54_785 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_785_smoke() {
+    std::println("\n=== #785: aot-concurrent-hotupdate-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:aot-concurrent-hotupdate-stats\")").has_value(),
+          "aot-concurrent-hotupdate-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_785
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -915,6 +962,22 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave53_237 ########");
     if (int rc = aura_mut_run_wave53_237::run_237_jit_soft_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_780 ########");
+    if (int rc = aura_mut_run_wave54_780::run_780_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_720 ########");
+    if (int rc = aura_mut_run_wave54_720::run_720_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_785 ########");
+    if (int rc = aura_mut_run_wave54_785::run_785_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_aot_unit_batch: OK");

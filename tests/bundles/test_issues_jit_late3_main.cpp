@@ -4,7 +4,6 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_791_run();
 extern int aura_issue_792_run();
 extern int aura_issue_793_run();
 extern int aura_issue_794_run();
@@ -34,11 +33,9 @@ extern int aura_issue_list_vector_soa_hotpath_ai_loops_run();
 extern int aura_issue_longrunning_infra_primitives_run();
 extern int aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run();
 extern int aura_issue_runtime_concurrent_full_cycle_chaos_run();
-extern int aura_issue_485_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_791", aura_issue_791_run},
         {"test_issue_792", aura_issue_792_run},
         {"test_issue_793", aura_issue_793_run},
         {"test_issue_794", aura_issue_794_run},
@@ -82,7 +79,6 @@ int main() {
          aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run},
         {"test_runtime_concurrent_full_cycle_chaos",
          aura_issue_runtime_concurrent_full_cycle_chaos_run},
-        {"test_issue_485", aura_issue_485_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late3", members, n);

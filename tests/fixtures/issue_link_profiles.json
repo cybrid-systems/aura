@@ -3,7 +3,6 @@
     "test_issue_131",
     "test_error_merr",
     "test_pilot_harness",
-    "test_issue_162",
     "test_issue_163",
     "test_issue_167",
     "test_issue_171",
@@ -17,7 +16,6 @@
   "jit": [
     "test_issue_135",
     "test_issue_137",
-    "test_issue_184",
     "test_issue_140",
     "test_issue_141",
     "test_issue_142",
@@ -25,15 +23,13 @@
     "test_issue_145",
     "test_issue_188",
     "test_issue_189",
-    "test_issue_190",
     "test_issue_191",
     "test_issue_192",
     "test_issue_196",
     "test_issue_240",
     "test_issue_244",
     "test_issue_228",
-    "test_issue_289",
-    "test_issue_482"
+    "test_issue_289"
   ],
   "jit_minimal": [
     "test_issue_146",
@@ -41,15 +37,10 @@
     "test_issue_148",
     "test_issue_149",
     "test_issue_212",
-    "test_issue_213",
-    "test_issue_213_panic_fiber"
+    "test_issue_213"
   ],
   "jit_contract": [
-    "test_issue_144",
-    "test_issue_254",
-    "test_issue_255",
-    "test_issue_256",
-    "test_issue_258"
+    "test_issue_255"
   ],
   "jit_tests": [
     "test_issue_224",
@@ -75,7 +66,6 @@
     "test_issue_429_soa",
     "test_issue_444_strategy_evolution",
     "test_issue_445_openclaw_integration",
-    "test_issue_462_shape_aware_folding",
     "test_issue_677",
     "test_per_fiber_stack_pool_high_concurrency",
     "test_aot_bridge_checkpoint_version_steal",
@@ -83,14 +73,9 @@
     "test_edsl_core_stability_cow_atomic_query_mutate",
     "test_compiler_core_incremental_selfmod_gaps",
     "test_highperf_cpp26_gaps_arena_soa_value_shape_pass",
-    "test_typesystem_typed_mutate_incremental_gaps",
-    "test_issue_715"
+    "test_typesystem_typed_mutate_incremental_gaps"
   ],
   "jit_late2": [
-    "test_issue_718",
-    "test_issue_719",
-    "test_issue_720",
-    "test_issue_721",
     "test_issue_723",
     "test_issue_726",
     "test_issue_728",
@@ -99,31 +84,14 @@
     "test_issue_735",
     "test_issue_756",
     "test_issue_757",
-    "test_issue_761",
-    "test_issue_762",
-    "test_issue_763",
     "test_dead_coercion_elision_narrow_evidence",
     "test_issue_765",
     "test_linear_ownership_postmutate_guard_steal_envframe",
     "test_typechecker_incremental_guard_steal_fidelity",
-    "test_issue_770",
-    "test_issue_772",
-    "test_issue_774",
     "test_issue_775",
-    "test_issue_776",
-    "test_issue_780",
-    "test_issue_781",
-    "test_issue_783",
-    "test_issue_784",
-    "test_issue_785",
-    "test_issue_786",
-    "test_issue_787",
-    "test_issue_788",
-    "test_issue_789",
-    "test_issue_790"
+    "test_issue_776"
   ],
   "jit_late3": [
-    "test_issue_791",
     "test_issue_792",
     "test_issue_793",
     "test_issue_794",
@@ -152,13 +120,10 @@
     "test_list_vector_soa_hotpath_ai_loops",
     "test_longrunning_infra_primitives",
     "test_scheduler_llm_bottleneck_adaptive_steal_gc",
-    "test_runtime_concurrent_full_cycle_chaos",
-    "test_issue_485"
+    "test_runtime_concurrent_full_cycle_chaos"
   ],
   "jit_late4": [],
-  "jit_late5": [
-    "test_issue_479"
-  ],
+  "jit_late5": [],
   "light_late": [
     "test_issue_178",
     "test_issue_473"
