@@ -1,0 +1,31 @@
+;; lib/std/render3d.aura — Issue #1986 / Epic #1979
+;; Thin Aura helpers over render3d:* engine primitives.
+;;
+;; Example:
+;;   (import "std/render3d")
+;;   (define v (render3d-demo-scene 32 16 32))
+;;   (render3d-look-at 16 8 28 0 -0.35)
+;;   (display (render3d:frame-ansi v))
+
+(define (render3d-demo-scene sx sy sz)
+  (let ((v (render3d:create-volume sx sy sz)))
+    (render3d:build-demo v)
+    (render3d:resize-fb 40 20)
+    v))
+
+;; yaw/pitch in radians → milliradians for set-camera
+(define (render3d-look-at x y z yaw pitch)
+  (render3d:set-camera
+   (floor x) (floor y) (floor z)
+   (floor (* yaw 1000))
+   (floor (* pitch 1000))
+   1050))
+
+(define (render3d-spin-frames v n)
+  (let loop ((i 0))
+    (if (>= i n)
+        (render3d:stats)
+        (begin
+          (render3d:set-camera 16 8 28 (floor (* i 80)) -350 1050)
+          (render3d:frame v 1)
+          (loop (+ i 1))))))

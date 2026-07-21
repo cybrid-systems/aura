@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**68** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**69** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -57,6 +57,7 @@
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
+| `std/render3d` | — | lib/std/render3d.aura — Issue #1986 / Epic #1979 |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` | lib/std/safe-refactor.aura — verification-gated refactoring |
 | `std/set` | `set` `set-add` `set-remove` `set-member?` `set-empty?` `set-union` `set-intersect` `set-difference` … (+5) | set.aura — Set data structure (built on hash tables) |
@@ -81,7 +82,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (515 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (525 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 
 Central registry orchestrates **28** `register_*_primitives` groups (see primitives-registry.md for the ordered list).

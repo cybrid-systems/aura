@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**515** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**525** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 100 primitives (19%)
-- **core**: 362 primitives (70%)
+- **core**: 372 primitives (71%)
 - **internal-observable**: 45 primitives (9%)
 - **convenience**: 8 primitives (2%)
 
@@ -555,6 +555,19 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 
+## Render3D: (10)
+
+- `render3d:build-demo` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:create-volume` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:destroy-volume` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:frame` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:frame-ansi` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:get-block` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:resize-fb` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:set-block` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:set-camera` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:stats` *[core]* — `src/compiler/evaluator_primitives_render3d.cpp`
+
 ## Resource: (2)
 
 - `resource:quota-check` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -770,7 +783,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (362)
+### Core builtins (must remain primitive) (372)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -997,6 +1010,16 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
 - `render-hotpath-enter` — `src/compiler/evaluator_primitives_memory.cpp`
 - `render-hotpath-exit` — `src/compiler/evaluator_primitives_memory.cpp`
+- `render3d:build-demo` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:create-volume` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:destroy-volume` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:frame` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:frame-ansi` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:get-block` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:resize-fb` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:set-block` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:set-camera` — `src/compiler/evaluator_primitives_render3d.cpp`
+- `render3d:stats` — `src/compiler/evaluator_primitives_render3d.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval.cpp`
