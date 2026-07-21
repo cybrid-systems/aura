@@ -16,8 +16,8 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 635 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 10 | Preferred destination suites |
-| **Total scanned** | **645** | |
+| `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
+| **Total scanned** | **642** | |
 
 ### Related artifacts
 
@@ -34,12 +34,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 68 | 0 | 5 | 73 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 0 | 1 | 177 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 0 | 1 | 51 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 0 | 0 | 50 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 12 | 0 | 0 | 12 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 58 | 0 | 1 | 59 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 58 | 0 | 0 | 58 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 36 | 0 | 0 | 36 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 32 | 0 | 0 | 32 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 203 | 0 | 2 | 205 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 203 | 0 | 1 | 204 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -111,7 +111,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **13**
 - Phase-slice files (`*_phase*`): **15**
 - Small files (< 4 KiB, possible thin probes): **9**
-- Existing `*_batch` drivers (migration milestones): **5**
+- Existing `*_batch` drivers (migration milestones): **6**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -157,6 +157,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/arena/test_arena_batch.cpp` → theme `arena_compaction`
 - `tests/domain/arena/test_compact_batch.cpp` → theme `arena_compaction`
 - `tests/domain/arena/test_compact_sweep_batch.cpp` → theme `arena_compaction`
+- `tests/domain/test_domain_gates_batch.cpp` → theme `mutation_dirty`
 - `tests/domain/arena/test_gc_batch.cpp` → theme `arena_compaction`
 - `tests/issues/test_issue_1449_demotion_batch.cpp` → theme `observability`
 
@@ -166,10 +167,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/arena/test_arena_defrag_concurrent.cpp`
 - `tests/domain/arena/test_compact_batch.cpp`
 - `tests/domain/arena/test_compact_sweep_batch.cpp`
-- `tests/domain/test_domain_fiber_orchestration.cpp`
-- `tests/domain/test_domain_hygiene_dirty.cpp`
-- `tests/domain/test_domain_production_sweep.cpp`
-- `tests/domain/test_domain_typed_mutate.cpp`
+- `tests/domain/test_domain_gates_batch.cpp`
 - `tests/domain/arena/test_gc_batch.cpp`
 - `tests/domain/test_obs_schema_matrix.cpp`
 
@@ -298,7 +296,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_domain_typed_mutate.cpp` (—) [domain_suite] — test_domain_typed_mutate.cpp — Domain suite: typed mutate / type-system gates
+- `tests/domain/test_domain_gates_batch.cpp` (—) [batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
 #### issues/ (176)
 
@@ -479,15 +477,11 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_792.cpp` (#792) — test_issue_792.cpp — Issue #792: P0
 - `tests/issues/test_issue_804.cpp` (#804) — test_issue_804.cpp — Issue #804: P0 stdlib error
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (51)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (50)
 
 **Target:** tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume batch
 
 **Priority:** P1 — domain suite already collapses many obs gates
-
-#### domain/ (1)
-
-- `tests/domain/test_domain_fiber_orchestration.cpp` (—) [domain_suite] — test_domain_fiber_orchestration.cpp — Domain suite: fiber / steal / Guard
 
 #### issues/ (50)
 
@@ -563,15 +557,11 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_763.cpp` (#763) — test_issue_763.cpp — Issue #763: Runtime linear_ownership_state
 - `tests/issues/test_issue_765.cpp` (#765) — test_issue_765.cpp — Issue #765: Full DepEntry quote/lambda tracking +
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (59)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (58)
 
 **Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
 
 **Priority:** P1 — domain hygiene suite exists
-
-#### domain/ (1)
-
-- `tests/domain/test_domain_hygiene_dirty.cpp` (—) [domain_suite] — test_domain_hygiene_dirty.cpp — Domain suite: macro hygiene + dirty/epoch
 
 #### issues/ (58)
 
@@ -720,16 +710,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (205)
+### `observability` — Observability / metrics / query:*-stats (204)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (2)
+#### domain/ (1)
 
-- `tests/domain/test_domain_production_sweep.cpp` (—) [small, domain_suite] — test_domain_production_sweep.cpp — Domain suite: production sweep/hardening/safety
-- `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability query schemas
+- `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
 #### issues/ (203)
 
