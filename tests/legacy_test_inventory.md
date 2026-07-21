@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 594 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 587 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **601** | |
+| **Total scanned** | **594** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 63 | 0 | 5 | 68 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 167 | 0 | 1 | 168 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 160 | 0 | 1 | 161 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 57 | 0 | 0 | 57 | P1 — domain hygiene suite exists |
@@ -47,8 +47,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 543 | Integration path via `CompilerService` / eval |
-| `test_harness` | 348 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 536 | Integration path via `CompilerService` / eval |
+| `test_harness` | 341 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 152 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
 | `own_main` | 50 | File defines `int main()` (standalone or bundle source) |
@@ -56,7 +56,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 386
+- `integration`: 379
 - `unknown`: 115
 - `unit`: 84
 - `issue_specific`: 7
@@ -64,7 +64,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 329
+- `test_harness.hpp` — 322
 - `compiler/observability_metrics.h` — 58
 - `compiler/aura_jit_bridge.h` — 19
 - `serve/scheduler.h` — 16
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 387
-- `aura.compiler.service` — 363
-- `std` — 339
-- `aura.compiler.evaluator` — 335
-- `aura.core.ast` — 236
+- `aura.compiler.value` — 380
+- `aura.compiler.service` — 356
+- `std` — 332
+- `aura.compiler.evaluator` — 328
+- `aura.core.ast` — 229
 - `aura.core.arena` — 127
 - `aura.core.type` — 118
 - `aura.compiler.ir` — 53
@@ -94,9 +94,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `aura.diag` — 43
 - `aura.core` — 35
 - `aura.parser.parser` — 30
-- `aura.core.mutation` — 24
 - `aura.compiler.pass_manager` — 17
-- `aura.compiler.sv_ir` — 12
+- `aura.core.mutation` — 17
+- `aura.compiler.ir_executor` — 11
 
 ### Coupling notes
 
@@ -108,14 +108,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ## Multi-file issues, phase slices, low-value signals
 
-- Issue numbers with **multiple** `tests/issues/` files: **13**
-- Phase-slice files (`*_phase*`): **15**
+- Issue numbers with **multiple** `tests/issues/` files: **12**
+- Phase-slice files (`*_phase*`): **9**
 - Small files (< 4 KiB, possible thin probes): **9**
 - Existing `*_batch` drivers (migration milestones): **6**
 
 ### Multi-file issue groups (consolidate first)
 
-- **#436** (7): `test_issue_436.cpp`, `test_issue_436_phase2.cpp`, `test_issue_436_phase3.cpp`, `test_issue_436_phase4.cpp`, `test_issue_436_phase5.cpp`, `test_issue_436_phase6.cpp`, `test_issue_436_phase7.cpp`
 - **#501** (6): `test_issue_501.cpp`, `test_issue_501_concepts.cpp`, `test_issue_501_hygiene.cpp`, `test_issue_501_phase2.cpp`, `test_issue_501_phase3.cpp`, `test_issue_501_phase4.cpp`
 - **#411** (5): `test_issue_411.cpp`, `test_issue_411_followup_1.cpp`, `test_issue_411_followup_2.cpp`, `test_issue_411_followup_3.cpp`, `test_issue_411_followup_4.cpp`
 - **#435** (5): `test_issue_435_phase1.cpp`, `test_issue_435_phase3.cpp`, `test_issue_435_phase4.cpp`, `test_issue_435_phase5.cpp`, `test_issue_435_phase6.cpp`
@@ -283,7 +282,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_767.cpp` (#767) — test_issue_767.cpp — Issue #767: Arena Auto-Compact Policy +
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (168)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (161)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -293,7 +292,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (167)
+#### issues/ (160)
 
 - `tests/issues/test_issue_125.cpp` (#125) [small, early_issue] — test_issue_125.cpp — Verify the per-module dirty-skip
 - `tests/issues/test_issue_126.cpp` (#126) [early_issue] — test_issue_126.cpp — Verify the pure functions extracted
@@ -418,13 +417,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_435_phase4.cpp` (#435) [phase_slice] — — CoverpointIR + CovergroupIR + list-based IR
 - `tests/issues/test_issue_435_phase5.cpp` (#435) [phase_slice] — — ConstraintIR + list IR baseline for the same).
 - `tests/issues/test_issue_435_phase6.cpp` (#435) [phase_slice] — — ClassIR + list IR baseline for the same).
-- `tests/issues/test_issue_436.cpp` (#436) — the Verilog emitter by kind. (Issue #436 Phase 1:
-- `tests/issues/test_issue_436_phase2.cpp` (#436) [phase_slice] — (Issue #436 Phase 2: automatic idiom upgrade).
-- `tests/issues/test_issue_436_phase3.cpp` (#436) [phase_slice] — (assert / assume / cover property) (Issue #436
-- `tests/issues/test_issue_436_phase4.cpp` (#436) [phase_slice] — module body signals (Issue #436 Phase 4: SV
-- `tests/issues/test_issue_436_phase5.cpp` (#436) [phase_slice] — package + import (Issue #436 Phase 5: SV type
-- `tests/issues/test_issue_436_phase6.cpp` (#436) [phase_slice] — generate-if) (Issue #436 Phase 6: SV generate
-- `tests/issues/test_issue_436_phase7.cpp` (#436) [phase_slice] — Phase 7). Demonstrates the dedicated C++ type
 - `tests/issues/test_issue_445_openclaw_integration.cpp` (#445) — test_issue_445_openclaw_integration.cpp — Issue #445:
 - `tests/issues/test_issue_453.cpp` (#453) — Validates:
 - `tests/issues/test_issue_459.cpp` (#459) — ── AC1: atomic-batch metrics start at 0 ──
