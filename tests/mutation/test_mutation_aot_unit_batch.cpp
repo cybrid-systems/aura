@@ -277,10 +277,33 @@ int run_aot_hotupdate_audit_1882() {
     return g_failed == 0 ? 0 : 1;
 }
 
+
 } // namespace aura_mut_run_aot_hotupdate_audit_1882
 // ─── end test_aot_hotupdate_typed_audit.cpp ───
 
+// Wave 36 (#1957): jit_incremental — #287 module_version / AOT reload smoke
+namespace aura_mut_run_wave36_287 {
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_287_module_version_reload_smoke() {
+    std::println("\n=== #287: module_version + reload scaffold smoke ===");
+    aura_set_module_version(42);
+    CHECK(aura_get_module_version() == 42, "set/get 42");
+    aura_set_aot_defuse_version(100);
+    aura_set_module_version(7);
+    CHECK(aura_get_aot_defuse_version() == 100, "defuse independent");
+    CHECK(aura_get_module_version() == 7, "module independent");
+    CHECK(aura_reload_aot_module(nullptr, 0) == false, "reload null → false");
+    CHECK(aura_reload_aot_module("/tmp/__aura_no_such_287__.so", 0) == false,
+          "reload missing → false");
+    aura_set_module_version(0);
+    aura_set_aot_defuse_version(0);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave36_287
+
 int main() {
+
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
     if (int rc = aura_mut_run_aot_metrics_lazy_1368::run_aot_metrics_lazy_1368(); rc != 0) {
         std::println("run_aot_metrics_lazy_1368 FAILED rc={}", rc);
@@ -295,6 +318,11 @@ int main() {
     }
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
+    std::println("\n######## run_287_module_version_reload_smoke ########");
+    if (int rc = aura_mut_run_wave36_287::run_287_module_version_reload_smoke(); rc != 0) {
+        std::println("run_287 FAILED rc={}", rc);
+        return rc;
+    }
     std::println("\ntest_mutation_aot_unit_batch: OK");
     return 0;
 }
