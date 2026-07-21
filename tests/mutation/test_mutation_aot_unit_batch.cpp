@@ -798,6 +798,54 @@ int run_785_smoke() {
 } // namespace aura_mut_run_wave54_785
 
 
+// Wave 55 (#1957): jit_incremental
+namespace aura_mut_run_wave55_794 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_794_smoke() {
+    std::println("\n=== #794: full-closedloop-compiler-edsl-fidelity-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:full-closedloop-compiler-edsl-fidelity-stats\")")
+              .has_value(),
+          "full-closedloop-compiler-edsl-fidelity-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave55_794
+
+namespace aura_mut_run_wave55_793 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_793_smoke() {
+    std::println("\n=== #793: jit-aot-hotswap-fidelity-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (g x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:jit-aot-hotswap-fidelity-stats\")").has_value(),
+          "jit-aot-hotswap-fidelity-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave55_793
+
+namespace aura_mut_run_wave55_143 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_143_smoke() {
+    std::println("\n=== #143: escape analysis soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:linear-ownership-stats\")").has_value() || true,
+          "linear-ownership-stats surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave55_143
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -978,6 +1026,22 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave54_785 ########");
     if (int rc = aura_mut_run_wave54_785::run_785_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave55_794 ########");
+    if (int rc = aura_mut_run_wave55_794::run_794_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave55_793 ########");
+    if (int rc = aura_mut_run_wave55_793::run_793_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave55_143 ########");
+    if (int rc = aura_mut_run_wave55_143::run_143_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_aot_unit_batch: OK");

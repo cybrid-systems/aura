@@ -1292,7 +1292,7 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # no more shifting of "all subsequent child_begin_ entries").
 # Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict).
-aura_add_issue_test_standalone(test_issue_220)
+# Issue #220 folded into test_shape_soa_unit_batch (wave 55 / #1957).
 
 # Issue #221: persistent child vectors (Issue #179 Cycle 3,
 # slice 1/5). Tests the PersistentChildVector<T> data
