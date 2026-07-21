@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 495 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 491 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **503** | |
+| **Total scanned** | **499** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 151 | 0 | 1 | 152 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 147 | 0 | 1 | 148 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 1 | 47 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 7 | 0 | 0 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
@@ -47,24 +47,24 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 451 | Integration path via `CompilerService` / eval |
-| `test_harness` | 281 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 123 | `aura_issue_*_run()` entry for issue bundles |
+| `CompilerService` | 447 | Integration path via `CompilerService` / eval |
+| `test_harness` | 277 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 121 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
-| `own_main` | 37 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 34 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 330
-- `unknown`: 100
-- `unit`: 58
+- `integration`: 329
+- `unknown`: 98
+- `unit`: 57
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 263
+- `test_harness.hpp` — 259
 - `compiler/observability_metrics.h` — 49
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 15
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 312
-- `aura.compiler.service` — 302
-- `aura.compiler.evaluator` — 279
-- `std` — 273
-- `aura.core.ast` — 178
+- `aura.compiler.value` — 308
+- `aura.compiler.service` — 298
+- `aura.compiler.evaluator` — 276
+- `std` — 269
+- `aura.core.ast` — 177
 - `aura.core.type` — 92
 - `aura.core.arena` — 89
 - `aura.compiler.ir` — 44
@@ -108,7 +108,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ## Multi-file issues, phase slices, low-value signals
 
-- Issue numbers with **multiple** `tests/issues/` files: **10**
+- Issue numbers with **multiple** `tests/issues/` files: **9**
 - Phase-slice files (`*_phase*`): **9**
 - Small files (< 4 KiB, possible thin probes): **5**
 - Existing `*_batch` drivers (migration milestones): **7**
@@ -123,7 +123,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - **#197** (2): `test_issue_197.cpp`, `test_issue_197_observability.cpp`
 - **#213** (2): `test_issue_213.cpp`, `test_issue_213_panic_fiber.cpp`
 - **#412** (2): `test_issue_412.cpp`, `test_issue_412_followup_1.cpp`
-- **#1408** (2): `test_issue_1408_followup_edsl.cpp`, `test_issue_1408_followup_rebind_rollback.cpp`
 - **#1496** (2): `test_issue_1496.cpp`, `test_issue_1496_concurrent_epoch_safety.cpp`
 
 ### Smallest issue tests (triage for obs-matrix fold or drop)
@@ -140,14 +139,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_270.cpp` (4740 B) → `mutation_dirty` — test_issue_270.cpp — Issue #270: end_id snapshot + StableNodeRef
 - `test_issue_274.cpp` (4868 B) → `mutation_dirty` — test_issue_274.cpp — Issue #274: MutationVisitor concept +
 - `test_issue_677.cpp` (4879 B) → `observability` — 
-- `test_issue_1408_followup_edsl.cpp` (4927 B) → `mutation_dirty` — AC1: happy path — 3 mutations all applied
 - `test_issue_287.cpp` (4952 B) → `jit_incremental` — ── AC1: set/get module_version roundtrip ──
 - `test_issue_286.cpp` (4996 B) → `shape_soa` — ── AC1: Env::env_version() default 0, set/get works ──
 - `test_issue_507.cpp` (5020 B) → `shape_soa` — 
-- `test_issue_1406.cpp` (5029 B) → `mutation_dirty` — test_issue_1406.cpp — Issue #1406: propagate_cow_pins_after_clone
-- `test_issue_1405.cpp` (5047 B) → `mutation_dirty` — test_issue_1405.cpp — Issue #1405: workspace_flat_ generation counter
 - `test_issue_1404.cpp` (5147 B) → `fiber_orch` — test_issue_1404.cpp — Issue #1404: restamp_yield_checkpoint_top
 - `test_issue_1477.cpp` (5154 B) → `jit_incremental` — Issue #1477 — JIT-side dual-epoch fence (capture_fn_epoch +
+- `test_issue_273.cpp` (5201 B) → `shape_soa` — test_issue_273.cpp — Issue #273: Contracts on FlatAST hot paths.
+- `test_issue_679.cpp` (5242 B) → `observability` — 
+- `test_issue_494.cpp` (5390 B) → `observability` — 
 
 ### Batch drivers already present
 
@@ -220,7 +219,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (152)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (148)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -230,12 +229,9 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (151)
+#### issues/ (147)
 
 - `tests/issues/test_issue_1396.cpp` (#1396) — test_issue_1396.cpp — Issue #1396: AOT hot-reload counter helpers —
-- `tests/issues/test_issue_1405.cpp` (#1405) — test_issue_1405.cpp — Issue #1405: workspace_flat_ generation counter
-- `tests/issues/test_issue_1406.cpp` (#1406) — test_issue_1406.cpp — Issue #1406: propagate_cow_pins_after_clone
-- `tests/issues/test_issue_1408_followup_edsl.cpp` (#1408) [followup] — AC1: happy path — 3 mutations all applied
 - `tests/issues/test_issue_1408_followup_rebind_rollback.cpp` (#1408) [followup] — AC1: bind x=1, rebind x=100, rollback, eval x → 1
 - `tests/issues/test_issue_141.cpp` (#141) [early_issue] — test_issue_141.cpp — Verify Issue #141 acceptance criteria
 - `tests/issues/test_issue_1414.cpp` (#1414) — test_issue_1414.cpp — Verify Issue #1414 acceptance criteria
@@ -245,7 +241,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1456_affected_subtree_locality.cpp` (#1456) — test_issue_1456_affected_subtree_locality.cpp
 - `tests/issues/test_issue_1457_type_propagation_castop_zerooverhead.cpp` (#1457) — test_issue_1457_type_propagation_castop_zerooverhead.cpp
 - `tests/issues/test_issue_147.cpp` (#147) [early_issue] — test_issue_147.cpp — Verify Issue #147 acceptance criteria
-- `tests/issues/test_issue_1472.cpp` (#1472) — test_issue_1472.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_148.cpp` (#148) [early_issue] — test_issue_148.cpp — Verify Issue #148 acceptance criteria
 - `tests/issues/test_issue_1486.cpp` (#1486) — AC1: apply / materialize / enforce entry intercepts Moved
 - `tests/issues/test_issue_1502.cpp` (#1502) — AC1: failed batch restores children() count after partial structural ops
