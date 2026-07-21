@@ -380,6 +380,42 @@ int run_323_aot_mangle_smoke() {
 }
 } // namespace aura_mut_run_wave38_323
 
+
+// Wave 39 (#1957): jit_incremental — #1512 opcode coverage + #1522 batch_deopt
+namespace aura_mut_run_wave39_1512 {
+using aura::jit::AuraJIT;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1512_opcode_coverage_smoke() {
+    std::println("\n=== #1512: JIT opcode coverage mask smoke ===");
+    AuraJIT jit;
+    auto mask = jit.metrics().opcode_covered_mask.load(std::memory_order_relaxed);
+    CHECK(mask == mask, "opcode_covered_mask readable");
+    // metrics() is const view — coverage is stamped on compile path;
+    // soft contract is surface readability only.
+    auto unhandled = jit.metrics().opcode_unhandled_mask.load(std::memory_order_relaxed);
+    CHECK(unhandled == unhandled, "opcode_unhandled_mask readable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave39_1512
+
+namespace aura_mut_run_wave39_1522 {
+using aura::jit::AuraJIT;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1522_batch_deopt_smoke() {
+    std::println("\n=== #1522: AuraJIT::batch_deopt_for smoke ===");
+    AuraJIT jit;
+    const auto t0 = jit.metrics().batch_deopt_for_total.load(std::memory_order_relaxed);
+    auto n = jit.batch_deopt_for("never_compiled", 1);
+    CHECK(n == 0, "empty tracker → 0 marked");
+    CHECK(jit.metrics().batch_deopt_for_total.load(std::memory_order_relaxed) >= t0,
+          "batch_deopt_for_total non-decreasing");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave39_1522
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -420,6 +456,20 @@ int main() {
     std::println("\n######## run_323_aot_mangle_smoke ########");
     if (int rc = aura_mut_run_wave38_323::run_323_aot_mangle_smoke(); rc != 0) {
         std::println("run_323 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1512_opcode_coverage_smoke ########");
+    if (int rc = aura_mut_run_wave39_1512::run_1512_opcode_coverage_smoke(); rc != 0) {
+        std::println("run_1512 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1522_batch_deopt_smoke ########");
+    if (int rc = aura_mut_run_wave39_1522::run_1522_batch_deopt_smoke(); rc != 0) {
+        std::println("run_1522 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");

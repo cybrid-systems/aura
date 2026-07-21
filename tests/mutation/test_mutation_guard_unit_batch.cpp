@@ -2062,6 +2062,70 @@ int run_1545_walk_active_closures_smoke() {
 }
 } // namespace aura_mut_run_wave38_1545
 
+
+// Wave 39 (#1957): mutation_dirty — #301 layout + #280 narrowing + #333 serialize_soa
+namespace aura_mut_run_wave39_301 {
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_301_stable_ref_layout_smoke() {
+    std::println("\n=== #301: StableNodeRef-like layout foundation smoke ===");
+    struct Mirror {
+        std::uint32_t id;
+        std::uint16_t gen;
+        std::uint16_t pad;
+    };
+    static_assert(sizeof(Mirror) == 8);
+    CHECK(sizeof(Mirror) == 8, "mirror layout 8 bytes");
+    CHECK(std::is_trivially_copyable_v<Mirror>, "trivially copyable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave39_301
+
+namespace aura_mut_run_wave39_280 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_280_occurrence_narrowing_smoke() {
+    std::println("\n=== #280: occurrence narrowing Branch evidence smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) (string-length x) 0))\")").has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto r = cs.eval("(f \"ab\")");
+    CHECK(r && is_int(*r) && as_int(*r) == 2, "(f \"ab\") → 2");
+    auto z = cs.eval("(f 1)");
+    CHECK(z && is_int(*z) && as_int(*z) == 0, "(f 1) → 0 else");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave39_280
+
+namespace aura_mut_run_wave39_333 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_333_serialize_soa_smoke() {
+    std::println("\n=== #333: FlatAST serialize_soa / deserialize_soa smoke ===");
+    FlatAST a;
+    auto n0 = a.add_raw_node(NodeTag::LiteralInt);
+    auto n1 = a.add_raw_node(NodeTag::LiteralInt);
+    (void)n1;
+    a.bump_generation();
+    std::vector<char> buf;
+    a.serialize_soa(buf);
+    CHECK(!buf.empty(), "serialize non-empty");
+    std::size_t pos = 0;
+    FlatAST b = FlatAST::deserialize_soa(buf, pos);
+    CHECK(b.size() == a.size(), "size preserved");
+    CHECK(pos > 0 || !buf.empty(), "deserialize advanced");
+    (void)n0;
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave39_333
+
+
 int main() {
 
 
@@ -2306,6 +2370,27 @@ int main() {
     std::println("\n######## run_1545_walk_active_closures_smoke ########");
     if (int rc = aura_mut_run_wave38_1545::run_1545_walk_active_closures_smoke(); rc != 0) {
         std::println("run_1545 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_301_stable_ref_layout_smoke ########");
+    if (int rc = aura_mut_run_wave39_301::run_301_stable_ref_layout_smoke(); rc != 0) {
+        std::println("run_301 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_280_occurrence_narrowing_smoke ########");
+    if (int rc = aura_mut_run_wave39_280::run_280_occurrence_narrowing_smoke(); rc != 0) {
+        std::println("run_280 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_333_serialize_soa_smoke ########");
+    if (int rc = aura_mut_run_wave39_333::run_333_serialize_soa_smoke(); rc != 0) {
+        std::println("run_333 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");

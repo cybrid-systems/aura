@@ -960,6 +960,42 @@ int run_366_syntax_marker_primitives_smoke() {
 
 } // namespace aura_edsl_run_wave38
 
+
+// Wave 39 (#1957): edsl_hygiene — #310 NodeTag SV + #364 nested macro mutate
+namespace aura_edsl_run_wave39 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+int run_310_sv_node_tags_smoke() {
+    std::println("\n=== #310: NodeTag Interface/Modport smoke ===");
+    using aura::ast::NodeTag;
+    CHECK(static_cast<int>(NodeTag::Interface) > 0, "Interface tag defined");
+    CHECK(static_cast<int>(NodeTag::Modport) > 0, "Modport tag defined");
+    CHECK(static_cast<int>(NodeTag::Modport) != static_cast<int>(NodeTag::Interface),
+          "distinct tags");
+    return g_failed ? 1 : 0;
+}
+
+int run_364_nested_macro_mutate_smoke() {
+    std::println("\n=== #364: nested hygienic macro + mutate smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define-hygienic-macro (twice x) (+ x x)) "
+                  "(define v 3) (twice v)\")")
+              .has_value(),
+          "set-code macro");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    (void)cs.eval("(mutate:rebind \"v\" \"5\")");
+    auto r = cs.eval("(eval-current)");
+    CHECK(r.has_value(), "eval after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave39
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1015,6 +1051,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave38_366 ########");
     if (int rc = aura_edsl_run_wave38::run_366_syntax_marker_primitives_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave39_310 ########");
+    if (int rc = aura_edsl_run_wave39::run_310_sv_node_tags_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave39_364 ########");
+    if (int rc = aura_edsl_run_wave39::run_364_nested_macro_mutate_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

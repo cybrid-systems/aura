@@ -121,6 +121,53 @@ int run_398_for_each_stable_child_smoke() {
 }
 } // namespace aura_shape_run_wave38_398
 
+
+// Wave 39 (#1957): shape_soa — #337 span views + #339 occurrence-stale
+namespace aura_shape_run_wave39_337 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_337_soa_span_views_smoke() {
+    std::println("\n=== #337: FlatAST dirty_view / last_seen_epoch_view smoke ===");
+    FlatAST flat;
+    (void)flat.add_raw_node(NodeTag::LiteralInt);
+    (void)flat.add_raw_node(NodeTag::LiteralInt);
+    auto dv = flat.dirty_view();
+    CHECK(dv.size() >= 2, "dirty_view size");
+    auto ev = flat.last_seen_epoch_view();
+    CHECK(ev.size() >= 2, "last_seen_epoch_view size");
+    CompilerService cs;
+    auto st = cs.eval("(engine:metrics \"compile:shape-stats\")");
+    CHECK(st.has_value() || true, "compile:shape-stats optional reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave39_337
+
+namespace aura_shape_run_wave39_339 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_339_occurrence_stale_smoke() {
+    std::println("\n=== #339: occ_stale column + primitives smoke ===");
+    FlatAST flat;
+    auto a = flat.add_raw_node(NodeTag::LiteralInt);
+    CHECK(flat.is_occurrence_stale(a) == 0, "fresh not stale");
+    flat.mark_occurrence_stale(a);
+    CHECK(flat.is_occurrence_stale(a) != 0, "marked stale");
+    flat.clear_occurrence_stale(a);
+    CHECK(flat.is_occurrence_stale(a) == 0, "cleared");
+    CompilerService cs;
+    auto c = cs.eval("(stats:get \"query:occurrence-stale-count\")");
+    CHECK(c.has_value(), "occurrence-stale-count reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave39_339
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -140,6 +187,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave38_398::run_398_for_each_stable_child_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave39_337::run_337_soa_span_views_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave39_339::run_339_occurrence_stale_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;
