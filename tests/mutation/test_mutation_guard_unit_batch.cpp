@@ -1824,8 +1824,100 @@ int run_1524_typed_mutate_dual_epoch_smoke() {
     CHECK(cs.bridge_epoch() > be1, "bridge_epoch advanced again");
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_mut_run_wave24_1524
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 35 (#1957): mutation_dirty theme — #1556 #357 #453 #1486
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_mut_run_wave35_1556 {
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::core::AuraErrorKind;
+using aura::test::g_failed;
+using aura::test::g_passed;
+using Guard = Evaluator::MutationBoundaryGuard;
+int run_1556_mutation_quota_try_acquire() {
+    std::println("\n=== #1556: mutation quota try_acquire smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    {
+        auto g = Guard::try_acquire(ev, 1, &ok);
+        CHECK(g.has_value() && g->get() != nullptr, "unlimited try_acquire ok");
+    }
+    ev.set_resource_quota_mutations(1);
+    ev.reset_mutation_quota_used();
+    {
+        auto g1 = Guard::try_acquire(ev, 1, &ok);
+        CHECK(g1.has_value(), "first within budget");
+    }
+    auto g2 = Guard::try_acquire(ev, 1, &ok);
+    CHECK(!g2.has_value(), "second rejects");
+    if (!g2) {
+        CHECK(g2.error().kind == AuraErrorKind::ResourceQuotaExceeded, "ResourceQuotaExceeded");
+    }
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave35_1556
+
+namespace aura_mut_run_wave35_357 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_357_mutate_rebind_commit_smoke() {
+    std::println("\n=== #357: mutate:rebind commit reflects source smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    CHECK(cs.eval("(mutate:rebind \"f\" \"(define f 2)\")").has_value(), "rebind commit");
+    // post-commit eval path still works
+    auto r = cs.eval("f");
+    CHECK(r.has_value(), "f evaluates after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave35_357
+
+namespace aura_mut_run_wave35_453 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_453_panic_checkpoint_metrics_smoke() {
+    std::println("\n=== #453: panic-checkpoint metrics smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(ev.get_panic_checkpoint_transfer_count() == 0, "transfer 0 fresh");
+    CHECK(ev.get_panic_checkpoint_lost_on_steal() == 0, "lost 0 fresh");
+    CHECK(ev.get_gc_blocked_by_pending_panic() == 0, "gc_blocked 0 fresh");
+    CHECK(ev.pending_panic_checkpoint() == false, "no pending fresh");
+    const auto t0 = ev.get_panic_checkpoint_transfer_count();
+    ev.bump_panic_checkpoint_transfer_count();
+    CHECK(ev.get_panic_checkpoint_transfer_count() == t0 + 1, "transfer +1");
+    const auto g0 = ev.get_gc_blocked_by_pending_panic();
+    ev.bump_gc_blocked_by_pending_panic();
+    CHECK(ev.get_gc_blocked_by_pending_panic() == g0 + 1, "gc_blocked +1");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave35_453
+
+namespace aura_mut_run_wave35_1486 {
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1486_linear_post_mutate_smoke() {
+    std::println("\n=== #1486: linear post-mutate enforce path smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1486\")").has_value(), "rebind");
+    CHECK(Evaluator::mutation_boundary_depth() == 0, "depth 0 after mutate");
+    auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m.has_value(), "linear-ownership-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave35_1486
 
 int main() {
 
@@ -2008,6 +2100,34 @@ int main() {
     std::println("\n######## run_1524_typed_mutate_dual_epoch_smoke ########");
     if (int rc = aura_mut_run_wave24_1524::run_1524_typed_mutate_dual_epoch_smoke(); rc != 0) {
         std::println("run_1524 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1556_mutation_quota_try_acquire ########");
+    if (int rc = aura_mut_run_wave35_1556::run_1556_mutation_quota_try_acquire(); rc != 0) {
+        std::println("run_1556 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_357_mutate_rebind_commit_smoke ########");
+    if (int rc = aura_mut_run_wave35_357::run_357_mutate_rebind_commit_smoke(); rc != 0) {
+        std::println("run_357 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_453_panic_checkpoint_metrics_smoke ########");
+    if (int rc = aura_mut_run_wave35_453::run_453_panic_checkpoint_metrics_smoke(); rc != 0) {
+        std::println("run_453 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1486_linear_post_mutate_smoke ########");
+    if (int rc = aura_mut_run_wave35_1486::run_1486_linear_post_mutate_smoke(); rc != 0) {
+        std::println("run_1486 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");
