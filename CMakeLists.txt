@@ -1799,6 +1799,10 @@ add_dependencies(all_test_issue_targets test_camera_rays)
 # Issue #1982 / Epic #1979: dense voxel volume + chunk grid (header-only).
 aura_add_issue_test(test_voxel_volume)
 add_dependencies(all_test_issue_targets test_voxel_volume)
+
+# Issue #1983 / Epic #1979: Amanatides–Woo DDA voxel raycast (header-only).
+aura_add_issue_test(test_voxel_raycast)
+add_dependencies(all_test_issue_targets test_voxel_raycast)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
