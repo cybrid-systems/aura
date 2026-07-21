@@ -10,6 +10,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.error;
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -309,7 +310,7 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
     }
 }
 
-bool Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
+aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
     for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
         const std::size_t idx = i - 1;
         if (bindings_symid_[idx].first == s) {
@@ -317,19 +318,27 @@ bool Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
                 bindings_linear_ownership_state_.resize(bindings_symid_.size(),
                                                         linear_rt::Untracked);
             bindings_linear_ownership_state_[idx] = state;
-            return true;
+            return {};
         }
     }
-    return false;
+    return std::unexpected(
+        aura::core::AuraError{aura::core::AuraErrorKind::UnboundVariable,
+                              std::string("Env: symbol not found in bindings_symid_: SymId=") +
+                                  std::to_string(static_cast<std::uint64_t>(s))});
 }
 
-bool Env::set_linear_ownership_state_by_name(std::string_view n, std::uint8_t state) {
+aura::core::VoidResult Env::set_linear_ownership_state_by_name(std::string_view n,
+                                                               std::uint8_t state) {
     if (pool_) {
         auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
-        if (set_linear_ownership_state(s, state))
-            return true;
+        auto r = set_linear_ownership_state(s, state);
+        if (!r)
+            return r;
+        return {};
     }
-    return false;
+    return std::unexpected(aura::core::AuraError{
+        aura::core::AuraErrorKind::UnboundVariable,
+        std::string("Env: pool_ is null, cannot resolve name: ") + std::string(n)});
 }
 
 // Issue #145: SymId-based lookup. Iterates bindings_symid_
@@ -1374,7 +1383,7 @@ bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
 }
 
 bool Evaluator::mark_linear_binding_moved(Env& env, aura::ast::SymId s) {
-    bool any = env.set_linear_ownership_state(s, linear_rt::Moved);
+    bool any = env.set_linear_ownership_state(s, linear_rt::Moved).has_value();
     const EnvId pid = env.parent_id();
     if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
         std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
@@ -1385,7 +1394,7 @@ bool Evaluator::mark_linear_binding_moved(Env& env, aura::ast::SymId s) {
 }
 
 bool Evaluator::mark_linear_binding_moved_by_name(Env& env, std::string_view name) {
-    bool any = env.set_linear_ownership_state_by_name(name, linear_rt::Moved);
+    bool any = env.set_linear_ownership_state_by_name(name, linear_rt::Moved).has_value();
     const EnvId pid = env.parent_id();
     if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
         std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
