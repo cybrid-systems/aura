@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**518** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**515** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 100 primitives (19%)
-- **core**: 365 primitives (70%)
+- **core**: 362 primitives (70%)
 - **internal-observable**: 45 primitives (9%)
 - **convenience**: 8 primitives (2%)
 
@@ -488,12 +488,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `dirty:ppa-reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
-## Eda: (3)
-
-- `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-
 ## Edsl: (1)
 
 - `edsl:define-struct` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -776,7 +770,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (365)
+### Core builtins (must remain primitive) (362)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -865,9 +859,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
-- `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`

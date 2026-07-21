@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 577 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 569 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **584** | |
+| **Total scanned** | **576** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 177 | 0 | 1 | 178 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 169 | 0 | 1 | 170 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 526 | Integration path via `CompilerService` / eval |
+| `CompilerService` | 518 | Integration path via `CompilerService` / eval |
 | `test_harness` | 341 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 149 | `aura_issue_*_run()` entry for issue bundles |
+| `bundle_run_fn` | 142 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
-| `own_main` | 48 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 46 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 369
+- `integration`: 361
 - `unknown`: 115
 - `unit`: 84
 - `issue_specific`: 7
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 370
-- `aura.compiler.service` — 346
+- `aura.compiler.value` — 362
+- `aura.compiler.service` — 338
 - `std` — 332
-- `aura.compiler.evaluator` — 318
-- `aura.core.ast` — 221
+- `aura.compiler.evaluator` — 310
+- `aura.core.ast` — 216
 - `aura.core.arena` — 127
 - `aura.core.type` — 118
 - `aura.compiler.ir` — 53
@@ -677,7 +677,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (178)
+### `observability` — Observability / metrics / query:*-stats (170)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -687,7 +687,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (177)
+#### issues/ (169)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -783,9 +783,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_492.cpp` (#492) — Issue #492 — ShapeProfiler deopt stability + JIT/fiber integration
 - `tests/issues/test_issue_493.cpp` (#493) — Issue #493 — EDSL hot-path bottleneck measurement + stats hash
 - `tests/issues/test_issue_494.cpp` (#494) — Issue #494 — Pass pipeline JIT/incremental concepts + yield + stats hash
-- `tests/issues/test_issue_496.cpp` (#496) — Issue #496 — Native SV Constraint/Class NodeTags + stats + mutate
 - `tests/issues/test_issue_497.cpp` (#497) — Issue #497 — StableRef lifecycle soft compact + refresh + stats
-- `tests/issues/test_issue_498.cpp` (#498) — Issue #498 — AI-native primitive metadata + skeleton ergonomics
 - `tests/issues/test_issue_500.cpp` (#500) — Issue #500 — Work-stealing + MutationBoundary outermost depth safety
 - `tests/issues/test_issue_508_observability.cpp` (#508) [obs_named] — Issue #508 — dead-coercion-zerooverhead-stats hash slice
 - `tests/issues/test_issue_511_observability.cpp` (#511) [obs_named] — Issue #511 — workspace-snapshot-stats hash slice
@@ -804,14 +802,12 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_534_observability.cpp` (#534) [obs_named] — Issue #534 — arena-production-compaction-stats hash slice
 - `tests/issues/test_issue_535_observability.cpp` (#535) [obs_named] — Issue #535 — contracts-production-hotpath-stats hash slice
 - `tests/issues/test_issue_557_observability.cpp` (#557) [obs_named] — Issue #557 — top5-commercial-coverage-stats hash slice
-- `tests/issues/test_issue_567_observability.cpp` (#567) [obs_named] — Issue #567 — primitives-governance-stats hash slice
 - `tests/issues/test_issue_568_observability.cpp` (#568) [obs_named] — Issue #568 — soa-children-columnar-migration-stats hash slice
 - `tests/issues/test_issue_569_observability.cpp` (#569) [obs_named] — DEPRECATED location for new work (#1959): prefer tests/domain/arena/
 - `tests/issues/test_issue_572_observability.cpp` (#572) [obs_named] — Issue #572 — pass-pipeline-dirtyaware-stats hash slice
 - `tests/issues/test_issue_583_observability.cpp` (#583) [obs_named] — Issue #583 — primitives-registry-core-stats hash slice
 - `tests/issues/test_issue_584_observability.cpp` (#584) [obs_named] — Issue #584 — primitives-hotpath-stats AI-agent stress slice
 - `tests/issues/test_issue_585_observability.cpp` (#585) [obs_named] — Issue #585 — primitives-error-stats unified recovery slice
-- `tests/issues/test_issue_587_observability.cpp` (#587) [obs_named] — Issue #587 — primitives-ai-native-stats development slice
 - `tests/issues/test_issue_589.cpp` (#589) — primitive (the AC4 surface listed in #589 body)
 - `tests/issues/test_issue_591_observability.cpp` (#591) [obs_named] — Issue #591 — scheduler-mutation-coord-stats steal/GC slice
 - `tests/issues/test_issue_601.cpp` (#601) — bridge_epoch refresh + forced-deopt protocol. Scope-limited observability
@@ -848,13 +844,9 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_690.cpp` (#690) — Issue #690 constraint typed-mutation reverify + blame
 - `tests/issues/test_issue_691.cpp` (#691) — Issue #691 CoercionMap + NarrowingRecord provenance linkage
 - `tests/issues/test_issue_692.cpp` (#692) — Issue #692 ADT exhaustiveness + pattern provenance typed-mutation
-- `tests/issues/test_issue_694.cpp` (#694) — Issue #694 SVA structured NodeTags + mutate + IR mapping
-- `tests/issues/test_issue_697.cpp` (#697) — Issue #697 Declarative Primitives Extension Kit + AI Agent EDA integration
-- `tests/issues/test_issue_698.cpp` (#698) — Issue #698 Hardware backend commercial interop closed-loop
 - `tests/issues/test_issue_706.cpp` (#706) — Issue #706 adaptive StealBudget + work-stealing bias for LLM bottleneck
 - `tests/issues/test_issue_708.cpp` (#708) — Issue #708 AOT hot-reload refcount swap + region/panic multi-fiber safety
 - `tests/issues/test_issue_709.cpp` (#709) — Issue #709 primitives registry fast dispatch + capture discipline + EDA integration
-- `tests/issues/test_issue_710.cpp` (#710) — Issue #710 verify_tool/diagnostic Guard + StableRef + dirty closed-loop
 - `tests/issues/test_issue_711.cpp` (#711) — This PR adds the closed-loop integration test that wires those
 - `tests/issues/test_issue_716.cpp` (#716) — 4. Test verifies: primitive shape, fresh-zero state, schema sentinel,
 - `tests/issues/test_issue_718.cpp` (#718) — summarize_block_dirty + block_dirty_ bitmask into CompilerService::invalidate_function
