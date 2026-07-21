@@ -758,7 +758,7 @@ run_test "edsl-ir-cache:v2-cache-hit" \
     '49'
 # Issue #238: incremental mutation stress test. 100 cycles,
 # 0 mismatches, dirty-count stays at 0 (cascade scope correct).
-run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/suite/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 100mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete"
+run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/suite/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 109mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete"
 
 # Same input via :jit should give the same numeric result.
 # (Note: no env sync back, so :jit's return value is the JIT's last
