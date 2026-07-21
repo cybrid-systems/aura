@@ -239,6 +239,33 @@ int run_355_refresh_stale_frame_smoke() {
 } // namespace aura_shape_run_wave41_355
 
 
+// Wave 42 (#1957): shape_soa — #501 phase3 walk_children / ASTContainer soft
+namespace aura_shape_run_wave42_501 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::ast::StringPool;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_501_walk_children_smoke() {
+    std::println("\n=== #501: walk_children / children column smoke ===");
+    FlatAST flat;
+    StringPool pool;
+    auto c0 = flat.add_literal(0);
+    auto c1 = flat.add_literal(1);
+    auto parent = flat.add_define(pool.intern("p501"), c0);
+    flat.insert_child(parent, 1, c1);
+    int n = 0;
+    flat.for_each_stable_child(parent, [&](FlatAST::StableNodeRef) { ++n; });
+    CHECK(n == 2, "walk/for_each two children");
+    CompilerService cs;
+    auto st = cs.eval("(engine:metrics \"query:children-column-stats\")");
+    CHECK(st.has_value(), "children-column-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave42_501
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -278,6 +305,10 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave41_355::run_355_refresh_stale_frame_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave42_501::run_501_walk_children_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;

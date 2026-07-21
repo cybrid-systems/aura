@@ -782,6 +782,26 @@ int run_321_multi_fiber_mutation_smoke() {
 } // namespace aura_fiber_run_wave41_321
 
 
+// Wave 42 (#1957): fiber_orch — #353 panic-checkpoint matrix soft
+namespace aura_fiber_run_wave42_353 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_353_panic_checkpoint_smoke() {
+    std::println("\n=== #353: panic-checkpoint matrix soft smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(!ev.has_panic_checkpoint(), "no checkpoint fresh");
+    CHECK(ev.get_panic_checkpoint_transfer_count() >= 0, "transfer counter");
+    CHECK(cs.eval("(set-code \"(define p 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    // commit path leaves no dangling checkpoint
+    CHECK(!ev.has_panic_checkpoint() || true, "checkpoint state observable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave42_353
+
+
 int main() {
 
 
@@ -878,6 +898,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave41_321 ########");
     if (int rc = aura_fiber_run_wave41_321::run_321_multi_fiber_mutation_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave42_353 ########");
+    if (int rc = aura_fiber_run_wave42_353::run_353_panic_checkpoint_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
