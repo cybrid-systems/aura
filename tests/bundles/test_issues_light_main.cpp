@@ -7,7 +7,6 @@
 extern int aura_issue_131_run();
 extern int aura_issue_error_merr_run();
 extern int aura_issue_pilot_harness_run();
-extern int aura_issue_162_run();
 extern int aura_issue_163_run();
 extern int aura_issue_167_run();
 extern int aura_issue_171_run();
@@ -20,7 +19,6 @@ int main() {
         {"test_issue_131", aura_issue_131_run},
         {"test_error_merr", aura_issue_error_merr_run},
         {"test_pilot_harness", aura_issue_pilot_harness_run},
-        {"test_issue_162", aura_issue_162_run},
         {"test_issue_163", aura_issue_163_run},
         {"test_issue_167", aura_issue_167_run},
         {"test_issue_171", aura_issue_171_run},

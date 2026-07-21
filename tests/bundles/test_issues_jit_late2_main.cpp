@@ -4,10 +4,6 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_718_run();
-extern int aura_issue_719_run();
-extern int aura_issue_720_run();
-extern int aura_issue_721_run();
 extern int aura_issue_723_run();
 extern int aura_issue_726_run();
 extern int aura_issue_728_run();
@@ -16,35 +12,15 @@ extern int aura_issue_733_run();
 extern int aura_issue_735_run();
 extern int aura_issue_756_run();
 extern int aura_issue_757_run();
-extern int aura_issue_761_run();
-extern int aura_issue_762_run();
-extern int aura_issue_763_run();
 extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
 extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
-extern int aura_issue_770_run();
-extern int aura_issue_772_run();
-extern int aura_issue_774_run();
 extern int aura_issue_775_run();
 extern int aura_issue_776_run();
-extern int aura_issue_780_run();
-extern int aura_issue_781_run();
-extern int aura_issue_783_run();
-extern int aura_issue_784_run();
-extern int aura_issue_785_run();
-extern int aura_issue_786_run();
-extern int aura_issue_787_run();
-extern int aura_issue_788_run();
-extern int aura_issue_789_run();
-extern int aura_issue_790_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_718", aura_issue_718_run},
-        {"test_issue_719", aura_issue_719_run},
-        {"test_issue_720", aura_issue_720_run},
-        {"test_issue_721", aura_issue_721_run},
         {"test_issue_723", aura_issue_723_run},
         {"test_issue_726", aura_issue_726_run},
         {"test_issue_728", aura_issue_728_run},
@@ -53,9 +29,6 @@ int main() {
         {"test_issue_735", aura_issue_735_run},
         {"test_issue_756", aura_issue_756_run},
         {"test_issue_757", aura_issue_757_run},
-        {"test_issue_761", aura_issue_761_run},
-        {"test_issue_762", aura_issue_762_run},
-        {"test_issue_763", aura_issue_763_run},
         {"test_dead_coercion_elision_narrow_evidence",
          aura_issue_dead_coercion_elision_narrow_evidence_run},
         {"test_issue_765", aura_issue_765_run},
@@ -63,21 +36,8 @@ int main() {
          aura_issue_linear_ownership_postmutate_guard_steal_envframe_run},
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
-        {"test_issue_770", aura_issue_770_run},
-        {"test_issue_772", aura_issue_772_run},
-        {"test_issue_774", aura_issue_774_run},
         {"test_issue_775", aura_issue_775_run},
         {"test_issue_776", aura_issue_776_run},
-        {"test_issue_780", aura_issue_780_run},
-        {"test_issue_781", aura_issue_781_run},
-        {"test_issue_783", aura_issue_783_run},
-        {"test_issue_784", aura_issue_784_run},
-        {"test_issue_785", aura_issue_785_run},
-        {"test_issue_786", aura_issue_786_run},
-        {"test_issue_787", aura_issue_787_run},
-        {"test_issue_788", aura_issue_788_run},
-        {"test_issue_789", aura_issue_789_run},
-        {"test_issue_790", aura_issue_790_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late2", members, n);

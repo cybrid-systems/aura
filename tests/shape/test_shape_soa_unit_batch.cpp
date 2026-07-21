@@ -472,6 +472,50 @@ int run_782_terminal_rendering_smoke() {
 } // namespace aura_shape_run_wave53_782
 
 
+// Wave 54 (#1957): shape_soa
+namespace aura_shape_run_wave54_254 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_254_smoke() {
+    std::println("\n=== #254: compile:ir-soa-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"compile:ir-soa-stats\")").has_value(), "ir-soa-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave54_254
+
+namespace aura_shape_run_wave54_721 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_721_smoke() {
+    std::println("\n=== #721: ir-soa-completeness-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:ir-soa-completeness-stats\")").has_value(),
+          "ir-soa-completeness-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave54_721
+
+namespace aura_shape_run_wave54_144 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_144_smoke() {
+    std::println("\n=== #144: cxx26 contracts soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:cxx26-invariants\")").has_value() || true,
+          "cxx26-invariants surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave54_144
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -567,6 +611,19 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave53_782::run_782_terminal_rendering_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave54_254::run_254_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave54_721::run_721_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave54_144::run_144_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");

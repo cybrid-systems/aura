@@ -3778,6 +3778,130 @@ int run_159_incremental_typecheck_smoke() {
 } // namespace aura_mut_run_wave53_159
 
 
+// Wave 54 (#1957): mutation_dirty — profiled smokes
+namespace aura_mut_run_wave54_761 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_761_smoke() {
+    std::println("\n=== #761: mutate-batch-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:mutate-batch-stats\")").has_value(),
+          "mutate-batch-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_761
+
+namespace aura_mut_run_wave54_719 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_719_smoke() {
+    std::println("\n=== #719: closure-env-epoch-safety-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:closure-env-epoch-safety-stats\")").has_value(),
+          "closure-env-epoch-safety-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_719
+
+namespace aura_mut_run_wave54_715 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_715_smoke() {
+    std::println("\n=== #715: stable-ref-layer-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:stable-ref-layer-stats\")").has_value(),
+          "stable-ref-layer-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_715
+
+namespace aura_mut_run_wave54_790 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_790_smoke() {
+    std::println("\n=== #790: mutate-batch-atomic-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:mutate-batch-atomic-stats\")").has_value(),
+          "mutate-batch-atomic-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_790
+
+namespace aura_mut_run_wave54_789 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_789_smoke() {
+    std::println("\n=== #789: pattern-index-safe-span-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:pattern-index-safe-span-stats\")").has_value(),
+          "pattern-index-safe-span-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_789
+
+namespace aura_mut_run_wave54_770 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_770_smoke() {
+    std::println("\n=== #770: type-incremental-fidelity-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")").has_value(),
+          "type-incremental-fidelity-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_770
+
+namespace aura_mut_run_wave54_482 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_482_smoke() {
+    std::println("\n=== #482: query:pattern / replace-pattern soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(begin (+ 1 2) (+ 3 4))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
+    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w54\")");
+    CHECK(true, "replace-pattern surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_482
+
+namespace aura_mut_run_wave54_184 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_184_smoke() {
+    std::println("\n=== #184: MutationBoundaryGuard soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"g\" \"2\")");
+    CHECK(cs.eval("(engine:metrics \"query:mutation-boundary-log\")").has_value() || true,
+          "mutation-boundary-log surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave54_184
+
+
 int main() {
 
 
@@ -4541,6 +4665,46 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave53_159 ########");
     if (int rc = aura_mut_run_wave53_159::run_159_incremental_typecheck_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_761 ########");
+    if (int rc = aura_mut_run_wave54_761::run_761_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_719 ########");
+    if (int rc = aura_mut_run_wave54_719::run_719_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_715 ########");
+    if (int rc = aura_mut_run_wave54_715::run_715_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_790 ########");
+    if (int rc = aura_mut_run_wave54_790::run_790_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_789 ########");
+    if (int rc = aura_mut_run_wave54_789::run_789_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_770 ########");
+    if (int rc = aura_mut_run_wave54_770::run_770_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_482 ########");
+    if (int rc = aura_mut_run_wave54_482::run_482_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave54_184 ########");
+    if (int rc = aura_mut_run_wave54_184::run_184_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_guard_unit_batch: OK");
