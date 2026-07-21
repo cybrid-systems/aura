@@ -18,7 +18,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <limits>
-#include <unistd.h> // Issue #237 v4: readlink for /proc/self/exe lookup
+#include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
 extern "C" std::uint64_t aura_get_defuse_version(void);
@@ -573,7 +574,6 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 // rejected — a binary from a future mutation epoch is invalid by
 // definition.
 #include <dlfcn.h>
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace {
 

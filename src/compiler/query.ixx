@@ -9,6 +9,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.query;
 import std;
@@ -567,7 +568,6 @@ inline TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::
 //   (+ x x) → (* x 2)   [when both children are the same Variable]
 //
 export class AutoFixEngine {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     AutoFixEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
         : ast_(ast)

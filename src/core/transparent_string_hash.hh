@@ -51,11 +51,12 @@ namespace aura::core {
 struct TransparentStringHash {
     using is_transparent = void;
 
+    // Single string_view overload — std::string and const char* convert to
+    // string_view unambiguously. A separate operator()(const std::string&)
+    // makes find(const char*) ambiguous (const char* → string_view vs
+    // temporary std::string), which fails static_assert in libstdc++.
     std::size_t operator()(std::string_view sv) const noexcept {
         return std::hash<std::string_view>{}(sv);
-    }
-    std::size_t operator()(const std::string& s) const noexcept {
-        return std::hash<std::string_view>{}(s);
     }
 };
 

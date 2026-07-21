@@ -50,7 +50,8 @@ module;
 #include "shape.h"
 #include "shape_profiler.h"
 #include "spec_jit_controller.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"                     // FNV constants (#901)
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.service;
 import std;
@@ -417,7 +418,6 @@ export enum class IncrementalTypecheckMode : std::uint8_t {
 };
 
 export class CompilerService {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 public:
     // Issue #531: closure / EnvFrame / bridge_epoch /
     // linear_ownership_state observability accessors.

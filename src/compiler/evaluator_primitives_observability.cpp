@@ -10,15 +10,15 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
-#include "core/transparent_string_hash.hh" // Issue #1671 — shared transparent hash for string-keyed stats catalog
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
 #include "primitives_meta.h"
 #include "primitives_detail.h"
 #include "serve/metrics.h"
-#include "hash_meta.h"    // FNV constants (#901)
-#include "basis_points.h" // #905
+#include "hash_meta.h"                     // FNV constants (#901)
+#include "basis_points.h"                  // #905
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 

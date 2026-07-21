@@ -14,6 +14,7 @@ module;
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.type_checker;
 import std;
@@ -37,7 +38,6 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "bounded_lru.h"
 // Issue #1877: last hygiene provenance stamp for truncated blame frames.
 #include "core/provenance_tracker.hh"
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #1884: C bridge (avoid <mutex> from typed_mutation_audit.h in this module).
 extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n);
 

@@ -9,6 +9,7 @@
 
 #if AURA_HAVE_LLVM
 
+
 // Short alias for the value tag namespace — keeps the JIT/IR
 // builder code free of fully-qualified names.
 namespace types = aura::compiler::types;
@@ -42,7 +43,8 @@ namespace types = aura::compiler::types;
 #include <unordered_set>
 #include <memory>
 #include <string>
-#include "hash_meta.h" // #908
+#include "hash_meta.h"                     // #908
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #1610: declared in aura_jit_runtime.cpp — compile-time consults
 // during FlatInstruction lower (not ORC-registered LLVM symbols).
@@ -3814,7 +3816,6 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
 #else
 
 #include <cstdio>
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::jit {
 

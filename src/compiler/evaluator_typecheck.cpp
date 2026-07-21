@@ -6,6 +6,7 @@ module;
 #include "observability_metrics.h"
 #include "typed_mutation_audit.h"  // Issue #1614 invariant audit
 #include "security_capabilities.h" // aura_fiber_current_id
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
@@ -16,7 +17,6 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.value;
 import aura.diag;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::compiler {
 

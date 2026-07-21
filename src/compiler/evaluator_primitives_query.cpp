@@ -20,6 +20,7 @@ module;
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
@@ -30,7 +31,6 @@ import aura.compiler.ir;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
 import aura.compiler.value;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();

@@ -21,7 +21,6 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh" // Issue #1579
-#include "core/transparent_string_hash.hh" // Issue #1671 / #891 / #914 — shared transparent hash for string-keyed maps
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
@@ -54,6 +53,7 @@ module;
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
@@ -330,22 +330,16 @@ public:
     using StringHash = aura::core::TransparentStringHash;
 
 private:
-    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>,
-                       aura::core::TransparentStringHash, std::equal_to<>>
-        table_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> table_;
     // Issue #1356: HotTierTable — name → fn for kPrimPerfHot only.
-    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>,
-                       aura::core::TransparentStringHash, std::equal_to<>>
-        hot_map_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> hot_map_;
     std::vector<HotEntry> hot_entries_;
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_{0};
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_render_{0};
     mutable std::atomic<std::uint64_t> cold_dispatch_fallback_{0};
     std::atomic<std::size_t> hot_table_size_{0};
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
-    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>,
-                       aura::core::TransparentStringHash, std::equal_to<>>
-        name_to_slot_;
+    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>> name_to_slot_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
     // string_heap_ arena allocation. Vector metadata lives in
     // the same monotonic arena as the underlying EvalValue /
@@ -590,7 +584,7 @@ private:
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Issue #894 / #914: name → last local index; transparent hash for
     // string_view lookups without temporary std::string.
-    std::unordered_map<std::string, std::size_t, Primitives::StringHash, Primitives::StringEq>
+    std::unordered_map<std::string, std::size_t, Primitives::StringHash, std::equal_to<>>
         binding_index_;
     // Issue #145: parallel SymId-keyed store. Both arrays
     // share the same length and order. lookup_by_symid reads

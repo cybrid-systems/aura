@@ -9,6 +9,7 @@ module;
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.macro_expansion;
 
@@ -68,7 +69,6 @@ export aura::ast::NodeId expand_inner_macros(
                              std::equal_to<>>& macros);
 
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
                                           aura::ast::NodeId root, int max_passes = 32);
 
 } // namespace aura::compiler::macro_exp

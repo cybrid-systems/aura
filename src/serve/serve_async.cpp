@@ -24,11 +24,11 @@ import std;
 #endif
 #include <poll.h>
 #include <dlfcn.h>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::serve {
 

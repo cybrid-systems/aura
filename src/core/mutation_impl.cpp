@@ -13,11 +13,11 @@ module;
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.core.mutation;
 
 import std;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::ast {
 namespace mutation {
