@@ -2,8 +2,11 @@
 """Generate issue test bundle mains and CMake glue.
 
 Reads tests/fixtures/issue_link_profiles.json and emits:
-  - tests/bundles/test_issues_<profile>_main.cpp  (one per bundle profile)
+  - tests/bundles/test_issues_<profile>_main.cpp  (slim table + main per profile)
   - cmake/AuraIssueBundles.cmake                  (aura_add_issue_bundle helper)
+
+Shared fork/runner logic lives in hand-written
+tests/bundles/issue_bundle_runner.{hh,cpp} (not generated).
 
 Usage:
   python3 scripts/gen_issue_bundles.py
@@ -257,20 +260,17 @@ def union_bundle_extras(members: list[str], all_extras: dict[str, dict]) -> dict
 
 
 def render_bundle_main(profile: str, members: list[str]) -> str:
+    """Slim per-profile main: extern table + call shared runner.
+
+    Fork/isolation logic is hand-written in issue_bundle_runner.cpp so the
+    12 profile mains stay data-only and stay in sync automatically.
+    """
     lines = [
         GENERATED_BANNER.rstrip(),
-        f"// Bundle driver for profile: {profile}",
+        f"// Bundle member table for profile: {profile}",
+        "// Runner: tests/bundles/issue_bundle_runner.cpp",
         "",
-        "#include <cstdio>",
-        "#include <cstdlib>",
-        "#include <sys/wait.h>",
-        "#include <unistd.h>",
-        "",
-        '#include "test_harness.hpp"',
-        "",
-        # Isolate process-global JIT/runtime state (g_hash_tables, pools)
-        # between members so one CS teardown cannot corrupt the next.
-        'extern "C" void aura_reset_runtime();',
+        '#include "issue_bundle_runner.hh"',
         "",
     ]
 
@@ -282,11 +282,7 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
         [
             "",
             "int main() {",
-            "    struct Member {",
-            "        const char* name;",
-            "        int (*run)();",
-            "    };",
-            "    Member members[] = {",
+            "    static const AuraBundleMember members[] = {",
         ]
     )
 
@@ -297,54 +293,8 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
     lines.extend(
         [
             "    };",
-            "",
-            "    int passed = 0;",
-            "    int failed = 0;",
-            "    const int n_members = static_cast<int>(sizeof(members) / sizeof(members[0]));",
-            "",
-            "    for (int i = 0; i < n_members; ++i) {",
-            '        std::println("\\n════ Bundle member: {} ════", members[i].name);',
-            # Issue #289: reset counters. Fork so a SIGABRT/heap crash in one
-            # member cannot take down the whole bundle process (CI rc=-6).
-            # aura_reset_runtime clears g_hash_tables / JIT pools in the child.
-            "        ::aura::test::g_passed = 0;",
-            "        ::aura::test::g_failed = 0;",
-            "        const pid_t pid = ::fork();",
-            "        if (pid < 0) {",
-            '            std::println(std::cerr, "fork failed for {}", members[i].name);',
-            "            ++failed;",
-            "            continue;",
-            "        }",
-            "        if (pid == 0) {",
-            "            aura_reset_runtime();",
-            "            const int rc = members[i].run();",
-            "            std::fflush(nullptr);",
-            "            ::_exit(rc == 0 ? 0 : 1);",
-            "        }",
-            "        int status = 0;",
-            "        if (::waitpid(pid, &status, 0) < 0) {",
-            '            std::println(std::cerr, "waitpid failed for {}", members[i].name);',
-            "            ++failed;",
-            "            continue;",
-            "        }",
-            "        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {",
-            "            ++passed;",
-            "        } else {",
-            "            ++failed;",
-            "            if (WIFSIGNALED(status)) {",
-            '                std::println(std::cerr, "bundle member {} crashed signal={}",',
-            "                             members[i].name, WTERMSIG(status));",
-            "            } else {",
-            '                std::println(std::cerr, "bundle member {} failed (rc={})",',
-            "                             members[i].name,",
-            "                             WIFEXITED(status) ? WEXITSTATUS(status) : -1);",
-            "            }",
-            "        }",
-            "    }",
-            "",
-            '    std::println("──────────────────────────────────────");',
-            '    std::println("Total: {} passed, {} failed", passed, failed);',
-            "    return failed > 0 ? 1 : 0;",
+            "    constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));",
+            f'    return aura_run_issue_bundle("{profile}", members, n);',
             "}",
             "",
         ]
@@ -367,7 +317,8 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         '    set(_target "test_issues_${PROFILE}")',
         "    set(_members ${${_members_var}})",
         "",
-        '    set(_sources "tests/bundles/test_issues_${PROFILE}_main.cpp")',
+        '    set(_sources "tests/bundles/issue_bundle_runner.cpp"',
+        '                 "tests/bundles/test_issues_${PROFILE}_main.cpp")',
         "    foreach(_m IN LISTS _members)",
         "        # domain/<theme>/ + domain/ + issues/ + tests/ (#1959)",
         "        aura_resolve_test_cpp(${_m} _aura_bundle_src)",
@@ -376,7 +327,7 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         "",
         "    add_executable(${_target} ${_sources})",
         "    set_property(TARGET ${_target} PROPERTY CXX_MODULE_STD ON)",
-        "    target_include_directories(${_target} PRIVATE src tests)",
+        "    target_include_directories(${_target} PRIVATE src tests tests/bundles)",
         "    aura_test_compile_options(${_target})",
         "    target_link_libraries(${_target} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)",
         "",

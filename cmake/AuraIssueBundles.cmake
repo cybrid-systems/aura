@@ -11,17 +11,17 @@ function(aura_add_issue_bundle PROFILE)
     set(_target "test_issues_${PROFILE}")
     set(_members ${${_members_var}})
 
-    set(_sources "tests/bundles/test_issues_${PROFILE}_main.cpp")
+    set(_sources "tests/bundles/issue_bundle_runner.cpp"
+                 "tests/bundles/test_issues_${PROFILE}_main.cpp")
     foreach(_m IN LISTS _members)
-        # Prefer aura_resolve_test_cpp so domain/<theme>/ pilots (#1959)
-        # and tests/domain/ suites resolve without hard-coded paths.
+        # domain/<theme>/ + domain/ + issues/ + tests/ (#1959)
         aura_resolve_test_cpp(${_m} _aura_bundle_src)
         list(APPEND _sources "${_aura_bundle_src}")
     endforeach()
 
     add_executable(${_target} ${_sources})
     set_property(TARGET ${_target} PROPERTY CXX_MODULE_STD ON)
-    target_include_directories(${_target} PRIVATE src tests)
+    target_include_directories(${_target} PRIVATE src tests tests/bundles)
     aura_test_compile_options(${_target})
     target_link_libraries(${_target} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 
