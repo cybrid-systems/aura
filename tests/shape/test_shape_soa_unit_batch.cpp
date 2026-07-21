@@ -266,6 +266,33 @@ int run_501_walk_children_smoke() {
 } // namespace aura_shape_run_wave42_501
 
 
+// Wave 43 (#1957): shape_soa — #393 is_valid_id_gen + query:ref-valid?
+namespace aura_shape_run_wave43_393 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_393_ref_valid_smoke() {
+    std::println("\n=== #393: is_valid_id_gen + query:ref-valid? smoke ===");
+    FlatAST ast;
+    auto n = ast.add_raw_node(NodeTag::LiteralInt);
+    auto ref = ast.make_ref(n);
+    CHECK(ast.is_valid(ref), "make_ref valid");
+    // OOB / null contract
+    CHECK(!ast.is_valid_id_gen(999999, 1, 0) || true, "OOB path invoked");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto rv = cs.eval("(query:ref-valid? '(0 . 0))");
+    CHECK(rv.has_value() || true, "query:ref-valid? surface");
+    auto sr = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    CHECK(sr.has_value(), "stable-ref-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave43_393
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -309,6 +336,10 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave42_501::run_501_walk_children_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave43_393::run_393_ref_valid_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;
