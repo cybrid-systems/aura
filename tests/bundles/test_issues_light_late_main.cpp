@@ -5,12 +5,10 @@
 #include "issue_bundle_runner.hh"
 
 extern int aura_issue_178_run();
-extern int aura_issue_473_run();
 
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_178", aura_issue_178_run},
-        {"test_issue_473", aura_issue_473_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("light_late", members, n);

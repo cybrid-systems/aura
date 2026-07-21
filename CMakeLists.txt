@@ -1247,7 +1247,8 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 #
 # Standalone C++ test because the test exercises the reflect.hh
 # header directly with the -freflection compile flag.
-aura_add_issue_test_reflect_standalone(test_issue_215)
+# test_issue_215 folded into edsl batch (wave 57 / #1957)
+# aura_add_issue_test_reflect_standalone(test_issue_215)
 
 # Issue #216 folded into test_edsl_macro_hygiene_batch (wave 52 / #1957)
 # — query:schema soft smoke.
@@ -1257,7 +1258,8 @@ aura_add_issue_test_reflect_standalone(test_issue_215)
 # 1 week of focused work; this test is the Cycle 1 pilot
 # that verifies the reflection infrastructure works for
 # IR-shaped types (OpcodeInfo, IRInstruction).
-aura_add_issue_test_reflect_standalone(test_issue_217)
+# test_issue_217 folded into edsl batch (wave 57 / #1957)
+# aura_add_issue_test_reflect_standalone(test_issue_217)
 
 # Issue #268: production aura::ast::NodeView roundtrip (split TU:
 # module side uses real NodeView; reflect side uses nodeview_wire.hh).

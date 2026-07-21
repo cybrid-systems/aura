@@ -2201,6 +2201,17 @@ int run_149_metrics_smoke() {
 } // namespace aura_obs_run_wave56_149
 
 
+// ═══ Wave 57 (#1957): observability ═══
+namespace aura_obs_run_wave57_677 {
+int run_677_metrics_smoke() {
+    std::println("\n=== #677: query:deployment-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:deployment-stats\")").has_value(), "deployment-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave57_677
+
+
 int main() {
 
 
@@ -2959,6 +2970,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave56_149 ########");
     if (int rc = aura_obs_run_wave56_149::run_149_metrics_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave57_677 ########");
+    if (int rc = aura_obs_run_wave57_677::run_677_metrics_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");

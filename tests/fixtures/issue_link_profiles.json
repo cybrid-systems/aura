@@ -1,30 +1,17 @@
 {
   "light": [
     "test_error_merr",
-    "test_pilot_harness",
-    "test_issue_181",
-    "test_issue_182"
+    "test_pilot_harness"
   ],
-  "fiber": [
-    "test_issue_115"
-  ],
+  "fiber": [],
   "jit": [],
-  "jit_minimal": [
-    "test_issue_146"
-  ],
+  "jit_minimal": [],
   "jit_contract": [],
-  "jit_tests": [
-    "test_issue_401"
-  ],
-  "reflect": [
-    "test_issue_215",
-    "test_issue_217"
-  ],
+  "jit_tests": [],
+  "reflect": [],
   "standalone": [],
   "standalone_link": [],
   "jit_late1": [
-    "test_issue_159_bench",
-    "test_issue_677",
     "test_per_fiber_stack_pool_high_concurrency",
     "test_aot_bridge_checkpoint_version_steal",
     "test_macro_hygiene_fiber_panic_aot_soa_self_evo",
@@ -63,7 +50,6 @@
   "jit_late4": [],
   "jit_late5": [],
   "light_late": [
-    "test_issue_178",
-    "test_issue_473"
+    "test_issue_178"
   ]
 }

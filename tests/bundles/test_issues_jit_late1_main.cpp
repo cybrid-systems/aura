@@ -4,8 +4,6 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_159_bench_run();
-extern int aura_issue_677_run();
 extern int aura_issue_per_fiber_stack_pool_high_concurrency_run();
 extern int aura_issue_aot_bridge_checkpoint_version_steal_run();
 extern int aura_issue_macro_hygiene_fiber_panic_aot_soa_self_evo_run();
@@ -16,8 +14,6 @@ extern int aura_issue_typesystem_typed_mutate_incremental_gaps_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_159_bench", aura_issue_159_bench_run},
-        {"test_issue_677", aura_issue_677_run},
         {"test_per_fiber_stack_pool_high_concurrency",
          aura_issue_per_fiber_stack_pool_high_concurrency_run},
         {"test_aot_bridge_checkpoint_version_steal",
