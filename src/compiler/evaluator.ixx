@@ -21,6 +21,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh" // Issue #1579
+#include "core/transparent_string_hash.hh" // Issue #1671 / #891 / #914 — shared transparent hash for string-keyed maps
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
 // Issue #1368: aura_set_aot_metrics for set_compiler_metrics auto-wire
@@ -323,32 +324,22 @@ public:
 
 public:
     // Transparent hash so lookup_cstr / slot_for_name / Env avoid temporary std::string
-    // (#891/#914).
-    struct StringHash {
-        using is_transparent = void;
-        std::size_t operator()(std::string_view s) const noexcept {
-            return std::hash<std::string_view>{}(s);
-        }
-        std::size_t operator()(const std::string& s) const noexcept {
-            return std::hash<std::string_view>{}(s);
-        }
-    };
-    struct StringEq {
-        using is_transparent = void;
-        bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
-    };
+    // (#891/#914). Moved to aura::core::TransparentStringHash in
+    // src/core/transparent_string_hash.hh — all three maps (table_,
+    // hot_map_, name_to_slot_) below use the shared type.
+    using StringHash = aura::core::TransparentStringHash;
 
 private:
-    std::unordered_map<std::string, PrimFn, StringHash, StringEq> table_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> table_;
     // Issue #1356: HotTierTable — name → fn for kPrimPerfHot only.
-    std::unordered_map<std::string, PrimFn, StringHash, StringEq> hot_map_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> hot_map_;
     std::vector<HotEntry> hot_entries_;
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_{0};
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_render_{0};
     mutable std::atomic<std::uint64_t> cold_dispatch_fallback_{0};
     std::atomic<std::size_t> hot_table_size_{0};
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
-    std::unordered_map<std::string, std::size_t, StringHash, StringEq> name_to_slot_;
+    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>> name_to_slot_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
     // string_heap_ arena allocation. Vector metadata lives in
     // the same monotonic arena as the underlying EvalValue /
