@@ -54,7 +54,7 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | `mutation/` | Bulk root mutation cpp (#1977) | 118 files; prefer `domain/test_domain_gates_batch` |
 | `compiler_core/` | Bulk root compiler cpp (#1977) | 58 files; future `domain/compiler/` |
 | `fiber/` | Bulk root fiber cpp (#1977) | 38 files; prefer `domain/test_domain_gates_batch` |
-| `edsl/` | Bulk root edsl cpp (#1977) | 19 files; prefer `domain/test_domain_gates_batch` |
+| `edsl/` | EDSL hygiene batches (#1977→batch) | `test_edsl_*_hygiene_batch` + domain gates for schema-only |
 | `jit/` | Bulk root JIT/AOT cpp (#1977) | 7 files; heavy JIT stays here or root |
 | `arena/` | Bulk root arena cpp (#1977) | 7 files; parallel to `domain/arena/` pilot |
 | `stdlib/` | Bulk root stdlib cpp (#1977) | 5 files; prefer `suite/` for `.aura` |
