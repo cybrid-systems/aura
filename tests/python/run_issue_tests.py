@@ -119,6 +119,38 @@ def _bundled_standalone_members() -> set[str]:
     return set(_member_to_bundle().keys())
 
 
+def _test_binary_has_source(name: str) -> bool:
+    """True if a source for *name* still exists (mirrors cmake/AuraTest.cmake).
+
+    Stale executables left in build/ after source cleanup (e.g. orphan
+    tests/domain/test_issue_1956.cpp removed in #1978) must not be
+    rediscovered as NEW CI failures.
+    """
+    # 1. tests/issues/<NAME>.cpp
+    if (ROOT / "tests" / "issues" / f"{name}.cpp").is_file():
+        return True
+    # 2. tests/domain/<NAME>.cpp
+    if (ROOT / "tests" / "domain" / f"{name}.cpp").is_file():
+        return True
+    # 3. tests/domain/<theme>/<NAME>.cpp  ·  4. tests/<theme>/<NAME>.cpp
+    domain = ROOT / "tests" / "domain"
+    if domain.is_dir():
+        for theme in domain.iterdir():
+            if theme.is_dir() and (theme / f"{name}.cpp").is_file():
+                return True
+    tests = ROOT / "tests"
+    for theme in tests.iterdir():
+        if theme.is_dir() and (theme / f"{name}.cpp").is_file():
+            return True
+    # 5. tests/<NAME>.cpp
+    if (tests / f"{name}.cpp").is_file():
+        return True
+    # Bundle drivers (tests/bundles/test_issues_*_main.cpp)
+    if (tests / "bundles" / f"{name}_main.cpp").is_file():
+        return True
+    return bool((tests / "bundles" / f"{name}.cpp").is_file())
+
+
 def discover_test_issue_binaries() -> list[str]:
     """Find issue bundle + standalone test binaries in build/."""
     bundled = _bundled_standalone_members()
@@ -146,6 +178,9 @@ def discover_test_issue_binaries() -> list[str]:
                 "test_arena_defrag_concurrent",
             }
         ):
+            # Drop build/ leftovers whose sources were deleted/relocated.
+            if not _test_binary_has_source(name):
+                continue
             bins.append(name)
     return bins
 
