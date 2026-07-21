@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 467 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 463 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **475** | |
+| **Total scanned** | **471** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 157 | 0 | 1 | 158 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 153 | 0 | 1 | 154 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,24 +47,24 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 423 | Integration path via `CompilerService` / eval |
-| `test_harness` | 260 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 419 | Integration path via `CompilerService` / eval |
+| `test_harness` | 256 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 120 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
-| `own_main` | 26 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 25 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 306
-- `unknown`: 97
+- `integration`: 304
+- `unknown`: 95
 - `unit`: 57
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 242
+- `test_harness.hpp` — 238
 - `compiler/observability_metrics.h` — 46
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 14
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 286
-- `aura.compiler.service` — 275
-- `aura.compiler.evaluator` — 258
-- `std` — 250
-- `aura.core.ast` — 167
+- `aura.compiler.value` — 283
+- `aura.compiler.service` — 271
+- `aura.compiler.evaluator` — 256
+- `std` — 246
+- `aura.core.ast` — 166
 - `aura.core.type` — 88
 - `aura.core.arena` — 86
 - `aura.compiler.ir` — 44
@@ -111,7 +111,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **9**
 - Phase-slice files (`*_phase*`): **9**
 - Small files (< 4 KiB, possible thin probes): **5**
-- Existing `*_batch` drivers (migration milestones): **7**
+- Existing `*_batch` drivers (migration milestones): **6**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -156,7 +156,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/test_domain_gates_batch.cpp` → theme `mutation_dirty`
 - `tests/domain/test_fiber_integration_batch.cpp` → theme `fiber_orch`
 - `tests/domain/arena/test_gc_batch.cpp` → theme `arena_compaction`
-- `tests/issues/test_issue_1449_demotion_batch.cpp` → theme `observability`
 
 ### Domain suites (do not regress; extend these)
 
@@ -590,7 +589,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (158)
+### `observability` — Observability / metrics / query:*-stats (154)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -600,12 +599,10 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (157)
+#### issues/ (153)
 
-- `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1460.cpp` (#1460) — test_issue_1460.cpp — Issue #1460:
 - `tests/issues/test_issue_1461.cpp` (#1461) — test_issue_1461.cpp — Issue #1461:
-- `tests/issues/test_issue_1462.cpp` (#1462) — test_issue_1462.cpp — Issue #1462: Agent Migration Guide +
 - `tests/issues/test_issue_1487.cpp` (#1487) — AC1: allocate_raw / allocate_checked reject over memory quota
 - `tests/issues/test_issue_149.cpp` (#149) [early_issue] — test_issue_149.cpp — Verify Issue #149 acceptance criteria
 - `tests/issues/test_issue_1491.cpp` (#1491) — apply_closure paths + JIT aura_closure_call (closed-loop on #1475/#1477).
@@ -635,7 +632,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1574.cpp` (#1574) — AC1: DefineDirtyMaskView any / is_block_dirty / is_instruction_dirty
 - `tests/issues/test_issue_1625_nested_lambda_targeted.cpp` (#1625) — AC1: free-ref nested marks only entry_block (or instr-hit blocks)
 - `tests/issues/test_issue_1637.cpp` (#1637) — tests/test_issue_1637.cpp — Issue #1637
-- `tests/issues/test_issue_1646.cpp` (#1646) — test_issue_1646.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_1908.cpp` (#1908) — test_issue_1908.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_197_observability.cpp` (#197) [small, obs_named, early_issue] — test_issue_197_observability.cpp — Issue #197 Aura
 - `tests/issues/test_issue_247.cpp` (#247) — test_issue_247.cpp — Issue #247: SyntaxMarker observability integration
@@ -660,7 +656,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_385.cpp` (#385) — test_issue_385.cpp — Issue #385: mutation-aware
 - `tests/issues/test_issue_386.cpp` (#386) — test_issue_386.cpp — Issue #386: Deep Occurrence Typing
 - `tests/issues/test_issue_387.cpp` (#387) — test_issue_387.cpp — Issue #387: Type Dependency Graph
-- `tests/issues/test_issue_388.cpp` (#388) — test_issue_388.cpp — Issue #388: Caller-side marker check +
 - `tests/issues/test_issue_389.cpp` (#389) — test_issue_389.cpp — Issue #389: `(compile:snapshot)` Aura
 - `tests/issues/test_issue_390.cpp` (#390) — test_issue_390.cpp — Issue #390: Auto-populate schema in
 - `tests/issues/test_issue_409.cpp` (#409) — test_issue_409.cpp — Issue #409: Fine-grained constraint

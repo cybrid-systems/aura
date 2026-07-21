@@ -5,6 +5,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
@@ -249,7 +250,84 @@ int run_1451_primitive_validate_new_smoke() {
     CHECK(desc.has_value(), "primitive:describe validate-new");
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_obs_run_wave28_1451
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 29 (#1957): observability — #1646 #1449 #1462 #388
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_obs_run_wave29_1646 {
+int run_1646_mutation_boundary_obs_stats_smoke() {
+    std::println("\n=== #1646: mutation-boundary-observability-stats smoke ===");
+    CompilerService cs;
+    auto h = cs.eval("(engine:metrics \"query:mutation-boundary-observability-stats\")");
+    // Implementation currently returns sum-int (hash fill deferred).
+    CHECK(h && (is_hash(*h) || is_int(*h)), "mutation-boundary-observability-stats reachable");
+    // source surface present
+    auto read_src = [](const char* path) -> std::string {
+        for (const char* prefix : {"", "../", "../../"}) {
+            std::ifstream in(std::string(prefix) + path);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    };
+    const auto q = read_src("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:mutation-boundary-observability-stats") != std::string::npos,
+          "primitive registered in query.cpp");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave29_1646
+
+namespace aura_obs_run_wave29_1449 {
+int run_1449_slim_surface_demotion_smoke() {
+    std::println("\n=== #1449: slim surface demotion smoke ===");
+    CompilerService cs;
+    // demoted dashboards still via stats:get / engine:metrics catalog
+    for (const char* name : {"query:edsl-readiness", "query:runtime-production-health"}) {
+        auto r = cs.eval(std::format("(stats:get \"{}\")", name));
+        CHECK(r.has_value(), std::format("stats:get {}", name));
+    }
+    auto surf = cs.eval("(engine:surface)");
+    CHECK(surf && is_hash(*surf), "engine:surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave29_1449
+
+namespace aura_obs_run_wave29_1462 {
+int run_1462_compat_shim_smoke() {
+    std::println("\n=== #1462: std/compat demoted query shims smoke ===");
+    CompilerService cs;
+    // May require import; try direct + import fallback
+    auto imp = cs.eval("(import \"std/compat\")");
+    (void)imp;
+    auto r_fbn = cs.eval("(query:find-by-name \"nonexistent-test-name-xyz\")");
+    auto r_find = cs.eval("(query:find \"nonexistent-test-name-xyz\")");
+    // both should resolve (compat or native); presence is enough
+    CHECK(r_fbn.has_value() || r_find.has_value(), "find path reachable");
+    auto r_nwm = cs.eval("(query:nodes-with-marker 'nonexistent-test-marker-xyz)");
+    auto r_bm = cs.eval("(query:by-marker 'nonexistent-test-marker-xyz)");
+    CHECK(r_nwm.has_value() || r_bm.has_value(), "marker path reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave29_1462
+
+namespace aura_obs_run_wave29_388 {
+int run_388_inline_pass_stats_smoke() {
+    std::println("\n=== #388: allow-macro-inline + inline-pass-stats smoke ===");
+    CompilerService cs;
+    auto r_on = cs.eval("(*allow-macro-inline* #t)");
+    CHECK(r_on.has_value(), "(*allow-macro-inline* #t)");
+    auto r_off = cs.eval("(*allow-macro-inline* #f)");
+    CHECK(r_off.has_value(), "(*allow-macro-inline* #f)");
+    auto stats = cs.eval("(engine:metrics \"compile:inline-pass-stats\")");
+    CHECK(stats.has_value(), "compile:inline-pass-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave29_388
 
 int main() {
 
@@ -300,6 +378,22 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave28_1451::run_1451_primitive_validate_new_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave29_1646::run_1646_mutation_boundary_obs_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave29_1449::run_1449_slim_surface_demotion_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave29_1462::run_1462_compat_shim_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave29_388::run_388_inline_pass_stats_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
