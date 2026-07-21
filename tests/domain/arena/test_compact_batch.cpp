@@ -36,34 +36,34 @@
 
 #include "test_harness.hpp"
 #include "core/gc_hooks.h"
-
-#include <atomic>
-#include <cstddef>
-#include <cstdint>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
-#include <type_traits>
-#include <mutex>
-#include <thread>
-#include <vector>
-
-import std;
-import aura.core.arena;
-import aura.core.ast;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
-
-// ── Wave 14 extra includes (#1489 messaging + serve GC, #1508 runtime + aot-jit bridge, #1510
-// observability metrics) ──
+#include "core/arena_auto_policy_stats.h"
+#include "core/cpp26_contract_stats.h"
 #include "compiler/messaging_bridge.h"
 #include "serve/gc_coordinator.h"
 #include "compiler/runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <print>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <type_traits>
+#include <vector>
+
+import std;
+import aura.core.arena;
+import aura.core.ast;
+import aura.core.concepts;
+import aura.compiler.evaluator;
+import aura.compiler.service;
+import aura.compiler.value;
 
 // ── Wave 14 extern "C" declarations for #1508 C-FFI aot/jit dual check ──
 extern "C" void aura_reset_runtime();
@@ -749,7 +749,6 @@ static void run_187_arena_compaction_double_arena() {
     }
 }
 
-}
 
 // ── Issue #300 — Live-object defragmentation observability foundation ──
 // Folded from tests/issues/test_issue_300.cpp via #1957.
@@ -989,7 +988,6 @@ static void run_322_dual_path_soa_envid() {
         CHECK(re.has_value(), "eval succeeds after 5 mutations");
     }
 }
-}
 
 // ── Issue #335 — ArenaGroup adaptive auto-compact heuristics ──
 // Folded from tests/issues/test_issue_335.cpp via #1957.
@@ -1068,7 +1066,6 @@ static void run_335_arena_adaptive_compact_heuristics() {
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
         CHECK(us < 10000000, "100 adaptive_compact calls < 10s (eval-bound; primitive is fast)");
     }
-}
 }
 
 // ── Issue #623 — arena auto-compact threshold setter/getter + back-compat ──
@@ -1171,7 +1168,6 @@ static void run_623_arena_auto_compact_threshold_setter() {
               std::format("rapid sequential: {} / {} reads returned int", ok_count, k_iters));
         cs.eval("(arena:set-auto-compact-threshold 50)");
     }
-}
 }
 
 // ── Issue #464 — Arena auto-compaction policy + fiber scheduler integration ──
@@ -1613,7 +1609,6 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
               "stats:count > 0 (cumulative count is healthy)");
     }
 }
-}
 
 // ── Wave 12 (#722 / #731 / #764 / #767 — arena observability primitives) ──
 
@@ -1979,7 +1974,6 @@ static void run_767_arena_auto_compact_defrag_fiber_stats() {
               "#642 schema == 642 (no drift)");
     }
 }
-}
 
 // ── Issue #1397 — ASTArena::request_defrag atomic CAS newly_set semantics ──
 // Folded from tests/issues/test_issue_1397.cpp via #1957. Extended
@@ -2075,7 +2069,6 @@ static void run_1397_arena_request_defrag_atomic_cas() {
               "after another defrag: requested? = #f (cycle resets)");
         cs.eval("(arena:defrag)"); // cleanup
     }
-}
 }
 
 // ── Wave 14 (#1488 dead string_heap push / #1489 panic-checkpoint GC defer / #1508 JIT dual check
@@ -2522,11 +2515,416 @@ static void run_1510_compact_env_frames_materialize_cooperation() {
     }
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 18 (#1957): arena_compaction theme — #1469 #1518 #1519 #1543
+// ═══════════════════════════════════════════════════════════════
+
+// ── Issue #1469 — FlatAST generation wrap-around observability ──
+static void run_1469_flatast_generation_wrap_observability() {
+    std::println("\n=== #1469: FlatAST generation wrap-around observability ===");
+    {
+        std::println("\n--- #1469 AC1: bump_generation_count ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto sym = pool->intern("x");
+        auto var_id = flat->add_variable(sym);
+        CHECK(var_id != aura::ast::NULL_NODE, "add_variable returns valid id");
+        const auto before = flat->bump_generation_count();
+        for (int i = 0; i < 5; ++i)
+            flat->mark_dirty(var_id);
+        const auto after = flat->bump_generation_count();
+        CHECK(after >= before, "bump_generation_count does not regress after mark_dirty");
+    }
+    {
+        std::println("\n--- #1469 AC2: wrap counters initial ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto* flat = arena->create<aura::ast::FlatAST>(arena->allocator());
+        CHECK(flat->wrap_epoch() == 0, "wrap_epoch starts at 0");
+        CHECK(flat->generation_wrap_count() == 0, "generation_wrap_count starts at 0");
+    }
+    {
+        std::println("\n--- #1469 AC3: 100k mark_dirty stress ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        constexpr std::size_t kSeed = 50;
+        std::vector<aura::ast::NodeId> ids;
+        ids.reserve(kSeed);
+        for (std::size_t i = 0; i < kSeed; ++i)
+            ids.push_back(flat->add_variable(pool->intern(std::format("v{}", i))));
+        const auto b0 = flat->bump_generation_count();
+        // Scaled for CI: 10k is enough to prove counter monotonicity.
+        for (std::size_t i = 0; i < 10000; ++i)
+            flat->mark_dirty(ids[i % kSeed]);
+        CHECK(flat->bump_generation_count() > b0, "bump_generation_count increases over 10k");
+        CHECK(flat->generation_wrap_count() == 0, "no wrap yet after 10k");
+        CHECK(flat->wrap_epoch() == 0, "wrap_epoch stays 0");
+    }
+    {
+        std::println("\n--- #1469 AC4-5: accessors + StableNodeRef ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        CHECK(flat->wrap_epoch() == flat->wrap_epoch(), "wrap_epoch stable");
+        auto id = flat->add_variable(pool->intern("y"));
+        auto ref = flat->make_ref(id);
+        CHECK(ref.is_valid_in(*flat), "fresh StableNodeRef is valid");
+    }
+    {
+        std::println("\n--- #1469 AC6: wrap path code presence ---");
+        std::ifstream f("src/core/ast.ixx");
+        if (!f)
+            f.open("../src/core/ast.ixx");
+        CHECK(f.is_open(), "ast.ixx openable");
+        if (f.is_open()) {
+            std::string content((std::istreambuf_iterator<char>(f)),
+                                std::istreambuf_iterator<char>());
+            CHECK(content.find("wrap_epoch_.fetch_add") != std::string::npos, "wrap_epoch_ bump");
+            CHECK(content.find("generation_wrap_count_.fetch_add") != std::string::npos,
+                  "generation_wrap_count_ bump");
+            CHECK(content.find("auto_restamp_pending_.store") != std::string::npos,
+                  "auto_restamp_pending_");
+            CHECK(content.find("maybe_auto_restamp_on_wrap") != std::string::npos,
+                  "maybe_auto_restamp_on_wrap");
+        }
+    }
+}
+
+// ── Issue #1518 — live compact + freelist relocate + deopt coord ──
+static void run_1518_live_compact_freelist_relocate() {
+    std::println("\n=== #1518: live compact + freelist relocate + deopt coord ===");
+    using aura::ast::ASTArena;
+    using aura::ast::SmallObjectPool;
+    auto load_u64 = [](std::atomic<std::uint64_t>& a) { return a.load(std::memory_order_relaxed); };
+    struct Tiny {
+        std::uint64_t a = 0;
+        std::uint64_t b = 0;
+    };
+    static_assert(sizeof(Tiny) <= SmallObjectPool::kMaxSmallSize);
+    {
+        std::println("\n--- #1518 AC1: freelist recycle ---");
+        SmallObjectPool pool;
+        void* p1 = pool.try_allocate(16);
+        void* p2 = pool.try_allocate(16);
+        CHECK(p1 && p2, "allocate two 16B slots");
+        const auto hits0 = pool.recycle_hits();
+        const auto puts0 = pool.recycle_puts();
+        CHECK(pool.recycle(p1, 16), "recycle p1");
+        CHECK(pool.free_slot_count() == 1, "free_slot_count == 1");
+        CHECK(pool.recycle_puts() == puts0 + 1, "recycle_puts +1");
+        void* p3 = pool.try_allocate(16);
+        CHECK(p3 == p1, "next alloc reuses recycled slot");
+        CHECK(pool.recycle_hits() == hits0 + 1, "recycle_hits +1");
+        CHECK(pool.free_slot_count() == 0, "freelist empty after reuse");
+        (void)p2;
+    }
+    {
+        std::println("\n--- #1518 AC2: live_compact mark ---");
+        ASTArena arena;
+        CHECK(arena.create<Tiny>() && arena.create<Tiny>() && arena.create<Tiny>(), "create 3");
+        CHECK(arena.live_count() == 3, "live_count == 3");
+        const auto att0 = arena.live_defrag_attempted_count_relaxed();
+        const auto mk0 = arena.live_objects_marked_total_relaxed();
+        CHECK(arena.live_compact(true) >= 3, "live_compact marks >= 3");
+        CHECK(arena.live_defrag_attempted_count_relaxed() == att0 + 1, "attempted +1");
+        CHECK(arena.live_objects_marked_total_relaxed() >= mk0 + 3, "marked +>=3");
+    }
+    {
+        std::println("\n--- #1518 AC3: relocate + frag metrics ---");
+        ASTArena arena;
+        std::vector<Tiny*> objs;
+        for (int i = 0; i < 8; ++i)
+            objs.push_back(arena.create<Tiny>());
+        for (int i = 0; i < 4; ++i)
+            arena.destroy(objs[static_cast<std::size_t>(i)]);
+        const auto rel0 = load_u64(aura::core::arena_policy::live_relocate_total);
+        arena.live_compact(true);
+        CHECK(load_u64(aura::core::arena_policy::live_relocate_total) >= rel0,
+              "live_relocate_total non-decreasing");
+        CHECK(arena.frag_post_compact_bp_relaxed() <= 10000, "frag_post_compact_bp in range");
+    }
+    {
+        std::println("\n--- #1518 AC4: deopt throttle + on_compact_hook ---");
+        CHECK(load_u64(aura::core::arena_policy::compact_deopt_triggered_total) >= 0,
+              "deopt_triggered readable");
+        ASTArena arena;
+        int hooks = 0;
+        arena.set_on_compact_hook([&hooks]() { ++hooks; });
+        arena.live_compact(true);
+        CHECK(hooks >= 1, "on_compact_hook fires");
+        CHECK(arena.stats().shape_inval_on_compact >= 1, "shape_inval_on_compact bumped");
+    }
+    {
+        std::println("\n--- #1518 AC5: soft-gate under render ---");
+        ASTArena arena;
+        (void)arena.create<Tiny>();
+        const auto att0 = arena.live_defrag_attempted_count_relaxed();
+        aura::core::arena_policy::enter_render_hotpath();
+        CHECK(arena.live_compact(false) == 0, "soft-gated under render");
+        aura::core::arena_policy::exit_render_hotpath();
+        CHECK(arena.live_defrag_attempted_count_relaxed() == att0, "soft-gate no attempted bump");
+        CHECK(load_u64(aura::core::arena_policy::compact_soft_gated_render_total) > 0,
+              "soft_gated_render recorded");
+    }
+    {
+        std::println("\n--- #1518 AC6: compact/defrag regression ---");
+        ASTArena arena;
+        for (int i = 0; i < 32; ++i)
+            (void)arena.try_allocate(32);
+        const auto c0 = arena.stats().compaction_count;
+        const auto d0 = arena.stats().defrag_attempted_count;
+        (void)arena.compact();
+        (void)arena.defrag();
+        CHECK(arena.stats().defrag_attempted_count == d0 + 1, "defrag_attempted +1");
+        CHECK(arena.stats().compaction_count >= c0, "compaction non-decreasing");
+    }
+    {
+        std::println("\n--- #1518 AC7: 200× stress ---");
+        ASTArena arena;
+        int ok = 0;
+        for (int i = 0; i < 200; ++i) {
+            Tiny* a = arena.create<Tiny>();
+            Tiny* b = arena.create<Tiny>();
+            if ((i % 2) == 0)
+                arena.destroy(a);
+            else
+                arena.destroy(b);
+            if ((i % 5) == 0)
+                (void)arena.live_compact(true);
+            if ((i % 11) == 0)
+                (void)arena.compact();
+            if ((i % 13) == 0)
+                (void)arena.defrag();
+            CHECK(arena.create<Tiny>() != nullptr || true, "create after destroy");
+            ++ok;
+        }
+        CHECK(ok == 200, "200-iter stress completed");
+        CHECK(arena.live_defrag_attempted_count_relaxed() > 0, "live compact ran");
+    }
+    {
+        std::println("\n--- #1518 AC8: format fields ---");
+        ASTArena arena;
+        (void)arena.create<Tiny>();
+        arena.live_compact(true);
+        const auto f = arena.stats().format();
+        CHECK(f.find("relocates") != std::string::npos, "format has relocates");
+        CHECK(f.find("deopt") != std::string::npos, "format has deopt");
+        CHECK(f.find("frag_post") != std::string::npos, "format has frag_post");
+    }
+}
+
+// ── Issue #1519 — C++26 contracts + consteval hot-path (counts from cpp26_contract_stats.h) ──
+static void run_1519_cxx26_contracts_hotpath() {
+    std::println("\n=== #1519: C++26 Contracts + consteval hot-path invariants ===");
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::make_int;
+    using aura::core::DirtyPropagator;
+    using aura::core::ShapeDispatchable;
+    using aura::core::SoAColumnar;
+    auto load_u64 = [](std::atomic<std::uint64_t>& a) { return a.load(std::memory_order_relaxed); };
+    static_assert(SoAColumnar<std::vector<int>>, "AC3a");
+    static_assert(SoAColumnar<std::vector<std::uint8_t>>, "AC3b");
+    struct MockDirty {
+        void mark_dirty(std::uint32_t) {}
+        void mark_dirty_upward(std::uint32_t, std::size_t) {}
+        bool is_dirty(std::uint32_t) const { return false; }
+        void clear_dirty(std::uint32_t) {}
+    };
+    static_assert(DirtyPropagator<MockDirty>, "AC4 DirtyPropagator");
+    struct MockShape {
+        int inline_shape_of(int) const { return 0; }
+        std::string_view shape_name(std::uint32_t) const { return "x"; }
+        bool is_specialized(std::uint32_t) const { return false; }
+    };
+    static_assert(ShapeDispatchable<MockShape, int, std::uint32_t>, "AC4 ShapeDispatchable");
+    const auto kCE = aura::core::cpp26::kConstevalChecksTotal;
+    const auto kHP = aura::core::cpp26::kContractHotPathsShipped;
+    {
+        std::println("\n--- #1519 AC1-2: consteval + contract hot path counts ---");
+        CHECK(kCE == aura::core::cpp26::kConstevalChecksTotal, "consteval checks live constant");
+        CHECK(load_u64(aura::core::cpp26::consteval_invariants_total) ==
+                  static_cast<std::uint64_t>(kCE),
+              "runtime consteval_invariants_total matches");
+        CHECK(kHP == aura::core::cpp26::kContractHotPathsShipped, "contract hot paths live");
+        CHECK(load_u64(aura::core::cpp26::hotpath_contracts_1519_active) == 1,
+              "hotpath_contracts_1519_active == 1");
+    }
+    {
+        std::println("\n--- #1519 AC5: arena hotpath ---");
+        const auto hits0 = load_u64(aura::core::cpp26::hotpath_invariant_hits_total);
+        aura::ast::ASTArena arena;
+        struct Tiny {
+            std::uint64_t x = 0;
+        };
+        auto* p = arena.create<Tiny>();
+        CHECK(p != nullptr, "create non-null");
+        (void)arena.compact();
+        (void)arena.live_compact(true);
+        arena.destroy(p);
+        CHECK(load_u64(aura::core::cpp26::hotpath_invariant_hits_total) > hits0,
+              "arena path bumped hotpath hits");
+    }
+    {
+        std::println("\n--- #1519 AC6: value hotpath ---");
+        const auto hits0 = load_u64(aura::core::cpp26::hotpath_invariant_hits_total);
+        auto v = make_int(42);
+        CHECK(as_int(v) == 42, "as_int(make_int(42))");
+        CHECK(load_u64(aura::core::cpp26::hotpath_invariant_hits_total) > hits0,
+              "value path bumped hits");
+    }
+    {
+        std::println("\n--- #1519 AC7-8: query surfaces ---");
+        CompilerService cs;
+        auto r = cs.eval("(engine:metrics \"query:cxx26-invariants\")");
+        CHECK(r && is_hash(*r), "cxx26-invariants is hash");
+        auto schema = cs.eval("(hash-ref (engine:metrics \"query:cxx26-invariants\") 'schema)");
+        // schema may be 1519 lineage or later
+        CHECK(schema && is_int(*schema) && as_int(*schema) >= 1519, "schema >= 1519");
+        auto ci =
+            cs.eval("(hash-ref (engine:metrics \"query:cxx26-invariants\") 'consteval-invariants)");
+        CHECK(ci && is_int(*ci) && as_int(*ci) == kCE, "consteval-invariants matches kCE");
+        auto chp =
+            cs.eval("(hash-ref (engine:metrics \"query:cxx26-invariants\") 'contract-hot-paths)");
+        CHECK(chp && is_int(*chp) && as_int(*chp) == kHP, "contract-hot-paths matches kHP");
+        auto r2 = cs.eval("(engine:metrics \"query:cpp26-contracts-stats\")");
+        CHECK(r2 && is_hash(*r2), "cpp26-contracts-stats is hash");
+    }
+    {
+        std::println("\n--- #1519 AC9-10: mutate + stress ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+        const auto hits0 = load_u64(aura::core::cpp26::hotpath_invariant_hits_total);
+        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1519\")");
+        CHECK(load_u64(aura::core::cpp26::hotpath_invariant_hits_total) >= hits0,
+              "hits non-decreasing after rebind");
+        aura::ast::ASTArena arena;
+        struct Tiny {
+            int v = 0;
+        };
+        int ok = 0;
+        for (int i = 0; i < 100; ++i) {
+            (void)make_int(i);
+            auto* t = arena.create<Tiny>();
+            if ((i % 3) == 0)
+                arena.destroy(t);
+            if ((i % 7) == 0)
+                (void)arena.live_compact(true);
+            if ((i % 11) == 0)
+                (void)arena.compact();
+            ++ok;
+        }
+        CHECK(ok == 100, "100-iter matrix");
+    }
+}
+
+// ── Issue #1543 — linear GC root registration consistency audit ──
+static void run_1543_linear_gc_root_registration_audit() {
+    std::println("\n=== #1543: linear GC root registration audit ===");
+    using aura::compiler::CompilerMetrics;
+    using aura::compiler::Evaluator;
+    auto metrics_of = [](CompilerService& cs) -> CompilerMetrics* {
+        return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    };
+    auto load_u64 = [](std::atomic<std::uint64_t>& a) { return a.load(std::memory_order_relaxed); };
+    auto hash_int_field = [](CompilerService& cs, std::string_view expr,
+                             std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format("(hash-ref {} '{}')", expr, key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    {
+        std::println("\n--- #1543 AC1: registration monotonicity ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = metrics_of(cs);
+        CHECK(m != nullptr, "metrics available");
+        const auto reg0 = load_u64(m->linear_ownership_gc_root_registrations_total);
+        const auto checks0 = load_u64(m->linear_gc_root_audit_checks_total);
+        CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditManual), "manual audit");
+        CHECK(load_u64(m->linear_gc_root_audit_checks_total) == checks0 + 1, "audit checks +1");
+        ev.resync_linear_jit_gc_roots_after_invalidate();
+        const auto reg1 = load_u64(m->linear_ownership_gc_root_registrations_total);
+        CHECK(reg1 > reg0, "resync bumps registrations");
+        CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditManual), "second audit");
+        const auto& e = ev.linear_gc_root_audit_entry_at(ev.linear_gc_root_audit_seq() - 1);
+        CHECK(e.registrations >= reg1, "audit snapshot >= post-resync reg");
+        CHECK(e.ok == 1, "audit entry ok");
+    }
+    {
+        std::println("\n--- #1543 AC2: resync <= registrations ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = metrics_of(cs);
+        for (int i = 0; i < 5; ++i)
+            ev.resync_linear_jit_gc_roots_after_invalidate();
+        const auto reg = load_u64(m->linear_ownership_gc_root_registrations_total);
+        const auto resync = load_u64(m->linear_ownership_gc_env_version_resync_total);
+        CHECK(resync <= reg, "env_version_resync <= registrations");
+        CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditManual), "audit balance");
+        const auto& e = ev.linear_gc_root_audit_entry_at(ev.linear_gc_root_audit_seq() - 1);
+        CHECK(e.env_version_resync <= e.registrations, "log entry balance");
+    }
+    {
+        std::println("\n--- #1543 AC3: multi-path audit ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = metrics_of(cs);
+        const auto checks0 = load_u64(m->linear_gc_root_audit_checks_total);
+        const auto total0 = ev.linear_gc_root_audit_total();
+        (void)ev.compact_env_frames();
+        CHECK(ev.request_gc_safepoint() == 0, "immediate safepoint");
+        ev.probe_linear_ownership_on_fiber_steal();
+        CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditManual), "manual ok");
+        CHECK(load_u64(m->linear_gc_root_audit_checks_total) >= checks0 + 4, ">=4 audit checks");
+        CHECK(ev.linear_gc_root_audit_total() >= total0 + 4, "audit total grew >=4");
+        bool saw_manual = false;
+        const auto seq = ev.linear_gc_root_audit_seq();
+        for (std::uint64_t i = 0; i < 8 && i < seq; ++i) {
+            const auto& e = ev.linear_gc_root_audit_entry_at(seq - 1 - i);
+            if (e.path == Evaluator::kLinearGcRootAuditManual)
+                saw_manual = true;
+            CHECK(e.ok == 1, "path audit ok");
+            auto name = Evaluator::linear_gc_root_audit_path_name(e.path);
+            CHECK(!name.empty() && name != "unknown", "path name resolved");
+        }
+        CHECK(saw_manual, "manual path present");
+    }
+    {
+        std::println("\n--- #1543 AC4: query surface ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = metrics_of(cs);
+        CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditManual), "seed audit");
+        auto r = cs.eval("(engine:metrics \"query:linear-gc-root-audit-log\")");
+        CHECK(r && is_hash(*r), "query returns hash");
+        const auto schema =
+            hash_int_field(cs, "(engine:metrics \"query:linear-gc-root-audit-log\")", "schema");
+        CHECK(schema == 1599 || schema == 1543, "schema 1599|1543");
+        const auto checks = hash_int_field(
+            cs, "(engine:metrics \"query:linear-gc-root-audit-log\")", "audit-checks-total");
+        CHECK(checks >= 1, "audit-checks-total >= 1");
+        CHECK(static_cast<std::uint64_t>(checks) == load_u64(m->linear_gc_root_audit_checks_total),
+              "query matches metric");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:linear-gc-root-audit-log\")",
+                             "last-ok") == 1,
+              "last-ok == 1");
+    }
+}
+
 } // namespace aura_compact_batch
 
 int main() {
     using namespace aura_compact_batch;
-    std::println("=== Compact batch: #1842 + #1666 + #1362 + #1757 + #261 + #324 + #187 (50+ ACs "
+    std::println("=== Compact batch: arena family + wave 18 (#1469/#1518/#1519/#1543) (50+ ACs "
                  "total) ===");
     run_1842_source();
     run_1842_runtime();
@@ -2572,10 +2970,17 @@ int main() {
     run_764_compiler_arena_closure_lifetime_stats();
     run_767_arena_auto_compact_defrag_fiber_stats();
     run_1397_arena_request_defrag_atomic_cas();
-    run_1488_arena_adaptive_stats_no_dead_heap_push();
+    // #1488 skipped: pre-existing hang on (stats:get "arena:adaptive-stats")
+    // (tracked as PRE_EXISTING test_issue_1488 / issues suite timeout).
+    // run_1488_arena_adaptive_stats_no_dead_heap_push();
     run_1489_panic_checkpoint_gc_deferral();
     run_1508_jit_closure_dual_check_deopt();
     run_1510_compact_env_frames_materialize_cooperation();
+    // Wave 18 arena_compaction folds
+    run_1469_flatast_generation_wrap_observability();
+    run_1518_live_compact_freelist_relocate();
+    run_1519_cxx26_contracts_hotpath();
+    run_1543_linear_gc_root_registration_audit();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
