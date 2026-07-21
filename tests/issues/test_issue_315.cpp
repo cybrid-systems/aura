@@ -6,7 +6,7 @@
 //
 // Scope-limited close. The issue body asks for the SymId-
 // based structured C++ IR for SV interfaces + modports.
-// sv_ir.ixx already shipped the std::string-based list-
+// the std::string-based list-
 // emit-friendly #435 variants (InterfaceIR / ModportIR)
 // in Phase 1+2. This PR adds the SymId-based parallel
 // layer (SVInterfaceIR / SVModportIR) that the lowering

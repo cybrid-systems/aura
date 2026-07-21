@@ -84,7 +84,7 @@ using types::make_void;
 // try_acquire + try/catch so exceptions restore panic checkpoint and never
 // leave partial workspace/IR state. On quota/guard failure bumps
 // compile_primitive_stale_ir_prevented_total; on throw bumps
-// mutation_guard_exception_total (+ lineage eda_guard_* counters).
+// mutation_guard_exception_total (+ lineage eda_guard_* counters, retired 4.4).
 // `on_fail` is returned for both try_acquire reject and caught exceptions
 // (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
 
@@ -3318,11 +3318,11 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
             };
             bool ok = false;
             if (strategy == "weaken-property" || strategy == "assert-fail")
-                ok = delegate("eda:weaken-property");
+                ok = false; // eda:weaken-property retired 4.4
             else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
-                ok = delegate("eda:add-coverpoint-bin");
+                ok = false; // eda:add-coverpoint-bin retired 4.4
             else if (strategy == "relax-constraint" || strategy == "structural-fix")
-                ok = delegate("eda:update-constraint");
+                ok = false; // eda:update-constraint retired 4.4
             if (!ok)
                 return make_bool(false);
             ev.bump_sv_self_evo_structured_mutate();

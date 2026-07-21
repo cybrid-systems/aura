@@ -897,20 +897,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
             const std::uint64_t skeletons =
                 m ? m->primitive_skeleton_generations_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t eda_cat = ev.primitives_.category_meta_count("eda");
             const std::uint64_t sva_cat = ev.primitives_.category_meta_count("sva");
             const std::uint64_t ver_cat = ev.primitives_.category_meta_count("verification");
-            const std::uint64_t backfill_counter =
-                m ? m->primitive_eda_meta_backfill_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t backfill =
-                backfill_counter > 0 ? backfill_counter : (eda_cat + sva_cat + ver_cat);
+            const std::uint64_t backfill = (sva_cat + ver_cat);
             const std::uint64_t schema_doc = ev.primitives_.schema_documented_meta_count();
             const std::uint64_t describes = ev.get_primitive_describe_count();
             const std::uint64_t slots = ev.primitives_.slot_count();
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"skeleton-generations", make_int(static_cast<std::int64_t>(skeletons))},
                 {"eda-meta-backfilled", make_int(static_cast<std::int64_t>(backfill))},
-                {"category-eda", make_int(static_cast<std::int64_t>(eda_cat))},
                 {"category-sva", make_int(static_cast<std::int64_t>(sva_cat))},
                 {"category-verification", make_int(static_cast<std::int64_t>(ver_cat))},
                 {"documented-with-schema", make_int(static_cast<std::int64_t>(schema_doc))},
@@ -1693,11 +1688,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto* ws = ev.workspace_flat();
             const std::uint64_t feedback_cycles =
                 m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t eda_feedback_ok =
-                m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t tool_feedback_ok =
                 ev.get_verify_tool_feedback_mutate_success_total();
-            const std::uint64_t mutate_success_on_feedback = eda_feedback_ok + tool_feedback_ok;
+            const std::uint64_t mutate_success_on_feedback = tool_feedback_ok;
             const std::uint64_t coverage_feedback =
                 ws ? ws->verification_coverage_feedback_total() : 0;
             const std::uint64_t assert_failures = ws ? ws->verification_assert_failure_total() : 0;

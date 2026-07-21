@@ -148,11 +148,8 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"reflect-type-schema",
                  make_int(m ? load_u64(m, m->stdlib_reflect_type_schema_total) : 0)},
                 // Issue #1231 Phase 1: hot path / EDA / FFI resource signals
+                // (eda:* resource signals retired 4.4 with the primitive vertical)
                 {"hot-path-hits", make_int(m ? load_u64(m, m->closure_ffi_calls) : 0)},
-                {"eda-parse-total", make_int(m ? load_u64(m, m->eda_foundation_parse_total) : 0)},
-                {"eda-hash-creates",
-                 make_int(m ? load_u64(m, m->eda_hash_table_creates_total) : 0)},
-                {"eda-alloc-bytes", make_int(m ? load_u64(m, m->eda_alloc_bytes_total) : 0)},
                 {"ffi-opaque-tracking",
                  make_int(m ? load_u64(m, m->ffi_opaque_tracking_hardened) : 1)},
                 // Per-issue schema ids for Agent dashboards
@@ -797,9 +794,6 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"schema", make_int(1229)},
                 {"active", make_int(m ? load_u64(m, m->production_sweep_1229_1240_active) : 1)},
-                {"eda-hash-creates",
-                 make_int(m ? load_u64(m, m->eda_hash_table_creates_total) : 0)},
-                {"eda-alloc-bytes", make_int(m ? load_u64(m, m->eda_alloc_bytes_total) : 0)},
                 {"ffi-opaque-tracking-hardened",
                  make_int(m ? load_u64(m, m->ffi_opaque_tracking_hardened) : 1)},
                 {"stdlib-hotpath-eda-ffi-dashboard",
@@ -1724,12 +1718,6 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 // #1344
                 {"sv-highlevel-mutate-active",
                  make_int(m ? load_u64(m, m->sv_highlevel_mutate_active) : 1)},
-                {"eda-mutate-modport-total",
-                 make_int(m ? load_u64(m, m->eda_mutate_modport_total) : 0)},
-                {"eda-mutate-interface-total",
-                 make_int(m ? load_u64(m, m->eda_mutate_interface_total) : 0)},
-                {"eda-mutate-property-total",
-                 make_int(m ? load_u64(m, m->eda_mutate_property_total) : 0)},
                 {"query-sv-pattern-preset-active",
                  make_int(m ? load_u64(m, m->query_sv_pattern_preset_active) : 1)},
                 // #1345

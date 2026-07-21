@@ -55,7 +55,7 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
         guard_ok = false;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
-            m->eda_guard_exception_handled_total.fetch_add(1, std::memory_order_relaxed);
+            // eda_guard_exception_handled_total retired 4.4
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
             if (track_env_compact_violation)
                 m->mutation_boundary_violation_on_env_compact_total.fetch_add(
@@ -67,7 +67,7 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
         guard_ok = false;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
-            m->eda_guard_uncaught_exception_total.fetch_add(1, std::memory_order_relaxed);
+            // eda_guard_uncaught_exception_total retired 4.4
             m->compile_primitive_stale_ir_prevented_total.fetch_add(1, std::memory_order_relaxed);
             if (track_env_compact_violation)
                 m->mutation_boundary_violation_on_env_compact_total.fetch_add(

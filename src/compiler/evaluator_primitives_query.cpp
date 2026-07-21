@@ -1936,23 +1936,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // evaluator (the P0 reads them via a thread-
             // local; the follow-up uses GlobalMetrics).
             const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
-            std::uint64_t eda_sv_cycles = 0;
-            std::uint64_t eda_sv_corruption = 0;
-            if (auto* ev = Evaluator::get_query_evaluator()) {
-                if (const auto* m = static_cast<const CompilerMetrics*>(ev->compiler_metrics())) {
-                    eda_sv_cycles =
-                        m->eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
-                    eda_sv_corruption =
-                        m->eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
-                }
-            }
-            const std::uint64_t sum = gc_pauses + eda_sv_cycles;
+            const std::uint64_t sum = gc_pauses;
             std::string result = "{\"gc_pauses_attributed_to_mutation\":";
             result += std::to_string(gc_pauses);
-            result += ",\"eda_sv_evolution_cycles\":";
-            result += std::to_string(eda_sv_cycles);
-            result += ",\"eda_sv_corruption_detected\":";
-            result += std::to_string(eda_sv_corruption);
+            result += "}";
             result += ",\"sum\":";
             result += std::to_string(sum);
             result += "}";
@@ -4450,8 +4437,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t feedback_mapped =
                 m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t feedback_success =
-                ev->get_verify_tool_feedback_mutate_success_total() +
-                (m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0);
+                ev->get_verify_tool_feedback_mutate_success_total();
             const std::uint64_t structured_hits =
                 m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
@@ -4462,8 +4448,6 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
             const std::uint64_t reverify =
                 m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t convergence =
-                m ? m->eda_sv_verification_convergence_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t hw_hooks =
                 m ? m->hardware_backend_hook_calls_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t reemits =
@@ -4475,8 +4459,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>((feedback_success * 100) / feedback_denom);
             const std::uint64_t total = feedback_mapped + feedback_success + structured_hits +
                                         sv_attempts + sv_success + stable_ref + dirty_props +
-                                        coverage + assert_fail + reverify + convergence + hw_hooks +
-                                        reemits + rollback;
+                                        coverage + assert_fail + reverify + hw_hooks + reemits +
+                                        rollback;
             std::int64_t recommendation = 0;
             if (assert_fail > coverage && assert_fail > 0)
                 recommendation = 3;
@@ -4494,7 +4478,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("coverage-feedback-total", static_cast<std::int64_t>(coverage));
             insert_kv("assert-failure-total", static_cast<std::int64_t>(assert_fail));
             insert_kv("reverify-success", static_cast<std::int64_t>(reverify));
-            insert_kv("verification-convergence", static_cast<std::int64_t>(convergence));
+            // verification-convergence (eda_sv_verification_convergence_total) retired 4.4
             insert_kv("hardware-hook-calls", static_cast<std::int64_t>(hw_hooks));
             insert_kv("commercial-reemits", static_cast<std::int64_t>(reemits));
             insert_kv("rollback-on-partial", static_cast<std::int64_t>(rollback));
@@ -9712,7 +9696,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     //   - coverage-delta: verification_coverage_feedback_total
     //   - assert-fail-count: verification_assert_failure_total
     //   - auto-mutate-from-feedback: feedback_mutate_hits +
-    //     eda_sv_feedback_mutate_success + verify_tool_feedback_mutate_success
+    //     verify_tool_feedback_mutate_success (eda_sv_feedback retired 4.4)
     //   - commercial-reemits: commercial_reemits_total
     //   - commercial-simulator-runs: commercial_simulator_runs_total
     //   - verification-loop-success: verification_loop_success_total
@@ -9758,12 +9742,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t assert_fail = ws ? ws->verification_assert_failure_total() : 0;
             const std::uint64_t feedback_hits =
                 m ? m->feedback_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t eda_feedback_ok =
-                m ? m->eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t verify_tool_feedback =
                 ev->get_verify_tool_feedback_mutate_success_total();
-            const std::uint64_t auto_mutate =
-                feedback_hits + eda_feedback_ok + verify_tool_feedback;
+            const std::uint64_t auto_mutate = feedback_hits + verify_tool_feedback;
             const std::uint64_t reemits =
                 m ? m->commercial_reemits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t sim_runs =

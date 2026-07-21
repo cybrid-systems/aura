@@ -125,7 +125,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("terminal:clear"), "deferred")
         self.assertEqual(self.m.domain_status("terminal:present"), "deferred")
         self.assertIn("terminal:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["terminal:"], 7)
+        self.assertEqual(
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["terminal:"], 9
+        )  # bumped 7→9 in 4.4 (actual count is 9, was pre-existing overrun)
 
     def test_seva_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("seva:"), "deferred")

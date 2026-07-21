@@ -4983,7 +4983,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward_fast(mid, aura::ast::FlatAST::kGeneralDirty,
                                    aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->eda_mutate_modport_total.fetch_add(1, std::memory_order_relaxed);
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
             m->sv_verification_structure_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
@@ -5022,7 +5021,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward_fast(iid, aura::ast::FlatAST::kGeneralDirty,
                                    aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->eda_mutate_interface_total.fetch_add(1, std::memory_order_relaxed);
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         ws->bump_sv_mutate_success();
@@ -5069,7 +5067,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ws->mark_dirty_upward_fast(pid, aura::ast::FlatAST::kGeneralDirty,
                                    aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->eda_mutate_property_total.fetch_add(1, std::memory_order_relaxed);
             m->sva_structured_mutate_hits_total.fetch_add(1, std::memory_order_relaxed);
         }
         ws->bump_sv_mutate_success();
