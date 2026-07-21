@@ -34,7 +34,6 @@ import aura.compiler.pass_manager;
 import aura.compiler.query;
 import aura.compiler.macro_expansion;
 import aura.compiler.hardware_backend;
-import aura.compiler.sv_ir;
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
 #include "compiler/mutation_guard_helpers.hh"

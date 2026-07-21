@@ -142,7 +142,6 @@ target_sources(aura PRIVATE
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/sv_ir_impl.cpp
     src/compiler/aura_jit_bridge.cpp
     # Issue #1956: HotUpdateRegistry coordination center (non-module).
     src/compiler/hot_update_registry.cpp
@@ -468,7 +467,6 @@ target_sources(test_ir PRIVATE
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     # Issue #461: aura_jit_bridge.cpp provides
     # aura_jit_fallback_count_v_read (used by
@@ -657,7 +655,6 @@ add_library(aura_test_objects STATIC
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp
@@ -841,7 +838,6 @@ target_sources(test_gc_evaluator_integration PRIVATE
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/sv_ir_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     # Issue #675 follow-up: http_health.cpp provides
     # aura::serve::http::port_from_env (used by
@@ -1220,7 +1216,6 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/constant_folding_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/sv_ir_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/hardware_backend_impl.cpp)
 # Match aura_test_objects's compile flags so the prebuilt BMIs

@@ -32,7 +32,6 @@ import std;
 import aura.core.ast;
 import aura.compiler.value;
 import aura.compiler.hardware_backend;
-import aura.compiler.sv_ir;
 
 namespace aura::compiler::primitives_detail::eda_detail {
 
@@ -146,34 +145,6 @@ inline std::vector<aura::ast::SymId> split_ports(aura::ast::StringPool& pool,
         start = pos + 1;
     }
     return out;
-}
-
-void maybe_hardware_feedback(Evaluator& ev, aura::ast::NodeId node) {
-    auto* ws = ev.workspace_flat();
-    if (!ws || node >= ws->size())
-        return;
-    if (!aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, node))
-        return;
-    const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, node);
-    const auto ppa_reasons = ws->ppa_dirty_reasons(node);
-    aura::compiler::hardware::on_structural_mutation(
-        node, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
-        ppa_reasons);
-    if (auto* pool = ev.workspace_pool()) {
-        const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
-        const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
-            m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
-            if (validation.ok)
-                m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
-            else
-                m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
-            m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        ev.record_sv_commercial_emit_fidelity(validation.ok, true,
-                                              !reemit.commercial_do_stub.empty());
-    }
 }
 
 } // namespace aura::compiler::primitives_detail::eda_detail

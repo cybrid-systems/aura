@@ -6919,8 +6919,8 @@ public:
     // Issue #772: SV Verification closed-loop SLO observability
     // counters backing the (query:sv-closedloop-slo) primitive.
     // These are public so future hardware_backend.ixx emit_sv_
-    // verification_structured + sv_ir_impl.cpp dirty-triggered
-    // incremental re-emit queue + eda:validate-sv-emit roundtrip
+    // verification_structured dirty-triggered incremental
+    // re-emit queue + eda:validate-sv-emit roundtrip
     // stub can call them at each decision point (emit parse
     // success/failure / re-emit latency max / SLO breach).
     //
