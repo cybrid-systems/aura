@@ -1,8 +1,0 @@
-[
-  {
-    "name": "cmdline-empty",
-    "code": "(command-line)",
-    "expect_out": "",
-    "expect_err": ""
-  }
-]

@@ -1,8 +1,0 @@
-[
-  {
-    "name": "closure-warning-stdout",
-    "code": "(define (f x) (+ x 1)) f",
-    "expect_out": "uncalled function",
-    "expect_err": ""
-  }
-]

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "cmdline-empty",
+    "code": "(command-line)",
+    "expect_out": "",
+    "expect_err": ""
+  },
+  {
+    "name": "blame-add-str",
+    "code": "(+ 1 \"hello\")",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  },
+  {
+    "name": "directory-list",
+    "code": "(directory-list \"/tmp\")",
+    "expect_out": "aura-regr.txt",
+    "expect_err": ""
+  },
+  {
+    "name": "linear-eval",
+    "code": "(set-code \"(display (move 42))\") (eval-current)",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "closure-warning-stdout",
+    "code": "(define (f x) (+ x 1)) f",
+    "expect_out": "uncalled function",
+    "expect_err": ""
+  },
+  {
+    "name": "mat-identity",
+    "code": "(require \"std/vector-math\" all:)(mat:ref (mat:identity 3) 1 1)",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "thread-pool-enqueue-stdin",
+    "code": "(display (thread_pool:enqueue (lambda () (+ 1 2))))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "letrec-poly",
+    "code": "(letrec ((id (lambda (x) x)))(display (id 99))(display (id #f)))",
+    "expect_out": "99#f",
+    "expect_err": ""
+  },
+  {
+    "name": "pid-measure",
+    "code": "(require \"std/adaptive\" all:)(measure-distance 0 \"30\" '(\"42\"))",
+    "expect_out": "fine",
+    "expect_err": ""
+  },
+  {
+    "name": "tweak-lit-plus",
+    "code": "(begin (set-code \"(display (+ 1 42))\")(eval-current)(mutate:tweak-literal 3 1 \"\")(eval-current))",
+    "expect_out": "44",
+    "expect_err": ""
+  }
+]
