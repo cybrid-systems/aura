@@ -456,7 +456,7 @@ static void run_1605() {
         CHECK(h && is_hash(*h), "hash");
         const auto schema = href(cs, "schema");
         CHECK(schema == 1623 || schema == 1605 || schema == 1601 || schema == 718,
-              std::format("schema 1623|1605|1601|718 (got {})", schema));
+              std::format("schema 1639|1623|1605|1601|718 (got {})", schema));
         CHECK(href(cs, "incremental_relower_blocks") >= 0, "incremental_relower_blocks");
         CHECK(href(cs, "full_relower_count") >= 0 || href(cs, "relower_full_called_count") >= 0,
               "full_relower_count alias");

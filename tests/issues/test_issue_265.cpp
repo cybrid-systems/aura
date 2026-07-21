@@ -3,6 +3,7 @@
 
 
 #include "test_harness.hpp"
+#include "core/transparent_string_hash.hh"
 
 import std;
 using aura::test::g_failed;
@@ -55,14 +56,17 @@ static void collect_var_names(aura::ast::FlatAST& flat, aura::ast::StringPool& p
         collect_var_names(flat, pool, v.child(i), out);
 }
 
+// Matches clone_macro_body name_map parameter (TransparentStringHash + equal_to<>).
+using HygNameMap = aura::core::TransparentStringMap<std::string>;
+
 bool test_hyg_ctr_resets_per_call() {
     std::println("\n--- AC1: hyg_ctr is per clone_macro_body call ---");
     auto src = make_env();
     auto body = parse(src, "(let ((tmp 1)) tmp)");
     auto tgt1 = make_env();
     auto tgt2 = make_env();
-    std::unordered_map<std::string, std::string> map1;
-    std::unordered_map<std::string, std::string> map2;
+    HygNameMap map1;
+    HygNameMap map2;
     (void)aura::compiler::macro_exp::clone_macro_body(*tgt1.flat, *tgt1.pool, *src.flat, *src.pool,
                                                       body, nullptr, &map1,
                                                       aura::ast::SyntaxMarker::MacroIntroduced);
@@ -82,7 +86,7 @@ bool test_prescan_inner_reference_matches_binding() {
     auto src = make_env();
     auto body = parse(src, "(let ((tmp x)) tmp)");
     auto tgt = make_env();
-    std::unordered_map<std::string, std::string> rename_map;
+    HygNameMap rename_map;
     auto cloned = aura::compiler::macro_exp::clone_macro_body(
         *tgt.flat, *tgt.pool, *src.flat, *src.pool, body, nullptr, &rename_map,
         aura::ast::SyntaxMarker::MacroIntroduced);
@@ -109,7 +113,7 @@ bool test_builtins_whitelist_not_gensymd() {
     auto src = make_env();
     auto body = parse(src, "(lambda (if) if)");
     auto tgt = make_env();
-    std::unordered_map<std::string, std::string> rename_map;
+    HygNameMap rename_map;
     auto cloned = aura::compiler::macro_exp::clone_macro_body(
         *tgt.flat, *tgt.pool, *src.flat, *src.pool, body, nullptr, &rename_map,
         aura::ast::SyntaxMarker::MacroIntroduced);
@@ -126,7 +130,7 @@ bool test_separate_expansions_get_distinct_gensyms_in_one_map() {
     auto src = make_env();
     auto body = parse(src, "(let ((a 1)) (let ((b 2)) (+ a b)))");
     auto tgt = make_env();
-    std::unordered_map<std::string, std::string> rename_map;
+    HygNameMap rename_map;
     (void)aura::compiler::macro_exp::clone_macro_body(*tgt.flat, *tgt.pool, *src.flat, *src.pool,
                                                       body, nullptr, &rename_map,
                                                       aura::ast::SyntaxMarker::MacroIntroduced);

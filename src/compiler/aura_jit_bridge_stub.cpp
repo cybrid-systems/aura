@@ -15,6 +15,7 @@
 // and is part of the aura compiler module.
 
 #include "aura_jit_bridge.h"
+#include "hot_update_registry.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -402,4 +403,26 @@ extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint6
     if (!aura_aot_parse_version_suffix(mangled, &got))
         return true;
     return got != expected;
+}
+
+// ── Weak stubs pulled in by aura_test_objects (light / light_late) ──
+// Production impls live in aura_jit_bridge.cpp + hot_update_registry.cpp.
+// Light bundles link the bridge stub only; provide no-ops so the link
+// succeeds when those object files are not in the executable.
+
+extern "C" __attribute__((weak)) void
+aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out) {
+    if (!out)
+        return;
+    // Zero the POD snapshot so light-bundle metrics queries stay inert.
+    std::memset(out, 0, sizeof(*out));
+}
+
+extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void) {}
+extern "C" __attribute__((weak)) void aura_1637_note_compact_restore_fallback(void) {}
+extern "C" __attribute__((weak)) void aura_1637_note_hot_swap_restore_fallback(void) {}
+
+extern "C" __attribute__((weak)) int
+aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_marker*/) {
+    return 0;
 }

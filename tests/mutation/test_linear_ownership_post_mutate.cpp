@@ -26,6 +26,7 @@
 //      compact/truncate cycles. All walks must return without UAF.
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <chrono>
@@ -54,6 +55,10 @@ using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+static CompilerMetrics* metrics_of(CompilerService& cs) {
+    return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+}
+
 static std::int64_t snapshot_metric(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:linear-ownership-safety-stats\") '{}')", key));
@@ -67,7 +72,7 @@ void ac1_walk_safe_traversal() {
     // Walk_active_closures is implemented in evaluator_env.cpp:1057.
     // This test verifies the underlying counter is reachable (uint64).
     CompilerService cs;
-    auto* m = static_cast<CompilerMetrics*>(cs.compiler_metrics());
+    auto* m = metrics_of(cs);
     if (!m) {
         std::println("  (no compiler_metrics bound — skipping)");
         return;
@@ -79,7 +84,7 @@ void ac1_walk_safe_traversal() {
 void ac3_metric_bumps_incr() {
     std::println("\n--- AC3: linear_live_closure_scans_total monotonic ---");
     CompilerService cs;
-    auto* m = static_cast<CompilerMetrics*>(cs.compiler_metrics());
+    auto* m = metrics_of(cs);
     if (!m) {
         std::println("  (no compiler_metrics bound — skipping)");
         return;
@@ -100,7 +105,7 @@ void ac4_null_env_id_walk_called() {
     // by the materialize-call path when invoked through a primitive.
     // Sanity: counter is reachable.
     CompilerService cs;
-    auto* m = static_cast<CompilerMetrics*>(cs.compiler_metrics());
+    auto* m = metrics_of(cs);
     if (!m) {
         std::println("  (no compiler_metrics bound — skipping)");
         return;

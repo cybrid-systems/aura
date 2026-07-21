@@ -73,7 +73,8 @@ static std::string read_file(const char* path) {
 }
 
 static std::int64_t href(CompilerService& cs, const char* q, const char* key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    // Observability queries surface via engine:metrics, not bare (query:…).
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -93,12 +94,23 @@ static void run_1842_source() {
     CHECK(src.find("#1842") != std::string::npos, "cites #1842");
     auto pos = src.find("\"evaluator:compact-env-frames\"");
     CHECK(pos != std::string::npos, "primitive present");
+    // Post-#1897 the Guard + try/catch body lives in shared helper
+    // run_under_mutation_guard (still MutationBoundaryGuard under the hood).
     auto win = src.substr(pos, 1600);
-    CHECK(win.find("MutationBoundaryGuard") != std::string::npos, "uses Guard");
-    CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
-    CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
-          "try block");
-    CHECK(win.find("catch") != std::string::npos, "catch path");
+    const bool via_helper = win.find("run_under_mutation_guard") != std::string::npos;
+    const bool via_inline = win.find("MutationBoundaryGuard") != std::string::npos;
+    CHECK(via_helper || via_inline, "uses Guard (inline or run_under_mutation_guard)");
+    if (via_inline) {
+        CHECK(win.find("guard_ok") != std::string::npos, "guard_ok flag");
+        CHECK(win.find("try {") != std::string::npos || win.find("try{") != std::string::npos,
+              "try block");
+        CHECK(win.find("catch") != std::string::npos, "catch path");
+    } else {
+        // Helper path: track_env_compact_violation wires the same contract.
+        CHECK(win.find("track_env_compact_violation") != std::string::npos ||
+                  win.find("/*track_env_compact_violation=") != std::string::npos,
+              "env-compact violation tracking on helper path");
+    }
     CHECK(win.find("compact_env_frames()") != std::string::npos, "calls compact_env_frames");
 }
 

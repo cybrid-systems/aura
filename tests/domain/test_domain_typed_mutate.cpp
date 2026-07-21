@@ -45,7 +45,8 @@ void run_suite(CompilerService& cs) {
     expect_schema_active(cs, "query:linear-escape-mutate-stats", 834);
     expect_schema_active(cs, "query:typed-mutate-coercion-stats", 835);
     expect_schema_active(cs, "query:fiber-epoch-type-safety-stats", 836);
-    expect_schema_active(cs, "query:typed-mutation-audit-stats", 839);
+    // schema lineage 839 → 1614 → 1894
+    expect_schema_active(cs, "query:typed-mutation-audit-stats", 1894);
     expect_schema_active(cs, "query:defuse-infer-partial-stats", 862);
     expect_schema_active(cs, "query:ownership-escape-postmutate-stats", 863);
     expect_schema_active(cs, "query:typed-mutation-audit-pass-stats", 864);

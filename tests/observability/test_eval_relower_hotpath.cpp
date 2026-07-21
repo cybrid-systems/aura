@@ -70,8 +70,9 @@ static void ac1_schema() {
     CompilerService cs;
     auto h = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
     CHECK(h && is_hash(*h), "hash");
-    CHECK(href(cs, "schema") == 1623 || href(cs, "schema") == 1605 || href(cs, "schema") == 1601,
-          "schema 1623|1605|1601");
+    CHECK(href(cs, "schema") == 1639 || href(cs, "schema") == 1623 || href(cs, "schema") == 1605 ||
+              href(cs, "schema") == 1601,
+          "schema 1639|1623|1605|1601");
     CHECK(href(cs, "issue") == 1623 || href(cs, "issue") == 1605 || href(cs, "issue") < 0,
           "issue 1623|1605");
     CHECK(href(cs, "incremental_eval_relower_hits") >= 0, "incremental_eval_relower_hits");

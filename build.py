@@ -1134,10 +1134,11 @@ def test_issues():
 def test_p0_regression():
     """Run P0 fix regression tests."""
     print(f"{B}═══ P0 Regression Tests ═══{N}")
-    # test_regression.py runs 150+ Aura subprocess cases plus JIT/AOT/fuzz
-    # helpers; wall time often exceeds 3 min on loaded runners.
+    # tests/python/test_regression.py runs 150+ Aura subprocess cases plus
+    # JIT/AOT/fuzz helpers; wall time often exceeds 3 min on loaded runners.
+    # Path moved under tests/python/ in #1932 layout migration.
     r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "test_regression.py")],
+        [sys.executable, str(ROOT / "tests" / "python" / "test_regression.py")],
         capture_output=True,
         text=True,
         timeout=300,
