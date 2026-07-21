@@ -1,29 +1,26 @@
 # Aura CI — canonical workflow (Issue #1570 path map)
 #
 # THIS IS THE ONLY PR/main CI entrypoint.
-# There is NO `.github/ci_pipeline.yml` (that path 404s / never existed).
 # Nightly / release live beside this file: nightly.yml, release.yml.
 #
+# Wall-time layout (target):
+#   PR:
+#     gate (~1–2m) ──► build-test (~12–18m: build + core/safety/issues-fast + s0 + bench)
+#     security-scan ── parallel from t=0 (no gate wait)
+#   main (push):
+#     same as PR, plus ubsan-smoke / asan / repro / deploy-health in parallel
+#
+# PR optimisations (2026-07):
+#   - concurrency cancel-in-progress (superseded PR pushes)
+#   - drop PR-side full rebuild jobs (s0-smoke + ubsan-smoke) — they duplicated
+#     build-test wall time; s0 folded into build-test; ubsan is main-only
+#   - security-scan no longer needs: [gate]
+#   - gate: remove non-blocking clang-tidy (wasted wall + no signal)
+#   - skip apt when mold/lld already on the image
+#   - paths-filter: docs-only PRs run gate only (no full C++ build)
+#
 # Developer map: docs/test_harness_pattern.md
-#   - Benchmark gate → tests/benchmark.py + ./build.py bench --strict
-#     (NOT src/test/benchmark_gate.ixx)
-#   - Issue tests    → tests/test_*.cpp + aura_add_issue_test +
-#     tests/run_issue_tests.py (NOT src/test/test_issue_pattern.ixx)
-#   - Platforms      → docs/ci-platforms.md (#1573)
-#
-# Wall-time layout (approx):
-#   gate (~1m) ──► build-test (~12–18m → target <8m, see docs/ci-performance.md)
-#                  └── final step: ./build.py bench --strict (#1569 SLO)
-#   asan-build (~10m, parallel with gate+build-test) ──► asan-verify (~5m)
-#
-# Issue #873/#874 CI performance: mold linker + link job pool + phase
-# timings. ccache stays disabled until module-launcher producer keys
-# are proven (see docs/ci-performance.md Phase 2).
-# pip cache uses an exact key only (requirements-dev.txt hash).
-#
-# PRs skip the ASAN track; main runs the full matrix.
-# Issue #675: PRs also run ubsan-smoke + security-scan;
-# main adds reproducible-build verification.
+# Platforms: docs/ci-platforms.md (#1573)
 
 name: CI
 
@@ -32,6 +29,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+
+# Cancel superseded runs on the same PR / branch (big win on rapid pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   AURA_BUILD_TYPE: RelWithDebInfo
@@ -48,6 +50,31 @@ env:
   AURA_CI_STRICT_BENCH: "1"
 
 jobs:
+  # Cheap filter: docs/chore-only PRs skip the full C++ matrix.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          code:
+            - 'src/**'
+            - 'tests/**'
+            - 'lib/**'
+            - 'cmake/**'
+            - 'CMakeLists.txt'
+            - 'build.py'
+            - 'requirements-dev.txt'
+            - '.github/workflows/ci.yml'
+            - 'scripts/**'
+            - 'contracts'
+            - '.clang-format'
+            - '.clang-tidy'
+
   gate:
     runs-on: ubuntu-latest
     container:
@@ -63,16 +90,11 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # gate = docs --check + ruff + clang-format (full src/tests tree) + fixtures.
-    # C++ format is enforced via build.py format inside gate (not a separate step).
+    # gate = docs --check + ruff + clang-format + fixtures + surface audits.
     - name: Static checks (docs + lint + format + fixtures)
       run: python3 build.py gate
 
     # Aura philosophy guard: no per-issue plan docs in docs/design/
-    # (Anqi 2026-07-19 directive). External mergebot re-adds files on
-    # origin/main; this CI guard catches them so future agents / merges
-    # don't propagate. Mirrors the pre-commit hook guard at
-    # `.githooks/pre-commit`.
     - name: "Aura philosophy guard: no docs/design/"
       run: |
         if find docs/design -type f -name '*.md' 2>/dev/null | grep -q .; then
@@ -83,42 +105,12 @@ jobs:
         fi
         echo "aura philosophy guard clean (no docs/design/ files)"
 
-    # Issue #476: clang-tidy static analysis (subset).
-    # The .clang-tidy config (repo root) whitelists the
-    # modern-C++ checks that catch real bugs without too
-    # much noise. We run it on a representative file set
-    # rather than the entire tree — clang-tidy on a
-    # 150k+ line codebase takes ~5 minutes, and the gate
-    # job runs on every PR. The file list is the union
-    # of the new code added by recent commits + the files
-    # most likely to grow new bugs (compilers / primitives).
-    # Main branch runs the full set on a longer-running
-    # job (TODO: add a separate clang-tidy-full job).
-    - name: Static analysis (clang-tidy subset)
-      run: |
-        set +e
-        files=$(find src/compiler/evaluator_primitives_query_workspace.cpp \
-                     src/compiler/evaluator_primitives_observability.cpp \
-                     src/core/arena.ixx \
-                     src/core/concepts.ixx \
-                     -type f 2>/dev/null)
-        if [ -z "$files" ]; then
-          echo "::warning::clang-tidy: no files found (unexpected)"
-          exit 0
-        fi
-        # HeaderFilterRegex in .clang-tidy keeps clang-tidy
-        # focused on src/ + tests/. -p . provides the
-        # compile_commands.json (or we fall back to a
-        # warning). clang-tidy is non-blocking for now —
-        # any warning produces a log line but doesn't fail
-        # the gate (so the gate stays green while the
-        # baseline is established). Once the warning count
-        # stabilizes, promote to blocking.
-        echo "$files" | xargs -I {} clang-tidy --quiet -p . {} || true
-        echo "✓ clang-tidy scan complete (non-blocking; see .clang-tidy for filter)"
-
   build-test:
-    needs: [gate]
+    needs: [gate, changes]
+    # Full matrix only when C++/tests/build surface changed (or on main push).
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.4
@@ -135,86 +127,30 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Issue #873/#874: fast linker (mold preferred, lld fallback).
-    # build.py probes mold with a trivial link; GCC 16's
-    # libatomic_asneeded.so breaks some mold versions (AS_NEEDED
-    # parse error) — then we auto-select lld. Install both so CI
-    # always has a working fast path.
-    - name: Install mold / lld (fast linkers)
+    # Fast linker: only apt if missing (image usually ships one).
+    - name: Ensure mold / lld
       run: |
         set -e
-        if ! command -v mold >/dev/null 2>&1; then
-          apt-get update -qq && apt-get install -y -qq mold || echo "::warning::mold not installed"
+        need_apt=0
+        command -v mold >/dev/null 2>&1 || need_apt=1
+        command -v ld.lld >/dev/null 2>&1 || need_apt=1
+        if [ "$need_apt" = 1 ]; then
+          apt-get update -qq
+          command -v mold >/dev/null 2>&1 || apt-get install -y -qq mold || echo "::warning::mold not installed"
+          command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
         fi
-        if command -v mold >/dev/null 2>&1; then mold --version; fi
-        # lld is the reliable fallback under GCC 16 + mold incompatibility.
-        if ! command -v ld.lld >/dev/null 2>&1; then
-          apt-get update -qq && apt-get install -y -qq lld || echo "::warning::lld not installed"
-        fi
-        if command -v ld.lld >/dev/null 2>&1; then ld.lld --version | head -1; fi
+        command -v mold >/dev/null 2>&1 && mold --version || true
+        command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
 
     - name: Build & Test
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-        # Issue #374: explicit AURA_RUNTIME_DIR for the AOT path.
-        # find_runtime_c() (aura_jit_bridge.cpp) tries (1)
-        # $AURA_RUNTIME_DIR/runtime.c, (2) walk-up from the aura
-        # binary 8 levels looking for lib/runtime.c, (3) CWD-
-        # relative lib/../lib/runtime.c, (4) FHS install-path
-        # fallbacks (/usr/local/share/aura, /usr/share/aura,
-        # /opt/aura/share). On the v1.0.4 CI image the walk-up
-        # normally finds lib/runtime.c under the workspace; if
-        # it ever fails (e.g. custom Docker layer with stripped
-        # /proc, or a non-standard build tree depth > 8), the
-        # env var below forces the lookup to a known location.
-        # See src/compiler/aura_jit_bridge.cpp find_runtime_c() comments.
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py ci
 
-    # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
-    # Requires AURA_CI_STRICT_BENCH=1 (workflow env). Fails the job when
-    # any case exceeds ratio+absolute delta vs tests/benchmark_baseline.json.
-    - name: Benchmark SLO gate (#1569)
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-        AURA_CI_STRICT_BENCH: "1"
-      run: python3 build.py bench --strict
-
-  # P4: S0 surface smoke — parallel with build-test (runtime gate AURA_PRIMITIVES=s0).
-  # Validates metrics facade + curated suite without bulk query:*-stats / eda / security.
-  # See docs/design/primitives-surface-refactor.md Phase 2b/4.
-  s0-smoke:
-    needs: [gate]
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.4
-    steps:
-    - uses: actions/checkout@v7
-
-    - uses: actions/cache@v6
-      with:
-        path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
-
-    - name: Install Python CI deps
-      run: pip install --break-system-packages -r requirements-dev.txt
-
-    - name: Install mold / lld (fast linkers)
-      run: |
-        set -e
-        if ! command -v mold >/dev/null 2>&1; then
-          apt-get update -qq && apt-get install -y -qq mold || echo "::warning::mold not installed"
-        fi
-        if ! command -v ld.lld >/dev/null 2>&1; then
-          apt-get update -qq && apt-get install -y -qq lld || echo "::warning::lld not installed"
-        fi
-
-    - name: Build
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-      run: python3 build.py build
-
+    # Was a separate s0-smoke job that rebuilt the entire tree (~10–15m).
+    # Folded here: reuse the same build/ (seconds, not a second full link).
     - name: Suite s0 surface smoke
       env:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
@@ -233,9 +169,14 @@ jobs:
           '(newline)' \
           | ./build/aura
 
+    # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
+    - name: Benchmark SLO gate (#1569)
+      env:
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_CI_STRICT_BENCH: "1"
+      run: python3 build.py bench --strict
+
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
-  # Routes through build.py --sanitizer=asan (Issue #299) so local and
-  # CI build invocation stay in lockstep.
   asan-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -313,8 +254,9 @@ jobs:
         AURA=$(pwd)/build_asan/aura bash tests/run-tests.sh
         echo "✓ emit-binary suite clean under ASAN"
 
-  # Issue #675: UBSAN smoke on every PR (lighter than full ASAN track).
+  # UBSAN: main only (full rebuild was doubling PR wall time vs build-test).
   ubsan-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
     container:
@@ -340,9 +282,12 @@ jobs:
         python3 build.py --sanitizer=ubsan test unit
         echo "✓ unit tests clean under UBSAN"
 
-  # Issue #675: dependency + filesystem vulnerability scan + SBOM.
+  # Security scan starts immediately (no gate dependency) — overlaps with gate.
   security-scan:
-    needs: [gate]
+    needs: [changes]
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.4
@@ -354,12 +299,6 @@ jobs:
         path: ~/.cache/pip
         key: pip-${{ runner.os }}-dev-v1.0.4-${{ hashFiles('requirements-dev.txt') }}
 
-    # Issue #675 follow-up: cache the Trivy vuln DB so
-    # the first run downloads it once and subsequent runs
-    # reuse the cache (the DB is ~30MB and takes 1-2
-    # min to download on a fresh container). Without
-    # this cache, the vuln scanner can hit the 4-min
-    # timeout on slow CI networks.
     - uses: actions/cache@v6
       with:
         path: ~/.cache/trivy
@@ -371,17 +310,6 @@ jobs:
 
     - name: Install Trivy
       run: |
-        # Issue #675 fix-up: pin to a known-available
-        # release. v0.58.1 was yanked from the GitHub
-        # release page (the install script downloaded a
-        # 404 tarball, causing the security-scan job to
-        # fail with exit 1). v0.72.0 is the latest stable
-        # release (2026-06-30) with all linux/amd64
-        # assets present. Update this pin when bumping
-        # the Trivy minor; verify the release still
-        # exists via:
-        #   curl -sI https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz
-        # (302 redirect = good; 404 = yanked).
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
           | sh -s -- -b /usr/local/bin v0.72.0
 
@@ -436,9 +364,7 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Only aura + test_issue_677. Full issue-test matrix is build-test's job;
-    # building all_test_issue_targets here was redundant and flaked GCC
-    # module dyndep scans (…aura_jit_bridge.cpp.o.ddi.i: Invalid argument).
+    # Only aura + test_issue_677. Full issue-test matrix is build-test's job.
     - name: Build aura + health test
       run: |
         set -euo pipefail
@@ -455,4 +381,3 @@ jobs:
         curl -fsS http://127.0.0.1:18087/metrics | grep -q 'aura_up 1'
         kill $pid
         ./build/test_issue_677
-
