@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1855 — compile:relower-strategy must snapshot
+// Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
 // dirty_block_count under jit_cache_mtx_ (shared) vs mark/clear
 // unique writers; compiler_service_ follows #1839 ownership.
 //

@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1729 — set_workspace_flat must lock + roll back on
+// Issue #1729 (#1978 renamed): issue# moved from filename to header.
 // index rebuild failure.
 //
 //   AC1: source cites #1729; unique_lock workspace_mtx_ + catch rollback

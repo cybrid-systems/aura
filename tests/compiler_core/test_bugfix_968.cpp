@@ -1,3 +1,4 @@
+// Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 // test_bugfix_968_984.cpp — Issues #968–#984 bugfix regression
 
 #include "test_harness.hpp"

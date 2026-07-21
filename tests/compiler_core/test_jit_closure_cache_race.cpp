@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1707 — g_closure_cache uses generation seqlock so
+// Issue #1707 (#1978 renamed): issue# moved from filename to header.
 // concurrent invalidate vs aura_closure_call cannot observe torn fn
 // pointers. AC covers struct contract + concurrent free/call stress.
 //

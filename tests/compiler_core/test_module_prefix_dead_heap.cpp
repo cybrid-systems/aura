@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1693 — import with prefix must not intern each
+// Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
 // prefixed name into string_heap_ (dead psid push; #1488 class).
 //
 //   AC1: source has no psid + push_back(prefixed) on prefix inject

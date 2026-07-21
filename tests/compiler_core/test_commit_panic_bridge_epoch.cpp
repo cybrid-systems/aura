@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1728 — commit_panic_checkpoint must bump bridge_epoch
+// Issue #1728 (#1978 renamed): issue# moved from filename to header.
 // so cross-COW closure freshness checks observe the commit.
 //
 //   AC1: source cites #1728; commit calls bridge_epoch_bump_fn_

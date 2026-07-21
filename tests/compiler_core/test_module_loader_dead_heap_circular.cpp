@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1692 — load_module_file circular-dep path must not
+// Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
 // intern an unused error string into string_heap_ (dead push; #1488 class).
 //
 //   AC1: source has no eidx + push_back on circular path

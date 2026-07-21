@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1768 — try_lock_workspace_shared/unique must update
+// Issue #1768 (#1978 renamed): issue# moved from filename to header.
 // lock_order TLS (on_acquire on try, on_release on fail or unlock).
 //
 //   AC1: source cites #1768; try_lock calls on_acquire + rollback

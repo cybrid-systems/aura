@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1786 — compile:per-symbol-dirty-stats ancestor walk
+// Issue #1786 (#1978 renamed): issue# moved from filename to header.
 // must use a visited set so cyclic parent_of does not overcount
 // (max_count alone still inflates ratio-bp).
 //

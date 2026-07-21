@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1739 — truncate_env_frames_to_checkpoint must bump
+// Issue #1728/#1739 (#1978 renamed): issue# moved from filename to header.
 // bridge_epoch so cross-COW closure freshness checks observe the
 // truncated env_frames_ arena (same bug class as #1728).
 //

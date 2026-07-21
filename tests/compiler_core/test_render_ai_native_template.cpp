@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1677 — render prim template + AI Native query/mutate evolution.
+// Issue #1677 (#1978 renamed): issue# moved from filename to header.
 //
 //   AC1: query:render-closure-stats schema 1677 + render-critical-meta-count > 0
 //   AC2: query:render-buffer-stats after make-terminal-buffer

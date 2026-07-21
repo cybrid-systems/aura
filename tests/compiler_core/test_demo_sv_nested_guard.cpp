@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1774 — eda:demo-sv-self-evolution may call
+// Issue #1774/#184/#236 (#1978 renamed): issue# moved from filename to header.
 // eda:run-verification-feedback (own MutationBoundaryGuard) from an
 // outer Guard without nested unique_lock deadlock (#184/#236: only
 // outermost locks workspace_mtx_).

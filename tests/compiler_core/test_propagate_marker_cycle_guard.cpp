@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1782 — syntax:propagate-marker must terminate on
+// Issue #1679/#1682/#1782 (#1978 renamed): issue# moved from filename to header.
 // cyclic FlatAST children (visited-set guard; parity #1679 / #1682).
 //
 //   AC1: source cites #1782; uses dense seen[] + no re-push on seen
