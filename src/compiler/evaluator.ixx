@@ -463,8 +463,9 @@ public:
     // Issue #1539: bind with linear ownership state (defaults via bind_symid = Untracked).
     void bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state);
     void bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state);
-    bool set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
-    bool set_linear_ownership_state_by_name(std::string_view n, std::uint8_t state);
+    aura::core::VoidResult set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
+    aura::core::VoidResult set_linear_ownership_state_by_name(std::string_view n,
+                                                              std::uint8_t state);
     // Issue #145: Optional pool reference. When set, bind_symid
     // mirrors the binding into the string-keyed bindings_ so
     // legacy lookup(string) in the lambda body still finds the

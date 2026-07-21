@@ -61,3 +61,15 @@ tests/issues/test_issue_1485.cpp
 # deferred to follow-up #1538 batch. Removed in same commit when a
 # proper C++ regression test is added.
 src/compiler/service.ixx
+# Tier 1 std::expected expansion — commit b3e8db70: VoidResult signature
+# migration of Env::set_linear_ownership_state + Env::set_linear_ownership_state_by_name
+# (bool → aura::core::VoidResult = std::expected<void, AuraError>).
+# Pure signature change; semantics preserved (no change to when state is set
+# or how pool_ resolution works). Callers (Evaluator::mark_linear_binding_moved
+# + _by_name at env.cpp:1377 / :1388) preserve bool "any" surface via
+# .has_value(). Existing test_issue_1949 family + test_issue_1539 covers
+# linear ownership semantics end-to-end (mark_linear_* already pair-tested
+# via the original signature). Removed when a focused C++ test exercises
+# the new UnboundVariable error path directly.
+src/compiler/evaluator.ixx
+src/compiler/evaluator_env.cpp
