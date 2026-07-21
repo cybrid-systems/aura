@@ -22,15 +22,21 @@ FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def shard_dir(kind: str) -> Path:
+    if kind == "smoke":
+        return FIXTURES  # smoke singleton at root: tests/fixtures/smoke.json
     return FIXTURES / kind
 
 
 def mono_path(kind: str) -> Path:
-    # smoke uses smoke_tests.json; others use <kind>_tests.json
+    # smoke uses tests/fixtures/smoke.json (see list_shard_files); others use <kind>_tests.json
     return FIXTURES / f"{kind}_tests.json"
 
 
 def list_shard_files(kind: str) -> list[Path]:
+    if kind == "smoke":
+        # Singleton: tests/fixtures/smoke.json (single file at root after #1962 round 6)
+        p = FIXTURES / "smoke.json"
+        return [p] if p.is_file() else []
     d = shard_dir(kind)
     if not d.is_dir():
         return []
