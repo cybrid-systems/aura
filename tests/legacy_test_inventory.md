@@ -403,7 +403,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — Consolidated closure-bridge Cycle-4 integration (Issue #226).
+- `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
 
 #### issues/ (46)
 

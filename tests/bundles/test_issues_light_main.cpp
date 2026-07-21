@@ -4,34 +4,18 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_116_run();
 extern int aura_issue_117_run();
-extern int aura_issue_118_run();
 extern int aura_issue_119_run();
 extern int aura_issue_120_run();
-extern int aura_issue_121_run();
-extern int aura_issue_265_run();
-extern int aura_issue_122_run();
-extern int aura_issue_123_run();
-extern int aura_issue_124_run();
-extern int aura_issue_125_run();
-extern int aura_issue_126_run();
-extern int aura_issue_127_run();
-extern int aura_issue_128_run();
-extern int aura_issue_130_run();
 extern int aura_issue_131_run();
 extern int aura_issue_error_merr_run();
 extern int aura_issue_pilot_harness_run();
-extern int aura_issue_132_run();
-extern int aura_issue_134_run();
 extern int aura_issue_136_run();
 extern int aura_issue_161_run();
 extern int aura_issue_162_run();
 extern int aura_issue_163_run();
 extern int aura_issue_167_run();
-extern int aura_issue_168_run();
 extern int aura_issue_171_run();
-extern int aura_issue_173_run();
 extern int aura_issue_181_run();
 extern int aura_issue_182_run();
 extern int aura_issue_197_run();
@@ -40,34 +24,18 @@ extern int aura_issue_243_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_116", aura_issue_116_run},
         {"test_issue_117", aura_issue_117_run},
-        {"test_issue_118", aura_issue_118_run},
         {"test_issue_119", aura_issue_119_run},
         {"test_issue_120", aura_issue_120_run},
-        {"test_issue_121", aura_issue_121_run},
-        {"test_issue_265", aura_issue_265_run},
-        {"test_issue_122", aura_issue_122_run},
-        {"test_issue_123", aura_issue_123_run},
-        {"test_issue_124", aura_issue_124_run},
-        {"test_issue_125", aura_issue_125_run},
-        {"test_issue_126", aura_issue_126_run},
-        {"test_issue_127", aura_issue_127_run},
-        {"test_issue_128", aura_issue_128_run},
-        {"test_issue_130", aura_issue_130_run},
         {"test_issue_131", aura_issue_131_run},
         {"test_error_merr", aura_issue_error_merr_run},
         {"test_pilot_harness", aura_issue_pilot_harness_run},
-        {"test_issue_132", aura_issue_132_run},
-        {"test_issue_134", aura_issue_134_run},
         {"test_issue_136", aura_issue_136_run},
         {"test_issue_161", aura_issue_161_run},
         {"test_issue_162", aura_issue_162_run},
         {"test_issue_163", aura_issue_163_run},
         {"test_issue_167", aura_issue_167_run},
-        {"test_issue_168", aura_issue_168_run},
         {"test_issue_171", aura_issue_171_run},
-        {"test_issue_173", aura_issue_173_run},
         {"test_issue_181", aura_issue_181_run},
         {"test_issue_182", aura_issue_182_run},
         {"test_issue_197", aura_issue_197_run},

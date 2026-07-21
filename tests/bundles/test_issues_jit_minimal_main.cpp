@@ -8,7 +8,6 @@ extern int aura_issue_146_run();
 extern int aura_issue_147_run();
 extern int aura_issue_148_run();
 extern int aura_issue_149_run();
-extern int aura_issue_206_run();
 extern int aura_issue_174_run();
 extern int aura_issue_208_run();
 extern int aura_issue_210_run();
@@ -25,7 +24,6 @@ int main() {
         {"test_issue_147", aura_issue_147_run},
         {"test_issue_148", aura_issue_148_run},
         {"test_issue_149", aura_issue_149_run},
-        {"test_issue_206", aura_issue_206_run},
         {"test_issue_174", aura_issue_174_run},
         {"test_issue_208", aura_issue_208_run},
         {"test_issue_210", aura_issue_210_run},

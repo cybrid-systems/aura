@@ -9,7 +9,6 @@ extern int aura_issue_218_run();
 extern int aura_issue_edsl_hygiene_atomic_run();
 extern int aura_issue_428_closure_run();
 extern int aura_issue_429_soa_run();
-extern int aura_issue_430_arena_compaction_run();
 extern int aura_issue_431_cxx26_run();
 extern int aura_issue_440_edsl_readiness_run();
 extern int aura_issue_444_strategy_evolution_run();
@@ -27,16 +26,12 @@ extern int aura_issue_681_run();
 extern int aura_issue_682_run();
 extern int aura_issue_683_run();
 extern int aura_issue_684_run();
-extern int aura_issue_685_run();
 extern int aura_issue_686_run();
 extern int aura_issue_688_run();
 extern int aura_issue_689_run();
 extern int aura_issue_690_run();
 extern int aura_issue_691_run();
 extern int aura_issue_692_run();
-extern int aura_issue_694_run();
-extern int aura_issue_697_run();
-extern int aura_issue_698_run();
 extern int aura_issue_706_run();
 extern int aura_issue_707_run();
 extern int aura_issue_per_fiber_stack_pool_high_concurrency_run();
@@ -48,7 +43,6 @@ extern int aura_issue_compiler_core_incremental_selfmod_gaps_run();
 extern int aura_issue_highperf_cpp26_gaps_arena_soa_value_shape_pass_run();
 extern int aura_issue_typesystem_typed_mutate_incremental_gaps_run();
 extern int aura_issue_709_run();
-extern int aura_issue_710_run();
 extern int aura_issue_711_run();
 extern int aura_issue_712_run();
 extern int aura_issue_713_run();
@@ -62,7 +56,6 @@ int main() {
         {"test_issue_edsl_hygiene_atomic", aura_issue_edsl_hygiene_atomic_run},
         {"test_issue_428_closure", aura_issue_428_closure_run},
         {"test_issue_429_soa", aura_issue_429_soa_run},
-        {"test_issue_430_arena_compaction", aura_issue_430_arena_compaction_run},
         {"test_issue_431_cxx26", aura_issue_431_cxx26_run},
         {"test_issue_440_edsl_readiness", aura_issue_440_edsl_readiness_run},
         {"test_issue_444_strategy_evolution", aura_issue_444_strategy_evolution_run},
@@ -80,7 +73,6 @@ int main() {
         {"test_issue_682", aura_issue_682_run},
         {"test_issue_683", aura_issue_683_run},
         {"test_issue_684", aura_issue_684_run},
-        {"test_issue_685", aura_issue_685_run},
         {"test_issue_686", aura_issue_686_run},
         {"test_issue_688", aura_issue_688_run},
         {"test_issue_689", aura_issue_689_run},

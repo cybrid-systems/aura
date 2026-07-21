@@ -10,11 +10,9 @@ extern int aura_issue_718_run();
 extern int aura_issue_719_run();
 extern int aura_issue_720_run();
 extern int aura_issue_721_run();
-extern int aura_issue_722_run();
 extern int aura_issue_723_run();
 extern int aura_issue_726_run();
 extern int aura_issue_728_run();
-extern int aura_issue_731_run();
 extern int aura_issue_732_run();
 extern int aura_issue_733_run();
 extern int aura_issue_735_run();
@@ -26,13 +24,11 @@ extern int aura_issue_760_run();
 extern int aura_issue_761_run();
 extern int aura_issue_762_run();
 extern int aura_issue_763_run();
-extern int aura_issue_764_run();
 extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
 extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
 extern int aura_issue_766_run();
-extern int aura_issue_767_run();
 extern int aura_issue_768_run();
 extern int aura_issue_769_run();
 extern int aura_issue_770_run();
@@ -62,11 +58,9 @@ int main() {
         {"test_issue_719", aura_issue_719_run},
         {"test_issue_720", aura_issue_720_run},
         {"test_issue_721", aura_issue_721_run},
-        {"test_issue_722", aura_issue_722_run},
         {"test_issue_723", aura_issue_723_run},
         {"test_issue_726", aura_issue_726_run},
         {"test_issue_728", aura_issue_728_run},
-        {"test_issue_731", aura_issue_731_run},
         {"test_issue_732", aura_issue_732_run},
         {"test_issue_733", aura_issue_733_run},
         {"test_issue_735", aura_issue_735_run},
@@ -78,7 +72,6 @@ int main() {
         {"test_issue_761", aura_issue_761_run},
         {"test_issue_762", aura_issue_762_run},
         {"test_issue_763", aura_issue_763_run},
-        {"test_issue_764", aura_issue_764_run},
         {"test_dead_coercion_elision_narrow_evidence",
          aura_issue_dead_coercion_elision_narrow_evidence_run},
         {"test_issue_765", aura_issue_765_run},
@@ -87,7 +80,6 @@ int main() {
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
         {"test_issue_766", aura_issue_766_run},
-        {"test_issue_767", aura_issue_767_run},
         {"test_issue_768", aura_issue_768_run},
         {"test_issue_769", aura_issue_769_run},
         {"test_issue_770", aura_issue_770_run},

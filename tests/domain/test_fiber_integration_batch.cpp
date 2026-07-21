@@ -1,4 +1,4 @@
-// tests/domain/fiber_integration_batch.cpp — Wave 8 of #1957 migration.
+// tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
 // Consolidated closure-bridge Cycle-4 integration (Issue #226).
 // Heavier than the unit-level GC batch (test_gc_batch.cpp): uses raw
 // aura::serve::Scheduler + std::thread for multi-fiber stress. Created

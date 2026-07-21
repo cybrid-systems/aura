@@ -4,9 +4,7 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_496_run();
 extern int aura_issue_497_run();
-extern int aura_issue_498_run();
 extern int aura_issue_500_run();
 extern int aura_issue_501_hygiene_run();
 extern int aura_issue_502_run();
@@ -32,10 +30,8 @@ extern int aura_issue_533_observability_run();
 extern int aura_issue_534_observability_run();
 extern int aura_issue_535_observability_run();
 extern int aura_issue_557_observability_run();
-extern int aura_issue_567_observability_run();
 extern int aura_issue_601_run();
 extern int aura_issue_603_run();
-extern int aura_issue_604_run();
 extern int aura_issue_606_run();
 extern int aura_issue_614_run();
 extern int aura_issue_615_run();
@@ -43,7 +39,6 @@ extern int aura_issue_618_run();
 extern int aura_issue_620_run();
 extern int aura_issue_621_run();
 extern int aura_issue_622_run();
-extern int aura_issue_623_run();
 extern int aura_issue_624_run();
 extern int aura_issue_625_run();
 extern int aura_issue_626_run();
@@ -81,7 +76,6 @@ int main() {
         {"test_issue_557_observability", aura_issue_557_observability_run},
         {"test_issue_601", aura_issue_601_run},
         {"test_issue_603", aura_issue_603_run},
-        {"test_issue_604", aura_issue_604_run},
         {"test_issue_606", aura_issue_606_run},
         {"test_issue_614", aura_issue_614_run},
         {"test_issue_615", aura_issue_615_run},
@@ -89,7 +83,6 @@ int main() {
         {"test_issue_620", aura_issue_620_run},
         {"test_issue_621", aura_issue_621_run},
         {"test_issue_622", aura_issue_622_run},
-        {"test_issue_623", aura_issue_623_run},
         {"test_issue_624", aura_issue_624_run},
         {"test_issue_625", aura_issue_625_run},
         {"test_issue_626", aura_issue_626_run},
