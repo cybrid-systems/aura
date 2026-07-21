@@ -56,8 +56,31 @@ MOVES: list[tuple[str, str]] = [
     ("run_bench_all.py", "bench/run_bench_all.py"),
 ]
 
-# Required category dirs after #1932 / #1934 / #1935 / #1939
-DIRS = ("python", "bench", "fuzz", "memory", "e2e", "domain", "suite", "fixtures")
+# Required category dirs after #1932 / #1934 / #1935 / #1939 / #1977.
+# Domain stays the "preferred suites" home; theme subdirs at tests/ root
+# hold bulk legacy root cpp (#1977). arena is BOTH a domain pilot
+# (tests/domain/arena/, 5 files) and a root theme home (tests/arena/, 7 files).
+DIRS = (
+    "python",
+    "bench",
+    "fuzz",
+    "memory",
+    "e2e",
+    "domain",
+    "suite",
+    "fixtures",
+    "observability",
+    "mutation",
+    "compiler_core",
+    "fiber",
+    "edsl",
+    "jit",
+    "arena",
+    "stdlib",
+    "linear",
+    "shape",
+    "misc",
+)
 
 # Stable CLI shims intentionally left at tests/ root (#1932 / #1939).
 ALLOWED_THIN_ENTRYPOINTS = frozenset(

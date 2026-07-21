@@ -6,18 +6,21 @@
 # Wired into aura_add_issue_test() and the main test binaries
 # (test_ir, test_concurrent, aura_test_objects, aura).
 
-# Resolve test source (policy: tests/README.md · #1958 / #1959):
+# Resolve test source (policy: tests/README.md · #1958 / #1959 / #1977):
 #   1. tests/issues/<NAME>.cpp           — legacy per-issue (do not grow)
 #   2. tests/domain/<NAME>.cpp           — domain suite at domain root
-#   3. tests/domain/<theme>/<NAME>.cpp   — theme pilot dirs (e.g. arena/)
-#   4. tests/<NAME>.cpp                  — root batches / fallback
+#   3. tests/domain/<theme>/<NAME>.cpp   — domain theme pilot dirs
+#   4. tests/<theme>/<NAME>.cpp          — theme-organized root tests (#1977)
+#   5. tests/<NAME>.cpp                  — root batches / fallback
 function(aura_resolve_test_cpp NAME OUT_VAR)
     if(EXISTS "${CMAKE_SOURCE_DIR}/tests/issues/${NAME}.cpp")
         set(${OUT_VAR} "tests/issues/${NAME}.cpp" PARENT_SCOPE)
     elseif(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
         set(${OUT_VAR} "tests/domain/${NAME}.cpp" PARENT_SCOPE)
     else()
-        file(GLOB _aura_theme_hits "${CMAKE_SOURCE_DIR}/tests/domain/*/${NAME}.cpp")
+        file(GLOB _aura_theme_hits
+            "${CMAKE_SOURCE_DIR}/tests/domain/*/${NAME}.cpp"
+            "${CMAKE_SOURCE_DIR}/tests/*/${NAME}.cpp")
         list(LENGTH _aura_theme_hits _aura_theme_n)
         if(_aura_theme_n GREATER 0)
             list(GET _aura_theme_hits 0 _aura_theme_abs)
@@ -28,7 +31,7 @@ function(aura_resolve_test_cpp NAME OUT_VAR)
         else()
             message(FATAL_ERROR
                 "aura_resolve_test_cpp(${NAME}): not found under tests/issues/, "
-                "tests/domain/, tests/domain/*/, or tests/")
+                "tests/domain/, tests/domain/*/, tests/*/, or tests/")
         endif()
     endif()
 endfunction()
