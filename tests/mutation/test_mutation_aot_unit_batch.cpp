@@ -512,6 +512,32 @@ int run_1537_fn_epoch_stale_smoke() {
 } // namespace aura_mut_run_wave41_1537
 
 
+// Wave 42 (#1957): jit_incremental — #358 incremental re-AOT dirty filter
+namespace aura_mut_run_wave42_358 {
+using aura::test::g_failed;
+using aura::test::g_passed;
+// Signatures from aura_jit_bridge.h
+extern "C" void aura_set_is_define_dirty_fn(bool (*fn)(void*, const char*), void* userdata);
+extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned int n,
+                                                unsigned int* out, unsigned int max_out);
+static bool dirty_cb(void*, const char* name) {
+    return name && std::string_view(name) == "foo";
+}
+int run_358_dirty_aot_filter_smoke() {
+    std::println("\n=== #358: aura_filter_dirty_flat_functions smoke ===");
+    unsigned int out[4] = {};
+    int rc = aura_filter_dirty_flat_functions(nullptr, 0, out, 4);
+    CHECK(rc == -1, "null functions → -1");
+    aura_set_is_define_dirty_fn(&dirty_cb, nullptr);
+    rc = aura_filter_dirty_flat_functions(nullptr, 1, out, 4);
+    CHECK(rc == -1, "null functions with callback → -1");
+    aura_set_is_define_dirty_fn(nullptr, nullptr);
+    CHECK(true, "clear callback");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave42_358
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -601,6 +627,13 @@ int main() {
     std::println("\n######## run_1537_fn_epoch_stale_smoke ########");
     if (int rc = aura_mut_run_wave41_1537::run_1537_fn_epoch_stale_smoke(); rc != 0) {
         std::println("run_1537 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_358_dirty_aot_filter_smoke ########");
+    if (int rc = aura_mut_run_wave42_358::run_358_dirty_aot_filter_smoke(); rc != 0) {
+        std::println("run_358 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");

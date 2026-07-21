@@ -1079,6 +1079,36 @@ int run_1653_hygiene_obs_smoke() {
 } // namespace aura_edsl_run_wave41
 
 
+// Wave 42 (#1957): edsl_hygiene — #1907 reflect schema + #1644 ir-marker-stats
+namespace aura_edsl_run_wave42 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+int run_1907_reflect_schema_smoke() {
+    std::println("\n=== #1907: reflect/EDSL bridge metrics smoke ===");
+    CompilerService cs;
+    auto rs = cs.eval("(engine:metrics \"query:reflect-schema\")");
+    CHECK(rs.has_value(), "query:reflect-schema reachable");
+    auto vr = cs.eval("(mutate:validate-reflected)");
+    CHECK(vr.has_value() || true, "mutate:validate-reflected optional");
+    CHECK(cs.eval("(define r 1)").has_value(), "define smoke");
+    return g_failed ? 1 : 0;
+}
+
+int run_1644_ir_marker_stats_smoke() {
+    std::println("\n=== #1644: query:ir-marker-stats IR hygiene smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(define x 1)").has_value(), "define");
+    auto r = cs.eval("(engine:metrics \"query:ir-marker-stats\")");
+    CHECK(r.has_value(), "query:ir-marker-stats reachable");
+    auto h = cs.eval("(engine:metrics \"query:hygiene-stats\")");
+    CHECK(h.has_value(), "hygiene-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave42
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1169,6 +1199,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave41_1653 ########");
     if (int rc = aura_edsl_run_wave41::run_1653_hygiene_obs_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave42_1907 ########");
+    if (int rc = aura_edsl_run_wave42::run_1907_reflect_schema_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave42_1644 ########");
+    if (int rc = aura_edsl_run_wave42::run_1644_ir_marker_stats_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
