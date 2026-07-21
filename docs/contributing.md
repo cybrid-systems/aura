@@ -47,7 +47,7 @@ Full layout, naming, good/bad examples, and exceptions:
 - [`tests/legacy_test_inventory.md`](../tests/legacy_test_inventory.md) — legacy inventory (#1957)
 
 **New Python drivers:** put them under `tests/python/`, `tests/bench/`,
-`tests/fuzz/`, `tests/memory/`, or `tests/e2e/` — not the top-level `tests/`
+`tests/fuzz/`, or `tests/e2e/` — not the top-level `tests/`
 root (thin entrypoints only). Check:
 
 ```bash

@@ -48,7 +48,6 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | **`e2e/`** | Strengthened .aura E2E + commercial_readiness (#1934) | Machine-checkable PASS/FAIL + goldens |
 | **`bench/`** | Benchmarks (C++ + Python + baseline) | SLO / microbench drivers |
 | **`fuzz/`** | Unified fuzz orchestrator + corpus (#1935) | `./build.py fuzz --list` / nightly |
-| **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
 | `observability/` | Bulk root obs cpp (#1977) | 180 files; prefer `domain/test_obs_schema_matrix` |
 | `mutation/` | Bulk root mutation cpp (#1977) | 118 files; prefer `domain/test_domain_gates_batch` |
@@ -79,7 +78,7 @@ python3 tests/migrate_test_layout.py --status   # exit 1 if root policy unclean
 |--------|--------|
 | Python drivers scattered at `tests/*.py` | Full drivers under **`tests/python/`** |
 | Bench scripts + baseline at root | **`tests/bench/`** (+ thin `tests/benchmark.py`) |
-| Fuzz / leak scripts mixed in | **`tests/fuzz/`**, **`tests/memory/`** |
+| Fuzz / leak scripts mixed in | **`tests/fuzz/`** |
 | Commercial .aura E2E loose | **`tests/e2e/`** (#1934) |
 | 437 root `test_*.cpp` scattered flat | Theme-organized into **`tests/<theme>/`** (#1977) — parallel to `domain/` |
 | Misplaced `incremental_mutation_test.aura` at root | Moved to `suite/` (#1977) |

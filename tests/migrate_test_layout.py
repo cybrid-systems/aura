@@ -3,7 +3,7 @@
 
 Idempotent migration helper for grouping Python drivers under
 tests/python/, bench drivers under tests/bench/, and reserving
-tests/fuzz/ + tests/memory/. Final cleanup / inventory: #1939.
+tests/fuzz/. Final cleanup / inventory: #1939.
 
 Usage:
   python3 tests/migrate_test_layout.py --dry-run   # print pending moves only
@@ -64,7 +64,6 @@ DIRS = (
     "python",
     "bench",
     "fuzz",
-    "memory",
     "e2e",
     "domain",
     "suite",
