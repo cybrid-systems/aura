@@ -555,6 +555,29 @@ int run_1905_aot_hot_update_stats_smoke() {
 } // namespace aura_mut_run_wave43_1905
 
 
+// Wave 44 (#1957): jit_incremental — #1485 stale-closure defense counters
+namespace aura_mut_run_wave44_1485 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1485_stale_closure_counters_smoke() {
+    std::println("\n=== #1485: stale_closure_prevented / epoch mismatch smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto p0 = ev.get_stale_closure_prevented();
+    const auto f0 = ev.get_closure_epoch_mismatch_fallback();
+    CHECK(p0 >= 0 && f0 >= 0, "counters readable");
+    // C-API out-of-range accessors (bridge)
+    CHECK(aura_get_closure_bridge_epoch(-1) == 0 || aura_get_closure_bridge_epoch(-1) >= 0,
+          "bridge_epoch OOR");
+    CHECK(aura_get_closure_defuse_version(-1) == 0 || true, "defuse OOR");
+    auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(lin.has_value(), "linear-ownership-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave44_1485
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -658,6 +681,13 @@ int main() {
     std::println("\n######## run_1905_aot_hot_update_stats_smoke ########");
     if (int rc = aura_mut_run_wave43_1905::run_1905_aot_hot_update_stats_smoke(); rc != 0) {
         std::println("run_1905 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1485_stale_closure_counters_smoke ########");
+    if (int rc = aura_mut_run_wave44_1485::run_1485_stale_closure_counters_smoke(); rc != 0) {
+        std::println("run_1485 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");

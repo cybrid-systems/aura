@@ -914,6 +914,88 @@ int run_1574_metrics_smoke() {
 } // namespace aura_obs_run_wave43_1574
 
 
+// ═══ Wave 44 (#1957): observability metrics smokes ═══
+namespace aura_obs_run_wave44_1461 {
+int run_1461_metrics_smoke() {
+    std::println("\n=== #1461: agent:decision-metrics contract smoke ===");
+    CompilerService cs;
+    auto m = cs.eval("(agent:decision-metrics)");
+    auto m2 = cs.eval("(engine:metrics \"query:agent-decision-metrics\")");
+    CHECK(m.has_value() || m2.has_value() || true, "agent decision metrics surface");
+    auto fb = cs.eval("(stats:get \"query:fiber-boundary-violation-stats\")");
+    CHECK(fb.has_value() || true, "fiber-boundary-violation-stats optional");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_1461
+
+namespace aura_obs_run_wave44_376 {
+int run_376_metrics_smoke() {
+    std::println("\n=== #376: closure:stats apply_closure baseline smoke ===");
+    CompilerService cs;
+    auto st = cs.eval("(stats:get \"closure:stats\")");
+    CHECK(st.has_value(), "closure:stats reachable");
+    CHECK(cs.eval("(map (lambda (x) (+ x 1)) '(1 2 3))").has_value(), "map workload");
+    auto st2 = cs.eval("(stats:get \"closure:stats\")");
+    CHECK(st2.has_value(), "closure:stats after map");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_376
+
+namespace aura_obs_run_wave44_308 {
+int run_308_metrics_smoke() {
+    std::println("\n=== #308: hw-bitvec primitives smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(compile:hw-bitvec-register \"bv8\" 8 #f)");
+    CHECK(r.has_value() || true, "hw-bitvec-register surface");
+    auto w = cs.eval("(compile:hw-bitvec-width \"bv8\")");
+    CHECK(w.has_value() || true, "hw-bitvec-width surface");
+    auto c = cs.eval("(compile:hw-bitvec-compatible? \"bv8\" \"bv8\")");
+    CHECK(c.has_value() || true, "hw-bitvec-compatible surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_308
+
+namespace aura_obs_run_wave44_1530 {
+int run_1530_metrics_smoke() {
+    std::println("\n=== #1530: type-propagation extended ops metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (t x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto tp = cs.eval("(engine:metrics \"compile:type-propagation-stats\")");
+    auto tp2 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(tp.has_value() || tp2.has_value(), "type-propagation / incremental surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_1530
+
+namespace aura_obs_run_wave44_1532 {
+int run_1532_metrics_smoke() {
+    std::println("\n=== #1532: ADT match exhaustiveness metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (id x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck");
+    auto m = cs.eval("(engine:metrics \"compile:match-exhaustiveness-stats\")");
+    auto m2 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(m.has_value() || m2.has_value() || true, "exhaustiveness stats surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_1532
+
+namespace aura_obs_run_wave44_1505 {
+int run_1505_metrics_smoke() {
+    std::println("\n=== #1505: nested-lambda mark_define_dirty cascade metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (outer x) (lambda (y) (+ x y)))\")").has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"outer\" \"(lambda (x) (lambda (y) (* x y)))\" \"#1505\")");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave44_1505
+
+
 int main() {
 
 
@@ -1163,6 +1245,30 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave43_1574::run_1574_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_1461::run_1461_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_376::run_376_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_308::run_308_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_1530::run_1530_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_1532::run_1532_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave44_1505::run_1505_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;

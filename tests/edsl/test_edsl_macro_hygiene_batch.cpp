@@ -1136,6 +1136,30 @@ int run_373_macro_mutate_guard_smoke() {
 } // namespace aura_edsl_run_wave43
 
 
+// Wave 44 (#1957): edsl_hygiene — #397 is_macro_introduced centralize
+namespace aura_edsl_run_wave44 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::ast::SyntaxMarker;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_397_is_macro_introduced_smoke() {
+    std::println("\n=== #397: FlatAST::is_macro_introduced helper smoke ===");
+    FlatAST flat;
+    auto u = flat.add_raw_node(NodeTag::LiteralInt, SyntaxMarker::User);
+    auto m = flat.add_raw_node(NodeTag::LiteralInt, SyntaxMarker::MacroIntroduced);
+    CHECK(!flat.is_macro_introduced(u), "User not macro");
+    CHECK(flat.is_macro_introduced(m), "MacroIntroduced true");
+    CHECK(!flat.is_macro_introduced(999999), "OOB false");
+    CompilerService cs;
+    auto mi = cs.eval("(query:macro-introduced)");
+    CHECK(mi.has_value(), "query:macro-introduced reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave44
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1241,6 +1265,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave43_373 ########");
     if (int rc = aura_edsl_run_wave43::run_373_macro_mutate_guard_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave44_397 ########");
+    if (int rc = aura_edsl_run_wave44::run_397_is_macro_introduced_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
