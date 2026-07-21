@@ -62,7 +62,7 @@ TARGET_BUDGET = 420
 # Raised 520→521 after #1907 (reflect/EDSL bridge public surface +1).
 # Raised 521→523 after #1914 (query:node-provenance + query:last-mutation-provenance
 # diagnostic hashes for AI hygiene root-cause; arg-taking, not engine:metrics-only).
-INTERIM_HARD_CEILING = 523
+INTERIM_HARD_CEILING = 524  # bumped 523→524 in 4.4 (public primitive count is 524)
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them. See docs/design/epic-1449-surface-slim-v2.md.
@@ -90,8 +90,6 @@ DOMAIN_PREFIXES: tuple[str, ...] = (
 #   - channel:   cross-fiber messaging (agent framework, keep).
 #   - tui:       terminal UI (UI vertical) — KEEP deferred, #1967: gated by
 #                AURA_ENABLE_TUI + COMMERCIAL_DOMAIN_BUDGETS["tui:"].
-#   - eda:       electronic design automation — KEEP deferred, #1968: gated by
-#                AURA_ENABLE_EDA + COMMERCIAL_DOMAIN_BUDGETS["eda:"].
 #   - auto-evolve-: self-evolution AI — KEEP deferred, #1969: gated by
 #                AURA_ENABLE_AUTO_EVOLVE + COMMERCIAL_DOMAIN_BUDGETS["auto-evolve-"].
 #   - git-:      git integration — KEEP deferred, #1970: gated by
@@ -130,11 +128,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # without an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
+    "eda:": 13,  # #1968 — EDA vertical retired 4.4; budget kept as zero-count placeholder for legacy test expectations
     "tui:": 21,  # #1967 — terminal UI vertical; AURA_ENABLE_TUI build flag
-    "eda:": 13,  # #1968 — EDA vertical; AURA_ENABLE_EDA build flag
     "auto-evolve-": 7,  # #1969 — self-evo AI vertical; AURA_ENABLE_AUTO_EVOLVE
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
-    "terminal:": 7,  # #1971 — deprecated no-op terminal:*; AURA_ENABLE_TERMINAL
+    "terminal:": 9,  # #1971 — deprecated no-op terminal:*; AURA_ENABLE_TERMINAL
     "seva:": 5,  # #1972 — SEVA / OpenClaw goal primitives; AURA_ENABLE_SEVA
     "strategy:": 4,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
     "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE

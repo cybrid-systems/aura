@@ -1076,7 +1076,6 @@ namespace primitives_detail {
     // Issues #923–#940: stdlib production-review dashboard primitives.
     void register_stdlib_review_primitives(std::function<void(std::string, PrimFn)> add,
                                            Evaluator& ev);
-    void register_eda_primitives(std::function<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
@@ -1199,9 +1198,6 @@ export class Evaluator {
     // Issue #909: peeled register structs access private Evaluator state.
     friend struct primitives_detail::ObservabilityPrims;
     friend struct primitives_detail::CompilePrims;
-    friend void
-    primitives_detail::register_eda_primitives(std::function<void(std::string, PrimFn)> add,
-                                               Evaluator& ev);
     friend void primitives_detail::register_verify_tool_primitives(
         std::function<void(std::string, std::function<aura::compiler::types::EvalValue(
                                             std::span<const aura::compiler::types::EvalValue>)>)>
@@ -3629,8 +3625,8 @@ private:
     void register_all_primitives();
     void install_defuse_subsystem();
     void build_primitive_slots();
-    // Issue #697: post-registration SV/EDA PrimMeta backfill.
-    void backfill_eda_sv_primitive_meta();
+    // Issue #697: post-registration SV/EDA PrimMeta backfill retired with the
+    // eda:* primitive vertical (4.3). See #1968 / sub-layer 4.4.
     // Issue #1416: post-registration tier-assignment for the 7 EDSL
     // escape-hatch primitives (Part 4 #1396) so the dispatch-site
     // capability gate in invoke_prim_with_telemetry can deny
@@ -8270,59 +8266,6 @@ public:
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             return m->type_incremental_blame_chain_length_total.load(std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    // Issue #841: EDA production infrastructure stats.
-    void bump_eda_infra_parse_success(std::uint64_t n = 1) const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->eda_infra_parse_success_total.fetch_add(n, std::memory_order_relaxed);
-        }
-    }
-    void bump_eda_infra_structured_mutate(std::uint64_t n = 1) const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->eda_infra_structured_mutate_total.fetch_add(n, std::memory_order_relaxed);
-        }
-    }
-    void bump_eda_infra_feedback_ingest(std::uint64_t n = 1) const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->eda_infra_feedback_ingest_total.fetch_add(n, std::memory_order_relaxed);
-        }
-    }
-    void bump_eda_infra_cosim_invoke(std::uint64_t n = 1) const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            m->eda_infra_cosim_invoke_total.fetch_add(n, std::memory_order_relaxed);
-        }
-    }
-    [[nodiscard]] std::uint64_t get_eda_infra_parse_success() const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            return m->eda_infra_parse_success_total.load(std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    [[nodiscard]] std::uint64_t get_eda_infra_structured_mutate() const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            return m->eda_infra_structured_mutate_total.load(std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    [[nodiscard]] std::uint64_t get_eda_infra_feedback_ingest() const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            return m->eda_infra_feedback_ingest_total.load(std::memory_order_relaxed);
-        }
-        return 0;
-    }
-    [[nodiscard]] std::uint64_t get_eda_infra_cosim_invoke() const noexcept {
-        if (compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
-            return m->eda_infra_cosim_invoke_total.load(std::memory_order_relaxed);
         }
         return 0;
     }

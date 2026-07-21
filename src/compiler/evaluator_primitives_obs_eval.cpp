@@ -1118,9 +1118,9 @@ void ObservabilityPrims::register_eval_p8(PrimRegistrar add, Evaluator& ev) {
     //     feedback_mutate_hits_total (#693) +
     //     ppa_savings_total (#693) +
     //     verification_loop_success_total (#693)
-    //   - eda_sv_feedback_mutate_success_total (#695) +
-    //     eda_sv_stable_ref_invalidation_total (#695) +
-    //     eda_sv_corruption_detected_total (#695)
+    //   - eda_sv_feedback_mutate_success_total (#695, retired 4.4) +
+    //     eda_sv_stable_ref_invalidation_total (#695, retired 4.4) +
+    //     eda_sv_corruption_detected_total (#695, retired 4.4)
     // What the issue body AC4 specifies by **exact name +
     // fields** — `query:sv-verification-closedloop-stats`
     // (no `-hash` suffix) with AC1+AC2+AC3-specific counters
@@ -11001,20 +11001,17 @@ void ObservabilityPrims::register_eval_p86(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         };
         const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-        const std::uint64_t load_sv_ok =
-            m ? m->eda_load_sv_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t load_sv_fail =
-            m ? m->eda_load_sv_failure_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t parse_vr_ok =
-            m ? m->eda_parse_verification_result_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t parse_vr_fail =
-            m ? m->eda_parse_verification_failure_total.load(std::memory_order_relaxed) : 0;
-        const auto load_total = load_sv_ok + load_sv_fail;
-        const auto parse_total = parse_vr_ok + parse_vr_fail;
-        const std::int64_t load_rate =
-            load_total == 0 ? 0 : static_cast<std::int64_t>((load_sv_ok * 100) / load_total);
-        const std::int64_t parse_rate =
-            parse_total == 0 ? 0 : static_cast<std::int64_t>((parse_vr_ok * 100) / parse_total);
+        const std::uint64_t load_sv_ok = 0;
+        const std::uint64_t load_sv_fail = 0;
+        const std::uint64_t parse_vr_ok = 0;
+        const std::uint64_t parse_vr_fail = 0;
+        // Issue #1968 / sub-layer 4.4: eda_load_sv_*/eda_parse_verification_*
+        // atomic fields retired. Both rates are 0 by definition (no
+        // successful loads + no successful parses → 0/0 = N/A). Just
+        // emit 0 directly without a divide (avoids -Werror=div-by-zero
+        // once the compiler proves load_total == 0 unconditionally).
+        const std::int64_t load_rate = 0;
+        const std::int64_t parse_rate = 0;
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"load-sv-total", make_int(static_cast<std::int64_t>(load_sv_ok))},
             {"load-sv-failure-total", make_int(static_cast<std::int64_t>(load_sv_fail))},

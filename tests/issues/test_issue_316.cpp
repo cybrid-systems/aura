@@ -6,7 +6,7 @@
 //
 // Scope-limited close. The issue body asks for SV emit
 // functions: `emit_sv_interface(const SVInterfaceIR&)` +
-// modport list output. The existing sv_ir.ixx already ships
+// modport list output. The existing #435 emit_path already ships
 // the std::string-based #435 emit_path (`emit_interface` +
 // `emit_modport`); this PR adds the parallel SymId variant
 // for the SVInterfaceIR / SVModportIR types from #315.

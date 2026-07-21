@@ -47,9 +47,8 @@ These are the `primitives_detail::register_*_primitives` calls in the central re
 24. `register_eval_primitives`
 25. `register_eval_observability_primitives`
 26. `register_stdlib_review_primitives`
-27. `register_eda_primitives`
-28. `register_security_primitives`
-29. `register_verify_tool_primitives`
+27. `register_security_primitives`
+28. `register_verify_tool_primitives`
 
 ## Fiber / mutation integration (for Agents)
 

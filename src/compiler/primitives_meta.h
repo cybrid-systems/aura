@@ -87,19 +87,13 @@ namespace primitives_meta_detail {
     }
 
     inline std::string suggest_primitive_name(std::string_view desc, std::string_view category) {
-        if (contains_ci(desc, "constraint"))
-            return "eda:update-constraint";
-        if (category == kPrimCategorySva && contains_ci(desc, "coverpoint"))
-            return "eda:add-coverpoint-bin";
-        if (category == kPrimCategorySva && contains_ci(desc, "property"))
-            return "eda:weaken-property";
-        if (category == kPrimCategoryVerification)
-            return "eda:run-verification-feedback";
-        if (category == kPrimCategoryEda && contains_ci(desc, "evolution"))
-            return "eda:demo-sv-self-evolution";
-        if (category == kPrimCategoryEda)
-            return "eda:custom-interface-mutate";
-        return "eda:custom-mutate";
+        // Issue #1968 / sub-layer 4.4: eda:* primitive vertical retired.
+        // No eda:* primitives registered any more; suggest_primitive_name
+        // returns "" so generate_primitive_skeleton emits an empty skeleton
+        // (callers handle empty prim_name as "no suggestion").
+        (void)desc;
+        (void)category;
+        return std::string{};
     }
 
 } // namespace primitives_meta_detail
@@ -108,71 +102,12 @@ inline PrimitiveSkeleton generate_primitive_skeleton(std::string_view descriptio
     using namespace primitives_meta_detail;
     PrimitiveSkeleton sk;
     sk.category = detect_category(description);
+    // Issue #1968 / sub-layer 4.4: eda:* primitive vertical retired.
+    // All eda:* branches below removed. suggest_primitive_name now
+    // returns "" for any input — callers handle empty prim_name as
+    // "no suggestion" and emit an empty PrimitiveSkeleton.
     const auto prim_name = suggest_primitive_name(description, sk.category);
-
-    if (prim_name == "eda:update-constraint") {
-        sk.spec = "(constraint-id expr-string) -> bool";
-        sk.cpp_lambda =
-            "add_mutate(\"eda:update-constraint\", [&ev](const auto& a) -> EvalValue {\n"
-            "    bool ok = true;\n"
-            "    MutationBoundaryGuard guard(ev, &ok);\n"
-            "    ws->append_param(cid, pool->intern(expr));\n"
-            "    return make_bool(true);\n"
-            "});";
-        sk.test_snippet = "(eda:update-constraint <constraint-id> \"val < 128;\")";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
-                          "\"Append constraint expr on native Constraint node.\", "
-                          "\"(int string) -> bool\")";
-    } else if (prim_name == "eda:add-coverpoint-bin") {
-        sk.spec = "(coverpoint-id bin-name-string) -> bool";
-        sk.cpp_lambda =
-            "add_mutate(\"eda:add-coverpoint-bin\", [&ev](const auto& a) -> EvalValue {\n"
-            "    bool ok = true;\n"
-            "    MutationBoundaryGuard guard(ev, &ok);\n"
-            "    ws->append_param(cp_id, pool->intern(bin_name));\n"
-            "    return make_bool(true);\n"
-            "});";
-        sk.test_snippet = "(eda:add-coverpoint-bin <coverpoint-id> \"mid\")";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
-                          "\"Add coverpoint bin.\", \"(int string) -> bool\")";
-    } else if (prim_name == "eda:weaken-property") {
-        sk.spec = "(property-id disable-clause-string) -> bool";
-        sk.cpp_lambda = "add_mutate(\"eda:weaken-property\", [&ev](const auto& a) -> EvalValue {\n"
-                        "    bool ok = true;\n"
-                        "    MutationBoundaryGuard guard(ev, &ok);\n"
-                        "    return make_bool(true);\n"
-                        "});";
-        sk.test_snippet = "(eda:weaken-property <property-id> \"reset\")";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"sva\", "
-                          "\"Weaken property.\", \"(int string) -> bool\")";
-    } else if (prim_name == "eda:run-verification-feedback") {
-        sk.spec = "(report-kind-string report-text-string) -> bool";
-        sk.cpp_lambda =
-            "add(\"eda:run-verification-feedback\", [&ev](const auto& a) -> EvalValue {\n"
-            "    return make_bool(true);\n"
-            "});";
-        sk.test_snippet = "(eda:run-verification-feedback \"coverage.log\" \"0 hole_a\")";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
-                          "\"verification\", \"Feedback loop.\", \"(string string) -> bool\")";
-    } else if (prim_name == "eda:demo-sv-self-evolution") {
-        sk.spec = "(example-string cycles-int) -> int";
-        sk.cpp_lambda = "add(\"eda:demo-sv-self-evolution\", [&ev](const auto& a) -> EvalValue {\n"
-                        "    return make_int(successes);\n"
-                        "});";
-        sk.test_snippet = "(eda:demo-sv-self-evolution \"interface\" 50)";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates|kPrimSafetyFiber, "
-                          "\"eda\", \"Self-evolution demo.\", \"(string int) -> int\")";
-    } else {
-        sk.spec = "(node-id payload-string) -> bool";
-        sk.cpp_lambda = "add_mutate(\"eda:custom-mutate\", [&ev](const auto& a) -> EvalValue {\n"
-                        "    bool ok = true;\n"
-                        "    MutationBoundaryGuard guard(ev, &ok);\n"
-                        "    return make_bool(true);\n"
-                        "});";
-        sk.test_snippet = "(eda:custom-mutate <node-id> \"payload\")";
-        sk.registration = "DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, \"eda\", "
-                          "\"Custom EDA mutate.\", \"(int string) -> bool\")";
-    }
+    (void)prim_name;
     return sk;
 }
 

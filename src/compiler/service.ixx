@@ -7095,22 +7095,8 @@ public:
         s.sv_diff_emits_total = metrics_.sv_diff_emits_total.load(std::memory_order_relaxed);
         s.sva_structured_mutate_hits_total =
             metrics_.sva_structured_mutate_hits_total.load(std::memory_order_relaxed);
-        s.eda_sv_evolution_cycles_total =
-            metrics_.eda_sv_evolution_cycles_total.load(std::memory_order_relaxed);
-        s.eda_sv_verification_convergence_total =
-            metrics_.eda_sv_verification_convergence_total.load(std::memory_order_relaxed);
-        s.eda_sv_feedback_mutate_success_total =
-            metrics_.eda_sv_feedback_mutate_success_total.load(std::memory_order_relaxed);
-        s.eda_sv_stable_ref_invalidation_total =
-            metrics_.eda_sv_stable_ref_invalidation_total.load(std::memory_order_relaxed);
-        s.eda_sv_commercial_stub_latency_us_total =
-            metrics_.eda_sv_commercial_stub_latency_us_total.load(std::memory_order_relaxed);
-        s.eda_sv_corruption_detected_total =
-            metrics_.eda_sv_corruption_detected_total.load(std::memory_order_relaxed);
         s.primitive_skeleton_generations_total =
             metrics_.primitive_skeleton_generations_total.load(std::memory_order_relaxed);
-        s.primitive_eda_meta_backfill_total =
-            metrics_.primitive_eda_meta_backfill_total.load(std::memory_order_relaxed);
         // Issue #342: narrowing provenance
         // observability. Mirrors the lifetime
         // counter in CompilerMetrics.

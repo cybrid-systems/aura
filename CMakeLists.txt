@@ -46,7 +46,6 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_obs_eval.cpp
     src/compiler/evaluator_primitives_obs_jit.cpp
     src/compiler/verify_tool.cpp
-    src/compiler/evaluator_primitives_eda.cpp
     src/compiler/evaluator_primitives_messaging.cpp
     src/compiler/evaluator_primitives_io.cpp
     src/compiler/evaluator_primitives_tui.cpp

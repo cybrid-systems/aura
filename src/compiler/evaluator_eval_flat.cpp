@@ -663,11 +663,11 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             auto name = std::string(pool.resolve(v.sym_id));
             // Issue #231: dedup by content so two quote literals
             // of the same symbol produce the same string heap
-            // index. Without this, `(eq? 'eda:module 'eda:module)`
+            // index. Without this, `(eq? 'foo:bar 'foo:bar)`
             // returns #f because each quote creates a fresh
             // string heap entry. Use short_str_cache_ for short
             // symbols (the common case for symbols with colon
-            // prefixes like eda:module), and a heap scan for
+            // prefixes like foo:bar), and a heap scan for
             // longer ones. Symbols are usually < 32 chars so the
             // linear scan is bounded.
             if (name.size() <= 6) {

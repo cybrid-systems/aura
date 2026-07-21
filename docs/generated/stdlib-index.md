@@ -84,4 +84,4 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 - Full name catalog: [primitives.md](primitives.md) (515 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 
-Central registry orchestrates **29** `register_*_primitives` groups (see primitives-registry.md for the ordered list).
+Central registry orchestrates **28** `register_*_primitives` groups (see primitives-registry.md for the ordered list).

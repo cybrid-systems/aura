@@ -898,12 +898,6 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> sv_diff_emits_total{0};
     // Issue #694: SVA structured AST mutate observability.
     std::atomic<std::uint64_t> sva_structured_mutate_hits_total{0};
-    // Issue #695: EDA-SV verification closed-loop stress harness.
-    std::atomic<std::uint64_t> eda_sv_evolution_cycles_total{0};
-    std::atomic<std::uint64_t> eda_sv_verification_convergence_total{0};
-    std::atomic<std::uint64_t> eda_sv_feedback_mutate_success_total{0};
-    std::atomic<std::uint64_t> eda_sv_stable_ref_invalidation_total{0};
-    // Issue #1901 (refine #1822): EDA self-evolution StableNodeRef
     // auto-refresh telemetry. stable_ref_auto_refresh_in_eda_total
     // counts every refresh_if_stale / re-make_ref call from the
     // EDA self-evolution primitive paths (eda:demo-sv-self-evolution
@@ -911,9 +905,6 @@ struct CompilerMetrics {
     // the iterations where the refresh prevented a stale-ref
     // access (forward-compat observability for the UAF window
     // that #1822 / #1901 closed).
-    std::atomic<std::uint64_t> stable_ref_auto_refresh_in_eda_total{0};
-    std::atomic<std::uint64_t> eda_self_evolution_stale_ref_prevented{0};
-    // Issue #1902 (refine #1818 / #1821): EDA Guard exception
     // telemetry. eda_feedback_exception_total counts every
     // catch in eda:run-verification-feedback +
     // eda:run-commercial-simulator-stub (plus future EDA
@@ -924,7 +915,6 @@ struct CompilerMetrics {
     // guard_exception_rollback_success counts the restore path
     // itself firing (sanity check: rollback_success should
     // track exception_total modulo dtor silent no-op cases).
-    std::atomic<std::uint64_t> eda_guard_exception_handled_total{0};
     // Issue #1896: compile:* dirty mutators under MutationBoundaryGuard.
     std::atomic<std::uint64_t> compile_primitive_guard_captures_total{0};
     std::atomic<std::uint64_t> compile_primitive_stale_ir_prevented_total{0};
@@ -994,13 +984,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dangling_env_prevented_materialize{0};
     std::atomic<std::uint64_t> dangling_env_prevented_apply{0};
     std::atomic<std::uint64_t> linear_ownership_safe_fallback_total{0};
-    std::atomic<std::uint64_t> eda_guard_uncaught_exception_total{0};
-    std::atomic<std::uint64_t> eda_primitive_entered_without_guard_total{0};
-    std::atomic<std::uint64_t> eda_sv_commercial_stub_latency_us_total{0};
-    std::atomic<std::uint64_t> eda_sv_corruption_detected_total{0};
-    // Issue #697: Declarative primitives extension kit observability.
     std::atomic<std::uint64_t> primitive_skeleton_generations_total{0};
-    std::atomic<std::uint64_t> primitive_eda_meta_backfill_total{0};
     // Issue #1416: counts how many EDSL escape-hatch primitives were
     // tier-assigned kPrimSecPrivileged by backfill_capability_tiers().
     // Bumps by 7 (the 7 Part 4 #1396 escape hatches) at Evaluator
@@ -1014,24 +998,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> primitives_by_category_query_total{0};
     std::atomic<std::uint64_t> schema_of_primitive_query_total{0};
     std::atomic<std::uint64_t> primitives_meta_catalog_query_total{0};
-    // Issue #499: EDA foundation primitives module observability.
-    std::atomic<std::uint64_t> eda_foundation_parse_total{0};
-    std::atomic<std::uint64_t> eda_foundation_query_total{0};
-    std::atomic<std::uint64_t> eda_foundation_mutate_total{0};
-    std::atomic<std::uint64_t> eda_foundation_waveform_total{0};
-    std::atomic<std::uint64_t> eda_foundation_feedback_total{0};
-    // Issue #616: EDA hardware-co-design primitives (load-sv /
     // parse-verification-result) observability. Counters are
     // separate from the foundation ones above so that
     // (query:eda-foundation-stats) shape from #499 stays
     // unchanged and (query:eda-hw-stats) is the dedicated
     // dashboard for the new file-I/O / verification-result
     // primitives.
-    std::atomic<std::uint64_t> eda_load_sv_total{0};
-    std::atomic<std::uint64_t> eda_load_sv_failure_total{0};
-    std::atomic<std::uint64_t> eda_parse_verification_result_total{0};
-    std::atomic<std::uint64_t> eda_parse_verification_failure_total{0};
-    // Issue #841: EDA production infrastructure observability (refines #499/#616;
     // non-duplicative with query:eda-foundation-stats and query:eda-hw-stats).
     //   - eda_infra_parse_success_total: successful SV/SVA parse paths
     //     (eda:parse-netlist / eda:load-sv).
@@ -1041,10 +1013,6 @@ struct CompilerMetrics {
     //     ingest (eda:parse-verification-result / eda:ingest-result).
     //   - eda_infra_cosim_invoke_total: co-simulation bridge invocations
     //     (eda:invoke-simulator + result ingest).
-    std::atomic<std::uint64_t> eda_infra_parse_success_total{0};
-    std::atomic<std::uint64_t> eda_infra_structured_mutate_total{0};
-    std::atomic<std::uint64_t> eda_infra_feedback_ingest_total{0};
-    std::atomic<std::uint64_t> eda_infra_cosim_invoke_total{0};
     // Issue #801: SV commercial emit fidelity observability (refines #772/#748/#725;
     // non-duplicative with query:sv-verification-structure-stats #748).
     //   - sv_commercial_emit_parse_success_total: validate_sv_emit roundtrip pass.
@@ -6572,8 +6540,6 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hot_path_primitives_module{1};     // #1227
     // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
-    std::atomic<std::uint64_t> eda_hash_table_creates_total{0};     // #1229
-    std::atomic<std::uint64_t> eda_alloc_bytes_total{0};            // #1229
     std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};     // #1230
     std::atomic<std::uint64_t> stdlib_hotpath_eda_ffi_dashboard{1}; // #1231
     std::atomic<std::uint64_t> agent_capability_gates{1};           // #1232
@@ -7210,9 +7176,6 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> blame_elision_reason_obs_active{1};
     // #1344 SV high-level mutate + query:pattern presets
     std::atomic<std::uint64_t> sv_highlevel_mutate_active{1};
-    std::atomic<std::uint64_t> eda_mutate_modport_total{0};
-    std::atomic<std::uint64_t> eda_mutate_interface_total{0};
-    std::atomic<std::uint64_t> eda_mutate_property_total{0};
     std::atomic<std::uint64_t> query_sv_pattern_preset_active{1};
     // #1345 mark_dirty_upward configurable prune
     std::atomic<std::uint64_t> dirty_upward_prune_active{1};
