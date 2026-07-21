@@ -29,7 +29,6 @@ import aura.parser.parser;
 import aura.core.mutators; // Phase 4 follow-up #3: migrate mutate:* primitives to strategy dispatch
 import aura.diag;
 import aura.compiler.hardware_backend;
-import aura.compiler.sv_ir;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
 import aura.compiler.soa_view;
 
@@ -169,47 +168,12 @@ namespace {
     // If this fiber already holds MutationBoundaryGuard's unique lock,
     // skip shared acquire (std::shared_mutex is not recursive).
     void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
-        const bool outer_unique =
-            ev.mutation_boundary_held() || ev.mutation_boundary_depth_slot_value() > 0;
-        std::optional<Evaluator::WorkspaceSharedLock> shared;
-        if (!outer_unique)
-            shared.emplace(ev);
-
-        // Re-read under the lock (or under outer unique) so ws/pool match.
-        auto* ws = ev.workspace_flat();
-        if (!ws || node >= ws->size())
-            return;
-        if (!aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, node))
-            return;
-        const auto sv_reasons = aura::compiler::hardware::sv_structural_dirty_reasons(*ws, node);
-        const auto ppa_reasons = ws->ppa_dirty_reasons(node);
-        aura::compiler::hardware::on_structural_mutation(
-            node, static_cast<std::uint8_t>(aura::ast::FlatAST::kGeneralDirty | sv_reasons),
-            ppa_reasons);
-        const auto* pool = ev.workspace_pool();
-        if (pool) {
-            const auto reemit = aura::compiler::sv_ir::reemit_sv_node(*ws, *pool, node);
-            const auto diff = aura::compiler::sv_ir::emit_sv_diff("", reemit.sv_text);
-            const auto validation = aura::compiler::sv_ir::validate_sv_emit(reemit.sv_text);
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->commercial_reemits_total.fetch_add(1, std::memory_order_relaxed);
-                m->sv_verification_dirty_reemit_total.fetch_add(1, std::memory_order_relaxed);
-                if (!diff.empty())
-                    m->sv_diff_emits_total.fetch_add(1, std::memory_order_relaxed);
-                if (validation.ok)
-                    m->sv_emit_parse_success_total.fetch_add(1, std::memory_order_relaxed);
-                else
-                    m->sv_emit_parse_fail_total.fetch_add(1, std::memory_order_relaxed);
-                if (reemit.ppa_savings > 0) {
-                    m->ppa_savings_total.fetch_add(static_cast<std::uint64_t>(reemit.ppa_savings),
-                                                   std::memory_order_relaxed);
-                }
-            }
-            ev.record_sv_commercial_emit_fidelity(validation.ok, true,
-                                                  !reemit.commercial_do_stub.empty());
-        }
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-            m->hardware_backend_hook_calls_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1968 / #4.3: SV commercial closed-loop hook retired with the
+        // aura.compiler.sv_ir module. Function kept as a no-op so the 5 caller
+        // sites in this TU compile unchanged; the work that used to live here
+        // (reemit_sv_node / validate_sv_emit / emit_sv_diff) is gone.
+        (void)ev;
+        (void)node;
     }
 
     bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,

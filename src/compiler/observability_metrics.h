@@ -1524,8 +1524,8 @@ struct CompilerMetrics {
     // sv-verification-structure-stats, #801 query:sv-commercial-
     // emit-fidelity-stats, #802 query:sv-verification-self-
     // evolution-stats). These are public so future hardware_backend
-    // emit_sv_verification_structured + sv_ir_impl.cpp dirty-
-    // triggered incremental re-emit queue + eda:validate-sv-emit
+    // emit_sv_verification_structured dirty-triggered incremental
+    // re-emit queue + eda:validate-sv-emit
     // roundtrip stub can call them at each decision point (emit
     // parse success/failure / re-emit latency / SLO breach).
     //
@@ -1572,8 +1572,8 @@ struct CompilerMetrics {
     //
     // Phase 1 ships the counters + bump helpers + the primitive.
     // The actual hardware_backend.ixx emit_sv_verification_
-    // structured for VCS/Questa/JasperGold compat + sv_ir_impl.cpp
-    // dirty-triggered incremental re-emit queue + eda:validate-
+    // structured for VCS/Questa/JasperGold compat + dirty-triggered
+    // incremental re-emit queue + eda:validate-
     // sv-emit roundtrip stub (slang/Verilator stub) + tests/
     // test_sv_verification_edsl_emit_fidelity_closedloop.cpp
     // harness + extend SEVA with full class/constraint/covergroup/
@@ -1582,8 +1582,8 @@ struct CompilerMetrics {
     // multi-clock/interface fixture + Prometheus exposure with
     // (query:sv-closedloop-slo) thresholds + SEVA tutorial update +
     // CI gate + docs are all follow-up work (each is a dedicated
-    // session in hardware_backend.ixx + sv_ir_impl.cpp + eda_
-    // primitives_eda.cpp + new test + SEVA demo + docs).
+    // session in hardware_backend.ixx + eda_primitives_eda.cpp +
+    // new test + SEVA demo + docs).
     std::atomic<std::uint64_t> sv_slo_emit_parse_success_total{0};
     std::atomic<std::uint64_t> sv_slo_emit_parse_failure_total{0};
     std::atomic<std::uint64_t> sv_slo_reemit_latency_max_us{0};
@@ -6570,23 +6570,18 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_stats_per_fiber{1};          // #1225
     std::atomic<std::uint64_t> lifetime_pin_scaffold{1};          // #1226
     std::atomic<std::uint64_t> hot_path_primitives_module{1};     // #1227
-    std::atomic<std::uint64_t> eda_parse_common_dedup{1};         // #1228
-
     // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
-    std::atomic<std::uint64_t> eda_hash_table_creates_total{0};      // #1229
-    std::atomic<std::uint64_t> eda_alloc_bytes_total{0};             // #1229
-    std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};      // #1230
-    std::atomic<std::uint64_t> stdlib_hotpath_eda_ffi_dashboard{1};  // #1231
-    std::atomic<std::uint64_t> agent_capability_gates{1};            // #1232
-    std::atomic<std::uint64_t> sv_verification_executor_scaffold{1}; // #1233
-    std::atomic<std::uint64_t> stable_node_ref_eda_scaffold{1};      // #1234
-    std::atomic<std::uint64_t> covergroup_sampling_scaffold{1};      // #1235
-    std::atomic<std::uint64_t> synthesize_json_escape_fixed{1};      // #1236
-    std::atomic<std::uint64_t> eda_commercial_sim_scaffold{1};       // #1237
-    std::atomic<std::uint64_t> sva_semantic_eval_scaffold{1};        // #1238
-    std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{2};    // #1239 / #1363 phase 2
-    std::atomic<std::uint64_t> value_tag_consteval_contracts{1};     // #1240
+    std::atomic<std::uint64_t> eda_hash_table_creates_total{0};     // #1229
+    std::atomic<std::uint64_t> eda_alloc_bytes_total{0};            // #1229
+    std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};     // #1230
+    std::atomic<std::uint64_t> stdlib_hotpath_eda_ffi_dashboard{1}; // #1231
+    std::atomic<std::uint64_t> agent_capability_gates{1};           // #1232
+    std::atomic<std::uint64_t> stable_node_ref_eda_scaffold{1};     // #1234
+    std::atomic<std::uint64_t> covergroup_sampling_scaffold{1};     // #1235
+    std::atomic<std::uint64_t> synthesize_json_escape_fixed{1};     // #1236
+    std::atomic<std::uint64_t> panic_checkpoint_raii_scaffold{2};   // #1239 / #1363 phase 2
+    std::atomic<std::uint64_t> value_tag_consteval_contracts{1};    // #1240
 
     // ── Issues #1241–#1245: SoAView / arena / hygiene concurrent Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1241_1245_active{1};

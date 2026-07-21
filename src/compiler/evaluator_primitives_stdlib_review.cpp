@@ -753,9 +753,6 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"lifetime-pin-scaffold", make_int(m ? load_u64(m, m->lifetime_pin_scaffold) : 1)},
                 {"hot-path-primitives-module",
                  make_int(m ? load_u64(m, m->hot_path_primitives_module) : 1)},
-                {"eda-parse-common-dedup",
-                 make_int(m ? load_u64(m, m->eda_parse_common_dedup) : 1)},
-                {"issue-1228", make_int(1228)},
             };
             return build_kv_hash(ev, kv);
         });
@@ -809,18 +806,12 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(m ? load_u64(m, m->stdlib_hotpath_eda_ffi_dashboard) : 1)},
                 {"agent-capability-gates",
                  make_int(m ? load_u64(m, m->agent_capability_gates) : 1)},
-                {"sv-verification-executor-scaffold",
-                 make_int(m ? load_u64(m, m->sv_verification_executor_scaffold) : 1)},
                 {"stable-node-ref-eda-scaffold",
                  make_int(m ? load_u64(m, m->stable_node_ref_eda_scaffold) : 1)},
                 {"covergroup-sampling-scaffold",
                  make_int(m ? load_u64(m, m->covergroup_sampling_scaffold) : 1)},
                 {"synthesize-json-escape-fixed",
                  make_int(m ? load_u64(m, m->synthesize_json_escape_fixed) : 1)},
-                {"eda-commercial-sim-scaffold",
-                 make_int(m ? load_u64(m, m->eda_commercial_sim_scaffold) : 1)},
-                {"sva-semantic-eval-scaffold",
-                 make_int(m ? load_u64(m, m->sva_semantic_eval_scaffold) : 1)},
                 {"panic-checkpoint-raii-scaffold",
                  make_int(m ? load_u64(m, m->panic_checkpoint_raii_scaffold) : 2)},
                 {"value-tag-consteval-contracts",

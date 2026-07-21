@@ -42,7 +42,6 @@ set(AURA_CXX_MODULE_COMPILER
     src/compiler/compute_kind.ixx
     src/compiler/hardware_backend.ixx
     src/compiler/arity.ixx
-    src/compiler/sv_ir.ixx
     src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx

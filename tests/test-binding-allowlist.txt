@@ -73,3 +73,26 @@ src/compiler/service.ixx
 # the new UnboundVariable error path directly.
 src/compiler/evaluator.ixx
 src/compiler/evaluator_env.cpp
+# Issue #1968 / sub-layer 4.3: EDA vertical retirement (4.1 blanked 10
+# eda:* primitive registrations + 4.2 dropped AURA_ENABLE_EDA gating +
+# backfill_eda_sv_primitive_meta + CMakeLists option + 9 test files).
+# 4.3 deletes the 6 EDA module/impl files that backed the now-blank
+# registrations: eda_commercial_sim.ixx + eda_parse_common.ixx +
+# sv_ir.ixx + sv_ir_impl.cpp + sv_verification_executor.ixx +
+# sva_semantic_eval.ixx. The 4 evaluator_primitives_*.cpp files below
+# change to drop dangling `import aura.compiler.sv_ir;` lines + delete
+# the dead `maybe_hardware_feedback` helper (eda.cpp) + stub the
+# `maybe_sv_hardware_closedloop` body (mutate.cpp; 5 caller sites now
+# no-ops since reemit_sv_node / validate_sv_emit / emit_sv_diff are
+# retired with sv_ir) + drop 4 scaffold-loader kv entries from
+# query:primitive-stats + query:production-sweep-1229-1240-stats
+# (stdlib_review.cpp). Pure deletion cleanup — no production
+# functionality changed since 4.1 already blanked the registrations,
+# 4.2 already removed the AURA_ENABLE_EDA gating. Verification:
+# cmake configure + ninja aura_test_objects link OK + fixtures +
+# primitive surface gate all PASS. Removed when a follow-up issue
+# adds an explicit "EDA vertical retirement" C++ regression test.
+src/compiler/evaluator_primitives_eda.cpp
+src/compiler/evaluator_primitives_compile.cpp
+src/compiler/evaluator_primitives_mutate.cpp
+src/compiler/evaluator_primitives_stdlib_review.cpp
