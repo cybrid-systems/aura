@@ -1,0 +1,188 @@
+[
+  {
+    "name": "incr_double_typecheck",
+    "code": "(set-code \"(define (add x y) (+ x y))\")(typecheck-current)(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_extract_function",
+    "code": "(set-code \"(define (calc x) (+ (* x 3) 1))\")(typecheck-current)(define r (query:root))(define calc-def (car (query:children r)))(define calc-lam (car (query:children calc-def)))(define calc-body (car (query:children calc-lam)))(define mul-call (car (cdr (query:children calc-body))))(mutate:extract-function mul-call \"mul3\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_insert_child",
+    "code": "(set-code \"(define (f) 1)\")(typecheck-current)(mutate:insert-child 2 1 \"42\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_multi_mutate",
+    "code": "(set-code \"(define x 10)(define y 20)\")(typecheck-current)(mutate:tweak-literal 2 5)(mutate:tweak-literal 3 10)(mutate:replace-type 2 \"String\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_mutate_typecheck",
+    "code": "(set-code \"(define (add x y) (+ x y))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"test\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_replace_type",
+    "code": "(set-code \"(define x 42)\")(typecheck-current)(mutate:replace-type 2 \"String\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_replace_value_int",
+    "code": "(set-code \"(define x 10)\")(typecheck-current)(mutate:replace-value 2 \"99\" \"test\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_splice",
+    "code": "(set-code \"(begin 1)\")(typecheck-current)(mutate:splice 2 1 \"42\")(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "incr_tweak_literal",
+    "code": "(set-code \"(define x 10)\")(typecheck-current)(mutate:tweak-literal 2 5)(typecheck-current)(display 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "adt_car_tag",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (car (Some 42)))",
+    "pipeline": "eval",
+    "expected": "Some"
+  },
+  {
+    "name": "adt_either",
+    "code": "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))",
+    "pipeline": "eval",
+    "expected": "err"
+  },
+  {
+    "name": "adt_match_none",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match None ((Some x) x) (None 0)))",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "adt_match_some",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some x) x) (None 0)))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "adt_multi_field",
+    "code": "(begin (define-type (Pair a b) (pair a b)) (car (cdr (pair 1 2))))",
+    "pipeline": "eval",
+    "expected": "1"
+  },
+  {
+    "name": "adt_none_is_not_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "adt_none_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (pair? None))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "adt_some_cadr",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (car (cdr (Some 42))))",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "adt_some_pair",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (pair? (Some 42)))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "adt_wildcard",
+    "code": "(begin (define-type (Option a) (Some a) (None)) (match (Some 99) ((Some _) #t) (None #f)))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "ir_add",
+    "code": "(+ 1 2)",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_chain",
+    "code": "(+ (: x Int 1) (: y Int 2))",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_expr",
+    "code": "(: x Int (+ 1 2))",
+    "pipeline": "ir",
+    "expected": "3"
+  },
+  {
+    "name": "ir_annot_if",
+    "code": "(if 1 (: a Int 42) (: b Int 0))",
+    "pipeline": "ir",
+    "expected": "42"
+  },
+  {
+    "name": "ir_annot_int",
+    "code": "(: x Int 42)",
+    "pipeline": "ir",
+    "expected": "42"
+  },
+  {
+    "name": "ir_annot_let",
+    "code": "(let ((x 10)) (: y Int x))",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_fact",
+    "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+    "pipeline": "ir",
+    "expected": "120"
+  },
+  {
+    "name": "ir_fib",
+    "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
+    "pipeline": "ir",
+    "expected": "55"
+  },
+  {
+    "name": "ir_fold_arith",
+    "code": "(+ (* 2 3) 4)",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_lambda",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "ir",
+    "expected": "10"
+  },
+  {
+    "name": "ir_let_arith",
+    "code": "(let ((x (+ 1 2))) (* x 3))",
+    "pipeline": "ir",
+    "expected": "9"
+  },
+  {
+    "name": "ir_nested_arith",
+    "code": "(+ (* 2 3) (/ 10 2))",
+    "pipeline": "ir",
+    "expected": "11"
+  }
+]
