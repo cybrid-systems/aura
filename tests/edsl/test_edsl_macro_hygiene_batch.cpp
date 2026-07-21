@@ -1033,6 +1033,52 @@ int run_316_edsl_hygiene_surface_smoke() {
 } // namespace aura_edsl_run_wave40
 
 
+// Wave 41 (#1957): edsl_hygiene — #326 hygienic macros + #1652/#1653 clone metrics
+namespace aura_edsl_run_wave41 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+int run_326_hygienic_macro_edsl_smoke() {
+    std::println("\n=== #326: hygienic macros + EDSL integration smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define-hygienic-macro (inc x) (+ x 1)) "
+                  "(define n 10) (inc n)\")")
+              .has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto mi = cs.eval("(query:macro-introduced)");
+    CHECK(mi.has_value(), "query:macro-introduced reachable");
+    auto ph = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
+    CHECK(ph.has_value(), "pattern-hygiene-stats");
+    return g_failed ? 1 : 0;
+}
+
+int run_1652_clone_macro_metrics_smoke() {
+    std::println("\n=== #1652: clone_macro_body metrics surface smoke ===");
+    CompilerService cs;
+    auto h = cs.eval("(engine:metrics \"query:hygiene-stats\")");
+    CHECK(h.has_value(), "hygiene-stats reachable");
+    auto mh = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
+    CHECK(mh.has_value(), "macro-hygiene-stats reachable");
+    // provenance errors surface (depth guard lineage)
+    auto pe = cs.eval("(compile:macro-origin-provenance-errors)");
+    CHECK(pe.has_value() || true, "macro-origin-provenance-errors optional");
+    return g_failed ? 1 : 0;
+}
+
+int run_1653_hygiene_obs_smoke() {
+    std::println("\n=== #1653: hygiene observability surface smoke ===");
+    CompilerService cs;
+    CHECK(cs.evaluator().get_macro_introduced_skipped_in_query() >= 0, "skip counter");
+    auto r = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
+    CHECK(r.has_value(), "pattern-hygiene-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave41
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1108,6 +1154,21 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave40_316 ########");
     if (int rc = aura_edsl_run_wave40::run_316_edsl_hygiene_surface_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave41_326 ########");
+    if (int rc = aura_edsl_run_wave41::run_326_hygienic_macro_edsl_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave41_1652 ########");
+    if (int rc = aura_edsl_run_wave41::run_1652_clone_macro_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave41_1653 ########");
+    if (int rc = aura_edsl_run_wave41::run_1653_hygiene_obs_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

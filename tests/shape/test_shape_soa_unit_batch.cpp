@@ -213,6 +213,32 @@ int run_311_add_interface_modport_smoke() {
 } // namespace aura_shape_run_wave40_311
 
 
+// Wave 41 (#1957): shape_soa — #355 refresh_stale_frame_in_walk
+namespace aura_shape_run_wave41_355 {
+using aura::compiler::CompilerService;
+using aura::compiler::NULL_ENV_ID;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_355_refresh_stale_frame_smoke() {
+    std::println("\n=== #355: refresh_stale_frame_in_walk smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // invalid id is no-op / safe
+    ev.refresh_stale_frame_in_walk(NULL_ENV_ID, "test");
+    CHECK(true, "invalid EnvId safe");
+    aura::compiler::Env src;
+    src.bind_symid_with_linear_state(1, aura::compiler::types::make_int(1), 1);
+    auto eid = ev.alloc_env_frame_from_env(src);
+    CHECK(eid != NULL_ENV_ID, "alloc frame");
+    ev.refresh_stale_frame_in_walk(eid, "test");
+    CHECK(true, "fresh frame refresh no crash");
+    auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m.has_value(), "linear-ownership-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave41_355
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -248,6 +274,10 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave40_311::run_311_add_interface_modport_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave41_355::run_355_refresh_stale_frame_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;

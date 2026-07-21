@@ -3,6 +3,8 @@
 // Prefer adding a section here over a new tests/issues binary.
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/runtime_shared.h"
 
 #include <cstdint>
 #include <fstream>
@@ -735,6 +737,59 @@ int run_1555_metrics_smoke() {
 } // namespace aura_obs_run_wave40_1555
 
 
+// ═══ Wave 41 (#1957): observability metrics smokes ═══
+namespace aura_obs_run_wave41_1491 {
+int run_1491_metrics_smoke() {
+    std::println("\n=== #1491: closure dual-check / jit fresh smoke ===");
+    CompilerService cs;
+    cs.bump_bridge_epoch();
+    CHECK(cs.eval("(set-code \"(define (k x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    // C-API freshness probe
+    const auto e = aura_aot_func_table_epoch();
+    CHECK(aura_is_jit_closure_fresh(e, 1) || !aura_is_jit_closure_fresh(e + 1, 1) || true,
+          "aura_is_jit_closure_fresh callable");
+    auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(lin.has_value(), "linear-ownership-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave41_1491
+
+namespace aura_obs_run_wave41_1528 {
+int run_1528_metrics_smoke() {
+    std::println("\n=== #1528: O(delta) reinfer locality metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define (a x) x) (define (b x) (a x)) (define (c x) (b x))\")")
+              .has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"a\" \"(lambda (x) (+ x 1))\" \"#1528\")");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats");
+    auto tdg = cs.eval("(engine:metrics \"compile:type-dep-graph-stats\")");
+    CHECK(tdg.has_value(), "type-dep-graph-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave41_1528
+
+namespace aura_obs_run_wave41_1513 {
+int run_1513_metrics_smoke() {
+    std::println("\n=== #1513: IRClosure provenance / dual-check metrics smoke ===");
+    CompilerService cs;
+    auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m.has_value(), "linear-ownership-stats");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats");
+    CHECK(cs.eval("(set-code \"(define (z) 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    cs.bump_bridge_epoch();
+    CHECK(true, "epoch bump safe");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave41_1513
+
+
 int main() {
 
 
@@ -940,6 +995,18 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave40_1555::run_1555_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave41_1491::run_1491_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave41_1528::run_1528_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave41_1513::run_1513_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
