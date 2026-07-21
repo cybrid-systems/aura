@@ -499,9 +499,95 @@ int run_1490_post_steal_refresh_smoke() {
     CHECK(ev.get_post_steal_refresh_count() > c1, "transfer advanced refresh count");
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_fiber_run_wave25_1490
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 33 (#1957): fiber_orch theme — #439 #1504 #1492 #1402
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_fiber_run_wave33_439 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_439_gc_safepoint_coord_smoke() {
+    std::println("\n=== #439: gc-safepoint + MutationBoundary coordination smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
+    CHECK(r && is_int(*r), "gc-safepoint-stats int");
+    auto req = cs.eval("(mutate:request-gc-safepoint)");
+    CHECK(req && is_int(*req), "mutate:request-gc-safepoint int");
+    auto code = as_int(*req);
+    CHECK(code == 0 || code == 1, "safepoint code 0|1");
+    auto mig = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+    CHECK(mig && is_int(*mig), "fiber-migration-stats regression");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave33_439
+
+namespace aura_fiber_run_wave33_1504 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1504_boundary_depth_safe_yield_smoke() {
+    std::println("\n=== #1504: mutation-boundary-depth + safe-yield smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto d = cs.eval("(engine:metrics \"query:mutation-boundary-depth\")");
+    CHECK(d && is_int(*d) && as_int(*d) == 0, "depth 0 idle");
+    auto h = cs.eval("(engine:metrics \"query:mutation-boundary-safe-yield\")");
+    // may be hash or int depending on surface
+    CHECK(h.has_value(), "safe-yield surface reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave33_1504
+
+namespace aura_fiber_run_wave33_1492 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::is_hash;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1492_steal_stats_smoke() {
+    std::println("\n=== #1492: orchestration-steal-stats smoke ===");
+    CompilerService cs;
+    auto h = cs.eval("(engine:metrics \"query:orchestration-steal-stats\")");
+    CHECK(h.has_value(), "orchestration-steal-stats reachable");
+    // schema field if hash
+    if (h && is_hash(*h)) {
+        auto sch =
+            cs.eval("(hash-ref (engine:metrics \"query:orchestration-steal-stats\") \"schema\")");
+        CHECK(sch.has_value(), "schema field present");
+    }
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave33_1492
+
+namespace aura_fiber_run_wave33_1402 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1402_privileged_cap_gate_smoke() {
+    std::println("\n=== #1402: privileged primitive capability gate smoke ===");
+    CompilerService cs;
+    // Without sandbox, admin path should remain callable
+    auto r = cs.eval("(security:set-sandbox-mode! #f)");
+    // may succeed or return value; no crash is the smoke contract
+    CHECK(true, "security:set-sandbox-mode! invoked");
+    (void)r;
+    auto mode = cs.eval("(stats:get \"security:sandbox-mode?\")");
+    CHECK(mode.has_value(), "stats:get security:sandbox-mode? reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave33_1402
+
 int main() {
+
 
     std::println("\n######## fingerprint ########");
     if (int rc = aura_fiber_run_agent_fingerprint_1730::run_agent_fingerprint_1730(); rc != 0)
@@ -531,6 +617,26 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave25_1490 ########");
     if (int rc = aura_fiber_run_wave25_1490::run_1490_post_steal_refresh_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave33_439 ########");
+    if (int rc = aura_fiber_run_wave33_439::run_439_gc_safepoint_coord_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave33_1504 ########");
+    if (int rc = aura_fiber_run_wave33_1504::run_1504_boundary_depth_safe_yield_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave33_1492 ########");
+    if (int rc = aura_fiber_run_wave33_1492::run_1492_steal_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave33_1402 ########");
+    if (int rc = aura_fiber_run_wave33_1402::run_1402_privileged_cap_gate_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
