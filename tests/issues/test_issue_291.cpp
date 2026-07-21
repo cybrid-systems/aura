@@ -79,7 +79,7 @@ bool test_serialize_roundtrip() {
         }());
     // Roundtrip
     aura::ast::FlatAST::StableNodeRef out{};
-    bool ok = flat.deserialize_stable_ref(buf, n, out);
+    bool ok = flat.deserialize_stable_ref(std::span<const std::uint8_t>{buf}, out);
     CHECK(ok, "deserialize returned true");
     CHECK(out.id == ref.id,
           "roundtrip id (got " + std::to_string(out.id) + ", want " + std::to_string(ref.id) + ")");
@@ -104,7 +104,7 @@ bool test_deserialize_rejects_bad_magic() {
     bad[2] = 0xBE;
     bad[3] = 0xEF;
     aura::ast::FlatAST::StableNodeRef out{};
-    bool ok = flat.deserialize_stable_ref(bad, sizeof(bad), out);
+    bool ok = flat.deserialize_stable_ref(std::span<const std::uint8_t>{bad}, out);
     CHECK(!ok, "deserialize returned false for bad magic");
     return true;
 }
@@ -115,7 +115,7 @@ bool test_deserialize_rejects_short() {
     aura::ast::FlatAST flat;
     std::uint8_t short_buf[8] = {};
     aura::ast::FlatAST::StableNodeRef out{};
-    bool ok = flat.deserialize_stable_ref(short_buf, sizeof(short_buf), out);
+    bool ok = flat.deserialize_stable_ref(std::span<const std::uint8_t>{short_buf}, out);
     CHECK(!ok, "deserialize returned false for 8-byte buffer");
     return true;
 }
