@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1724 — evolve-strategy must not silently swallow
+// Issue #1724 (#1978 renamed): issue# moved from filename to header.
 // std::stod/stoi analytics parse failures (#1669 pattern).
 //
 //   AC1: source cites #1724; catch (const std::exception&) + metric bump

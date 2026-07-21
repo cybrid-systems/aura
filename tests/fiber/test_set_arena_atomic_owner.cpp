@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1663 — set_arena owner pair atomic w.r.t. concurrent
+// Issue #1663 (#1978 renamed): issue# moved from filename to header.
 // allocate_raw (no torn owner/fn → silent quota bypass)
 // (refine #1546 / #1554 / #1662).
 //

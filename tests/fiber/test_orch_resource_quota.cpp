@@ -1,5 +1,6 @@
 // @category: integration
 // @reason: Issue #1600 — ResourceQuota on agent_spawn / parallel_intend /
+// Issue #1600 (#1978 renamed): issue# moved from filename to header.
 // Fiber::join orchestration paths with typed ResourceQuotaExceeded.
 //
 //   AC1: Scheduler::spawn / agent_spawn reject when fibers quota exhausted

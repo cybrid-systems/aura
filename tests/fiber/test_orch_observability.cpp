@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1881 — orch health query surfaces + hot-path metric wiring
+// Issue #1881 (#1978 renamed): issue# moved from filename to header.
 // (fold into existing query:orch-module-stats / mf-mailbox-stats /
 // parallel-orch-stats; no new frozen query names).
 //

@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1725 — evolve-strategy top-errors std::stoi must not
+// Issue #1725 (#1978 renamed): issue# moved from filename to header.
 // silently swallow parse failures (#1724 sibling / #1669 pattern).
 //
 //   AC1: source cites #1725; top-errors stoi uses std::exception catch

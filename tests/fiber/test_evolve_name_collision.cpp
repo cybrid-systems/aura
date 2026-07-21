@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1726 — evolve-strategy name-collision loop must be capped.
+// Issue #1726 (#1978 renamed): issue# moved from filename to header.
 //
 //   AC1: source cites #1726; kMaxNameCollisions + exhausted metric
 //   AC2: agent_evolve_name_collision_exhausted field declared

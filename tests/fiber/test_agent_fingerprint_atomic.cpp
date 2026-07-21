@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1730 — current_agent_fingerprint_ must be atomic
+// Issue #1730 (#1978 renamed): issue# moved from filename to header.
 // under concurrent fiber set/get.
 //
 //   AC1: source cites #1730; atomic store/load on fingerprint

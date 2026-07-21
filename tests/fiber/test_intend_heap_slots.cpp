@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1721 — intend must not unbounded-push intermediate
+// Issue #1721 (#1978 renamed): issue# moved from filename to header.
 // strings onto string_heap each attempt; reuse fixed slots.
 //
 //   AC1: source cites #1721 and uses put_slot / slot_goal/code/err

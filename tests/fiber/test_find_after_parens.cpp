@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1723 — evolve-strategy analytics find_after must be
+// Issue #1723 (#1978 renamed): issue# moved from filename to header.
 // paren-aware (nested values / top-errors lists).
 //
 //   AC1: source cites #1723; find_after tracks depth

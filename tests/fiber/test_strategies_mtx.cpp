@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1722 — ev.strategies_ access must use strategies_mtx_
+// Issue #1722 (#1978 renamed): issue# moved from filename to header.
 // (sibling of #1720). Locks land with #1720; this locks AC coverage.
 //
 //   AC1: strategies_mtx_ declared; sources cite #1722

@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1880 — ResourceQuota + try_acquire on agent_spawn /
+// Issue #1880 (#1978 renamed): issue# moved from filename to header.
 // parallel_orch (typed ResourceQuotaExceeded, no panic/OOM).
 //
 //   AC1: source cites #1880; memory preflight + try_acquire body wire

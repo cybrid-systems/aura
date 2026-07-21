@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1719 — intend call_fn must not apply_closure on freed
+// Issue #1719 (#1978 renamed): issue# moved from filename to header.
 // generator/verifier/fixer ClosureIds (UAF sibling of #1713).
 //
 //   AC1: source call_fn uses agent_cid_live / Issue #1719

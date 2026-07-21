@@ -1,11 +1,12 @@
 // @category: unit
-// @reason: Issue #1718 — synthesize:optimize try_probe must reuse a fixed
-// string_heap slot, not push_back every probe (unbounded heap growth).
+// @reason: Issue #1716 — synthesize:optimize must not use std::rand()
+// Issue #1716 (#1978 renamed): issue# moved from filename to header.
+// (non-thread-safe); use thread_local mt19937 instead.
 //
-//   AC1: source cites #1718 and uses probe_slot reuse
-//   AC2: try_probe assigns string_heap_[probe_slot] (not only push_back)
-//   AC3: no unbounded push_back(call_src) without slot reuse in fitness
-//   AC4: synthesize:optimize still registered
+//   AC1: source has no std::rand / RAND_MAX in synthesize:optimize
+//   AC2: source uses thread_local mt19937 / agent_prng
+//   AC3: cites Issue #1716
+//   AC4: synthesize:optimize primitive still registered (callable)
 
 #include "test_harness.hpp"
 
@@ -31,6 +32,7 @@ std::string read_file(const char* path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
+// Live code only: strip // line comments before scanning for banned APIs.
 std::string strip_line_comments(std::string_view win) {
     std::string code;
     code.reserve(win.size());
@@ -48,9 +50,9 @@ std::string strip_line_comments(std::string_view win) {
 } // namespace
 
 int main() {
-    // ── AC1–AC3: source audit ──
+    // ── AC1/AC2/AC3: source audit ──
     {
-        std::println("\n--- AC1–AC3: probe_slot reuse ---");
+        std::println("\n--- AC1/AC2/AC3: thread_local PRNG, no std::rand ---");
         const char* candidates[] = {
             "src/compiler/evaluator_primitives_agent.cpp",
             "../src/compiler/evaluator_primitives_agent.cpp",
@@ -63,34 +65,29 @@ int main() {
         }
         CHECK(!src.empty(), "read agent primitives");
         if (!src.empty()) {
-            CHECK(src.find("Issue #1718") != std::string::npos, "cites #1718");
-            CHECK(src.find("probe_slot") != std::string::npos, "probe_slot present");
+            CHECK(src.find("Issue #1716") != std::string::npos, "cites #1716");
+            CHECK(src.find("thread_local std::mt19937") != std::string::npos,
+                  "thread_local mt19937");
+            CHECK(src.find("agent_prng") != std::string::npos, "agent_prng helper");
+            CHECK(src.find("agent_rand_below") != std::string::npos, "agent_rand_below");
+            CHECK(src.find("agent_rand_unit") != std::string::npos, "agent_rand_unit");
 
             auto pos = src.find("add(\"synthesize:optimize\"");
             CHECK(pos != std::string::npos, "found synthesize:optimize");
             if (pos != std::string::npos) {
+                // Body until next top-level add(
                 auto end = src.find("\n    add(\"", pos + 10);
-                auto win = src.substr(pos, end == std::string::npos ? 25000 : end - pos);
+                auto win = src.substr(pos, end == std::string::npos ? 12000 : end - pos);
                 auto code = strip_line_comments(win);
-                // try_probe region
-                auto tp = code.find("try_probe");
-                CHECK(tp != std::string::npos, "try_probe present");
-                if (tp != std::string::npos) {
-                    auto region = code.substr(tp, 900);
-                    CHECK(region.find("probe_slot") != std::string::npos,
-                          "try_probe uses probe_slot");
-                    CHECK(region.find("push_back(call_src)") != std::string::npos,
-                          "first-time push still present");
-                    CHECK(region.find("string_heap_[probe_slot]") != std::string::npos,
-                          "in-place assign to slot");
-                    CHECK(region.find("make_string(probe_slot)") != std::string::npos,
-                          "eval uses probe_slot");
-                }
+                CHECK(code.find("std::rand") == std::string::npos, "no live std::rand");
+                CHECK(code.find("RAND_MAX") == std::string::npos, "no live RAND_MAX");
+                CHECK(code.find("agent_rand") != std::string::npos,
+                      "optimize body uses agent_rand*");
             }
         }
     }
 
-    // ── AC4: primitive registered ──
+    // ── AC4: primitive exists ──
     {
         std::println("\n--- AC4: synthesize:optimize registered ---");
         CompilerService cs;
@@ -103,7 +100,7 @@ int main() {
         }
     }
 
-    std::println("\n=== test_try_probe_heap_slot_1718: {} passed, {} failed ===", g_passed,
+    std::println("\n=== test_synthesize_optimize_prng_1716: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
