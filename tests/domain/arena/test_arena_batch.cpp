@@ -30,6 +30,7 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/gap_buffer.hh"
 
 #include <atomic>
 #include <chrono>
@@ -773,6 +774,181 @@ static void run_173_types_distinct() {
           "NULL_PAIR_ID == NULL_CELL_ID (both 0xFFFFFFFFu, but conceptually distinct)");
 }
 
+// ── Issue #219 — GapBuffer child_data_ for O(1) FlatAST insert/remove ──
+// Folded from tests/issues/test_issue_219.cpp via #1957. Uses production
+// GapBuffer template from src/core/gap_buffer.hh.
+
+static void run_219_gap_buffer_child_data() {
+    std::println("\n=== #219: GapBuffer child_data_ (FlatAST columnar O(1) ops) ===");
+    using GB = aura::ast::GapBuffer<std::uint32_t>;
+    // T1: basic push_back / size / operator[] / clear
+    {
+        GB gb;
+        CHECK(gb.empty() && gb.size() == 0 && gb.capacity() == 0, "fresh gb empty");
+        gb.push_back(10);
+        gb.push_back(20);
+        gb.push_back(30);
+        CHECK(gb.size() == 3 && !gb.empty(), "size 3 after 3 pushes");
+        CHECK(gb[0] == 10 && gb[1] == 20 && gb[2] == 30, "[0]=10 [1]=20 [2]=30");
+        CHECK(gb.front() == 10 && gb.back() == 30, "front=10 back=30");
+        gb.clear();
+        CHECK(gb.empty() && gb.size() == 0, "empty after clear");
+        CHECK(gb.capacity() >= 3, "capacity preserved across clear");
+    }
+    // T2: insert at front/middle/end
+    {
+        GB gb;
+        gb.push_back(1);
+        gb.push_back(3);
+        gb.push_back(5);
+        gb.insert(1, 2);
+        CHECK(gb.size() == 4 && gb[0] == 1 && gb[3] == 5, "middle insert [1,2,3,5]");
+        gb.insert(0, 0);
+        CHECK(gb.size() == 5 && gb[0] == 0 && gb[4] == 5, "front insert [0,1,2,3,5]");
+        gb.insert(gb.size(), 6);
+        CHECK(gb.size() == 6 && gb[5] == 6, "end insert last=6");
+        gb.insert(3, 99);
+        gb.insert(3, 88);
+        CHECK(gb.size() == 8 && gb[3] == 88 && gb[4] == 99, "two inserts at pos 3");
+    }
+    // T3: erase
+    {
+        GB gb;
+        for (std::uint32_t i = 0; i < 5; ++i)
+            gb.push_back(i * 10);
+        gb.erase(2);
+        CHECK(gb.size() == 4 && gb[2] == 30, "middle erase");
+        gb.erase(0);
+        gb.erase(gb.size() - 1);
+        gb.erase(0);
+        gb.erase(0);
+        CHECK(gb.empty(), "empty after erasing all");
+        gb.erase(0);
+        CHECK(gb.empty(), "erase on empty is no-op");
+    }
+    // T4-6: perf smoke (5000-element, 100 ops each < 100µs/op; 1k+1k+compact < 10ms)
+    {
+        GB gb;
+        for (std::uint32_t i = 0; i < 5000; ++i)
+            gb.push_back(i);
+        std::mt19937 rng(12345);
+        std::uniform_int_distribution<std::uint32_t> pos(0, static_cast<std::uint32_t>(gb.size()));
+        for (int i = 0; i < 5; ++i)
+            gb.insert(pos(rng), 99999); // warm-up
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; ++i)
+            gb.insert(pos(rng), 99999);
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+        CHECK(static_cast<double>(us) / 100.0 < 100.0, "100 inserts < 100us/op");
+    }
+    {
+        GB gb;
+        for (std::uint32_t i = 0; i < 5000; ++i)
+            gb.push_back(i);
+        std::mt19937 rng(54321);
+        std::uniform_int_distribution<std::uint32_t> pos(0,
+                                                         static_cast<std::uint32_t>(gb.size()) - 1);
+        for (int i = 0; i < 5; ++i)
+            gb.erase(pos(rng));
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; ++i)
+            gb.erase(pos(rng));
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+        CHECK(static_cast<double>(us) / 100.0 < 100.0, "100 erases < 100us/op");
+    }
+    {
+        GB gb;
+        for (int i = 0; i < 100; ++i)
+            gb.push_back(i);
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 1000; ++i)
+            gb.insert(static_cast<std::size_t>(i) % 100, static_cast<std::uint32_t>(i));
+        for (int i = 0; i < 1000; ++i)
+            gb.erase(static_cast<std::size_t>(i) % gb.size());
+        gb.compact();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+        CHECK(us < 10000, "1000+1000+compact < 10ms (perf)");
+    }
+    // T7: clear + reconstruct
+    {
+        GB gb;
+        for (std::uint32_t i = 0; i < 100; ++i)
+            gb.push_back(i * 7);
+        CHECK(gb.size() == 100, "pre-clear size 100");
+        gb.clear();
+        for (std::uint32_t i = 0; i < 50; ++i)
+            gb.push_back(i * 11);
+        CHECK(gb.size() == 50, "size 50 after reconstruct");
+        for (std::uint32_t i = 0; i < 50; ++i)
+            CHECK(gb[i] == i * 11, "element matches");
+    }
+    // T8: reserve + grow + shrink_to_fit
+    {
+        GB gb;
+        gb.reserve(100);
+        CHECK(gb.capacity() >= 100 && gb.size() == 0, "reserve sets capacity");
+        for (std::uint32_t i = 0; i < 200; ++i)
+            gb.push_back(i);
+        CHECK(gb.size() == 200 && gb.capacity() >= 200, "capacity grew");
+        gb.shrink_to_fit();
+        CHECK(gb.capacity() == gb.size(), "shrink_to_fit -> capacity == size");
+    }
+    // T9: AST-like pattern (100 mixed insert/erase ops)
+    {
+        GB gb;
+        constexpr std::uint32_t num_nodes = 5000, avg_children = 3;
+        for (std::uint32_t i = 0; i < num_nodes * avg_children; ++i)
+            gb.push_back(i);
+        CHECK(gb.size() == num_nodes * avg_children, "AST-like pre-built size");
+        std::mt19937 rng(99999);
+        std::uniform_int_distribution<std::uint32_t> pos(0,
+                                                         static_cast<std::uint32_t>(gb.size()) - 1);
+        std::uniform_int_distribution<int> op(0, 1);
+        for (int i = 0; i < 100; ++i) {
+            if (op(rng) == 0)
+                gb.insert(pos(rng), 99999);
+            else
+                gb.erase(pos(rng));
+        }
+        CHECK(true, "100 mixed AST-like ops complete");
+    }
+    // T10: wire format v1 roundtrip
+    {
+        GB gb;
+        constexpr std::uint32_t n = 1000;
+        for (std::uint32_t i = 0; i < n; ++i)
+            gb.push_back(i * 13);
+        std::vector<char> buf;
+        std::uint32_t count = static_cast<std::uint32_t>(gb.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count), reinterpret_cast<char*>(&count) + 4);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint32_t v = gb[i];
+            buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 4);
+        }
+        CHECK(buf.size() == 4 + n * 4, "serialized buf size matches");
+        GB gb2;
+        std::size_t pos = 0;
+        std::memcpy(&count, &buf[pos], 4);
+        pos += 4;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            std::uint32_t v;
+            std::memcpy(&v, &buf[pos], 4);
+            pos += 4;
+            gb2.push_back(v);
+        }
+        CHECK(gb2.size() == n, "deserialized size matches");
+        for (std::uint32_t i = 0; i < n; ++i)
+            CHECK(gb2[i] == i * 13, "element matches after roundtrip");
+        CHECK(pos == buf.size(), "all bytes consumed");
+    }
+}
+
 } // namespace aura_arena_batch
 
 int main() {
@@ -819,6 +995,7 @@ int main() {
     run_173_type_aliases();
     run_173_null_sentinels();
     run_173_types_distinct();
+    run_219_gap_buffer_child_data();
     std::println("\n=== Arena batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

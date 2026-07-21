@@ -556,12 +556,185 @@ static void run_324_yield_field() {
           "compaction_yield_checks field exists (always 0 until fiber hook lands)");
 }
 
+// ── Issue #187 — Arena compaction + double-arena strategy + observability ──
+// Folded from tests/issues/test_issue_187.cpp via #1957.
+
+static void run_187_arena_compaction_double_arena() {
+    std::println("\n=== #187: Arena compaction + double-arena strategy + observability ===");
+    // AC1.1-1.6: arena::compact_estimate + compact + shrink_to_fit + live-preserve
+    {
+        std::println("\n--- AC1.1-1.6: compact_estimate + compact + shrink_to_fit ---");
+        aura::ast::ASTArena arena(8 * 1024 * 1024);
+        CHECK(arena.compact_estimate() > 0, "compact_estimate > 0 on fresh arena");
+        auto* obj = arena.create<int>(42);
+        CHECK(*obj == 42, "create<int> returns valid object");
+        CHECK(arena.stats().capacity < 8 * 1024 * 1024,
+              "auto-compact-on-alloc reduced capacity from 8MB to < 8MB");
+        std::size_t s1 = arena.compact();
+        std::size_t s2 = arena.compact();
+        CHECK(s1 == 0 && s2 == 0, "compact() idempotent: no-op after auto-compact-on-alloc");
+        aura::ast::ASTArena small_arena(1024);
+        small_arena.create<int>(1);
+        auto cap_before = small_arena.stats().capacity;
+        small_arena.shrink_to_fit();
+        CHECK(small_arena.stats().capacity == cap_before, "shrink_to_fit no-op at initial size");
+        CHECK(small_arena.stats().used > 0, "live allocation preserved across shrink_to_fit");
+        aura::ast::ASTArena preserved_arena(8 * 1024 * 1024);
+        auto* a = preserved_arena.create<int>(100);
+        auto* b = preserved_arena.create<int>(200);
+        auto* c = preserved_arena.create<int>(300);
+        preserved_arena.compact();
+        CHECK(*a == 100 && *b == 200 && *c == 300, "live objects preserved across compact()");
+    }
+    // AC1.7-1.10: ArenaGroup multi-arena management
+    {
+        std::println("\n--- AC1.7-1.10: ArenaGroup compact_module/auto_compact/stats_json ---");
+        aura::ast::ArenaGroup group;
+        auto& m = group.module_arena("test_mod", 1024 * 1024);
+        m.create<int>(1);
+        (void)group.compact_module("test_mod");
+        CHECK(group.compact_module("nonexistent") == 0,
+              "compact_module on missing module returns 0");
+        group.set_compact_threshold(0.0);
+        auto& m1 = group.module_arena("a", 1024 * 1024);
+        m1.create<int>(1);
+        auto& m2 = group.module_arena("b", 1024 * 1024);
+        m2.create<int>(2);
+        CHECK(group.auto_compact() >= 0, "auto_compact returns non-negative total");
+        auto& mm = group.module_arena("hello", 1024 * 1024);
+        mm.create<int>(42);
+        mm.compact();
+        auto json = group.stats_json();
+        CHECK(json.find("\"arenas\"") != std::string::npos, "JSON has arenas key");
+        CHECK(json.find("\"name\":\"hello\"") != std::string::npos, "JSON has module name");
+        CHECK(json.find("\"compaction_count\"") != std::string::npos, "JSON has compaction count");
+        CHECK(json.find("\"fragmentation_ratio\"") != std::string::npos,
+              "JSON has fragmentation ratio");
+        group.set_compact_threshold(2.0);
+        CHECK(group.compact_threshold() <= 0.95, "threshold clamped to <= 0.95");
+        group.set_compact_threshold(-1.0);
+        CHECK(group.compact_threshold() >= 0.0, "threshold clamped to >= 0.0");
+    }
+    // AC2: Double-arena policy (per-module arenas)
+    {
+        std::println("\n--- AC2: ArenaGroup per-module arenas (persistent vs temp) ---");
+        aura::ast::ArenaGroup group;
+        auto& m1 = group.module_arena("persistent_mod", 4 * 1024 * 1024);
+        auto& m2 = group.module_arena("temp_mod", 1 * 1024 * 1024);
+        m1.create<int>(1);
+        m2.create<int>(2);
+        m2.create<int>(3);
+        auto stats = group.module_stats();
+        CHECK(stats.size() == 2, "2 module arenas tracked");
+        bool found_persistent = false, found_temp = false;
+        for (auto& [name, s] : stats) {
+            if (name == "persistent_mod")
+                found_persistent = true;
+            if (name == "temp_mod")
+                found_temp = true;
+        }
+        CHECK(found_persistent && found_temp, "persistent + temp both in module_stats");
+    }
+    // AC3: Fragmentation observability
+    {
+        std::println("\n--- AC3.1-3.2: ArenaStats fragmentation_ratio + format() ---");
+        aura::ast::ASTArena arena(8 * 1024 * 1024);
+        CHECK(arena.stats().fragmentation_ratio() > 0.9, "fresh 8MB has > 90% fragmentation");
+        arena.create<int>(42);
+        CHECK(arena.stats().fragmentation_ratio() < 1.0, "after small alloc, fragmentation < 1.0");
+        arena.compact();
+        auto formatted = arena.stats().format();
+        CHECK(formatted.find("compaction") != std::string::npos,
+              "format() output mentions compaction");
+    }
+    // AC4: StringPool compaction + observability
+    {
+        std::println("\n--- AC4: StringPool intern + compact + reset + data_size ---");
+        std::pmr::polymorphic_allocator<std::byte> alloc{};
+        aura::ast::StringPool pool(alloc);
+        CHECK(pool.entry_count() == 0 && pool.load_factor() == 0.0, "fresh pool empty");
+        pool.intern("hello");
+        pool.intern("world");
+        pool.intern("foo");
+        CHECK(pool.entry_count() == 3, "3 entries after 3 interns");
+        CHECK(pool.load_factor() > 0.0, "load_factor > 0 after intern");
+        auto initial = pool.data_size();
+        pool.intern("a");
+        pool.intern("b");
+        CHECK(pool.data_size() > initial, "data_size grows as we intern");
+        aura::ast::StringPool pool2(alloc);
+        for (int i = 0; i < 200; ++i)
+            pool2.intern(std::string("s") + std::to_string(i));
+        auto cap_before = pool2.hash_capacity();
+        pool2.compact();
+        CHECK(pool2.hash_capacity() <= cap_before, "compact reduces or preserves hash_capacity");
+        auto sym = pool2.intern("hello");
+        CHECK(pool2.resolve(sym) == "hello", "SymId still valid after compact");
+        auto s1 = pool2.compact();
+        auto s2 = pool2.compact();
+        CHECK(s1 >= 0 && s2 == 0, "second compact is no-op (idempotent)");
+        pool2.intern("x");
+        CHECK(pool2.entry_count() >= 1, "entry exists before reset");
+        pool2.reset();
+        CHECK(pool2.entry_count() == 0, "0 entries after reset");
+        CHECK(pool2.data_size() == 1, "data_size = 1 after reset (just leading NUL)");
+    }
+    // AC5: Long fragmentation scenario
+    {
+        std::println("\n--- AC5.1: fragmentation scenario (1000 allocs + compact) ---");
+        aura::ast::ASTArena arena(8 * 1024 * 1024);
+        std::vector<int*> ptrs;
+        for (int i = 0; i < 1000; ++i)
+            ptrs.push_back(arena.create<int>(i));
+        CHECK(arena.stats().peak_used > 0, "peak_used > 0 after 1000 allocs");
+        arena.compact();
+        CHECK(arena.stats().capacity <= 8 * 1024 * 1024, "compact reduces capacity");
+        bool all_ok = true;
+        for (size_t i = 0; i < ptrs.size(); ++i)
+            if (*ptrs[i] != static_cast<int>(i)) {
+                all_ok = false;
+                break;
+            }
+        CHECK(all_ok, "all 1000 live objects intact after compact");
+    }
+    // AC6: Aura-level primitives (CompilerService-driven)
+    {
+        std::println("\n--- AC6.1-6.7: (arena:compact) + (arena:estimate) + ... ---");
+        aura::compiler::CompilerService cs;
+        if (auto r = cs.eval("(arena:compact)"); r && is_int(*r)) {
+            CHECK(as_int(*r) >= 0, "(arena:compact) returns non-negative bytes");
+        }
+        if (auto r = cs.eval("(stats:get \"arena:estimate\")"); r && is_int(*r)) {
+            CHECK(as_int(*r) >= 0, "(stats:get \"arena:estimate\") returns non-negative bytes");
+        }
+        if (auto r = cs.eval("(stats:get \"arena:stats-json\")");
+            r && aura::compiler::types::is_string(*r)) {
+            CHECK(true, "(stats:get \"arena:stats-json\") returns string");
+        }
+        if (auto r = cs.eval("(string-pool:compact)"); r && is_int(*r)) {
+            CHECK(as_int(*r) >= 0, "(string-pool:compact) returns non-negative bytes");
+        }
+        auto sv = cs.eval("(stats:get \"string-pool:stats\")");
+        CHECK(sv.has_value(), "(stats:get \"string-pool:stats\") returns a value (or void)");
+        auto tv = cs.eval("(arena:set-compact-threshold 25)");
+        CHECK(tv.has_value(), "(arena:set-compact-threshold 25) callable");
+        if (auto r = cs.eval("(begin "
+                             "(define x1 1) (define x2 2) (define x3 3) (define x4 4) "
+                             "(define x5 5) (string-pool:compact) "
+                             "(define y1 1) (define y2 2) (string-pool:compact) "
+                             "(+ x1 x2 x3 x4 x5 y1 y2))");
+            r && is_int(*r)) {
+            CHECK(as_int(*r) == 18, "compound workflow: 1+2+3+4+5+1+2 = 18");
+        }
+    }
+}
+
 } // namespace aura_compact_batch
 
 int main() {
     using namespace aura_compact_batch;
-    std::println(
-        "=== Compact batch: #1842 + #1666 + #1362 + #1757 + #261 + #324 (28 ACs total) ===");
+    std::println("=== Compact batch: #1842 + #1666 + #1362 + #1757 + #261 + #324 + #187 (50+ ACs "
+                 "total) ===");
     run_1842_source();
     run_1842_runtime();
     run_1842_nested_guard();
@@ -592,6 +765,7 @@ int main() {
     run_324_arena_stats_accessible();
     run_324_dual_path_consistency();
     run_324_yield_field();
+    run_187_arena_compaction_double_arena();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

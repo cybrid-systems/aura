@@ -54,6 +54,10 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
+import aura.core.arena;
+import aura.compiler.ir;
+import aura.compiler.ir_executor;
 
 namespace aura_gc_batch {
 
@@ -433,6 +437,241 @@ static void run_205_env_walk_callback() {
     }
 }
 
+// ── Issue #223 — closure-bridge epoch counter for lifetime tracking ──
+// Folded from tests/issues/test_issue_223.cpp via #1957. Mirror structs in
+// standalone TU (production types guarded against GCC 16.1 std module +
+// P2996 reflection conflict in test_issue_223.cpp).
+
+namespace test_223_bridge {
+    struct ClosureBridgeData {
+        const void* flat = nullptr;
+        const void* pool = nullptr;
+        std::uint32_t body_id = ~0u;
+        std::string body_source;
+        std::uint64_t bridge_epoch = 0;
+    };
+    struct IRClosureBridgeFields {
+        const void* flat = nullptr;
+        const void* pool = nullptr;
+        std::uint32_t body_id = ~0u;
+        std::uint64_t bridge_epoch = 0;
+    };
+    struct MockEpochTracker {
+        std::atomic<std::uint64_t> mutation_epoch_{0};
+        std::uint64_t bridge_epoch() const noexcept {
+            return mutation_epoch_.load(std::memory_order_relaxed);
+        }
+        void bump_bridge_epoch() noexcept {
+            mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+        }
+        void reset() noexcept { mutation_epoch_.fetch_add(1, std::memory_order_relaxed); }
+    };
+    static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) {
+        if (bridge_epoch == 0)
+            return false; // legacy: trust
+        return bridge_epoch != current_epoch;
+    }
+} // namespace test_223_bridge
+
+static void run_223_closure_bridge_epoch() {
+    using namespace test_223_bridge;
+    std::println("\n=== #223: closure-bridge epoch counter ===");
+    // T1: bridge_epoch() / reset() / bump_bridge_epoch() basics
+    {
+        MockEpochTracker svc;
+        CHECK(svc.bridge_epoch() == 0, "initial bridge_epoch = 0");
+        svc.reset();
+        CHECK(svc.bridge_epoch() == 1, "reset() bumped to 1");
+        svc.bump_bridge_epoch();
+        CHECK(svc.bridge_epoch() == 2, "bump_bridge_epoch() bumped to 2");
+        svc.reset();
+        CHECK(svc.bridge_epoch() == 3, "second reset() bumped to 3");
+    }
+    // T2: ClosureBridgeData captures epoch at construction
+    {
+        MockEpochTracker svc;
+        int fake_flat = 0, fake_pool = 0;
+        ClosureBridgeData bd;
+        bd.flat = &fake_flat;
+        bd.pool = &fake_pool;
+        bd.body_id = 42;
+        bd.body_source = "(lambda (x) x)";
+        bd.bridge_epoch = svc.bridge_epoch();
+        CHECK(bd.bridge_epoch == 0, "bridge captured epoch 0");
+        CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+              "epoch 0 bridge is legacy (not invalidated)");
+        svc.reset();
+        bd.bridge_epoch = 1;
+        CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+              "bridge at epoch 1 not stale at current epoch 1");
+        svc.reset();
+        CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+              "bridge at epoch 1 stale after reset to 2");
+        ClosureBridgeData bd2;
+        bd2.flat = &fake_flat;
+        bd2.pool = &fake_pool;
+        bd2.body_id = 42;
+        bd2.body_source = "(lambda (x) x)";
+        bd2.bridge_epoch = svc.bridge_epoch();
+        CHECK(bd2.bridge_epoch == 2 && !is_bridge_stale(bd2.bridge_epoch, svc.bridge_epoch()),
+              "new bridge at epoch 2 not stale");
+    }
+    // T3: IRClosure carries bridge_epoch
+    {
+        MockEpochTracker svc;
+        IRClosureBridgeFields cl;
+        cl.bridge_epoch = svc.bridge_epoch();
+        CHECK(cl.bridge_epoch == 0, "IRClosure bridge_epoch defaults to 0");
+        svc.reset();
+        CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+              "IRClosure captured at epoch 0 stays legacy");
+        cl.bridge_epoch = svc.bridge_epoch();
+        CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+              "IRClosure re-captured at current epoch not stale");
+        svc.bump_bridge_epoch();
+        CHECK(is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+              "IRClosure at epoch 1 stale after bump");
+    }
+    // T4: Epoch monotonicity (100 resets + bumps)
+    {
+        MockEpochTracker svc;
+        std::uint64_t last = svc.bridge_epoch();
+        for (int i = 0; i < 100; ++i) {
+            svc.reset();
+            CHECK(svc.bridge_epoch() > last, "epoch monotonically increases (reset)");
+            last = svc.bridge_epoch();
+            svc.bump_bridge_epoch();
+            CHECK(svc.bridge_epoch() > last, "epoch monotonically increases (bump)");
+            last = svc.bridge_epoch();
+        }
+    }
+    // T5+T6: apply_closure wiring + body_source fallback
+    {
+        MockEpochTracker svc;
+        struct SimCl {
+            void* flat = (void*)0xdeadbeef;
+            void* pool = (void*)0xcafebabe;
+            std::uint32_t body_id = 42;
+            std::uint64_t bridge_epoch = 0;
+        };
+        SimCl cl;
+        cl.bridge_epoch = svc.bridge_epoch();
+        CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+              "legacy closure not invalidated");
+        cl.bridge_epoch = 1;
+        svc.bump_bridge_epoch();
+        svc.reset();
+        CHECK(is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+              "closure at epoch 1 invalidated after reset");
+        SimCl cl2;
+        cl2.bridge_epoch = svc.bridge_epoch();
+        CHECK(!is_bridge_stale(cl2.bridge_epoch, svc.bridge_epoch()),
+              "fresh closure at current epoch not invalidated");
+        // T6 body_source fallback
+        struct WithSource {
+            std::uint64_t bridge_epoch = 0;
+            std::string body_source;
+        };
+        WithSource cl_a;
+        cl_a.body_source = "";
+        cl_a.bridge_epoch = 1;
+        CHECK(is_bridge_stale(cl_a.bridge_epoch, 2), "T6 stale bridge detected");
+        CHECK(cl_a.body_source.empty(), "T6 empty body_source = no fallback");
+        WithSource cl_b;
+        cl_b.body_source = "(lambda (x) (* x x))";
+        cl_b.bridge_epoch = 1;
+        CHECK(is_bridge_stale(cl_b.bridge_epoch, 2), "T6 stale bridge + body_source = fallback");
+        WithSource cl_c;
+        cl_c.body_source = "(lambda (x) (* x x))";
+        cl_c.bridge_epoch = 2;
+        CHECK(!is_bridge_stale(cl_c.bridge_epoch, 2), "T6 fresh bridge not stale");
+    }
+}
+
+// ── Issue #224 — closure-bridge shared_ptr-based ownership ──
+// Folded from tests/issues/test_issue_224_closure_bridge.cpp via #1957.
+// Cycle 2: std::shared_ptr<const ast::FlatAST> keeps the FlatAST alive
+// as long as the bridge exists, even after the lowering arena resets.
+
+static void run_224_closure_bridge_shared_ptr() {
+    std::println("\n=== #224: closure-bridge shared_ptr-based ownership ===");
+    // T1.1: shared_ptr keeps FlatAST alive (refcount semantics)
+    {
+        auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+        auto pool_ptr = std::make_shared<aura::ast::StringPool>();
+        aura::ir::ClosureBridgeData bd;
+        bd.flat = flat_ptr;
+        bd.pool = pool_ptr;
+        bd.body_id = 0;
+        CHECK(flat_ptr.use_count() == 2, "shared_ptr refcount = 2 after copy to bd.flat");
+        flat_ptr.reset();
+        pool_ptr.reset();
+        CHECK(bd.flat.use_count() == 1, "bd.flat still valid after local reset");
+        CHECK(bd.pool.use_count() == 1, "bd.pool still valid after local reset");
+        CHECK(bd.flat != nullptr && bd.pool != nullptr,
+              "shared_ptr remains valid after local drops");
+        CHECK(bd.flat->size() == 0, "bd.flat dereferenceable after local drop");
+    }
+    // T1.2: refcount cycles to 0
+    {
+        auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+        auto pool_ptr = std::make_shared<aura::ast::StringPool>();
+        aura::ir::ClosureBridgeData bd;
+        bd.flat = flat_ptr;
+        bd.pool = pool_ptr;
+        CHECK(flat_ptr.use_count() == 2, "refcount = 2 after copy");
+        flat_ptr.reset();
+        pool_ptr.reset();
+        CHECK(bd.flat.use_count() == 1, "refcount = 1 after local reset");
+    }
+    // T1.3: shared_ptr composes with bridge_epoch
+    {
+        auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+        auto pool_ptr = std::make_shared<aura::ast::StringPool>();
+        aura::ir::ClosureBridgeData bd;
+        bd.flat = flat_ptr;
+        bd.pool = pool_ptr;
+        bd.body_id = 0;
+        bd.bridge_epoch = 42;
+        CHECK(bd.bridge_epoch == 42, "bridge_epoch preserved alongside shared_ptr");
+        CHECK(bd.flat != nullptr, "shared_ptr valid alongside bridge_epoch");
+        constexpr std::uint64_t kNewEpoch = 100;
+        CHECK(bd.bridge_epoch != kNewEpoch, "bridge_epoch mismatch signals staleness");
+    }
+    // T1.4: shared_ptr field type consistency (static_assert)
+    {
+        using BDType = decltype(aura::ir::ClosureBridgeData::flat);
+        using CLType = decltype(aura::compiler::IRClosure::flat);
+        static_assert(std::is_same_v<BDType, CLType>,
+                      "ClosureBridgeData::flat == IRClosure::flat type");
+        CHECK(true, "static_assert holds: both shared_ptr<const ast::FlatAST>");
+    }
+    // T1.5: shared_ptr copy/move
+    {
+        auto flat_ptr = std::make_shared<aura::ast::FlatAST>();
+        aura::ir::ClosureBridgeData bd1;
+        bd1.flat = flat_ptr;
+        CHECK(flat_ptr.use_count() == 2, "refcount = 2 after copy to bd1");
+        aura::ir::ClosureBridgeData bd2 = bd1;
+        CHECK(flat_ptr.use_count() == 3, "refcount = 3 after copy to bd2");
+        CHECK(bd1.flat.get() == bd2.flat.get(), "bd1.flat == bd2.flat pointer");
+        bd2 = aura::ir::ClosureBridgeData{};
+        CHECK(flat_ptr.use_count() == 2, "refcount = 2 after bd2 cleared");
+    }
+    // T1.6: end-to-end via CompilerService
+    {
+        aura::compiler::CompilerService cs;
+        auto eval1 = cs.eval("(begin (define (square x) (* x x)) (square 5))");
+        auto eval2 = cs.eval("(begin (define (square x) (* x x)) (square 5))");
+        CHECK(eval1 && eval2, "both evals return values");
+        if (eval1 && eval2) {
+            CHECK(aura::compiler::types::as_int(*eval1) == 25, "first (square 5) = 25");
+            CHECK(aura::compiler::types::as_int(*eval2) == 25,
+                  "second (square 5) = 25 (bridge shared_ptr alive across cache)");
+        }
+    }
+}
+
 } // namespace aura_gc_batch
 
 int main() {
@@ -455,6 +694,8 @@ int main() {
     run_1864_concurrent();
     run_204_mark_env_frame_roots();
     run_205_env_walk_callback();
+    run_223_closure_bridge_epoch();
+    run_224_closure_bridge_shared_ptr();
     std::println("\n=== GC batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
