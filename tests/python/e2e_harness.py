@@ -5,7 +5,9 @@ Reusable check_* helpers for commercial_readiness / suite e2e:
   - run_aura_file(path) → AuraRunResult
   - check_e2e_pass(result) — requires E2E-PASS and zero FAIL: lines
   - check_pass_labels(result, expected_labels)
-  - check_golden(result, golden_path) — PASS labels match golden JSON
+  - check_golden(result, golden_path=None, suite_name=None) — PASS labels match consolidated golden JSON
+    (suite_name auto-derived from result.path.stem if omitted)
+    Default golden_path: tests/fixtures/e2e_golden/all.json (single consolidated file)
   - assert helpers raise E2EAssertionError with actual vs expected context
 """
 
@@ -171,33 +173,64 @@ def check_pass_labels(result: AuraRunResult, expected: Sequence[str]) -> None:
         )
 
 
-def check_golden(result: AuraRunResult, golden_path: Path | str) -> None:
-    """Compare PASS labels against fixtures/e2e_golden/*.json."""
-    golden_path = Path(golden_path)
+def check_golden(
+    result: AuraRunResult,
+    golden_path: Path | str | None = None,
+    *,
+    suite_name: str | None = None,
+) -> None:
+    """Compare PASS labels against the consolidated e2e_golden/all.json.
+
+    Default golden_path is tests/fixtures/e2e_golden/all.json. Default
+    suite_name is `result.path.stem`. The file schema is:
+        {"schema": <n>, "issue": <n>, "suites": {<stem>: {source, pass_labels, min_passes}}}
+    """
+    golden_path = Path(golden_path) if golden_path else GOLDEN_DIR / "all.json"
     if not golden_path.is_file():
-        raise FileNotFoundError(f"golden missing: {golden_path}")
+        raise FileNotFoundError(f"golden missing: {golden_path} (run --update-golden)")
     data = json.loads(golden_path.read_text(encoding="utf-8"))
-    expected = data.get("pass_labels") or data.get("passes") or []
+    suites = data.get("suites") or {}
+    name = suite_name or result.path.stem
+    if name not in suites:
+        raise E2EAssertionError(f"{golden_path}: no entry for suite {name!r}")
+    suite = suites[name]
+    expected = suite.get("pass_labels") or suite.get("passes") or []
     if not isinstance(expected, list):
-        raise E2EAssertionError(f"{golden_path}: pass_labels must be a list")
+        raise E2EAssertionError(f"{golden_path}: suites[{name!r}].pass_labels must be a list")
     check_pass_labels(result, [str(x) for x in expected])
-    min_p = int(data.get("min_passes", 0))
+    min_p = int(suite.get("min_passes", 0))
     if min_p and len(result.pass_labels) < min_p:
-        raise E2EAssertionError(f"{result.path.name}: golden min_passes={min_p}, got {len(result.pass_labels)}")
+        raise E2EAssertionError(
+            f"{result.path.name}: golden suites[{name}] min_passes={min_p}, got {len(result.pass_labels)}"
+        )
 
 
-def write_golden(result: AuraRunResult, golden_path: Path | str) -> None:
-    """Update golden from a successful run (developer helper)."""
-    golden_path = Path(golden_path)
+def write_golden(
+    result: AuraRunResult,
+    golden_path: Path | str | None = None,
+    *,
+    suite_name: str | None = None,
+) -> None:
+    """Update one suite's entry inside the consolidated e2e_golden/all.json.
+
+    Default golden_path is tests/fixtures/e2e_golden/all.json. Default
+    suite_name is `result.path.stem`. Reads existing file (if any), updates
+    one suite entry, writes back.
+    """
+    golden_path = Path(golden_path) if golden_path else GOLDEN_DIR / "all.json"
     golden_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schema": 1934,
-        "issue": 1934,
+    if golden_path.is_file():
+        existing = json.loads(golden_path.read_text(encoding="utf-8"))
+    else:
+        existing = {"schema": 1934, "issue": 1934, "suites": {}}
+    suites = existing.setdefault("suites", {})
+    name = suite_name or result.path.stem
+    suites[name] = {
         "source": str(result.path.relative_to(ROOT)) if result.path.is_relative_to(ROOT) else str(result.path),
         "pass_labels": result.pass_labels,
         "min_passes": len(result.pass_labels),
     }
-    golden_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    golden_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
 def discover_commercial_readiness() -> list[Path]:
@@ -209,4 +242,5 @@ def discover_commercial_readiness() -> list[Path]:
 
 
 def golden_for(script: Path) -> Path:
-    return GOLDEN_DIR / f"{script.stem}.json"
+    """Return the consolidated e2e_golden path (single file holds all suites)."""
+    return GOLDEN_DIR / "all.json"

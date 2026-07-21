@@ -8,9 +8,10 @@ tests/e2e/
 └── commercial_readiness/
     └── commercial_readiness_*.aura   # machine-checkable PASS/FAIL + E2E-PASS
 tests/fixtures/e2e_golden/
-    └── commercial_readiness_*.json   # expected PASS labels
+    └── all.json                      # consolidated golden:
+                                      #   {"suites": {<stem>: {source, pass_labels, min_passes}}}
 tests/python/
-    ├── e2e_harness.py                # check_* helpers
+    ├── e2e_harness.py                # check_* helpers (suite_name from result.path.stem)
     └── run_e2e.py                    # suite runner
 ```
 
@@ -36,5 +37,5 @@ python3 tests/python/run_e2e.py --update-golden   # refresh goldens
 ## Adding a case
 
 1. Add `tests/e2e/commercial_readiness/commercial_readiness_<name>.aura`
-2. Run `python3 tests/python/run_e2e.py --update-golden`
-3. Commit both the `.aura` and `fixtures/e2e_golden/*.json`
+2. Run `python3 tests/python/run_e2e.py --update-golden` (updates the consolidated `all.json`)
+3. Commit both the `.aura` and `fixtures/e2e_golden/all.json`
