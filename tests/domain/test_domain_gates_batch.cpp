@@ -24,6 +24,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
+import aura.compiler.ast_walkers;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
@@ -562,6 +563,203 @@ static void run_128_span_vector_conversion() {
     CHECK(empty_kinds.empty(), "empty span → empty result");
 }
 
+// ── Wave 4 (#130 cache_hit_rate / #132 AST walker / #134 parse_datatype / #166 cache invalidation)
+// ──
+
+static void run_130_cache_hit_rate_metric() {
+    std::println("\n=== #130: TypeChecker cache_hit_rate + stats() (Issue #130) ===");
+    aura::core::TypeRegistry reg;
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(tc.cache_hit_rate() == 0.0, "fresh TypeChecker: hit rate 0.0");
+    tc.reset_stats();
+    auto s0 = tc.stats();
+    CHECK(s0.cache_hits == 0 && s0.cache_misses == 0 && s0.stale_cache == 0,
+          "after reset_stats: counts all 0");
+    auto arena = std::make_unique<aura::ast::ASTArena>();
+    auto alloc = arena->allocator();
+    aura::ast::FlatAST flat(alloc);
+    aura::ast::StringPool pool(alloc);
+    auto id = flat.add_literal(42);
+    flat.root = id;
+    aura::diag::DiagnosticCollector diag;
+    (void)tc.infer_flat(flat, pool, id, diag);
+    auto s = tc.stats();
+    CHECK(s.cache_misses >= 1, "first inference records >= 1 cache_miss");
+    double rate = tc.cache_hit_rate();
+    CHECK(rate >= 0.0 && rate <= 1.0, "hit rate in [0, 1]");
+    CHECK(rate < 0.5, "cold-start hit rate < 0.5");
+}
+
+static void run_132_ast_walker_extractions() {
+    std::println(
+        "\n=== #132: find_top_level_defines + collect_user_bindings (AST walker extractions) ===");
+    // Basic: (begin (define a 1) (define b 2) 42)
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto a_name = pool.intern("a");
+        auto b_name = pool.intern("b");
+        auto def_a = flat.add_define(a_name, flat.add_literal(1));
+        auto def_b = flat.add_define(b_name, flat.add_literal(2));
+        auto lit_42 = flat.add_literal(42);
+        auto begin = flat.add_begin({def_a, def_b, lit_42});
+        auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
+        CHECK(defs.size() == 2 && defs[0].first == "a" && defs[1].first == "b",
+              "find_top_level_defines returns (a, b) in document order");
+    }
+    // Nested: outer is found, inner inside lambda is NOT
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto outer_name = pool.intern("outer");
+        auto inner_name = pool.intern("inner");
+        auto x_name = pool.intern("x");
+        auto def_outer = flat.add_define(outer_name, flat.add_literal(1));
+        auto x_var = flat.add_variable(x_name);
+        auto inner_body = flat.add_define(inner_name, flat.add_literal(2));
+        auto lambda = flat.add_lambda({x_var}, {inner_body});
+        auto begin = flat.add_begin({def_outer, lambda});
+        auto defs = aura::compiler::find_top_level_defines(flat, pool, begin);
+        CHECK(defs.size() == 1 && defs[0].first == "outer",
+              "find_top_level_defines skips nested defines inside lambda");
+    }
+    // Edge cases: NULL_NODE / non-define root → empty
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto defs_null = aura::compiler::find_top_level_defines(flat, pool, aura::ast::NULL_NODE);
+        CHECK(defs_null.empty(), "find_top_level_defines(NULL_NODE) → empty");
+        auto lit = flat.add_literal(42);
+        auto defs_lit = aura::compiler::find_top_level_defines(flat, pool, lit);
+        CHECK(defs_lit.empty(), "find_top_level_defines(literal) → empty");
+    }
+    // collect_user_bindings: (begin (define a 1) (: b Int) (define c 3))
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto a_name = pool.intern("a");
+        auto b_name = pool.intern("b");
+        auto c_name = pool.intern("c");
+        auto int_sym = pool.intern("Int");
+        auto def_a = flat.add_define(a_name, flat.add_literal(1));
+        auto def_c = flat.add_define(c_name, flat.add_literal(3));
+        auto annot = flat.add_type_annotation(int_sym, flat.add_literal(0), b_name);
+        auto begin = flat.add_begin({def_a, annot, def_c});
+        auto names = aura::compiler::collect_user_bindings(flat, pool, begin);
+        CHECK(names.size() == 3 && names[0] == "a" && names[1] == "b" && names[2] == "c",
+              "collect_user_bindings: (a, b, c) including TypeAnnotation");
+    }
+}
+
+static void run_134_parse_datatype() {
+    std::println("\n=== #134: parse_datatype — basic + zero-arity + parametric + empty ===");
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto pr = aura::parser::parse_to_flat("(datatype (Tree) (Leaf Int) (Node Tree Tree))", flat,
+                                              pool);
+        CHECK(pr.success && pr.root != aura::ast::NULL_NODE,
+              "parse_datatype (Tree, Leaf, Node) succeeds + non-NULL root");
+    }
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto pr = aura::parser::parse_to_flat("(datatype (None) (None))", flat, pool);
+        CHECK(pr.success, "zero-arity ctor (None) parses");
+    }
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto pr =
+            aura::parser::parse_to_flat("(datatype (Option : T) (Some T) (None))", flat, pool);
+        CHECK(pr.success, "parametric type spec (: T) parses");
+    }
+    {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto pr = aura::parser::parse_to_flat("(datatype (Empty))", flat, pool);
+        CHECK(pr.success, "empty datatype (just type name) parses");
+    }
+}
+
+static void run_166_cache_invalidation() {
+    std::println("\n=== #166: multi-layer cache invalidation (mutation_epoch_) ===");
+    auto runner = [](CompilerService& cs, std::string_view src) -> int64_t {
+        auto r = cs.eval(std::string(src));
+        if (!r)
+            return -1;
+        auto& v = *r;
+        if (aura::compiler::types::is_int(v))
+            return aura::compiler::types::as_int(v);
+        if (aura::compiler::types::is_bool(v))
+            return aura::compiler::types::as_bool(v) ? 1 : 0;
+        return -1;
+    };
+    // T1: eval → mutate → re-eval (basic regression)
+    {
+        CompilerService cs;
+        CHECK(runner(cs, "(set-code \"(define x 10)\")") >= 0, "T1 set-code");
+        CHECK(runner(cs, "x") == 10, "T1 first eval x = 10");
+        CHECK(runner(cs, "(mutate:rebind \"x\" \"42\" \"bump x\")") > 0, "T1 mutate:rebind");
+        CHECK(runner(cs, "x") == 42, "T1 after mutate x = 42");
+    }
+    // T2: epoch increments; unrelated mutation doesn't break cached fn
+    {
+        CompilerService cs;
+        CHECK(runner(cs, "(set-code \"(define (f x) (* x x))(define y 0)\")") >= 0,
+              "T2 set-code with f + y");
+        CHECK(runner(cs, "(f 5)") == 25, "T2 (f 5) = 25");
+        CHECK(runner(cs, "(mutate:rebind \"y\" \"100\" \"bump y\")") > 0,
+              "T2 mutate:rebind on unrelated var");
+        CHECK(runner(cs, "(f 5)") == 25,
+              "T2 after unrelated mutation (f 5) still = 25 (cache handled)");
+    }
+    // T3: function body mutation invalidates cache
+    {
+        CompilerService cs;
+        CHECK(runner(cs, "(set-code \"(define (g x) (+ x 1))\")") >= 0, "T3 set-code");
+        CHECK(runner(cs, "(g 10)") == 11, "T3 first (g 10) = 11");
+        CHECK(runner(cs, "(mutate:set-body \"g\" \"(lambda (x) (+ x 100))\" \"bump g\")") > 0,
+              "T3 mutate:set-body");
+        CHECK(runner(cs, "(g 10)") == 110, "T3 after mutate:set-body (g 10) = 110");
+    }
+    // T4: rapid mutations (epoch counter monotonic, counter reflects each rebind)
+    {
+        CompilerService cs;
+        CHECK(runner(cs, "(set-code \"(define counter 0)\")") >= 0, "T4 set-code");
+        bool all_ok = true;
+        for (int i = 1; i <= 10; ++i) {
+            std::string mutate_src = "(mutate:rebind \"counter\" \"" + std::to_string(i) +
+                                     "\" \"iter " + std::to_string(i) + "\")";
+            if (runner(cs, mutate_src) <= 0) {
+                all_ok = false;
+                break;
+            }
+            if (runner(cs, "counter") != i) {
+                all_ok = false;
+                break;
+            }
+        }
+        CHECK(all_ok, "T4 10 rapid mutations all succeeded with correct values");
+    }
+}
+
 static void run_typechecker_unit_tests() {
     run_116_deferred_coercion_node();
     run_118_unbound_var_tags_node();
@@ -582,6 +780,10 @@ static void run_typechecker_unit_tests() {
     run_127_result_monadic_chain();
     run_128_span_type_identity();
     run_128_span_vector_conversion();
+    run_130_cache_hit_rate_metric();
+    run_132_ast_walker_extractions();
+    run_134_parse_datatype();
+    run_166_cache_invalidation();
 }
 
 } // namespace aura_domain_gates_batch
