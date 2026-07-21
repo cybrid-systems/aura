@@ -2,9 +2,7 @@
   "description": "PR/fast CI: domain suites first, then profile bundles + error policy. Prefer extending domain suites over adding targets here.",
   "targets": [
     "test_obs_schema_matrix",
-    "test_domain_fiber_orchestration",
-    "test_domain_hygiene_dirty",
-    "test_domain_typed_mutate",
+    "test_domain_gates_batch",
     "test_aura_result_error_policy",
     "test_issues_light",
     "test_issues_jit_minimal",

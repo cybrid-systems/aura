@@ -1,18 +1,24 @@
-// test_obs_schema_matrix.cpp — Domain suite: observability query schemas
+// test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 //
 // Replaces the "one test_issue_N.cpp per stats surface" pattern for
-// schema/bump gate ACs. Add new Close #N observability surfaces by
-// editing tests/domain/cases/obs_schema_cases.hpp — do not add a new binary.
+// schema/bump gate ACs. Also folds Wave 2 production sweep field-list
+// gates (was test_domain_production_sweep.cpp).
+//
+// Add new Close #N observability surfaces by editing
+// tests/domain/cases/obs_schema_cases.hpp; production flag surfaces via
+// cases/production_sweep_cases.hpp — do not add a new binary.
 //
 // Coverage:
 //   - StandardTotalHits: total/hits/savings/active + schema + bump
 //   - FieldList: schema + required field keys present
+//   - Production field-list schemas (Wave 2 production_* fold)
 //   - Light primitives used by late surfaces (terminal:*, primitives:alias)
 //
 // See tests/domain/README.md for the testing policy.
 
 #include "test_harness.hpp"
 #include "domain/cases/obs_schema_cases.hpp"
+#include "domain/cases/production_sweep_cases.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -38,6 +44,9 @@ using aura::test::obs::kFieldListCasesCount;
 using aura::test::obs::kStandardCases;
 using aura::test::obs::kStandardCasesCount;
 using aura::test::obs::StandardCase;
+using aura::test::prod::kProdCases;
+using aura::test::prod::kProdCasesCount;
+using aura::test::prod::ProdCase;
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
@@ -151,6 +160,29 @@ void run_field_list_cases(CompilerService& cs) {
     }
 }
 
+void run_production_cases(CompilerService& cs) {
+    std::println("\n=== Domain suite: production field-list schemas ({}) ===", kProdCasesCount);
+    for (std::size_t i = 0; i < kProdCasesCount; ++i) {
+        const ProdCase& c = kProdCases[i];
+        auto h = cs.eval(aura::test::aura_call_expr(c.query));
+        CHECK(h && is_hash(*h), std::format("{} returns hash ({})", c.query, c.source_stem));
+        // #1261–#1265 lineage may report schema 1625 or 1261.
+        const auto got = href(cs, c.query, "schema");
+        const bool schema_ok = (got == c.schema) ||
+                               (c.schema == 1625 && (got == 1625 || got == 1261)) ||
+                               (c.schema == 1261 && (got == 1625 || got == 1261));
+        CHECK(schema_ok,
+              std::format("{} schema == {} (got {}, {})", c.query, c.schema, got, c.source_stem));
+        for (std::size_t f = 0; f < c.n_fields; ++f) {
+            const char* key = c.fields[f];
+            auto v = cs.eval(
+                std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(c.query), key));
+            CHECK(v.has_value(),
+                  std::format("{} field '{}' present ({})", c.query, key, c.source_stem));
+        }
+    }
+}
+
 void run_light_primitives(CompilerService& cs) {
     std::println("\n=== Domain suite: light production primitives ===");
     auto buf = cs.eval("(terminal:create-buffer)");
@@ -172,6 +204,7 @@ void run_regression(CompilerService& cs) {
 void run_all(CompilerService& cs) {
     run_standard_cases(cs);
     run_field_list_cases(cs);
+    run_production_cases(cs);
     run_light_primitives(cs);
     run_regression(cs);
 }
@@ -182,6 +215,11 @@ int aura_issue_obs_schema_matrix_run() {
     aura::compiler::CompilerService cs;
     run_all(cs);
     return RUN_ALL_TESTS();
+}
+
+// Legacy alias (was test_domain_production_sweep).
+int aura_issue_domain_production_sweep_run() {
+    return aura_issue_obs_schema_matrix_run();
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER

@@ -28,10 +28,10 @@ Defined as `kHotPathMatrix` / `HotPathScenario` in `test_strategy.h`:
 
 | Scenario id | Title | Primary issues | Recommended suite |
 |-------------|-------|----------------|-------------------|
-| `mutate-steal-gc-old-closure` | Mutate + steal + GC + old closure | **#1624**, **#1627** | `domain/test_domain_fiber_orchestration` |
+| `mutate-steal-gc-old-closure` | Mutate + steal + GC + old closure | **#1624**, **#1627** | `domain/test_domain_gates_batch` |
 | `invalidate-jit-deopt` | Invalidate + JIT deopt | #1623, #740 | `test_eval_relower_hotpath_1623` |
-| `fiber-guard-shape-epoch` | GuardShape / epoch + fiber | #836, #1627 | `domain/test_domain_fiber_orchestration` |
-| `typed-mutation-invariant` | TypedMutationAudit invariants | #1614, #1544 | `domain/test_domain_typed_mutate` |
+| `fiber-guard-shape-epoch` | GuardShape / epoch + fiber | #836, #1627 | `domain/test_domain_gates_batch` |
+| `typed-mutation-invariant` | TypedMutationAudit invariants | #1614, #1544 | `domain/test_domain_gates_batch` |
 | `type-prop-invariant-corr` | TypeProp ↔ invariant | #1884, #1872 | `test_type_prop_invariant_correlation_1884` |
 | `aot-hotupdate-audit` | AOT hot-update audit | #1882, #590 | `test_aot_hotupdate_typed_audit_1882` |
 | `self-evolution-loop` | Self-evolution loop stats | #1883, #595 | `domain/test_obs_schema_matrix` |
