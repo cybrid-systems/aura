@@ -1,0 +1,74 @@
+[
+  {
+    "name": "command-output",
+    "code": "(command-output \"echo 42\")",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "command-output-empty",
+    "code": "(command-output \"echo -n\")",
+    "expect_out": "",
+    "expect_err": ""
+  },
+  {
+    "name": "command-output-multi",
+    "code": "(command-output \"echo hello; echo world\")",
+    "expect_out": "hello\nworld",
+    "expect_err": ""
+  },
+  {
+    "name": "lambda-annot-param",
+    "code": "((lambda ((: x Int)) (+ x 1)) 41)",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "lambda-annot-param2",
+    "code": "((lambda ((: x Int)) x) 99)",
+    "expect_out": "99",
+    "expect_err": ""
+  },
+  {
+    "name": "lambda-annot-tc",
+    "code": "(begin (set-code \"((lambda ((: x Int)) (+ x 1)) 41)\")(display (typecheck-current)))",
+    "expect_out": "type: Int",
+    "expect_err": ""
+  },
+  {
+    "name": "typecheck-status-after-bad-mutate",
+    "code": "(set-code \"(define (f x) (+ x 1))\") (mutate:rebind \"f\" \"(lambda (x) (undefined-fn x))\") (display (stats:get \"typecheck-status\"))",
+    "expect_out": "typecheck after mutate (selective) failed",
+    "expect_err": ""
+  },
+  {
+    "name": "typecheck-status-ok",
+    "code": "(set-code \"(define (f x) (+ x 1))\") (mutate:rebind \"f\" \"(lambda (x) (+ x 2))\") (display (stats:get \"typecheck-status\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "typecheck-status-set-body-ok",
+    "code": "(set-code \"(define (f x) (+ x 1))\") (mutate:set-body \"f\" \"(+ x 2)\") (display (stats:get \"typecheck-status\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "fiber-join-basic",
+    "code": "(begin (define fid (fiber:spawn (lambda () (+ 1 2)))) (display (fiber:join fid)))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "fiber-spawn-multi",
+    "code": "(begin (define a (fiber:spawn (lambda () (* 3 4)))) (define b (fiber:spawn (lambda () (+ 10 20)))) (display (+ (fiber:join a) (fiber:join b))))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "fiber-stdin-concurrent",
+    "code": "(begin (define f1 (fiber:spawn (lambda () (+ 1 2)))) (define f2 (fiber:spawn (lambda () (+ 10 20)))) (define f3 (fiber:spawn (lambda () (+ 100 200)))) (display (+ (fiber:join f1) (fiber:join f2) (fiber:join f3))))",
+    "expect_out": "333",
+    "expect_err": ""
+  }
+]
