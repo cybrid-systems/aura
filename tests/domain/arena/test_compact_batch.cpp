@@ -1596,6 +1596,372 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
               "stats:count > 0 (cumulative count is healthy)");
     }
 }
+}
+
+// ── Wave 12 (#722 / #731 / #764 / #767 — arena observability primitives) ──
+
+static void run_722_arena_integration_stats() {
+    std::println("\n=== #722: Arena integration stats (4 counters + schema 722) ===");
+    auto hash_int_field = [](CompilerService& cs, const char* hash_src,
+                             const char* key) -> int64_t {
+        auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_src, key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: hash shape
+    {
+        std::println("\n--- #722 AC1: hash shape ---");
+        auto r = cs.eval("(engine:metrics \"query:arena-integration-stats\")");
+        CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+              "(engine:metrics \"query:arena-integration-stats\") returns a hash");
+        for (const char* k : {"tier-fallbacks", "dtor-dirty-hooks", "auto-compact-triggers",
+                              "fragmentation-post-mutate", "schema"}) {
+            auto f = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:arena-integration-stats\") '{}')", k));
+            CHECK(f.has_value(), std::format("field '{}' present", k));
+        }
+    }
+    // AC2: fresh-zero state
+    {
+        std::println("\n--- #722 AC2: counters == 0 on fresh service ---");
+        for (const char* k : {"tier-fallbacks", "dtor-dirty-hooks", "auto-compact-triggers",
+                              "fragmentation-post-mutate"}) {
+            auto v = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")", k);
+            CHECK(v == 0, std::format("'{}' = 0 on fresh service (got {})", k, v));
+        }
+    }
+    // AC3: schema sentinel
+    {
+        std::println("\n--- #722 AC3: schema == 722 ---");
+        auto v = hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")", "schema");
+        CHECK(v == 722, std::format("schema = {} (expected 722)", v));
+    }
+    // AC4: bump helpers
+    {
+        std::println("\n--- #722 AC4: bump helpers callable ---");
+        auto& ev = cs.evaluator();
+        ev.bump_arena_tier_fallback();
+        ev.bump_arena_tier_fallback();
+        ev.bump_arena_dtor_dirty_hook();
+        ev.bump_arena_dtor_dirty_hook();
+        ev.bump_arena_dtor_dirty_hook();
+        ev.bump_arena_auto_compact_trigger();
+        ev.set_arena_fragmentation_post_mutate(420000);
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                             "tier-fallbacks") == 2,
+              "after 2 bumps == 2");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                             "dtor-dirty-hooks") == 3,
+              "after 3 bumps == 3");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                             "auto-compact-triggers") == 1,
+              "after 1 bump == 1");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                             "fragmentation-post-mutate") == 420000,
+              "after set(420000) == 420000");
+        ev.set_arena_fragmentation_post_mutate(750000);
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-integration-stats\")",
+                             "fragmentation-post-mutate") == 750000,
+              "setter overwrites (not delta): 750000");
+    }
+    // AC5: regression #712..#721
+    {
+        std::println("\n--- #722 AC5: regression #712..#721 sibling primitives ---");
+        const char* sibs[] = {"(engine:metrics \"query:macro-reflect-validation-stats\")",
+                              "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                              "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                              "(engine:metrics \"query:stable-ref-layer-stats\")",
+                              "(engine:metrics \"query:pattern-stats\")",
+                              "(engine:metrics \"query:fiber-boundary-violation-stats\")",
+                              "(engine:metrics \"query:incremental-relower-stats\")",
+                              "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                              "(engine:metrics \"query:jit-interpreter-parity-stats\")",
+                              "(engine:metrics \"query:ir-soa-completeness-stats\")"};
+        const int schemas[] = {712, 713, 714, 715, 716, 717, 718, 719, 720, 721};
+        for (size_t i = 0; i < std::size(sibs); ++i) {
+            auto r = cs.eval(sibs[i]);
+            CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+                  std::format("sibling #{} hash regression", schemas[i]));
+            CHECK(hash_int_field(cs, sibs[i], "schema") == schemas[i],
+                  std::format("sibling #{} schema == {} (no drift)", schemas[i], schemas[i]));
+        }
+    }
+}
+
+static void run_731_arena_concurrent_compact_stats() {
+    std::println(
+        "\n=== #731: Arena concurrent compact observability (4 counters + schema 731) ===");
+    auto hash_int_field = [](CompilerService& cs, const char* hash_src,
+                             const char* key) -> int64_t {
+        auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_src, key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: hash shape
+    {
+        std::println("\n--- #731 AC1: hash shape ---");
+        auto r = cs.eval("(engine:metrics \"query:arena-concurrent-compact-stats\")");
+        CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+              "(engine:metrics \"query:arena-concurrent-compact-stats\") returns a hash");
+        for (const char* k : {"concurrent-compacts", "envframe-revalidations",
+                              "panic-rollback-compact-hits", "races-prevented", "schema"}) {
+            auto f = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:arena-concurrent-compact-stats\") '{}')", k));
+            CHECK(f.has_value(), std::format("field '{}' present", k));
+        }
+    }
+    // AC2: fresh-zero state
+    {
+        std::println("\n--- #731 AC2: counters == 0 on fresh service ---");
+        for (const char* k : {"concurrent-compacts", "envframe-revalidations",
+                              "panic-rollback-compact-hits", "races-prevented"}) {
+            auto v =
+                hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")", k);
+            CHECK(v == 0, std::format("'{}' = 0 on fresh service (got {})", k, v));
+        }
+    }
+    // AC3: schema sentinel
+    {
+        std::println("\n--- #731 AC3: schema == 731 ---");
+        auto v = hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")",
+                                "schema");
+        CHECK(v == 731, std::format("schema = {} (expected 731)", v));
+    }
+    // AC4: bump helpers
+    {
+        std::println("\n--- #731 AC4: bump helpers callable ---");
+        auto& ev = cs.evaluator();
+        for (int i = 0; i < 3; ++i)
+            ev.bump_arena_concurrent_compact();
+        for (int i = 0; i < 6; ++i)
+            ev.bump_arena_envframe_revalidation();
+        for (int i = 0; i < 2; ++i)
+            ev.bump_arena_panic_rollback_compact_hit();
+        for (int i = 0; i < 4; ++i)
+            ev.bump_arena_race_prevented();
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")",
+                             "concurrent-compacts") == 3,
+              "3 bumps == 3");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")",
+                             "envframe-revalidations") == 6,
+              "6 bumps == 6");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")",
+                             "panic-rollback-compact-hits") == 2,
+              "2 bumps == 2");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-concurrent-compact-stats\")",
+                             "races-prevented") == 4,
+              "4 bumps == 4");
+    }
+    // AC5: regression #712..#728 (incl. #722)
+    {
+        std::println("\n--- #731 AC5: regression #712..#728 sibling primitives ---");
+        const char* sibs[] = {"(engine:metrics \"query:macro-reflect-validation-stats\")",
+                              "(engine:metrics \"query:macro-jit-hygiene-stats\")",
+                              "(engine:metrics \"query:self-evolution-closedloop-stats\")",
+                              "(engine:metrics \"query:stable-ref-layer-stats\")",
+                              "(engine:metrics \"query:pattern-stats\")",
+                              "(engine:metrics \"query:fiber-boundary-violation-stats\")",
+                              "(engine:metrics \"query:incremental-relower-stats\")",
+                              "(engine:metrics \"query:closure-env-epoch-safety-stats\")",
+                              "(engine:metrics \"query:jit-interpreter-parity-stats\")",
+                              "(engine:metrics \"query:ir-soa-completeness-stats\")",
+                              "(engine:metrics \"query:arena-integration-stats\")",
+                              "(engine:metrics \"query:value-dispatch-stats\")",
+                              "(engine:metrics \"query:closed-loop-reliability-stats\")",
+                              "(engine:metrics \"query:unified-error-stats\")"};
+        for (const char* p : sibs) {
+            auto r = cs.eval(p);
+            CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+                  std::format("sibling hash regression ({})", p));
+        }
+    }
+}
+
+static void run_764_compiler_arena_closure_lifetime_stats() {
+    std::println("\n=== #764: Compiler Arena closure lifetime stats (4 counters + schema 764) ===");
+    auto hash_int_field = [](CompilerService& cs, const char* hash_src,
+                             const char* key) -> int64_t {
+        auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_src, key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: hash shape
+    {
+        std::println("\n--- #764 AC1: hash shape ---");
+        auto r = cs.eval("(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")");
+        CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+              "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\") returns a hash");
+        for (const char* k : {"root-hits", "bridge-sharedptr-pinned", "cross-violations-prevented",
+                              "invalidate-ast-refresh", "schema"}) {
+            auto f = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:compiler-arena-closure-lifetime-stats\") '{}')",
+                k));
+            CHECK(f.has_value(), std::format("field '{}' present", k));
+        }
+    }
+    // AC2: fresh-zero state
+    {
+        std::println("\n--- #764 AC2: counters == 0 on fresh service ---");
+        for (const char* k : {"root-hits", "bridge-sharedptr-pinned", "cross-violations-prevented",
+                              "invalidate-ast-refresh"}) {
+            auto v = hash_int_field(
+                cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", k);
+            CHECK(v == 0, std::format("'{}' = 0 on fresh service (got {})", k, v));
+        }
+    }
+    // AC3: schema sentinel
+    {
+        std::println("\n--- #764 AC3: schema == 764 ---");
+        auto v = hash_int_field(
+            cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")", "schema");
+        CHECK(v == 764, std::format("schema = {} (expected 764)", v));
+    }
+    // AC4: bump helpers
+    {
+        std::println("\n--- #764 AC4: bump helpers callable ---");
+        auto& ev = cs.evaluator();
+        for (int i = 0; i < 3; ++i)
+            ev.bump_compiler_arena_closure_lifetime_root_hit();
+        for (int i = 0; i < 2; ++i)
+            ev.bump_compiler_arena_closure_lifetime_bridge_sharedptr_pinned();
+        ev.bump_compiler_arena_closure_lifetime_cross_violation_prevented();
+        for (int i = 0; i < 4; ++i)
+            ev.bump_compiler_arena_closure_lifetime_invalidate_ast_refresh();
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                             "root-hits") == 3,
+              "3 bumps == 3");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                             "bridge-sharedptr-pinned") == 2,
+              "2 bumps == 2");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                             "cross-violations-prevented") == 1,
+              "1 bump == 1");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:compiler-arena-closure-lifetime-stats\")",
+                             "invalidate-ast-refresh") == 4,
+              "4 bumps == 4");
+    }
+    // AC5: regression #735/#756..#763
+    {
+        std::println("\n--- #764 AC5: regression #735/#756..#763 ---");
+        const char* sibs[] = {"(engine:metrics \"query:macro-provenance-stats\")",
+                              "(engine:metrics \"query:envframe-dualpath-policy-stats\")",
+                              "(engine:metrics \"query:macro-hygiene-provenance-stats\")",
+                              "(engine:metrics \"query:edsl-reflection-stats\")",
+                              "(engine:metrics \"query:code-as-data-maturity-stats\")",
+                              "(engine:metrics \"query:pattern-performance-stats\")",
+                              "(engine:metrics \"query:mutate-batch-stats\")",
+                              "(engine:metrics \"query:workspace-closedloop-orchestration-stats\")",
+                              "(engine:metrics \"query:linear-ownership-gc-compiler-stats\")"};
+        const int schemas[] = {735, 756, 757, 758, 759, 760, 761, 762, 763};
+        for (size_t i = 0; i < std::size(sibs); ++i) {
+            auto r = cs.eval(sibs[i]);
+            CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+                  std::format("sibling #{} hash regression", schemas[i]));
+            CHECK(hash_int_field(cs, sibs[i], "schema") == schemas[i],
+                  std::format("sibling #{} schema == {} (no drift)", schemas[i], schemas[i]));
+        }
+    }
+}
+
+static void run_767_arena_auto_compact_defrag_fiber_stats() {
+    std::println("\n=== #767: Arena auto-compact + live defrag + fiber yield stats (6 fields + "
+                 "schema 767) ===");
+    auto hash_int_field = [](CompilerService& cs, const char* hash_src,
+                             const char* key) -> int64_t {
+        auto r = cs.eval(std::format("(hash-ref {} '{}')", hash_src, key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: hash shape (6 fields + schema = 7 entries)
+    {
+        std::println("\n--- #767 AC1: hash shape ---");
+        auto r = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")");
+        CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+              "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") returns a hash");
+        for (const char* k : {"auto-compact-triggers", "frag-reduced-bp", "live-defrag-savings",
+                              "fiber-yield-during-compact", "shape-inval-count",
+                              "defrag-blocked-fibers", "schema"}) {
+            auto f = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\") '{}')",
+                k));
+            CHECK(f.has_value(), std::format("field '{}' present", k));
+        }
+    }
+    // AC2: 4 reused >= 0, 2 new == 0
+    {
+        std::println("\n--- #767 AC2: reused >= 0, new == 0 on fresh service ---");
+        for (const char* k : {"auto-compact-triggers", "frag-reduced-bp", "live-defrag-savings",
+                              "shape-inval-count"}) {
+            auto v = hash_int_field(
+                cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", k);
+            CHECK(v >= 0, std::format("reused '{}' >= 0 (got {})", k, v));
+        }
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                             "fiber-yield-during-compact") == 0,
+              "fiber-yield-during-compact == 0 on fresh service");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                             "defrag-blocked-fibers") == 0,
+              "defrag-blocked-fibers == 0 on fresh service");
+    }
+    // AC3: schema sentinel
+    {
+        std::println("\n--- #767 AC3: schema == 767 ---");
+        auto v = hash_int_field(
+            cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", "schema");
+        CHECK(v == 767, std::format("schema = {} (expected 767)", v));
+    }
+    // AC4: bump helpers
+    {
+        std::println("\n--- #767 AC4: bump helpers callable ---");
+        auto& ev = cs.evaluator();
+        for (int i = 0; i < 4; ++i)
+            ev.bump_arena_auto_compact_fiber_yield_during_compact();
+        for (int i = 0; i < 3; ++i)
+            ev.bump_arena_auto_compact_defrag_blocked_fibers();
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                             "fiber-yield-during-compact") == 4,
+              "4 bumps == 4");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")",
+                             "defrag-blocked-fibers") == 3,
+              "3 bumps == 3");
+        for (const char* k : {"auto-compact-triggers", "frag-reduced-bp", "live-defrag-savings",
+                              "shape-inval-count"}) {
+            auto v = hash_int_field(
+                cs, "(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")", k);
+            CHECK(v >= 0, std::format("reused '{}' >= 0 after #767 bumps (no regression)", k));
+        }
+    }
+    // AC5: regression #685 + #642 + #766
+    {
+        std::println("\n--- #767 AC5: regression #685 + #642 + #766 ---");
+        auto a685 = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        auto a642 = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        auto a766 = cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")");
+        CHECK(a685.has_value() && aura::compiler::types::is_hash(*a685),
+              "query:arena-auto-compact-stats hash regression (#685)");
+        CHECK(a642.has_value() && aura::compiler::types::is_hash(*a642),
+              "query:arena-auto-compaction-stats hash regression (#642)");
+        CHECK(a766.has_value() && aura::compiler::types::is_hash(*a766),
+              "query:ir-soa-migration-stats hash regression (#766)");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-stats\")",
+                             "auto-triggers") >= 0,
+              "#685 auto-triggers >= 0 (no regression)");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compact-stats\")",
+                             "yield-checks-hit") >= 0,
+              "#685 yield-checks-hit >= 0 (no regression)");
+        CHECK(hash_int_field(cs, "(engine:metrics \"query:arena-auto-compaction-stats\")",
+                             "schema") == 642,
+              "#642 schema == 642 (no drift)");
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -1642,6 +2008,10 @@ int main() {
     run_604_arena_auto_compact_defrag_fiber_safepoint();
     run_642_arena_auto_compaction_stats_companion();
     run_685_arena_auto_compact_defrag_shape_synergy();
+    run_722_arena_integration_stats();
+    run_731_arena_concurrent_compact_stats();
+    run_764_compiler_arena_closure_lifetime_stats();
+    run_767_arena_auto_compact_defrag_fiber_stats();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
