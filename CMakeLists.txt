@@ -1724,3 +1724,38 @@ aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6)
 # under mutate load + 200-iter typed mutate cycle + 8-thread
 # concurrent typed mutate + (gc-heap) + regression.
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
+# ── Issue test bundles (restored; accidentally dropped in wave 8 #1978) ──
+# One fat executable per link profile — see scripts/gen_issue_bundles.py
+# and tests/bundles/issue_bundle_runner.{hh,cpp}.
+aura_add_issue_bundle(light)
+aura_add_issue_bundle(jit)
+aura_add_issue_bundle(jit_minimal)
+aura_add_issue_bundle(jit_contract)
+aura_add_issue_bundle(jit_tests)
+aura_add_issue_bundle(fiber)
+aura_add_issue_bundle(jit_late1)
+aura_add_issue_bundle(jit_late2)
+aura_add_issue_bundle(jit_late3)
+aura_add_issue_bundle(jit_late4)
+aura_add_issue_bundle(jit_late5)
+aura_add_issue_bundle(light_late)
+
+# Default issue-suite build: the 12 profile bundles (not 200+ standalones).
+add_custom_target(all_test_issue_targets ALL)
+add_dependencies(all_test_issue_targets test_issues_light)
+add_dependencies(all_test_issue_targets test_issues_jit)
+add_dependencies(all_test_issue_targets test_issues_jit_minimal)
+add_dependencies(all_test_issue_targets test_issues_jit_contract)
+add_dependencies(all_test_issue_targets test_issues_jit_tests)
+add_dependencies(all_test_issue_targets test_issues_fiber)
+add_dependencies(all_test_issue_targets test_issues_jit_late1)
+add_dependencies(all_test_issue_targets test_issues_jit_late2)
+add_dependencies(all_test_issue_targets test_issues_jit_late3)
+add_dependencies(all_test_issue_targets test_issues_jit_late4)
+add_dependencies(all_test_issue_targets test_issues_jit_late5)
+add_dependencies(all_test_issue_targets test_issues_light_late)
+
+# Domain / theme suite registrations (AuraDomainTests.cmake) temporarily
+# not re-included here: wave #1978 left orphan target names that fail
+# aura_resolve_test_cpp. Re-enable after domain cmake is refreshed.
+# include(${CMAKE_SOURCE_DIR}/cmake/AuraDomainTests.cmake)
