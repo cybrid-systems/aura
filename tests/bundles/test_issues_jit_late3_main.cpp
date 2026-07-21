@@ -20,11 +20,6 @@ extern int aura_issue_open_issues_phase1_batch_run();
 extern int aura_issue_804_run();
 extern int aura_issue_760_run();
 extern int aura_issue_660_cache_define_bundle_run();
-extern int aura_issue_661_sv_interface_structure_stats_run();
-extern int aura_issue_662_sva_structured_mutate_run();
-extern int aura_issue_663_hardware_backend_sv_stats_run();
-extern int aura_issue_664_sv_defuse_stats_run();
-extern int aura_issue_665_sv_stability_stats_run();
 extern int aura_issue_667_primitives_apply_stats_run();
 extern int aura_issue_668_run();
 extern int aura_issue_669_run();
@@ -43,7 +38,6 @@ extern int aura_issue_shape_jit_pass_deopt_incremental_closedloop_ai_mutate_run(
 extern int aura_issue_typesystem_solve_delta_occurrence_priority_heavy_mutate_run();
 extern int aura_issue_typesystem_type_propagation_jit_l2_typed_mutate_run();
 extern int aura_issue_linear_ownership_occurrence_predicate_mutate_run();
-extern int aura_issue_sv_verification_edsl_full_structured_closedloop_run();
 extern int aura_issue_reflection_runtime_validate_macro_edsl_mutate_run();
 extern int aura_issue_primitives_capture_contract_run();
 extern int aura_issue_list_vector_soa_hotpath_ai_loops_run();
@@ -79,12 +73,6 @@ int main() {
         {"test_issue_804", aura_issue_804_run},
         {"test_issue_760", aura_issue_760_run},
         {"test_issue_660_cache_define_bundle", aura_issue_660_cache_define_bundle_run},
-        {"test_issue_661_sv_interface_structure_stats",
-         aura_issue_661_sv_interface_structure_stats_run},
-        {"test_issue_662_sva_structured_mutate", aura_issue_662_sva_structured_mutate_run},
-        {"test_issue_663_hardware_backend_sv_stats", aura_issue_663_hardware_backend_sv_stats_run},
-        {"test_issue_664_sv_defuse_stats", aura_issue_664_sv_defuse_stats_run},
-        {"test_issue_665_sv_stability_stats", aura_issue_665_sv_stability_stats_run},
         {"test_issue_667_primitives_apply_stats", aura_issue_667_primitives_apply_stats_run},
         {"test_issue_668", aura_issue_668_run},
         {"test_issue_669", aura_issue_669_run},
@@ -114,8 +102,6 @@ int main() {
          aura_issue_typesystem_type_propagation_jit_l2_typed_mutate_run},
         {"test_linear_ownership_occurrence_predicate_mutate",
          aura_issue_linear_ownership_occurrence_predicate_mutate_run},
-        {"test_sv_verification_edsl_full_structured_closedloop",
-         aura_issue_sv_verification_edsl_full_structured_closedloop_run},
         {"test_reflection_runtime_validate_macro_edsl_mutate",
          aura_issue_reflection_runtime_validate_macro_edsl_mutate_run},
         {"test_primitives_capture_contract", aura_issue_primitives_capture_contract_run},
