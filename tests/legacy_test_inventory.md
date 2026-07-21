@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 475 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 471 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **483** | |
+| **Total scanned** | **479** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 165 | 0 | 1 | 166 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 161 | 0 | 1 | 162 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 431 | Integration path via `CompilerService` / eval |
-| `test_harness` | 265 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 427 | Integration path via `CompilerService` / eval |
+| `test_harness` | 264 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 120 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
-| `own_main` | 29 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 26 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 314
+- `integration`: 310
 - `unknown`: 97
 - `unit`: 57
 - `issue_specific`: 6
@@ -64,8 +64,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 247
-- `compiler/observability_metrics.h` — 48
+- `test_harness.hpp` — 246
+- `compiler/observability_metrics.h` — 47
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 14
 - `serve/fiber.h` — 10
@@ -82,13 +82,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 294
-- `aura.compiler.service` — 283
-- `aura.compiler.evaluator` — 264
-- `std` — 256
-- `aura.core.ast` — 169
-- `aura.core.type` — 89
-- `aura.core.arena` — 88
+- `aura.compiler.value` — 290
+- `aura.compiler.service` — 279
+- `aura.compiler.evaluator` — 260
+- `std` — 254
+- `aura.core.ast` — 168
+- `aura.core.type` — 88
+- `aura.core.arena` — 86
 - `aura.compiler.ir` — 44
 - `aura.core` — 32
 - `aura.compiler.type_checker` — 27
@@ -590,7 +590,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (166)
+### `observability` — Observability / metrics / query:*-stats (162)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -600,7 +600,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (165)
+#### issues/ (161)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -618,7 +618,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1496_concurrent_epoch_safety.cpp` (#1496) — Complements test_issue_1496.cpp AC6 with explicit steal path and
 - `tests/issues/test_issue_1497.cpp` (#1497) — AC1: unified auto_restamp_pinned_stable_refs_at on all sites
 - `tests/issues/test_issue_1498.cpp` (#1498) — AC1: allocate_raw / allocate_checked + Guard try_acquire typed reject
-- `tests/issues/test_issue_1499.cpp` (#1499) — AC1: query:ai-closedloop-readiness-stats is hash, schema 1499
 - `tests/issues/test_issue_1505.cpp` (#1505) — AC1: free-var scan of nested lambdas — free-ref nested marked
 - `tests/issues/test_issue_1506.cpp` (#1506) — AC1: eval after mark/set-body exercises re-lower counters
 - `tests/issues/test_issue_1509.cpp` (#1509) — #1508 (JIT dual check). This issue is the integration stress AC5.
@@ -676,7 +675,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_412_followup_1.cpp` (#412) [followup] — test_issue_412_followup_1.cpp — Issue #412 follow-up
 - `tests/issues/test_issue_426.cpp` (#426) — minimal re-lower for AI mutate:rebind/set-body
 - `tests/issues/test_issue_428_closure.cpp` (#428) — test_issue_428_closure.cpp — Issue #428: Strengthen Closure
-- `tests/issues/test_issue_433.cpp` (#433) — test_issue_433.cpp — Issue #433: DeadCoercionEliminationPass
 - `tests/issues/test_issue_443.cpp` (#443) — - query:verify-tool-stats returns an integer
 - `tests/issues/test_issue_444_strategy_evolution.cpp` (#444) — test_issue_444_strategy_evolution.cpp — Issue #444:
 - `tests/issues/test_issue_447.cpp` (#447) — query:pattern on large ASTs (P0). Validates:
@@ -716,8 +714,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_557_observability.cpp` (#557) [obs_named] — Issue #557 — top5-commercial-coverage-stats hash slice
 - `tests/issues/test_issue_568_observability.cpp` (#568) [obs_named] — Issue #568 — soa-children-columnar-migration-stats hash slice
 - `tests/issues/test_issue_569_observability.cpp` (#569) [obs_named] — DEPRECATED location for new work (#1959): prefer tests/domain/arena/
-- `tests/issues/test_issue_572_observability.cpp` (#572) [obs_named] — Issue #572 — pass-pipeline-dirtyaware-stats hash slice
-- `tests/issues/test_issue_585_observability.cpp` (#585) [obs_named] — Issue #585 — primitives-error-stats unified recovery slice
 - `tests/issues/test_issue_589.cpp` (#589) — primitive (the AC4 surface listed in #589 body)
 - `tests/issues/test_issue_601.cpp` (#601) — bridge_epoch refresh + forced-deopt protocol. Scope-limited observability
 - `tests/issues/test_issue_603.cpp` (#603) — consumer adoption + per-block dirty_ driven minimal re-lower observability
