@@ -302,6 +302,40 @@ int run_287_module_version_reload_smoke() {
 }
 } // namespace aura_mut_run_wave36_287
 
+// Wave 37 (#1957): jit_incremental — #461 JIT fallback stub + stats smoke
+namespace aura_mut_run_wave37_461 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+extern "C" std::uint64_t aura_jit_fallback_to_interpreter(int64_t* args, uint32_t n_args);
+extern "C" std::uint64_t aura_jit_fallback_count_v_read();
+extern "C" int64_t aura_jit_test();
+
+int run_461_jit_fallback_smoke() {
+    std::println("\n=== #461: JIT fallback stub + query:jit-fallback-stats smoke ===");
+    int64_t args[1] = {0};
+    auto rc = aura_jit_fallback_to_interpreter(args, 1);
+    CHECK(rc == 11ull, "fallback stub returns void sentinel (tag 11)");
+    auto before = aura_jit_fallback_count_v_read();
+    aura_jit_fallback_to_interpreter(nullptr, 0);
+    auto after = aura_jit_fallback_count_v_read();
+    CHECK(after == before + 1, "fallback counter bumps on stub call");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:jit-fallback-stats\")");
+    CHECK(r && is_int(*r), "query:jit-fallback-stats returns int");
+    if (r && is_int(*r)) {
+        CHECK(static_cast<std::uint64_t>(as_int(*r)) == after,
+              "query:jit-fallback-stats matches counter");
+    }
+    auto jt = aura_jit_test();
+    CHECK(jt == 42 || jt == -1, "aura_jit_test 42|−1 regression");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave37_461
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -321,6 +355,13 @@ int main() {
     std::println("\n######## run_287_module_version_reload_smoke ########");
     if (int rc = aura_mut_run_wave36_287::run_287_module_version_reload_smoke(); rc != 0) {
         std::println("run_287 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_461_jit_fallback_smoke ########");
+    if (int rc = aura_mut_run_wave37_461::run_461_jit_fallback_smoke(); rc != 0) {
+        std::println("run_461 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");

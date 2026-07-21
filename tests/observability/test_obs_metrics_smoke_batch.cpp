@@ -617,6 +617,36 @@ int run_412b_metrics_smoke() {
 }
 } // namespace aura_obs_run_wave34_412b
 
+// ═══ Wave 37 (#1957): observability metrics smokes ═══
+
+namespace aura_obs_run_wave37_389 {
+int run_389_metrics_smoke() {
+    std::println("\n=== #389: query:marker-stats smoke (wave37) ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:marker-stats\")");
+    CHECK(r.has_value(), "query:marker-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave37_389
+
+namespace aura_obs_run_wave37_569 {
+int run_569_metrics_smoke() {
+    std::println("\n=== #569: arena auto-compact/defrag stats smoke (wave37) ===");
+    CompilerService cs;
+    auto a = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
+    CHECK(a.has_value(), "query:arena-auto-compact-defrag-stats reachable");
+    auto p = cs.eval("(engine:metrics \"query:arena-production-compaction-stats\")");
+    CHECK(p.has_value(), "query:arena-production-compaction-stats reachable");
+    auto c = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+    CHECK(c.has_value(), "query:arena-auto-compact-stats reachable");
+    auto s = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+    CHECK(s.has_value(), "query:arena-auto-stats reachable");
+    auto f = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
+    CHECK(f.has_value(), "query:arena-fragmentation-snapshot reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave37_569
+
 int main() {
 
 
@@ -794,6 +824,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave34_412b::run_412b_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave37_389::run_389_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave37_569::run_569_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
