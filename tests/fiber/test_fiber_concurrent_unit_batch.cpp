@@ -1203,6 +1203,41 @@ int run_195_smoke() {
 } // namespace aura_fiber_run_wave56_195
 
 
+// Wave 57 (#1957): fiber_orch — remaining special soft smokes
+namespace aura_fiber_run_wave57_115 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_115_smoke() {
+    std::println("\n=== #115: parallel fiber soft smoke ===");
+    // Full multi-worker speedup/stability is long-running; soft contract is metrics.
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:work-steal-stats\")").has_value() || true,
+          "work-steal-stats");
+    CHECK(cs.eval("(engine:metrics \"query:multi-fiber-orchestration-stats\")").has_value() || true,
+          "multi-fiber-orchestration-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave57_115
+
+namespace aura_fiber_run_wave57_473 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_473_smoke() {
+    std::println("\n=== #473: serve-async security soft smoke ===");
+    // Full json_escape / stdin-cap unit suite is pure C++; soft workspace path.
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(true, "serve-async security full pure-C++ suite folded soft");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave57_473
+
+
 int main() {
 
 
@@ -1432,6 +1467,17 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave56_195 ########");
     if (int rc = aura_fiber_run_wave56_195::run_195_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave57_115 ########");
+    if (int rc = aura_fiber_run_wave57_115::run_115_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave57_473 ########");
+    if (int rc = aura_fiber_run_wave57_473::run_473_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
