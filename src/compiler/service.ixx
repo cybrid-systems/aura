@@ -1447,6 +1447,8 @@ public:
             "rollback",
             "mutation-log",
             "query-mutation-log",
+            "ir-cache-v2:dirty?",
+            "ir-cache-v2:dependents",
             // Mutation primitives (issue #165/#166): tree-walker so the
             // returned bool/Int propagates correctly. The IR pipeline
             // either silently drops unknown primitives or wraps them as
@@ -1656,6 +1658,8 @@ public:
             "rollback",
             "mutation-log",
             "query-mutation-log",
+            "ir-cache-v2:dirty?",
+            "ir-cache-v2:dependents",
             "mutate:rebind",
             "mutate:set-body",
             "mutate:remove-node",
@@ -5065,18 +5069,9 @@ public:
                 total_blocks_seen += fb.size();
             evaluator_.bump_dirty_block_ratio(dirty_blocks, total_blocks_seen);
         }
-        if (dirty_blocks == 0) {
-            // Bitmask says nothing changed → reuse cached IR.
-            // Bump the skip counter; do NOT call lowering.
-            // This is the cycle-2 win: avoid the full
-            // lowering pass when the bitmask is clean.
+        if (dirty_blocks == 0 && !it->second.dirty && !it->second.irs.empty()) {
             metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
             metrics_.irsoa_cache_miss_reduction.fetch_add(1, std::memory_order_relaxed);
-            // Issue #603: every block in every function is clean —
-            // that's the maximal relower_blocks_saved win per call.
-            // Sum all block counts so the observability primitive
-            // exposes the per-call win (rather than only the call
-            // count).
             std::size_t total_blocks_saved = 0;
             for (const auto& fb : it->second.block_dirty_per_func_)
                 total_blocks_saved += fb.size();
@@ -5554,14 +5549,21 @@ public:
             // Only create if not already present OR if the hash changed.
             // (We don't overwrite an existing entry's depends_on, which was
             // computed last time and is still valid if the source hash matches.)
+            const bool existed = ir_cache_v2_.find(name) != ir_cache_v2_.end();
             auto& entry = ir_cache_v2_[name];
-            if (entry.source_hash != hash) {
+            if (!existed) {
+                entry.source = canonical;
+                entry.source_hash = hash;
+                entry.dirty = false; // source-only shell until heavy populate
+            } else if (entry.source_hash != hash) {
                 entry.source = canonical;
                 entry.source_hash = hash;
                 entry.irs.clear();
                 entry.bridges.clear();
                 entry.strings.clear();
-                entry.dirty = false; // freshly parsed, not dirty
+                entry.block_dirty_per_func_.clear();
+                entry.instruction_dirty_per_func_.clear();
+                entry.dirty = true; // body changed — keep rebind / cascade mark
             }
         }
     }
@@ -5726,8 +5728,7 @@ public:
             // (body-only from #1495 mark). Large dirty surfaces still
             // go through relower_define_blocks which may full-fallback.
             const std::size_t dirty_n = it->second.dirty_block_count();
-            if (dirty_n == 0) {
-                it->second.dirty = false;
+            if (dirty_n == 0 && !it->second.dirty) {
                 ++ok;
                 continue;
             }

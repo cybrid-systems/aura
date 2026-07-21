@@ -1421,7 +1421,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         soa_view::record_edsl_mutate_soa_path();
         // Issue #1919: AI multi-round mutation pressure → intelligent auto-compact.
         aura::core::arena_policy::signal_mutation_pressure();
-        aura::core::arena_policy::signal_dirty_cascade();
+        // Note: do not signal_dirty_cascade here — it forces Guard-exit
+        // auto_compact which wholesale-dirties ir_cache_v2_ and erases
+        // dep_graph-precise cascade marks.
         bool ok = true;
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent

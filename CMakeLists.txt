@@ -446,7 +446,7 @@ AT(step15_letrec_fact10
     "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))" 3628800)
 
 # ── IR tests ─────────────────────────────────────────────────────
-add_executable(test_ir tests/test_ir.cpp)
+add_executable(test_ir tests/arena/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 aura_target_cxx_modules(test_ir)
 target_sources(test_ir PRIVATE
@@ -513,14 +513,14 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 # unused-parameter, and sign-compare warnings on test_ir.cpp itself.
 # The linked-in production sources (aura_test_objects, the per-target
 # source list above) keep the lax `aura_test_compile_options` settings.
-aura_strict_test_warnings(tests/test_ir.cpp)
+aura_strict_test_warnings(tests/arena/test_ir.cpp)
 aura_test_compile_options(test_ir)
 target_include_directories(test_ir PRIVATE src src/compiler)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 
 # ── Concurrent model tests ────────────────────────────
 # Tests fiber lifecycle, worker scheduling, and eventfd wakeup
-add_executable(test_concurrent tests/test_concurrent.cpp)
+add_executable(test_concurrent tests/fiber/test_concurrent.cpp)
 set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
@@ -571,7 +571,7 @@ target_include_directories(test_concurrent PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
 # Issue #477: test_concurrent.cpp is the main concurrency specification;
 # opt the test source itself into strict warnings.
-aura_strict_test_warnings(tests/test_concurrent.cpp)
+aura_strict_test_warnings(tests/fiber/test_concurrent.cpp)
 aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
@@ -810,7 +810,7 @@ endfunction()
 #     stale_cache with TYPE_VAR validation)
 #   - Stress test: 100 mutate+typecheck cycles
 #   - Performance: incremental vs full typecheck cache behavior
-add_executable(test_gc_evaluator_integration tests/test_gc_evaluator_integration.cpp)
+add_executable(test_gc_evaluator_integration tests/compiler_core/test_gc_evaluator_integration.cpp)
 set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: pre-existing build fix. Without this
 # FILE_SET, the C++ module scanner produces empty modmap files
@@ -899,12 +899,12 @@ endif()
 # actually enforced at runtime. Two phases:
 #   1. test_contracts holds — pre-condition holds, no violation (exit 0)
 #   2. test_contracts fires — pre-condition violated, handler fires (exit 42)
-add_executable(test_contracts tests/test_contracts.cpp)
-set_source_files_properties(tests/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+add_executable(test_contracts tests/compiler_core/test_contracts.cpp)
+set_source_files_properties(tests/compiler_core/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
 # Issue #477: contract test is small + production-quality; opt into strict
 # warnings for the test source itself.
-aura_strict_test_warnings(tests/test_contracts.cpp)
+aura_strict_test_warnings(tests/compiler_core/test_contracts.cpp)
 # Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
 # provides `handle_contract_violation` for C++26 contract checks.
 target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)
@@ -924,7 +924,7 @@ set_tests_properties(contracts_fires PROPERTIES
 # Verifies the FNV-1a source-hash function used by ir_cache_v2_.
 # Full integration is covered by tests/edsl_ir_cache_test.aura
 # (see tests/run-tests.sh).
-add_executable(test_ir_cache_v2 tests/test_ir_cache_v2.cpp)
+add_executable(test_ir_cache_v2 tests/edsl/test_ir_cache_v2.cpp)
 add_test(NAME ir_cache_v2_fnv1a
          COMMAND test_ir_cache_v2)
 
@@ -1000,7 +1000,7 @@ add_test(NAME tc_let
 
 
 # ── Shape profiler tests (Phase 1, #53) ─────────────────────
-add_executable(test_shape tests/test_shape.cpp src/compiler/shape_profiler.cpp)
+add_executable(test_shape tests/shape/test_shape.cpp src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape PRIVATE src)
 target_link_libraries(test_shape PRIVATE stdc++)
 # Issue #278 follow-up: pre-existing build fix. shape_profiler.cpp
@@ -1014,7 +1014,7 @@ add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── Speculative JIT tests (Phase 2, #53) ─────────────────────
-add_executable(test_spec_jit tests/test_spec_jit.cpp
+add_executable(test_spec_jit tests/mutation/test_spec_jit.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/shape_profiler.cpp)
 target_include_directories(test_spec_jit PRIVATE src)
@@ -1047,8 +1047,8 @@ add_test(NAME test_spec_jit COMMAND test_spec_jit
 # Verifies the AuraJIT::Metrics struct (default state, atomic
 # concurrent increments, format() output, edge cases). Doesn't
 # need a full LLVM stack — exercises the counter paths directly.
-add_executable(test_jit_metrics tests/test_jit_metrics.cpp
-    tests/test_jit_metrics_stub.cpp
+add_executable(test_jit_metrics tests/jit/test_jit_metrics.cpp
+    tests/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1071,8 +1071,8 @@ add_test(NAME jit_metrics COMMAND test_jit_metrics
 # Verifies the per-function compile cache and metrics counters
 # under concurrent access. Doesn't need a full LLVM stack —
 # exercises the counter paths directly.
-add_executable(test_jit_concurrent_compile tests/test_jit_concurrent_compile.cpp
-    tests/test_jit_metrics_stub.cpp
+add_executable(test_jit_concurrent_compile tests/fiber/test_jit_concurrent_compile.cpp
+    tests/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1098,8 +1098,8 @@ add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
 # and fresh-instance zero baseline. Doesn't need a full LLVM
 # pipeline — exercises the public metrics + per-function
 # accessors directly. Same build pattern as test_jit_metrics.
-add_executable(test_jit_consistency tests/test_jit_consistency.cpp
-    tests/test_jit_metrics_stub.cpp
+add_executable(test_jit_consistency tests/observability/test_jit_consistency.cpp
+    tests/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1119,7 +1119,7 @@ add_test(NAME jit_consistency COMMAND test_jit_consistency
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── Speculative JIT runtime tests (Phase 3, #53) ────────────
-add_executable(test_spec_runtime tests/test_spec_runtime.cpp)
+add_executable(test_spec_runtime tests/stdlib/test_spec_runtime.cpp)
 target_include_directories(test_spec_runtime PRIVATE src)
 target_link_libraries(test_spec_runtime PRIVATE stdc++)
 add_test(NAME test_spec_runtime COMMAND test_spec_runtime
@@ -2397,7 +2397,7 @@ aura_issue_test_link_llvm_jit(test_runtime_mutation_boundary_steal_safety)
 # observability per AC #2.
 # Pairs with tests/run_concurrent_edsl_tsan.sh for TSan.
 add_executable(test_edsl_concurrent_query_mutate
-               tests/test_edsl_concurrent_query_mutate.cpp)
+               tests/mutation/test_edsl_concurrent_query_mutate.cpp)
 set_property(TARGET test_edsl_concurrent_query_mutate
              PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_edsl_concurrent_query_mutate PRIVATE src)
