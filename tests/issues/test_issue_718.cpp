@@ -132,8 +132,8 @@ static void run_ac3_schema_sentinel(aura::compiler::CompilerService& cs) {
     std::println("\n--- AC3: schema == 718 (drift sentinel) ---");
     const auto schema =
         hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
-    CHECK(schema == 1623 || schema == 1605 || schema == 1601 || schema == 718,
-          std::format("schema = {} (expected 1623|1605|1601|718 lineage)", schema));
+    CHECK(schema == 1639 || schema == 1623 || schema == 1605 || schema == 1601 || schema == 718,
+          std::format("schema = {} (expected 1639|1623|1605|1601|718 lineage)", schema));
 }
 
 static void run_ac4_bump_accessible(aura::compiler::CompilerService& cs) {

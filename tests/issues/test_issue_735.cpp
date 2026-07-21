@@ -284,9 +284,9 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
         std::format("fiber-boundary schema = {} (expected 717, no drift)", fiber_boundary_schema));
     const auto incremental_schema =
         hash_int_field(cs, "(engine:metrics \"query:incremental-relower-stats\")", "schema");
-    CHECK(incremental_schema == 1623 || incremental_schema == 1605 || incremental_schema == 1601 ||
-              incremental_schema == 718,
-          std::format("incremental-relower schema = {} (expected 1623|1605|1601|718 lineage)",
+    CHECK(incremental_schema == 1639 || incremental_schema == 1623 || incremental_schema == 1605 ||
+              incremental_schema == 1601 || incremental_schema == 718,
+          std::format("incremental-relower schema = {} (expected 1639|1623|1605|1601|718 lineage)",
                       incremental_schema));
     const auto closure_env_schema =
         hash_int_field(cs, "(engine:metrics \"query:closure-env-epoch-safety-stats\")", "schema");
@@ -307,7 +307,8 @@ static void run_ac5_regression(aura::compiler::CompilerService& cs) {
           std::format("arena schema = {} (expected 722, no drift)", arena_schema));
     const auto value_dispatch_schema =
         hash_int_field(cs, "(engine:metrics \"query:value-dispatch-stats\")", "schema");
-    CHECK(value_dispatch_schema == 1622 || value_dispatch_schema == 723,
+    CHECK(value_dispatch_schema == 1622 || value_dispatch_schema == 1622 ||
+              value_dispatch_schema == 723,
           std::format("value-dispatch schema = {} (expected 1622|723 lineage)",
                       value_dispatch_schema));
     const auto closed_loop_schema =

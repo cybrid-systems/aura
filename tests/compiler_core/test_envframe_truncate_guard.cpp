@@ -20,6 +20,7 @@
 //      stress test clean (4 threads × 5k iter).
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
 #include <atomic>
 #include <chrono>
@@ -93,7 +94,8 @@ void ac3_metrics_increment() {
 void ac3_metric_bumps() {
     std::println("\n--- AC3 (direct): metric counters accessible ---");
     CompilerService cs;
-    auto* m = static_cast<CompilerMetrics*>(cs.compiler_metrics());
+    // CompilerService owns CompilerMetrics; evaluator holds a void* back-pointer.
+    CompilerMetrics* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     if (!m) {
         std::println("  (no compiler_metrics bound — skipping direct counter check)");
         return;
@@ -141,7 +143,10 @@ void ac5_concurrent_panic_truncate_apply() {
     // verifies the per-thread counters monotonically grow.
     auto worker = [&](std::uint64_t base) {
         for (std::size_t i = 0; i < kIterations; ++i) {
-            std::atomic<std::uint64_t> local_epoch{base + i};
+            // Epochs are 1-based: bridge_epoch==0 is the "doomed / invalid"
+            // sentinel, so never seed a zero value here (base=0,i=0 would
+            // otherwise under-count apply_count by one).
+            std::atomic<std::uint64_t> local_epoch{base + i + 1};
             // Simulate apply_closure checking freshness.
             const std::uint64_t captured = local_epoch.load(std::memory_order_relaxed);
             if (captured != 0)
