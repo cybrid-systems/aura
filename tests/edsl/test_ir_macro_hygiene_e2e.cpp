@@ -1,3 +1,4 @@
+// Issue #1891 (#1978 renamed): issue# moved from filename to header.
 // @category: integration
 // @reason: Issue #1891 — end-to-end SyntaxMarker::MacroIntroduced provenance
 // propagation AST (clone_macro_body) → IR lowering → InlinePass → JIT /

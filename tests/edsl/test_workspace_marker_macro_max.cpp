@@ -1,3 +1,4 @@
+// Issue #1678 (#1978 renamed): issue# moved from filename to header.
 // @category: unit
 // @reason: Issue #1678 — workspace_marker_macro_introduced uses max(walk, snapshot)
 // so walk < snapshot no longer undercounts MacroIntroduced provenance.

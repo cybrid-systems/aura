@@ -1,3 +1,4 @@
+// Issue #421 (#1978 renamed): issue# moved from filename to header.
 // test_pattern_macro_filter_closed_loop_421.cpp
 // Issue #421: query:pattern recursive MacroIntroduced
 // filtering after query-primitive split.

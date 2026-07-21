@@ -1,3 +1,4 @@
+// Issue #1838 (#1978 renamed): issue# moved from filename to header.
 // @category: unit
 // @reason: Issue #1838 — hygiene:protected? must hold metadata
 // reader lock when reading is_macro_introduced (same race class

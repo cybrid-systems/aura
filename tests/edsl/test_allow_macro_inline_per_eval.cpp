@@ -1,3 +1,4 @@
+// Issue #1780 (#1978 renamed): issue# moved from filename to header.
 // @category: unit
 // @reason: Issue #1780 — *allow-macro-inline* must use per-Evaluator
 // state (not InlinePass process-wide static). Concurrent CompilerServices

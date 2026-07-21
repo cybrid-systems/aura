@@ -1,3 +1,4 @@
+// Issue #1914 (#1978 renamed): issue# moved from filename to header.
 // @category: integration
 // @reason: Issue #1914 — deepen query hygiene / SyntaxMarker + provenance
 // diagnostics (query:node-provenance, query:last-mutation-provenance,
