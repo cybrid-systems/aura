@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 463 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 457 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **471** | |
+| **Total scanned** | **465** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 153 | 0 | 1 | 154 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 147 | 0 | 1 | 148 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,8 +47,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 419 | Integration path via `CompilerService` / eval |
-| `test_harness` | 256 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 413 | Integration path via `CompilerService` / eval |
+| `test_harness` | 253 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 120 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 25 | File defines `int main()` (standalone or bundle source) |
@@ -56,16 +56,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 304
-- `unknown`: 95
+- `integration`: 299
+- `unknown`: 94
 - `unit`: 57
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 238
-- `compiler/observability_metrics.h` — 46
+- `test_harness.hpp` — 235
+- `compiler/observability_metrics.h` — 44
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 14
 - `compiler/aura_jit.h` — 10
@@ -82,15 +82,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 283
-- `aura.compiler.service` — 271
-- `aura.compiler.evaluator` — 256
-- `std` — 246
-- `aura.core.ast` — 166
-- `aura.core.type` — 88
-- `aura.core.arena` — 86
-- `aura.compiler.ir` — 44
-- `aura.core` — 32
+- `aura.compiler.value` — 278
+- `aura.compiler.service` — 266
+- `aura.compiler.evaluator` — 251
+- `std` — 240
+- `aura.core.ast` — 162
+- `aura.core.type` — 85
+- `aura.core.arena` — 81
+- `aura.compiler.ir` — 43
+- `aura.core` — 31
 - `aura.compiler.type_checker` — 27
 - `aura.diag` — 26
 - `aura.parser.parser` — 18
@@ -589,7 +589,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (154)
+### `observability` — Observability / metrics / query:*-stats (148)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -599,11 +599,10 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (153)
+#### issues/ (147)
 
 - `tests/issues/test_issue_1460.cpp` (#1460) — test_issue_1460.cpp — Issue #1460:
 - `tests/issues/test_issue_1461.cpp` (#1461) — test_issue_1461.cpp — Issue #1461:
-- `tests/issues/test_issue_1487.cpp` (#1487) — AC1: allocate_raw / allocate_checked reject over memory quota
 - `tests/issues/test_issue_149.cpp` (#149) [early_issue] — test_issue_149.cpp — Verify Issue #149 acceptance criteria
 - `tests/issues/test_issue_1491.cpp` (#1491) — apply_closure paths + JIT aura_closure_call (closed-loop on #1475/#1477).
 - `tests/issues/test_issue_1494.cpp` (#1494) — MutationBoundary / invalidate paths (parent closed-loop on #1478 / #1458).
@@ -611,7 +610,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1496.cpp` (#1496) — AC1: both paths call unified_invalidation_protocol (metric grows)
 - `tests/issues/test_issue_1496_concurrent_epoch_safety.cpp` (#1496) — Complements test_issue_1496.cpp AC6 with explicit steal path and
 - `tests/issues/test_issue_1497.cpp` (#1497) — AC1: unified auto_restamp_pinned_stable_refs_at on all sites
-- `tests/issues/test_issue_1498.cpp` (#1498) — AC1: allocate_raw / allocate_checked + Guard try_acquire typed reject
 - `tests/issues/test_issue_1505.cpp` (#1505) — AC1: free-var scan of nested lambdas — free-ref nested marked
 - `tests/issues/test_issue_1506.cpp` (#1506) — AC1: eval after mark/set-body exercises re-lower counters
 - `tests/issues/test_issue_1509.cpp` (#1509) — #1508 (JIT dual check). This issue is the integration stress AC5.
@@ -646,10 +644,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_308.cpp` (#308) — test_issue_308.cpp — Verify Issue #308 acceptance criteria
 - `tests/issues/test_issue_312.cpp` (#312) — test_issue_312.cpp — Verify Issue #312 acceptance criteria
 - `tests/issues/test_issue_325.cpp` (#325) — test_issue_325.cpp — Verify Issue #325 acceptance
-- `tests/issues/test_issue_331.cpp` (#331) — test_issue_331.cpp — Issue #331: targeted dirty bitmask +
-- `tests/issues/test_issue_338.cpp` (#338) — test_issue_338.cpp — Issue #338: Enhance and/or
-- `tests/issues/test_issue_340.cpp` (#340) — test_issue_340.cpp — Verify Issue #340 acceptance
-- `tests/issues/test_issue_341.cpp` (#341) — test_issue_341.cpp — Issue #341: Integrate Occurrence
 - `tests/issues/test_issue_343.cpp` (#343) — test_issue_343.cpp — Issue #343: StableNodeRef
 - `tests/issues/test_issue_376.cpp` (#376) — test_issue_376.cpp — Issue #376: low-overhead unified
 - `tests/issues/test_issue_383.cpp` (#383) — test_issue_383.cpp — Issue #383: strengthen
