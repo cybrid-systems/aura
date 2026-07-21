@@ -1758,8 +1758,7 @@ add_dependencies(all_test_issue_targets test_issues_jit_late5)
 add_dependencies(all_test_issue_targets test_issues_light_late)
 
 # compiler_core terminal + EnvFrame/bridge_epoch batches (merged from
-# standalone drivers; AuraDomainTests.cmake still holds the full domain
-# suite but remains excluded until its orphan targets are cleaned).
+# standalone drivers that shared harness/deps).
 aura_add_issue_test(test_terminal_domain_batch)
 aura_issue_test_link_llvm_jit(test_terminal_domain_batch)
 add_dependencies(all_test_issue_targets test_terminal_domain_batch)
@@ -1767,8 +1766,3 @@ add_dependencies(all_test_issue_targets test_terminal_domain_batch)
 aura_add_issue_test(test_envframe_epoch_batch)
 aura_issue_test_link_llvm_jit(test_envframe_epoch_batch)
 add_dependencies(all_test_issue_targets test_envframe_epoch_batch)
-
-# Domain / theme suite registrations (AuraDomainTests.cmake) temporarily
-# not re-included here: wave #1978 left orphan target names that fail
-# aura_resolve_test_cpp. Re-enable after domain cmake is refreshed.
-# include(${CMAKE_SOURCE_DIR}/cmake/AuraDomainTests.cmake)
