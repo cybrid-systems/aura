@@ -561,8 +561,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_consolidated_production_priority_517.cpp` | 102 | `keep` | no automatic streamline |
 | `test_contracts.cpp` | 87 | `keep` | no automatic streamline |
 | `test_coverage_holes_workspace_lock_1816.cpp` | 108 | `keep` | no automatic streamline |
-| `test_demo_sv_nested_guard_1774.cpp` | 94 | `keep` | no automatic streamline |
-| `test_eda_guard_exception_safety.cpp` | 211 | `keep` | no automatic streamline |
 | `test_env_batch.cpp` | 723 | `keep_batch_exclude` | family batch driver (EXCLUDE_FROM_ALL convention) |
 | `test_env_lookup_batch.cpp` | 289 | `keep_batch_exclude` | family batch driver (EXCLUDE_FROM_ALL convention) |
 | `test_envframe_stableid.cpp` | 190 | `keep` | no automatic streamline |
