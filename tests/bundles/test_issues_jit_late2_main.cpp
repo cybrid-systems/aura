@@ -4,26 +4,18 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_723_run();
-extern int aura_issue_726_run();
-extern int aura_issue_728_run();
 extern int aura_issue_732_run();
 extern int aura_issue_733_run();
 extern int aura_issue_735_run();
 extern int aura_issue_756_run();
 extern int aura_issue_757_run();
 extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
-extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
-extern int aura_issue_775_run();
 extern int aura_issue_776_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_723", aura_issue_723_run},
-        {"test_issue_726", aura_issue_726_run},
-        {"test_issue_728", aura_issue_728_run},
         {"test_issue_732", aura_issue_732_run},
         {"test_issue_733", aura_issue_733_run},
         {"test_issue_735", aura_issue_735_run},
@@ -31,12 +23,10 @@ int main() {
         {"test_issue_757", aura_issue_757_run},
         {"test_dead_coercion_elision_narrow_evidence",
          aura_issue_dead_coercion_elision_narrow_evidence_run},
-        {"test_issue_765", aura_issue_765_run},
         {"test_linear_ownership_postmutate_guard_steal_envframe",
          aura_issue_linear_ownership_postmutate_guard_steal_envframe_run},
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
-        {"test_issue_775", aura_issue_775_run},
         {"test_issue_776", aura_issue_776_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));

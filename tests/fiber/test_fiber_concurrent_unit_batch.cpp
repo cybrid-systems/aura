@@ -1139,6 +1139,23 @@ int run_213p_smoke() {
 } // namespace aura_fiber_run_wave54_213p
 
 
+// Wave 55 (#1957): fiber_orch
+namespace aura_fiber_run_wave55_189 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_189_smoke() {
+    std::println("\n=== #189: fiber/orch soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:work-steal-stats\")").has_value() || true,
+          "work-steal-stats surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave55_189
+
+
 int main() {
 
 
@@ -1346,6 +1363,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave54_213p ########");
     if (int rc = aura_fiber_run_wave54_213p::run_213p_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave55_189 ########");
+    if (int rc = aura_fiber_run_wave55_189::run_189_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);

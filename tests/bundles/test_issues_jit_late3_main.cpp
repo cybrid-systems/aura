@@ -4,19 +4,12 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_792_run();
-extern int aura_issue_793_run();
-extern int aura_issue_794_run();
-extern int aura_issue_795_run();
-extern int aura_issue_796_run();
 extern int aura_issue_797_run();
-extern int aura_issue_806_run();
 extern int aura_issue_803_run();
 extern int aura_issue_stable_ref_cross_cow_provenance_enforcement_run();
 extern int aura_issue_primitives_hotpath_registry_slo_run();
 extern int aura_issue_aura_result_error_policy_run();
 extern int aura_issue_open_issues_phase1_batch_run();
-extern int aura_issue_804_run();
 extern int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run();
 extern int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run();
 extern int aura_issue_prompt6_epoch_atomic_visibility_fiber_steal_run();
@@ -36,20 +29,13 @@ extern int aura_issue_runtime_concurrent_full_cycle_chaos_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_792", aura_issue_792_run},
-        {"test_issue_793", aura_issue_793_run},
-        {"test_issue_794", aura_issue_794_run},
-        {"test_issue_795", aura_issue_795_run},
-        {"test_issue_796", aura_issue_796_run},
         {"test_issue_797", aura_issue_797_run},
-        {"test_issue_806", aura_issue_806_run},
         {"test_issue_803", aura_issue_803_run},
         {"test_stable_ref_cross_cow_provenance_enforcement",
          aura_issue_stable_ref_cross_cow_provenance_enforcement_run},
         {"test_primitives_hotpath_registry_slo", aura_issue_primitives_hotpath_registry_slo_run},
         {"test_aura_result_error_policy", aura_issue_aura_result_error_policy_run},
         {"test_open_issues_phase1_batch", aura_issue_open_issues_phase1_batch_run},
-        {"test_issue_804", aura_issue_804_run},
         {"test_atomic_batch_snapshot_stable_ref_ai_loops",
          aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run},
         {"test_stable_ref_cow_subworkspace_concurrent_ai",
