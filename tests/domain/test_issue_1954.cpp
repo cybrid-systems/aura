@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1954.cpp — Wave 4 relocate from tests/test_issue_1954.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // @category: unit
 // @reason: Issue #1954 — refine #1929 make_closure_view lifetime +
 // walk_active_closures boundary mandate for hot-update Closure Bridge.

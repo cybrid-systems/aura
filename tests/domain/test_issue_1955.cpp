@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1955.cpp — Wave 4 relocate from tests/test_issue_1955.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // @category: unit
 // @reason: Issue #1955 — refine #1927 compact/truncate env_frames dual-epoch
 // + MutationBoundaryGuard consistency under panic rollback.

@@ -15,9 +15,9 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 | Location | Count | Notes |
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 635 | Legacy per-issue mains / bundle members |
-| `tests/test_*.cpp` (issue-oriented) | 263 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 9 | Preferred destination suites |
-| **Total scanned** | **907** | |
+| `tests/test_*.cpp` (issue-oriented) | 255 | Numbered root tests + `*_batch` drivers |
+| `tests/domain/test_*.cpp` | 18 | Preferred destination suites |
+| **Total scanned** | **908** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 69 | 14 | 5 | 88 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 52 | 1 | 229 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 50 | 3 | 229 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 26 | 1 | 77 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 12 | 5 | 0 | 17 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 59 | 18 | 1 | 78 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 36 | 16 | 0 | 52 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 36 | 13 | 3 | 52 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 32 | 11 | 0 | 43 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 201 | 104 | 1 | 306 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 201 | 101 | 5 | 307 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 17 | 0 | 17 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -197,8 +197,17 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/arena/test_compact_sweep_batch.cpp`
 - `tests/domain/test_domain_fiber_orchestration.cpp`
 - `tests/domain/test_domain_hygiene_dirty.cpp`
+- `tests/domain/test_domain_production_sweep.cpp`
 - `tests/domain/test_domain_typed_mutate.cpp`
 - `tests/domain/arena/test_gc_batch.cpp`
+- `tests/domain/test_issue_1943.cpp`
+- `tests/domain/test_issue_1950.cpp`
+- `tests/domain/test_issue_1951.cpp`
+- `tests/domain/test_issue_1952.cpp`
+- `tests/domain/test_issue_1953.cpp`
+- `tests/domain/test_issue_1954.cpp`
+- `tests/domain/test_issue_1955.cpp`
+- `tests/domain/test_issue_1956.cpp`
 - `tests/domain/test_obs_schema_matrix.cpp`
 
 ## Migration priority roadmap
@@ -342,11 +351,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (1)
+#### domain/ (3)
 
 - `tests/domain/test_domain_typed_mutate.cpp` (—) [domain_suite] — test_domain_typed_mutate.cpp — Domain suite: typed mutate / type-system gates
+- `tests/domain/test_issue_1950.cpp` (#1950) [small, domain_suite] — tests/domain/test_issue_1950.cpp — Wave 4 relocate from tests/test_issue_1950.cpp
+- `tests/domain/test_issue_1951.cpp` (#1951) [small, domain_suite] — tests/domain/test_issue_1951.cpp — Wave 4 relocate from tests/test_issue_1951.cpp
 
-#### root/ (52)
+#### root/ (50)
 
 - `tests/test_atomic_batch_dispatch_1899.cpp` (#1899) [batch_driver] — AC1: source has kAtomicBatchLocklessOps table + #1899 + strong docs
 - `tests/test_atomic_batch_metadata_1893.cpp` (#1893) [batch_driver] — rollback + audit. Consolidates deferred #1649 AC1 / #1680.
@@ -368,8 +379,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_guard_dtor_invariant_noexcept_1766.cpp` (#1766) — via throwing ensure_* probes. Contract: depth decremented first;
 - `tests/test_guard_hold_max_cas_1765.cpp` (#1765) — AC1: source cites #1765; compare_exchange_weak on us_max
 - `tests/test_ir_closure_provenance_1616.cpp` (#1616) — AC1: IRInstruction + FlatInstruction carry marker+provenance (wired)
-- `tests/test_issue_1950.cpp` (#1950) [small] — test_issue_1950.cpp — Issue #1950: MutationBoundaryGuard dtor batching
-- `tests/test_issue_1951.cpp` (#1951) [small] — test_issue_1951.cpp — Issue #1951: linear boundary closed-loop consolidation.
 - `tests/test_issues_819_829_batch.cpp` (#819) [batch_driver] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.
 - `tests/test_linear_batch.cpp` (—) [large, batch_driver] — test_linear_batch.cpp
 - `tests/test_marker_metadata_lock_1783.cpp` (#1783) — AC1: source has metadata_mtx_ + begin_metadata_mutation / reader lock
@@ -800,7 +809,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### root/ (16)
+#### domain/ (3)
+
+- `tests/domain/test_issue_1943.cpp` (#1943) [domain_suite] — tests/domain/test_issue_1943.cpp — Wave 4 relocate from tests/test_issue_1943.cpp
+- `tests/domain/test_issue_1952.cpp` (#1952) [small, domain_suite] — tests/domain/test_issue_1952.cpp — Wave 4 relocate from tests/test_issue_1952.cpp
+- `tests/domain/test_issue_1956.cpp` (#1956) [domain_suite] — tests/domain/test_issue_1956.cpp — Wave 4 relocate from tests/test_issue_1956.cpp
+
+#### root/ (13)
 
 - `tests/test_aot_hotupdate_typed_audit_1882.cpp` (#1882) — AC1: query:aot-hotupdate-audit-stats schema 1882 + wired flags
 - `tests/test_aot_incremental_reemit_1930.cpp` (#1930) — AC1: source cites #1930; stable map + emit path + return-success
@@ -808,9 +823,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_incremental_effectiveness_snapshot_fail_1854.cpp` (#1854) — AC1: source cites #1854; typed catch + make_void + metric
 - `tests/test_incremental_relower_batch.cpp` (—) [large, batch_driver] — test_incremental_relower_batch.cpp — batch driver for incremental_relower family.
 - `tests/test_incremental_type_batch.cpp` (—) [batch_driver] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
-- `tests/test_issue_1943.cpp` (#1943) — test_issue_1943.cpp — Issue #1943: Hot-Update MVP regression test.
-- `tests/test_issue_1952.cpp` (#1952) [small] — test_issue_1952.cpp — Issue #1952: AOT incremental re-emit pipeline +
-- `tests/test_issue_1956.cpp` (#1956) — AC1: HotUpdateRegistry class + query:hot-update-registry-stats schema-1956
 - `tests/test_jit_closure_cache_race_1707.cpp` (#1707) — pointers. AC covers struct contract + concurrent free/call stress.
 - `tests/test_jit_critical_coverage_1917.cpp` (#1917) — AC1: kCriticalOpcodeMask covers 13 hot-path opcodes; is_critical_opcode
 - `tests/test_jit_full_opcode_coverage_1658.cpp` (#1658) — AC1: strict_consistency_mode default ON
@@ -913,17 +925,21 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (306)
+### `observability` — Observability / metrics / query:*-stats (307)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (1)
+#### domain/ (5)
 
+- `tests/domain/test_domain_production_sweep.cpp` (—) [small, domain_suite] — test_domain_production_sweep.cpp — Domain suite: production sweep/hardening/safety
+- `tests/domain/test_issue_1953.cpp` (#1953) [domain_suite] — tests/domain/test_issue_1953.cpp — Wave 4 relocate from tests/test_issue_1953.cpp
+- `tests/domain/test_issue_1954.cpp` (#1954) [domain_suite] — tests/domain/test_issue_1954.cpp — Wave 4 relocate from tests/test_issue_1954.cpp
+- `tests/domain/test_issue_1955.cpp` (#1955) [domain_suite] — tests/domain/test_issue_1955.cpp — Wave 4 relocate from tests/test_issue_1955.cpp
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability query schemas
 
-#### root/ (104)
+#### root/ (101)
 
 - `tests/test_ai_closedloop_readiness_1593.cpp` (#1593) — AC1: schema 1593 + health-score / action / recommendation
 - `tests/test_aot_stats_null_metrics_1843.cpp` (#1843) [small] — AC1: source cites #1843; early !m branch; no m ? load pattern
@@ -959,9 +975,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_invalidate_consistency_1627.cpp` (#1627) — AC1: soft + hard both bump invalidate_pre_cascade_prepare_total
 - `tests/test_invalidations_stats_workspace_lock_1851.cpp` (#1851) — AC1: source cites #1851; shared_lock + workspace_mtx_
 - `tests/test_ir_metadata_interpreter_jit_closed_loop_403.cpp` (#403) — test_ir_metadata_interpreter_jit_closed_loop_403.cpp
-- `tests/test_issue_1953.cpp` (#1953) — AC1: schema-1953 / issue-1953 on query:mutation-systemic-guard-stats
-- `tests/test_issue_1954.cpp` (#1954) — AC1: schema-1954 / issue-1954 on query:closure-view-lifetime-stats
-- `tests/test_issue_1955.cpp` (#1955) — AC1: schema-1955 / issue-1955 on query:envframe-truncate-epoch-stats
 - `tests/test_let_poly_solve_delta_1617.cpp` (#1617) — AC1: mark_let_poly_dirty tracks roots + metrics
 - `tests/test_linear_boundary_consistency_1568.cpp` (#1568) — enforce_linear_boundary_consistency, force_drop, use-after-move
 - `tests/test_linear_live_closure_walk_1895.cpp` (#1895) — AC1: walk_active_closures visits registered closures

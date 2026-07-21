@@ -23,6 +23,9 @@ Migration inventory: [`../legacy_test_inventory.md`](../legacy_test_inventory.md
 | `test_domain_typed_mutate.cpp` | Typed mutate / type-system | Coercion, renarrow, ownership post-mutate |
 | `test_obs_schema_matrix.cpp` | Obs schema matrix | Standard total/hits/savings or field-list schemas |
 | `cases/obs_schema_cases.hpp` | Case table for obs matrix | **Default** for new stats surfaces |
+| `test_domain_production_sweep.cpp` | Production sweep/hardening/safety | Schema + field gates (Wave 2); root `test_production_*` EXCLUDE |
+| `cases/production_sweep_cases.hpp` | Case table for production suite | Folded production flag surfaces |
+| `test_issue_1943…1956.cpp` | Wave 4 relocate from root | Prefer theme rename on next edit; do not re-add under `tests/` root |
 | **`arena/`** | Arena / compaction pilot (#1959) | See [`arena/README.md`](arena/README.md) — reference theme dir |
 
 Harness for all of the above: `#include "test_harness.hpp"` only (#1960).

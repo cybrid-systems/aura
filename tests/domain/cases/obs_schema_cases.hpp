@@ -30,7 +30,8 @@ inline constexpr StandardCase kStandardCases[] = {
     {836, "query:fiber-epoch-type-safety-stats", "fiber_epoch_type"},
     {837, "query:sv-verification-feedback-mutate-stats", "sv_feedback_mutate"},
     {838, "query:seva-longrunning-harness-v2-stats", "seva_harness_v2"},
-    {839, "query:typed-mutation-audit-stats", "typed_mut_audit"},
+    // Lineage #839 / #1614 / #1894 — runtime schema id is now 1894.
+    {1894, "query:typed-mutation-audit-stats", "typed_mut_audit"},
     {840, "query:stable-ref-full-provenance-v2-stats", "stable_ref_full_v2"},
     {842, "query:longrunning-ai-infra-stats", "longrun_ai_infra"},
     {843, "query:ai-native-meta-extension-stats", "ai_native_meta"},
@@ -100,7 +101,13 @@ inline constexpr const char* kFields_827[] = {"schema", "contracts-active"};
 inline constexpr const char* kFields_828[] = {"schema", "enforcement-active"};
 inline constexpr const char* kFields_829[] = {"schema", "live-defrag-active"};
 
+inline constexpr const char* kFields_w1_955[] = {"schema", "active", "session-unregister-wired", "http-async-unified", "defuse-version-prod-api", "eval-on-current-guard", "ir-cache-max-size", "autofix-unbound-safe", "gcsweep-shared-layout", "lexer-nul-escape"};
+inline constexpr const char* kFields_w1_923[] = {"schema", "active", "issue-940", "registry-domain-peels", "self-evo-safety", "list-iterative-sorts"};
+
 inline constexpr FieldListCase kFieldListCases[] = {
+    {955, "query:bugfix-941-967-stats", kFields_w1_955, sizeof(kFields_w1_955) / sizeof(kFields_w1_955[0])}, // Wave1 fold
+    {923, "query:stdlib-production-review-stats", kFields_w1_923, sizeof(kFields_w1_923) / sizeof(kFields_w1_923[0])}, // Wave1 fold
+
     {805, "query:primitives-hotpath-registry-stats", kFields_805, sizeof(kFields_805) / sizeof(kFields_805[0])},
     {809, "query:error-handling-policy-stats", kFields_809, sizeof(kFields_809) / sizeof(kFields_809[0])},
     {810, "query:fiber-scheduler-init-stats", kFields_810, sizeof(kFields_810) / sizeof(kFields_810[0])},

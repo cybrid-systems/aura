@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1951.cpp — Wave 4 relocate from tests/test_issue_1951.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // test_issue_1951.cpp — Issue #1951: linear boundary closed-loop consolidation.
 //
 // AC check (Issue #1951):

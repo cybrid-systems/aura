@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1953.cpp — Wave 4 relocate from tests/test_issue_1953.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // @category: unit
 // @reason: Issue #1953 — refine #1931 systemic MutationBoundaryGuard
 // enforcement + dtor ≤6 atomics for hot-update hot-path.

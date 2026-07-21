@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1952.cpp — Wave 4 relocate from tests/test_issue_1952.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // test_issue_1952.cpp — Issue #1952: AOT incremental re-emit pipeline +
 // stable DefineId/func_id persistence (MVP scope per Anqi comment).
 //

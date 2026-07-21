@@ -1,3 +1,5 @@
+// tests/domain/test_issue_1956.cpp — Wave 4 relocate from tests/test_issue_1956.cpp
+// Prefer domain/; do not re-add under tests/ root. (#root_test_classification)
 // @category: unit
 // @reason: Issue #1956 — HotUpdateRegistry unified coordination center
 // for re-emit / region / epoch / dirty listeners + metrics.
