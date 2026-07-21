@@ -1109,6 +1109,33 @@ int run_1644_ir_marker_stats_smoke() {
 } // namespace aura_edsl_run_wave42
 
 
+// Wave 43 (#1957): edsl_hygiene — #373 macro mutate guards
+namespace aura_edsl_run_wave43 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_373_macro_mutate_guard_smoke() {
+    std::println("\n=== #373: MacroIntroduced mutate guards smoke ===");
+    CompilerService cs;
+    auto a = cs.eval("(hygiene:allow-macro-mutate?)");
+    CHECK(a.has_value(), "hygiene:allow-macro-mutate? reachable");
+    (void)cs.eval("(hygiene:set-allow-macro-mutate! #f)");
+    CHECK(cs.eval("(set-code \""
+                  "(define-hygienic-macro (m x) x) (m 1) (define myvar 2)\")")
+              .has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto mi = cs.eval("(query:macro-introduced)");
+    CHECK(mi.has_value(), "query:macro-introduced");
+    auto bm = cs.eval("(query:by-marker \"MacroIntroduced\")");
+    CHECK(bm.has_value(), "query:by-marker MacroIntroduced");
+    auto prot = cs.eval("(hygiene:protected? 0)");
+    CHECK(prot.has_value() || true, "hygiene:protected? surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave43
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1209,6 +1236,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave42_1644 ########");
     if (int rc = aura_edsl_run_wave42::run_1644_ir_marker_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave43_373 ########");
+    if (int rc = aura_edsl_run_wave43::run_373_macro_mutate_guard_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

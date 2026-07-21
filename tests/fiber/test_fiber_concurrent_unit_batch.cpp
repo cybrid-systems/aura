@@ -802,6 +802,28 @@ int run_353_panic_checkpoint_smoke() {
 } // namespace aura_fiber_run_wave42_353
 
 
+// Wave 43 (#1957): fiber_orch — #384 bidirectional inference soft (identity lambda)
+namespace aura_fiber_run_wave43_384 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_384_bidirectional_inference_smoke() {
+    std::println("\n=== #384: bidirectional inference identity application smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("((lambda (x) x) 42)").has_value(), "identity apply");
+    auto r = cs.eval("((lambda (x) (* x 2)) 21)");
+    CHECK(r && is_int(*r) && as_int(*r) == 42, "(* 21 2) → 42");
+    auto tc = cs.eval("(typecheck-current)");
+    // may need set-code first
+    CHECK(cs.eval("(set-code \"(define id (lambda (x) x))\")").has_value(), "set-code");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck-current");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave43_384
+
+
 int main() {
 
 
@@ -903,6 +925,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave42_353 ########");
     if (int rc = aura_fiber_run_wave42_353::run_353_panic_checkpoint_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave43_384 ########");
+    if (int rc = aura_fiber_run_wave43_384::run_384_bidirectional_inference_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

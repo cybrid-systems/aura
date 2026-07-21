@@ -538,6 +538,23 @@ int run_358_dirty_aot_filter_smoke() {
 } // namespace aura_mut_run_wave42_358
 
 
+// Wave 43 (#1957): jit_incremental — #1905 aot-hot-update-stats
+namespace aura_mut_run_wave43_1905 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1905_aot_hot_update_stats_smoke() {
+    std::println("\n=== #1905: query:aot-hot-update-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:aot-hot-update-stats\")");
+    CHECK(r.has_value(), "query:aot-hot-update-stats reachable");
+    auto aot = cs.eval("(engine:metrics \"compile:aot-stats\")");
+    CHECK(aot.has_value(), "compile:aot-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave43_1905
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -634,6 +651,13 @@ int main() {
     std::println("\n######## run_358_dirty_aot_filter_smoke ########");
     if (int rc = aura_mut_run_wave42_358::run_358_dirty_aot_filter_smoke(); rc != 0) {
         std::println("run_358 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1905_aot_hot_update_stats_smoke ########");
+    if (int rc = aura_mut_run_wave43_1905::run_1905_aot_hot_update_stats_smoke(); rc != 0) {
+        std::println("run_1905 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");
