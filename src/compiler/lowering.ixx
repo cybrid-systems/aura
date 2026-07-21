@@ -446,6 +446,6 @@ export struct LowerSoAEmitSnapshot {
 };
 
 export const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 } // namespace aura::compiler

@@ -1442,7 +1442,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     groups[metrics_group_for_field(#name)].emplace_back(                                           \
         #name, make_int(static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed))));
 #include "compiler_metrics_fields.inc"
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
             return groups;
         };
 

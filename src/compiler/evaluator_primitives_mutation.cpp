@@ -15,6 +15,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -248,7 +249,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
         std::uint64_t total = log.size();
         std::uint64_t committed = 0;
         std::uint64_t rolled_back = 0;
-        std::unordered_map<std::string, std::uint64_t> by_op;
+        std::unordered_map<std::string, std::uint64_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            by_op;
         std::uint64_t last_id = 0;
         std::string last_op;
         aura::ast::NodeId last_target = aura::ast::NULL_NODE;

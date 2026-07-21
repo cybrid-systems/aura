@@ -1927,7 +1927,7 @@ export std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::as
 // apply_status_updates() writes invariant_status back to the log
 // (visit_mutation takes const MutationRecord& per the concept).
 export class PostMutationInvariantVisitor {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 public:
     PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
                                  void* metrics = nullptr)

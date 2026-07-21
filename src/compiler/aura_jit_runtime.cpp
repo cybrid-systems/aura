@@ -69,6 +69,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include "value_tags.h"      // Issue #181 Cycle 2: v2 string encoding helpers
 #include "hash_meta.h"       // Issue #908: kEmptySlot
 #include "aura_jit_bridge.h" // Issue #1508: dual-check helpers
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 // Issue #1359: 1MB default (was 64MB), graceful OOM, env override.
@@ -990,7 +991,9 @@ static std::atomic<std::uint64_t> g_jit_fns_limit_warnings{0};
 // current module, the runtime falls back to looking up by name.
 // Keyed by the function's stable name (assigned by cache_define as
 // the user's define name, e.g. "fn-b#0").
-static std::unordered_map<std::string, JitFnEntry> g_jit_fns_by_name;
+static std::unordered_map<std::string, JitFnEntry, aura::core::TransparentStringHash,
+                          std::equal_to<>>
+    g_jit_fns_by_name;
 
 static void register_fn_entry(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                               int32_t local_count, int32_t arg_count, int32_t env_count) {

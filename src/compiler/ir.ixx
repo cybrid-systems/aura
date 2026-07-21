@@ -694,7 +694,9 @@ export struct IRModule {
     std::vector<std::string> string_pool; // string constants (for ConstString opcode)
 
     // Deduplicated string pool (Phase 4e: JIT hash string keys)
-    std::unordered_map<std::string, std::uint32_t> string_map_;
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        string_map_;
 
     std::uint32_t add_string(std::string s) {
         auto it = string_map_.find(s);
@@ -883,6 +885,7 @@ export struct IRStatsSnapshot {
 };
 
 export inline IRStatsSnapshot compute_ir_stats(const IRModule& mod) {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
     IRStatsSnapshot s;
     s.total_functions = mod.functions.size();
     for (const auto& func : mod.functions) {

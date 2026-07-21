@@ -153,6 +153,7 @@ export struct BitVecType {
 
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     TypeRegistry();
     ~TypeRegistry();
@@ -338,7 +339,8 @@ private:
     };
     std::vector<Entry*> entries_; // index → stable pointer into arena_
     TypeEntryArena arena_;        // bump-allocates Entry objects
-    std::unordered_map<std::string, TypeId> name_to_id_;
+    std::unordered_map<std::string, TypeId, aura::core::TransparentStringHash, std::equal_to<>>
+        name_to_id_;
     uint32_t next_generation_ = 1;
 
     // Issue #1431: TypeRegistry thread-safety. InferenceEngine is

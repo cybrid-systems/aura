@@ -422,7 +422,9 @@ static void* g_aot_emit_userdata = nullptr;
 // for cross-workspace COW (#1943 deferred); this map is the single-workspace
 // zero-downtime contract.
 static std::mutex g_stable_func_id_mtx;
-static std::unordered_map<std::string, std::uint32_t> g_name_to_stable_func_id;
+static std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                          std::equal_to<>>
+    g_name_to_stable_func_id;
 static std::atomic<std::uint32_t> g_next_stable_func_id{1};
 
 // Returns stable func_id for name. out_preserved: 1 if map already held
@@ -571,6 +573,7 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 // rejected — a binary from a future mutation epoch is invalid by
 // definition.
 #include <dlfcn.h>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace {
 

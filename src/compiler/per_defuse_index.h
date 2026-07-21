@@ -31,7 +31,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"                     // FNV constants (#901)
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #411 fu1 fu4: NodeId type alias (mirrors
 // `export using NodeId = std::uint32_t` in
@@ -236,7 +237,9 @@ public:
 private:
     // Issue #1846: guards per_index_ map + vectors.
     TrackerSpinLock lock_;
-    std::unordered_map<std::string, std::vector<Caller>> per_index_;
+    std::unordered_map<std::string, std::vector<Caller>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        per_index_;
 };
 
 } // namespace aura::compiler::per_defuse_index

@@ -18,6 +18,7 @@ import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
 import aura.diag;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -907,8 +908,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
         // 注入 declare-type 声明的自定义类型签名
         if (!ev.declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string> sig_map;
-            std::unordered_map<std::string, std::string> mod_src_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                sig_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                mod_src_map;
             for (auto& [name, decl] : ev.declared_type_sigs_) {
                 sig_map[name] = decl.type_str;
                 if (!decl.module_file.empty())

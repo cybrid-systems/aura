@@ -40,6 +40,7 @@ export module aura.compiler.ir_cache_pure;
 import aura.core.ast;
 
 export namespace aura::compiler {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // ── should_relower ────────────────────────────────────────
 // Issue #126: pure decision function extracted from
@@ -98,7 +99,8 @@ ImpactScope compute_impact_scope(
     const aura::ast::FlatAST& flat, aura::ast::NodeId root,
     const std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>&
         source_to_ir_map,
-    const std::unordered_map<std::string, std::size_t>& ir_cache_index) {
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>& ir_cache_index) {
     ImpactScope result;
     if (root == aura::ast::NULL_NODE || root >= flat.size()) {
         return result;

@@ -28,6 +28,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::serve {
 
@@ -600,7 +601,9 @@ void run_serve_async(int num_workers) {
     // Created before any sessions so we can inject it into each one.
     void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
 
-    std::unordered_map<std::string, std::unique_ptr<Session>> sessions;
+    std::unordered_map<std::string, std::unique_ptr<Session>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        sessions;
     std::string active_session = "default";
     {
         auto& sess = sessions["default"];

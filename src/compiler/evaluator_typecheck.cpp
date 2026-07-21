@@ -16,7 +16,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.value;
 import aura.diag;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::compiler {
 

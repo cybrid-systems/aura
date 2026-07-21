@@ -10,6 +10,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -102,43 +103,45 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             std::string fix_data;
             std::string explanation;
         };
-        static const std::unordered_map<std::string, FixEntry> unbound_fixes = {
-            {"for-each",
-             {"missing-require", "add-require", "std/list",
-              "Add (require \"std/list\" all:) to use for-each"}},
-            {"map",
-             {"missing-require", "add-require", "std/list",
-              "Add (require \"std/list\" all:) to use map"}},
-            {"filter",
-             {"missing-require", "add-require", "std/list",
-              "Add (require \"std/list\" all:) to use filter"}},
-            {"foldl",
-             {"missing-require", "add-require", "std/list",
-              "Add (require \"std/list\" all:) to use foldl"}},
-            {"make-hash",
-             {"missing-require", "add-require", "std/hash",
-              "Add (require \"std/hash\" all:) to use make-hash"}},
-            {"hash-ref",
-             {"missing-require", "add-require", "std/hash",
-              "Add (require \"std/hash\" all:) to use hash-ref"}},
-            {"rule:define",
-             {"missing-require", "add-require", "std/rule",
-              "Add (require \"std/rule\" all:) to use rule:define"}},
-            // Issue #561: synthesize:fill + synthesize:pipeline
-            // lint hint references removed — these were dead
-            // hints pointing to a non-existent std/pipeline module.
-            // Decision documented in
-            // docs/design/synthesize-namespace-decision.md
-            // (synthesize:fill is a real primitive in agent.cpp
-            // that wraps LLM calls; synthesize:pipeline is a
-            // docs/AI-strategy concept, not an actual primitive).
-            {"define-type",
-             {"missing-require", "add-require", "std/data",
-              "Add (require \"std/data\" all:) to use define-type"}},
-            {"c-func",
-             {"missing-require", "add-require", "std/ffi",
-              "Add (require \"std/ffi\" all:) to use c-func"}},
-        };
+        static const std::unordered_map<std::string, FixEntry, aura::core::TransparentStringHash,
+                                        std::equal_to<>>
+            unbound_fixes = {
+                {"for-each",
+                 {"missing-require", "add-require", "std/list",
+                  "Add (require \"std/list\" all:) to use for-each"}},
+                {"map",
+                 {"missing-require", "add-require", "std/list",
+                  "Add (require \"std/list\" all:) to use map"}},
+                {"filter",
+                 {"missing-require", "add-require", "std/list",
+                  "Add (require \"std/list\" all:) to use filter"}},
+                {"foldl",
+                 {"missing-require", "add-require", "std/list",
+                  "Add (require \"std/list\" all:) to use foldl"}},
+                {"make-hash",
+                 {"missing-require", "add-require", "std/hash",
+                  "Add (require \"std/hash\" all:) to use make-hash"}},
+                {"hash-ref",
+                 {"missing-require", "add-require", "std/hash",
+                  "Add (require \"std/hash\" all:) to use hash-ref"}},
+                {"rule:define",
+                 {"missing-require", "add-require", "std/rule",
+                  "Add (require \"std/rule\" all:) to use rule:define"}},
+                // Issue #561: synthesize:fill + synthesize:pipeline
+                // lint hint references removed — these were dead
+                // hints pointing to a non-existent std/pipeline module.
+                // Decision documented in
+                // docs/design/synthesize-namespace-decision.md
+                // (synthesize:fill is a real primitive in agent.cpp
+                // that wraps LLM calls; synthesize:pipeline is a
+                // docs/AI-strategy concept, not an actual primitive).
+                {"define-type",
+                 {"missing-require", "add-require", "std/data",
+                  "Add (require \"std/data\" all:) to use define-type"}},
+                {"c-func",
+                 {"missing-require", "add-require", "std/ffi",
+                  "Add (require \"std/ffi\" all:) to use c-func"}},
+            };
 
         // Detect "unbound variable: X" and match against known symbols
         std::string prefix = "unbound variable: ";

@@ -17,6 +17,7 @@ module;
 module aura.core.mutation;
 
 import std;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::ast {
 namespace mutation {
@@ -26,8 +27,12 @@ namespace mutation {
     // module's purview.
     // Issue #1296 (P0): concurrent register + lookup from JIT workers /
     // multi-fiber is a data race on bare unordered_map. Guard both paths.
-    std::unordered_map<std::string, std::string>& custom_predicate_registry() {
-        static std::unordered_map<std::string, std::string> m;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>&
+    custom_predicate_registry() {
+        static std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                  std::equal_to<>>
+            m;
         return m;
     }
 

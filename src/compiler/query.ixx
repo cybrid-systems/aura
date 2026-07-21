@@ -356,7 +356,9 @@ public:
                                   std::string_view replace_sexpr);
 
 private:
-    std::unordered_map<std::string, ReplaceTemplate> parse_cache_;
+    std::unordered_map<std::string, ReplaceTemplate, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        parse_cache_;
     aura::ast::NodeId build_node(const ReplaceTemplate& tmpl);
 
     aura::ast::FlatAST& ast_;
@@ -565,6 +567,7 @@ inline TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::
 //   (+ x x) → (* x 2)   [when both children are the same Variable]
 //
 export class AutoFixEngine {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     AutoFixEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
         : ast_(ast)

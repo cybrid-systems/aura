@@ -52,20 +52,23 @@ export struct MacroExpansionDef {
 
 // Clone a FlatAST subtree with optional param substitution and
 // hygienic renaming (name_map). hyg_ctr is per-call (instance-local).
-export aura::ast::NodeId
-clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-                 aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
-                 aura::ast::NodeId body_id,
-                 const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr,
-                 std::unordered_map<std::string, std::string>* name_map = nullptr,
-                 aura::ast::SyntaxMarker cloned_marker = aura::ast::SyntaxMarker::User);
+export aura::ast::NodeId clone_macro_body(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst = nullptr,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map = nullptr,
+    aura::ast::SyntaxMarker cloned_marker = aura::ast::SyntaxMarker::User);
 
-export aura::ast::NodeId
-expand_inner_macros(aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
-                    int depth, int max_depth,
-                    const std::unordered_map<std::string, MacroExpansionDef>& macros);
+export aura::ast::NodeId expand_inner_macros(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root, int depth,
+    int max_depth,
+    const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                             std::equal_to<>>& macros);
 
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
                                           aura::ast::NodeId root, int max_passes = 32);
 
 } // namespace aura::compiler::macro_exp

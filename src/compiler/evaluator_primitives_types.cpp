@@ -16,6 +16,7 @@ import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
 import aura.diag;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -138,7 +139,9 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         }
 
         std::vector<std::string> fn_names;
-        std::unordered_map<std::string, aura::ast::NodeId> define_map;
+        std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            define_map;
         for (aura::ast::NodeId nid = 0; nid < flat.size(); ++nid) {
             auto nv = flat.get(nid);
             if (nv.tag == aura::ast::NodeTag::Define) {

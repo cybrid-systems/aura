@@ -1269,6 +1269,7 @@ export struct ArenaAutoCompactPolicyStats {
 // or compilation unit. Enables fine-grained reset and memory reporting.
 //
 export class ArenaGroup {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     // Issue #187: compaction policy. When the fragmentation ratio
     // (capacity - used) / capacity exceeds this threshold (0.0-1.0),
@@ -1628,7 +1629,9 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, std::unique_ptr<ASTArena>> arenas_;
+    std::unordered_map<std::string, std::unique_ptr<ASTArena>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        arenas_;
     double compact_threshold_ = 0.50; // Issue #187: default 50% fragmentation triggers compact
     // Issue #1554: default quota owner for module arenas.
     void* default_owner_ = nullptr;
@@ -1650,7 +1653,8 @@ private:
     // 0.95] so we never compact on every call (which
     // would defeat the point) and never miss the base
     // threshold (which would defeat the safety net).
-    std::unordered_map<std::string, double> savings_ema_;
+    std::unordered_map<std::string, double, aura::core::TransparentStringHash, std::equal_to<>>
+        savings_ema_;
     static constexpr double kEmaAlpha = 0.3;
     static constexpr double kEmaGain = 0.0001; // 0.01% per saved byte per module
     static constexpr double kMinThreshold = 0.05;
