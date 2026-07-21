@@ -108,7 +108,6 @@ ALLOWED_ROOT_OTHER = frozenset(
         "root_test_classification.md",  # scripts/classify_root_tests.py
         "test-binding-allowlist.txt",
         "test_harness.hpp",
-        "issue_test_harness.hpp",  # deprecated shim → test_harness.hpp
         "nodeview_wire.hh",
         "test_issue_178_bridge.h",
         "runtime_test_harness.c",
