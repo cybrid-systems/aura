@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 587 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 586 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **594** | |
+| **Total scanned** | **593** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 57 | 0 | 0 | 57 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 185 | 0 | 1 | 186 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 184 | 0 | 1 | 185 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 536 | Integration path via `CompilerService` / eval |
+| `CompilerService` | 535 | Integration path via `CompilerService` / eval |
 | `test_harness` | 341 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 152 | `aura_issue_*_run()` entry for issue bundles |
+| `bundle_run_fn` | 151 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
 | `own_main` | 50 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 379
+- `integration`: 378
 - `unknown`: 115
 - `unit`: 84
 - `issue_specific`: 7
@@ -82,10 +82,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 380
-- `aura.compiler.service` — 356
+- `aura.compiler.value` — 379
+- `aura.compiler.service` — 355
 - `std` — 332
-- `aura.compiler.evaluator` — 328
+- `aura.compiler.evaluator` — 327
 - `aura.core.ast` — 229
 - `aura.core.arena` — 127
 - `aura.core.type` — 118
@@ -679,7 +679,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (186)
+### `observability` — Observability / metrics / query:*-stats (185)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -689,7 +689,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (185)
+#### issues/ (184)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -857,7 +857,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_690.cpp` (#690) — Issue #690 constraint typed-mutation reverify + blame
 - `tests/issues/test_issue_691.cpp` (#691) — Issue #691 CoercionMap + NarrowingRecord provenance linkage
 - `tests/issues/test_issue_692.cpp` (#692) — Issue #692 ADT exhaustiveness + pattern provenance typed-mutation
-- `tests/issues/test_issue_693.cpp` (#693) — Issue #693 Hardware backend SV commercial closed-loop
 - `tests/issues/test_issue_694.cpp` (#694) — Issue #694 SVA structured NodeTags + mutate + IR mapping
 - `tests/issues/test_issue_697.cpp` (#697) — Issue #697 Declarative Primitives Extension Kit + AI Agent EDA integration
 - `tests/issues/test_issue_698.cpp` (#698) — Issue #698 Hardware backend commercial interop closed-loop

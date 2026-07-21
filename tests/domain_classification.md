@@ -442,7 +442,6 @@
 - `test_issue_689.cpp`
 - `test_issue_690.cpp`
 - `test_issue_691.cpp`
-- `test_issue_693.cpp`
 - `test_issue_694.cpp`
 - `test_issue_695.cpp`
 - `test_issue_697.cpp`
