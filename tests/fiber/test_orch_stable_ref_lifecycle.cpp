@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1879 — agent_spawn / join / fiber resume-steal force
+// Issue #1879 (#1978 renamed): issue# moved from filename to header.
 // StableNodeRef provenance validation + auto pin/refresh + linear probe.
 //
 //   AC1: source cites #1879; orch spawn body exit + join provenance

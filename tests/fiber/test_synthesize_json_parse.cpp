@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1715 — synthesize:define must parse LLM JSON via
+// Issue #1715 (#1978 renamed): issue# moved from filename to header.
 // json-parse structure walk (not hand-rolled find("content") scan).
 //
 //   AC1: source uses json-parse / hash-ref; no find("content") scanner

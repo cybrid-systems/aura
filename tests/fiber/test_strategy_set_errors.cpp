@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1714 — strategy:set-strategy must return tagged merr
+// Issue #1714 (#1978 renamed): issue# moved from filename to header.
 // on bad args / unknown name (not silent make_void).
 //
 //   AC1: unknown strategy name → pair merr (car "unknown-strategy")

@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1712 — auto-evolve-tick must not fprintf [DBG tick] to
+// Issue #1712 (#1978 renamed): issue# moved from filename to header.
 // stderr on every production tick.
 //
 //   AC1: source has no [DBG tick] / detect.val fprintf in tick body

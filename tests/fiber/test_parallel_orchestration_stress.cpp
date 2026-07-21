@@ -1,5 +1,6 @@
 // @category: integration
 // @reason: Issue #1602 — E2E stress for concurrent mutate + parallel agent
+// Issue #1602 (#1978 renamed): issue# moved from filename to header.
 // + Fiber::join + GC compact/steal paths (refine #1584–#1588 / #1595 / #1597).
 //
 //   AC1: suite/parallel_orchestration_stress.aura companion (C++ metrics)

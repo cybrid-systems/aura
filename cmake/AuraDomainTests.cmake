@@ -295,9 +295,9 @@ aura_issue_test_link_llvm_jit(test_production_sweep_1177_1201)
 set_target_properties(test_production_sweep_1177_1201 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1202–#1228: orchestration / heal / memory / observability Phase 1
-aura_add_issue_test(test_production_sweep_1202_1228)
-aura_issue_test_link_llvm_jit(test_production_sweep_1202_1228)
-set_target_properties(test_production_sweep_1202_1228 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1
 aura_add_issue_test(test_production_sweep_1229_1240)

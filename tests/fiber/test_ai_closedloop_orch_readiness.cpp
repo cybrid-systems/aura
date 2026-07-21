@@ -1,5 +1,6 @@
 // @category: integration
 // @reason: Issue #1597 — fold Fiber::join / MultiFiberMailbox / parallel_orch
+// Issue #1597 (#1978 renamed): issue# moved from filename to header.
 // metrics into query:ai-closedloop-readiness-stats (schema 1597).
 //
 //   AC1: schema 1597 + orch-health-score + join/mailbox/parallel breakdown

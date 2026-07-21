@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1720 — intend/strategy vectors need shared_mutex guards
+// Issue #1720 (#1978 renamed): issue# moved from filename to header.
 // under concurrent fiber access.
 //
 //   AC1: Evaluator declares strategies_mtx_/intend_history_mtx_/timeline_mtx_

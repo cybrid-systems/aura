@@ -4970,8 +4970,8 @@ aura_add_issue_test(test_shape_linear_collaborative_pass_1661)
 aura_issue_test_link_llvm_jit(test_shape_linear_collaborative_pass_1661)
 
 # Issue #1663: set_arena owner atomic vs concurrent allocate_raw.
-aura_add_issue_test(test_set_arena_atomic_owner_1663)
-aura_issue_test_link_llvm_jit(test_set_arena_atomic_owner_1663)
+aura_add_issue_test(test_set_arena_atomic_owner)
+aura_issue_test_link_llvm_jit(test_set_arena_atomic_owner)
 # Issue #1664: closures→env dual-lock order (probe vs scan).
 aura_add_issue_test(test_lock_order_closures_env_1664)
 aura_issue_test_link_llvm_jit(test_lock_order_closures_env_1664)
@@ -5056,50 +5056,50 @@ aura_issue_test_link_llvm_jit(test_pair_unchecked_safety_1710)
 aura_add_issue_test(test_prim_call_count_clamp_1711)
 aura_issue_test_link_llvm_jit(test_prim_call_count_clamp_1711)
 # Issue #1712: auto-evolve-tick has no production [DBG tick] fprintf.
-aura_add_issue_test(test_auto_evolve_tick_no_dbg_1712)
-aura_issue_test_link_llvm_jit(test_auto_evolve_tick_no_dbg_1712)
+aura_add_issue_test(test_auto_evolve_tick_no_dbg)
+aura_issue_test_link_llvm_jit(test_auto_evolve_tick_no_dbg)
 # Issue #1713: auto-evolve-tick/once validate ClosureId live before apply.
 aura_add_issue_test(test_auto_evolve_closure_live_1713)
 aura_issue_test_link_llvm_jit(test_auto_evolve_closure_live_1713)
 # Issue #1714: strategy:set-strategy tagged merr on invalid name/args.
-aura_add_issue_test(test_strategy_set_errors_1714)
-aura_issue_test_link_llvm_jit(test_strategy_set_errors_1714)
+aura_add_issue_test(test_strategy_set_errors)
+aura_issue_test_link_llvm_jit(test_strategy_set_errors)
 # Issue #1715: synthesize:define JSON via json-parse structure walk.
-aura_add_issue_test(test_synthesize_json_parse_1715)
-aura_issue_test_link_llvm_jit(test_synthesize_json_parse_1715)
+aura_add_issue_test(test_synthesize_json_parse)
+aura_issue_test_link_llvm_jit(test_synthesize_json_parse)
 # Issue #1716: synthesize:optimize thread_local mt19937 (not std::rand).
-aura_add_issue_test(test_synthesize_optimize_prng_1716)
-aura_issue_test_link_llvm_jit(test_synthesize_optimize_prng_1716)
+aura_add_issue_test(test_synthesize_optimize_prng)
+aura_issue_test_link_llvm_jit(test_synthesize_optimize_prng)
 # Issue #1717: WorkspaceSwapGuard RAII for optimize child workspace.
 aura_add_issue_test(test_workspace_swap_guard_1717)
 aura_issue_test_link_llvm_jit(test_workspace_swap_guard_1717)
 # Issue #1718: try_probe reuses fixed string_heap slot (no unbounded push).
-aura_add_issue_test(test_try_probe_heap_slot_1718)
-aura_issue_test_link_llvm_jit(test_try_probe_heap_slot_1718)
+aura_add_issue_test(test_try_probe_heap_slot)
+aura_issue_test_link_llvm_jit(test_try_probe_heap_slot)
 # Issue #1719: intend apply_closure refuses freed ClosureIds.
-aura_add_issue_test(test_intend_closure_live_1719)
-aura_issue_test_link_llvm_jit(test_intend_closure_live_1719)
+aura_add_issue_test(test_intend_closure_live)
+aura_issue_test_link_llvm_jit(test_intend_closure_live)
 # Issue #1720: strategy/intend/timeline shared_mutex concurrent access.
-aura_add_issue_test(test_strategy_intend_mutex_1720)
-aura_issue_test_link_llvm_jit(test_strategy_intend_mutex_1720)
+aura_add_issue_test(test_strategy_intend_mutex)
+aura_issue_test_link_llvm_jit(test_strategy_intend_mutex)
 # Issue #1721: intend reuses fixed string_heap slots for intermediates.
-aura_add_issue_test(test_intend_heap_slots_1721)
-aura_issue_test_link_llvm_jit(test_intend_heap_slots_1721)
+aura_add_issue_test(test_intend_heap_slots)
+aura_issue_test_link_llvm_jit(test_intend_heap_slots)
 # Issue #1722: strategies_mtx_ covers all strategy primitive R/W sites.
-aura_add_issue_test(test_strategies_mtx_1722)
-aura_issue_test_link_llvm_jit(test_strategies_mtx_1722)
+aura_add_issue_test(test_strategies_mtx)
+aura_issue_test_link_llvm_jit(test_strategies_mtx)
 # Issue #1723: paren-aware find_after in evolve-strategy analytics parse.
-aura_add_issue_test(test_find_after_parens_1723)
-aura_issue_test_link_llvm_jit(test_find_after_parens_1723)
+aura_add_issue_test(test_find_after_parens)
+aura_issue_test_link_llvm_jit(test_find_after_parens)
 # Issue #1724: evolve-strategy analytics stod/stoi parse metric (#1669).
-aura_add_issue_test(test_evolve_analytics_parse_1724)
-aura_issue_test_link_llvm_jit(test_evolve_analytics_parse_1724)
+aura_add_issue_test(test_evolve_analytics_parse)
+aura_issue_test_link_llvm_jit(test_evolve_analytics_parse)
 # Issue #1725: top-errors stoi parse metric (#1724 sibling).
-aura_add_issue_test(test_top_errors_stoi_1725)
-aura_issue_test_link_llvm_jit(test_top_errors_stoi_1725)
+aura_add_issue_test(test_top_errors_stoi)
+aura_issue_test_link_llvm_jit(test_top_errors_stoi)
 # Issue #1726: evolve-strategy name-collision loop must be capped.
-aura_add_issue_test(test_evolve_name_collision_1726)
-aura_issue_test_link_llvm_jit(test_evolve_name_collision_1726)
+aura_add_issue_test(test_evolve_name_collision)
+aura_issue_test_link_llvm_jit(test_evolve_name_collision)
 # Issue #1727: clear panic checkpoint on cross-evaluator discriminator skip.
 aura_add_issue_test(test_panic_checkpoint_clear_1727)
 aura_issue_test_link_llvm_jit(test_panic_checkpoint_clear_1727)
@@ -5110,8 +5110,8 @@ aura_issue_test_link_llvm_jit(test_commit_panic_bridge_epoch_1728)
 aura_add_issue_test(test_set_workspace_flat_1729)
 aura_issue_test_link_llvm_jit(test_set_workspace_flat_1729)
 # Issue #1730: current_agent_fingerprint_ is atomic under concurrent fibers.
-aura_add_issue_test(test_agent_fingerprint_atomic_1730)
-aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic_1730)
+aura_add_issue_test(test_agent_fingerprint_atomic)
+aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic)
 # Issue #1731: linear_post_mutate_enforce(NULL_ENV_ID) observability.
 
 
@@ -5286,14 +5286,14 @@ aura_issue_test_link_llvm_jit(test_provenance_blame_hygiene_1877)
 aura_add_issue_test(test_atomic_batch_tenant_1878)
 aura_issue_test_link_llvm_jit(test_atomic_batch_tenant_1878)
 # Issue #1879: orch spawn/join/steal StableNodeRef provenance mandate.
-aura_add_issue_test(test_orch_stable_ref_lifecycle_1879)
-aura_issue_test_link_llvm_jit(test_orch_stable_ref_lifecycle_1879)
+aura_add_issue_test(test_orch_stable_ref_lifecycle)
+aura_issue_test_link_llvm_jit(test_orch_stable_ref_lifecycle)
 # Issue #1880: ResourceQuota + try_acquire on agent_spawn / parallel_orch.
-aura_add_issue_test(test_orch_quota_integration_1880)
-aura_issue_test_link_llvm_jit(test_orch_quota_integration_1880)
+aura_add_issue_test(test_orch_quota_integration)
+aura_issue_test_link_llvm_jit(test_orch_quota_integration)
 # Issue #1881: orch health observability (module/mailbox/parallel stats wiring).
-aura_add_issue_test(test_orch_observability_1881)
-aura_issue_test_link_llvm_jit(test_orch_observability_1881)
+aura_add_issue_test(test_orch_observability)
+aura_issue_test_link_llvm_jit(test_orch_observability)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
 # Issue #1755: validate_linear_ownership_state bridge_epoch drift metric.
 # Issue #1756: resolve_env_frame_detailed NULL/OOB/INVALID_VERSION.
@@ -5313,8 +5313,8 @@ aura_issue_test_link_llvm_jit(test_resource_quota_wired)
 aura_add_issue_test(test_fiber_join_linear)
 aura_issue_test_link_llvm_jit(test_fiber_join_linear)
 # Issue #1597: orch metrics folded into ai-closedloop-readiness-stats.
-aura_add_issue_test(test_ai_closedloop_orch_readiness_1597)
-aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness_1597)
+aura_add_issue_test(test_ai_closedloop_orch_readiness)
+aura_issue_test_link_llvm_jit(test_ai_closedloop_orch_readiness)
 # Issue #1598: apply_closure / JIT / post-steal dual-epoch hotpath refine.
 aura_add_issue_test(test_epoch_apply_hotpath_1598)
 aura_issue_test_link_llvm_jit(test_epoch_apply_hotpath_1598)
@@ -5328,8 +5328,8 @@ aura_add_issue_test(test_epoch_apply_mandate_1632)
 aura_issue_test_link_llvm_jit(test_epoch_apply_mandate_1632)
 # Issue #1599: linear GC audit + closedloop readiness + adaptive safepoint refine.
 # Issue #1600: ResourceQuota on agent_spawn / parallel_intend / join orch paths.
-aura_add_issue_test(test_orch_resource_quota_1600)
-aura_issue_test_link_llvm_jit(test_orch_resource_quota_1600)
+aura_add_issue_test(test_orch_resource_quota)
+aura_issue_test_link_llvm_jit(test_orch_resource_quota)
 # Issue #1607: unified mark_define_dirty / invalidate dual-epoch protocol.
 aura_add_issue_test(test_unified_invalidation_1607)
 aura_issue_test_link_llvm_jit(test_unified_invalidation_1607)
@@ -5388,8 +5388,8 @@ set_target_properties(test_value_encoding_v2_dispatch_contracts_1622 PROPERTIES 
 aura_add_issue_test(test_eval_relower_hotpath_1623)
 aura_issue_test_link_llvm_jit(test_eval_relower_hotpath_1623)
 # Issue #1602: parallel orchestration stress (mutate + parallel agent + GC).
-aura_add_issue_test(test_parallel_orchestration_stress_1602)
-aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress_1602)
+aura_add_issue_test(test_parallel_orchestration_stress)
+aura_issue_test_link_llvm_jit(test_parallel_orchestration_stress)
 
 # Issue #1496: unify mark_define_dirty / invalidate_function dual-epoch protocol.
 # Issue #1571: concurrent epoch safety stress for #1496 (mutate + steal + old closure).
