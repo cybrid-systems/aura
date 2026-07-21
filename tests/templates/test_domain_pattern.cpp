@@ -9,7 +9,7 @@
 //
 // ── BEFORE YOU CREATE A NEW FILE ──────────────────────────────────────────
 // 1. Can this AC live in an existing suite?
-//      test_domain_fiber_orchestration / hygiene_dirty / typed_mutate
+//      test_domain_gates_batch (fiber / hygiene / typed-mutate)
 //      test_obs_schema_matrix + cases/obs_schema_cases.hpp
 // 2. Is it only a stats schema? → add a row to obs_schema_cases.hpp, STOP.
 // 3. Only then copy this template to tests/domain/ and register CMake.

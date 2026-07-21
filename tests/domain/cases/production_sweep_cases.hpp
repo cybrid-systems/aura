@@ -1,6 +1,7 @@
 // Production sweep / hardening / safety field-list cases — Wave 2 consolidation.
 // Schema + required fields; behavioral extras stay in EXCLUDE_FROM_ALL root binaries.
-// Generated/maintained for tests/domain/test_domain_production_sweep.cpp
+// Generated/maintained for tests/domain/test_obs_schema_matrix.cpp
+// (production field-list gates folded into the obs schema suite).
 #pragma once
 #include <cstddef>
 #include <cstdint>

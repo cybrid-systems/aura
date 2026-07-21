@@ -51,10 +51,10 @@ Legacy inventory & migration roadmap: **[#1957](https://github.com/cybrid-system
 | **`memory/`** | Leak / soak scripts | Multi-hour memory campaigns |
 | `issues/test_issue_*.cpp` | **Legacy** per-issue binaries | **Do not add new** — migrate via inventory |
 | `observability/` | Bulk root obs cpp (#1977) | 180 files; prefer `domain/test_obs_schema_matrix` |
-| `mutation/` | Bulk root mutation cpp (#1977) | 118 files; prefer `domain/test_domain_typed_mutate` |
+| `mutation/` | Bulk root mutation cpp (#1977) | 118 files; prefer `domain/test_domain_gates_batch` |
 | `compiler_core/` | Bulk root compiler cpp (#1977) | 58 files; future `domain/compiler/` |
-| `fiber/` | Bulk root fiber cpp (#1977) | 38 files; prefer `domain/test_domain_fiber_orchestration` |
-| `edsl/` | Bulk root edsl cpp (#1977) | 19 files; prefer `domain/test_domain_hygiene_dirty` |
+| `fiber/` | Bulk root fiber cpp (#1977) | 38 files; prefer `domain/test_domain_gates_batch` |
+| `edsl/` | Bulk root edsl cpp (#1977) | 19 files; prefer `domain/test_domain_gates_batch` |
 | `jit/` | Bulk root JIT/AOT cpp (#1977) | 7 files; heavy JIT stays here or root |
 | `arena/` | Bulk root arena cpp (#1977) | 7 files; parallel to `domain/arena/` pilot |
 | `stdlib/` | Bulk root stdlib cpp (#1977) | 5 files; prefer `suite/` for `.aura` |
@@ -115,10 +115,8 @@ Is this a new query:*-stats / engine:metrics schema gate?
            STOP — do not create a binary
 
 Does an existing domain suite cover this theme?
-  fiber / steal / Guard  → domain/test_domain_fiber_orchestration.cpp
-  hygiene / macro / dirty epoch → domain/test_domain_hygiene_dirty.cpp
-  typed mutate / type-system → domain/test_domain_typed_mutate.cpp
-  observability matrix     → domain/test_obs_schema_matrix.cpp
+  fiber / hygiene / typed-mutate gates → domain/test_domain_gates_batch.cpp
+  observability + production schemas   → domain/test_obs_schema_matrix.cpp
   └─ YES → add a section / case there. STOP
 
 Is this a multi-AC family already batched (compact, soa, linear, …)?
@@ -139,7 +137,7 @@ NEVER: tests/issues/test_issue_<N>.cpp for new work
 
 | Pattern | Example | Use for |
 |---------|---------|---------|
-| `test_domain_<theme>.cpp` | `test_domain_fiber_orchestration.cpp` | Broad theme suite (default) |
+| `test_domain_<theme>.cpp` | `test_domain_gates_batch.cpp` | Broad theme suite (default) |
 | `test_domain_<theme>_<aspect>.cpp` | `test_domain_arena_compaction.cpp` | Sub-theme split when a file grows large |
 | `test_<theme>_<aspect>.cpp` | `test_obs_schema_matrix.cpp` | Established suite name (ok if already wired) |
 | `cases/<theme>_cases.hpp` | `cases/obs_schema_cases.hpp` | Shared tables / data-driven cases |
@@ -174,8 +172,8 @@ inconsistent harness style.
 ### Good — domain suite section (preferred)
 
 ```cpp
-// tests/domain/test_domain_fiber_orchestration.cpp
-void run_suite(CompilerService& cs) {
+// tests/domain/test_domain_gates_batch.cpp
+void run_fiber_orchestration(CompilerService& cs) {
     std::println("\n=== Steal + arena/GC coordination (#812) ===");
     expect_hash_schema(cs, "query:orchestration-steal-arena-gc-stats", 812);
     cs.evaluator().bump_steal_arena_yield_during_compact();
@@ -224,10 +222,8 @@ Even then:
 
 | Target | Theme |
 |--------|--------|
-| `test_domain_fiber_orchestration` | Fiber / steal / Guard / orch health |
-| `test_domain_hygiene_dirty` | Macro hygiene / dirty-epoch markers |
-| `test_domain_typed_mutate` | Typed mutate / type-system obs gates |
-| `test_obs_schema_matrix` | Schema + bump matrix (`cases/obs_schema_cases.hpp`) |
+| `test_domain_gates_batch` | Fiber / hygiene / typed-mutate behavioral gates |
+| `test_obs_schema_matrix` | Schema + bump + production field-list (`cases/*.hpp`) |
 
 Live policy detail: [`domain/README.md`](domain/README.md).  
 Scaffold: [`templates/test_domain_pattern.cpp`](templates/test_domain_pattern.cpp)
@@ -257,7 +253,7 @@ Optional headers for tooling:
 
 ```cpp
 // @category: integration
-// @reason: domain fiber/orch gates; extends test_domain_fiber_orchestration
+// @reason: domain fiber/orch gates; extends test_domain_gates_batch
 ```
 
 ## Running tests (#1961)
@@ -293,9 +289,9 @@ python3 tests/run.py issues --tier fast -- --json
 ./build.py test issues-fast
 ./build.py gate                           # static only
 
-# Domain pilot
-ninja -C build test_domain_fiber_orchestration
-./build/test_domain_fiber_orchestration
+# Domain suites
+ninja -C build test_domain_gates_batch test_obs_schema_matrix
+./build/test_domain_gates_batch
 ninja -C build test_arena_batch           # domain/arena (#1959)
 ```
 

@@ -18,14 +18,10 @@ Migration inventory: [`../legacy_test_inventory.md`](../legacy_test_inventory.md
 
 | File | Theme | Extend when… |
 |------|--------|----------------|
-| `test_domain_fiber_orchestration.cpp` | Fiber / steal / Guard / orch | New orchestration observability or safety gates |
-| `test_domain_hygiene_dirty.cpp` | Macro hygiene / dirty-epoch | Provenance, marker, hygiene query ACs |
-| `test_domain_typed_mutate.cpp` | Typed mutate / type-system | Coercion, renarrow, ownership post-mutate |
-| `test_obs_schema_matrix.cpp` | Obs schema matrix | Standard total/hits/savings or field-list schemas |
+| `test_obs_schema_matrix.cpp` | Obs + production schemas | Standard total/hits/savings, field-list, or production flag surfaces |
 | `cases/obs_schema_cases.hpp` | Case table for obs matrix | **Default** for new stats surfaces |
-| `test_domain_production_sweep.cpp` | Production sweep/hardening/safety | Schema + field gates (Wave 2); root `test_production_*` EXCLUDE |
-| `cases/production_sweep_cases.hpp` | Case table for production suite | Folded production flag surfaces |
-| `test_issue_1943…1956.cpp` | Wave 4 relocate from root | Prefer theme rename on next edit; do not re-add under `tests/` root |
+| `cases/production_sweep_cases.hpp` | Production field-list cases | Folded production flag surfaces (run by obs matrix) |
+| `test_domain_gates_batch.cpp` | Fiber / hygiene / typed-mutate gates | Behavioral bump+readback gates (was 3 theme binaries) |
 | **`arena/`** | Arena / compaction pilot (#1959) | See [`arena/README.md`](arena/README.md) — reference theme dir |
 
 Harness for all of the above: `#include "test_harness.hpp"` only (#1960).
@@ -34,32 +30,35 @@ Harness for all of the above: `#include "test_harness.hpp"` only (#1960).
 
 ### 1. New stats surface only
 
-1. Add a row to `cases/obs_schema_cases.hpp`.
+1. Add a row to `cases/obs_schema_cases.hpp` (or `production_sweep_cases.hpp`
+   for production field-list gates).
 2. If the matrix needs a bump helper, wire `bump_slug` in
    `test_obs_schema_matrix.cpp`.
 3. Rebuild: `ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix`.
 
-### 2. Behavioral gate for an existing theme
+### 2. Behavioral gate (fiber / hygiene / typed mutate)
 
-1. Open the matching `test_domain_*.cpp`.
-2. Add a section:
+1. Open `test_domain_gates_batch.cpp`.
+2. Add a section under the matching `run_*` block:
 
    ```cpp
    std::println("\n=== Short title (#NNNN) ===");
    // setup → act → CHECK invariants
    ```
 
-3. Keep helpers (`href`, `expect_schema`) local or shared; do not fork a new binary.
+3. Keep helpers (`href`, `expect_schema`) local; do not fork a new binary.
 
 ### 3. Brand-new theme suite
 
-1. Copy [`../templates/test_domain_pattern.cpp`](../templates/test_domain_pattern.cpp)
-   → `test_domain_<theme>_<aspect>.cpp`.
-2. Register in [`../../cmake/AuraDomainTests.cmake`](../../cmake/AuraDomainTests.cmake):
+1. Prefer extending `test_domain_gates_batch.cpp` or the arena family
+   batches first.
+2. Only if the theme is large enough to justify a binary: copy
+   [`../templates/test_domain_pattern.cpp`](../templates/test_domain_pattern.cpp)
+   → `test_domain_<theme>_<aspect>.cpp` and register in `CMakeLists.txt`:
 
    ```cmake
    aura_add_issue_test(test_domain_<theme>_<aspect>)
-   aura_issue_test_link_llvm_jit(test_domain_<theme>_<aspect>)  # if CS/JIT needed
+   aura_issue_test_link_llvm_jit(test_domain_<theme>_<aspect>)
    add_dependencies(all_test_issue_targets test_domain_<theme>_<aspect>)
    ```
 

@@ -83,33 +83,33 @@ void thread_b_defrag(aura::compiler::CompilerService& cs, std::atomic<bool>& don
     }
 }
 
-// ── AC1: (arena:safepoint-registered?) primitive ────────────
+// ── AC1: arena:safepoint-registered? via engine:metrics ─────
+// SlimSurface: demoted from public add() to register_stats_impl;
+// call through (engine:metrics "…") not a free primitive form.
 bool test_ac1_safepoint_registered_primitive() {
-    std::println("\n--- AC1: (arena:safepoint-registered?) ---");
+    std::println("\n--- AC1: (engine:metrics \"arena:safepoint-registered?\") ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(arena:safepoint-registered?)");
-    CHECK(r.has_value(), "AC1: primitive returns a value");
+    auto r = cs.eval("(engine:metrics \"arena:safepoint-registered?\")");
+    CHECK(r.has_value(), "AC1: stats surface returns a value");
     if (r && aura::compiler::types::is_bool(*r)) {
         auto b = aura::compiler::types::as_bool(*r);
         std::println("  AC1: safepoint_registered = {}", b);
-        // We don't assert the boolean value — depends on whether
-        // the fiber scheduler is initialized (likely not in this
-        // test process). The AC is that the primitive exists and
-        // returns a bool.
-        CHECK(true, "AC1: primitive returns a bool (value varies)");
+        // Value depends on whether the fiber scheduler registered a
+        // safepoint (likely false in this bare test process).
+        CHECK(true, "AC1: stats surface returns a bool (value varies)");
     } else {
-        CHECK(false, "AC1: primitive returns a bool");
+        CHECK(false, "AC1: stats surface returns a bool");
     }
     return true;
 }
 
-// ── AC2: (arena:warn-no-safepoint) primitive ─────────────────
+// ── AC2: arena:warn-no-safepoint via engine:metrics ──────────
 bool test_ac2_warn_no_safepoint_primitive() {
-    std::println("\n--- AC2: (arena:warn-no-safepoint) ---");
+    std::println("\n--- AC2: (engine:metrics \"arena:warn-no-safepoint\") ---");
     aura::compiler::CompilerService cs;
 
     // AC2a: initially — warning hasn't fired
-    auto r0 = cs.eval("(arena:warn-no-safepoint)");
+    auto r0 = cs.eval("(engine:metrics \"arena:warn-no-safepoint\")");
     bool b0 =
         (r0 && aura::compiler::types::is_bool(*r0)) ? aura::compiler::types::as_bool(*r0) : true;
     std::println("  AC2: initial warn-no-safepoint = {}", b0);
@@ -122,7 +122,7 @@ bool test_ac2_warn_no_safepoint_primitive() {
     CHECK(rr.has_value(), "AC2b: request_defrag primitive returns a value");
 
     // Now: warning should have fired (true)
-    auto r1 = cs.eval("(arena:warn-no-safepoint)");
+    auto r1 = cs.eval("(engine:metrics \"arena:warn-no-safepoint\")");
     bool b1 =
         (r1 && aura::compiler::types::is_bool(*r1)) ? aura::compiler::types::as_bool(*r1) : false;
     std::println("  AC2: post-request warn-no-safepoint = {}", b1);
@@ -130,7 +130,7 @@ bool test_ac2_warn_no_safepoint_primitive() {
               "safepoint (one-shot guarantee)");
 
     // AC2c: warning should still be true (one-shot, persistent)
-    auto r2 = cs.eval("(arena:warn-no-safepoint)");
+    auto r2 = cs.eval("(engine:metrics \"arena:warn-no-safepoint\")");
     bool b2 =
         (r2 && aura::compiler::types::is_bool(*r2)) ? aura::compiler::types::as_bool(*r2) : false;
     std::println("  AC2: second query warn-no-safepoint = {}", b2);

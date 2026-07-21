@@ -587,14 +587,13 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # Do not grow tests/issues/test_issue_*.cpp for routine work.
 #
 # Layers still present:
-#   1. Domain suites — tests/domain/test_domain_*.cpp, test_obs_schema_matrix
-#      (registered via aura_add_issue_test in CMakeLists.txt; resolved via
-#      aura_resolve_test_cpp). AuraDomainTests.cmake removed in Anqi 2026-07-21
-#      wave (was dead code — never included in CMakeLists.txt).
+#   1. Domain suites — tests/domain/test_obs_schema_matrix,
+#      test_domain_gates_batch, arena/* (registered below via
+#      aura_add_issue_test; resolved via aura_resolve_test_cpp).
 #   2. Bundle executables — tests/bundles/test_issues_<profile>_main.cpp
 #      + members from tests/issues/ (link profiles in fixtures/).
-#   3. Family batch drivers — tests/test_*_batch.cpp (EXCLUDE_FROM_ALL
-#      intermediate consolidation; same CMake file).
+#   3. Family batch drivers — domain/arena/*_batch + compiler_core batches
+#      (EXCLUDE_FROM_ALL for on-demand ninja).
 #   4. aura_test_objects — shared static lib for test link units.
 #
 # Source resolution (aura_resolve_test_cpp): issues/ → domain/ → tests/.
@@ -1766,3 +1765,35 @@ add_dependencies(all_test_issue_targets test_terminal_domain_batch)
 aura_add_issue_test(test_envframe_epoch_batch)
 aura_issue_test_link_llvm_jit(test_envframe_epoch_batch)
 add_dependencies(all_test_issue_targets test_envframe_epoch_batch)
+
+# ── tests/domain/ suites (restored after AuraDomainTests.cmake removal) ──
+# Default-build: schema matrix + behavioral gates + concurrent defrag.
+# On-demand (EXCLUDE_FROM_ALL): arena family batches.
+
+aura_add_issue_test(test_obs_schema_matrix)
+aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
+add_dependencies(all_test_issue_targets test_obs_schema_matrix)
+
+aura_add_issue_test(test_domain_gates_batch)
+aura_issue_test_link_llvm_jit(test_domain_gates_batch)
+add_dependencies(all_test_issue_targets test_domain_gates_batch)
+
+aura_add_issue_test(test_arena_defrag_concurrent)
+aura_issue_test_link_llvm_jit_minimal(test_arena_defrag_concurrent)
+add_dependencies(all_test_issue_targets test_arena_defrag_concurrent)
+
+aura_add_issue_test(test_arena_batch)
+aura_issue_test_link_llvm_jit(test_arena_batch)
+set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+aura_add_issue_test(test_compact_batch)
+aura_issue_test_link_llvm_jit(test_compact_batch)
+set_target_properties(test_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+aura_add_issue_test(test_compact_sweep_batch)
+aura_issue_test_link_llvm_jit(test_compact_sweep_batch)
+set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+aura_add_issue_test(test_gc_batch)
+aura_issue_test_link_llvm_jit(test_gc_batch)
+set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
