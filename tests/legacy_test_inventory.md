@@ -36,10 +36,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 50 | 3 | 229 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 26 | 1 | 77 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 12 | 5 | 0 | 17 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 59 | 18 | 1 | 78 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 58 | 18 | 1 | 77 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 36 | 13 | 3 | 52 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 32 | 11 | 0 | 43 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 202 | 101 | 5 | 308 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 203 | 101 | 5 | 309 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 17 | 0 | 17 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -709,7 +709,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_763.cpp` (#763) — test_issue_763.cpp — Issue #763: Runtime linear_ownership_state
 - `tests/issues/test_issue_765.cpp` (#765) — test_issue_765.cpp — Issue #765: Full DepEntry quote/lambda tracking +
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (78)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (77)
 
 **Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
 
@@ -740,7 +740,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_task6_production_readiness_closed_loop_514.cpp` (#514) — test_task6_production_readiness_closed_loop_514.cpp
 - `tests/test_workspace_marker_macro_max_1678.cpp` (#1678) [small] — AC1: walk=1, snapshot=5 → macro-markers reports 5 (not 1)
 
-#### issues/ (59)
+#### issues/ (58)
 
 - `tests/issues/test_issue_120.cpp` (#120) [early_issue] — test_issue_120.cpp — Verify the hygienic macro fix (Issue #120).
 - `tests/issues/test_issue_131.cpp` (#131) [early_issue] — test_issue_131.cpp — Verify the FFI primitives
@@ -785,7 +785,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_365.cpp` (#365) — test_issue_365.cpp — Verify Issue #365 acceptance criteria
 - `tests/issues/test_issue_366.cpp` (#366) — test_issue_366.cpp — Verify Issue #366 acceptance criteria
 - `tests/issues/test_issue_373.cpp` (#373) — test_issue_373.cpp — Verify Issue #373 acceptance criteria
-- `tests/issues/test_issue_388.cpp` (#388) — test_issue_388.cpp — Issue #388: Caller-side marker check +
 - `tests/issues/test_issue_440_edsl_readiness.cpp` (#440) — test_issue_440_edsl_readiness.cpp — Issue #440:
 - `tests/issues/test_issue_455.cpp` (#455) — Validates:
 - `tests/issues/test_issue_486.cpp` (#486) — Issue #486 — query:pattern MacroIntroduced filter + macro-hygiene-stats
@@ -924,7 +923,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (308)
+### `observability` — Observability / metrics / query:*-stats (309)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -1042,7 +1041,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/test_value_encoding_v2_dispatch_contracts_1622.cpp` (#1622) — hot-path Contracts (refine #571/#723).
 - `tests/test_verify_parse_shared_helper_1771.cpp` (#1771) — formal-cex} share parse_verify_node_id_lines helper (no triple copy).
 
-#### issues/ (202)
+#### issues/ (203)
 
 - `tests/issues/test_issue_1384_envframe_version_init.cpp` (#1384) — test_issue_1384_envframe_version_init.cpp — Issue #1384:
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
@@ -1110,6 +1109,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_385.cpp` (#385) — test_issue_385.cpp — Issue #385: mutation-aware
 - `tests/issues/test_issue_386.cpp` (#386) — test_issue_386.cpp — Issue #386: Deep Occurrence Typing
 - `tests/issues/test_issue_387.cpp` (#387) — test_issue_387.cpp — Issue #387: Type Dependency Graph
+- `tests/issues/test_issue_388.cpp` (#388) — test_issue_388.cpp — Issue #388: Caller-side marker check +
 - `tests/issues/test_issue_389.cpp` (#389) — test_issue_389.cpp — Issue #389: `(compile:snapshot)` Aura
 - `tests/issues/test_issue_390.cpp` (#390) — test_issue_390.cpp — Issue #390: Auto-populate schema in
 - `tests/issues/test_issue_409.cpp` (#409) — test_issue_409.cpp — Issue #409: Fine-grained constraint

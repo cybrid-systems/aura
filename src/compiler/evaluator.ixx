@@ -330,16 +330,22 @@ public:
     using StringHash = aura::core::TransparentStringHash;
 
 private:
-    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> table_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        table_;
     // Issue #1356: HotTierTable — name → fn for kPrimPerfHot only.
-    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>> hot_map_;
+    std::unordered_map<std::string, PrimFn, StringHash, std::equal_to<>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        hot_map_;
     std::vector<HotEntry> hot_entries_;
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_{0};
     mutable std::atomic<std::uint64_t> hot_dispatch_hits_render_{0};
     mutable std::atomic<std::uint64_t> cold_dispatch_fallback_{0};
     std::atomic<std::size_t> hot_table_size_{0};
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
-    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>> name_to_slot_;
+    std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        name_to_slot_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
     // string_heap_ arena allocation. Vector metadata lives in
     // the same monotonic arena as the underlying EvalValue /
@@ -3844,12 +3850,16 @@ private:
     std::vector<std::unique_ptr<aura::compiler::render_telemetry::PrimLatencyStats>> prim_latency_;
     std::chrono::steady_clock::time_point last_frame_mark_{};
     ModuleLoadedFn module_loaded_cb_;
-    std::unordered_map<std::string, MacroDef> macros_;
+    std::unordered_map<std::string, MacroDef, aura::core::TransparentStringHash, std::equal_to<>>
+        macros_;
     std::vector<Env*> modules_; // module objects (arena-allocated, indexed by ModuleRef.index)
-    std::unordered_map<std::string, std::uint64_t> module_cache_; // path → index
-    std::unordered_set<std::string> loading_stack_;               // circular dep detection
-    std::vector<std::string> module_names_;                       // display names for modules
-    std::unordered_map<std::string, ast::ASTArena*>
+    std::unordered_map<std::string, std::uint64_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        module_cache_;                              // path → index
+    std::unordered_set<std::string> loading_stack_; // circular dep detection
+    std::vector<std::string> module_names_;         // display names for modules
+    std::unordered_map<std::string, ast::ASTArena*, aura::core::TransparentStringHash,
+                       std::equal_to<>>
         module_arena_ptrs_; // path → owning arena (for gc_module)
     // Issue #145 Phase 2.4 — runtime arena for high-churn
     // heap vectors. monotonic_buffer_resource bump-allocates
@@ -4764,7 +4774,9 @@ private:
         std::string module_file; // 来源模块文件（用于跨模块错误定位）
         bool resolved = false;
     };
-    std::unordered_map<std::string, DeclaredType> declared_type_sigs_;
+    std::unordered_map<std::string, DeclaredType, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        declared_type_sigs_;
 
     // ── Functor 泛型模块模板 ────────────────────────────────────
     struct ModuleTemplate {
@@ -4774,12 +4786,16 @@ private:
         std::vector<std::string>
             cap_require; // required capabilities (e.g., ["FileRead", "FileWrite"])
     };
-    std::unordered_map<std::string, ModuleTemplate> module_templates_;
+    std::unordered_map<std::string, ModuleTemplate, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        module_templates_;
 
     // ── Functor 实例化缓存 ──────────────────────────────────────
     // key = "template_name|arg1|arg2|..."
     // value = 实例化后的 env（指针通过 module 索引引用）
-    std::unordered_map<std::string, std::uint64_t> functor_instance_cache_;
+    std::unordered_map<std::string, std::uint64_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        functor_instance_cache_;
 
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_;      //
@@ -4792,7 +4808,9 @@ private:
     std::pmr::vector<std::string> string_heap_{&runtime_resource_};
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
-    std::unordered_map<std::string, types::EvalValue> short_str_cache_;
+    std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        short_str_cache_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;

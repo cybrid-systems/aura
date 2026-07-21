@@ -20,6 +20,7 @@ import aura.compiler.macro_expansion;
 import aura.diag;
 import aura.parser.parser;
 import aura.compiler.soa_view;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler {
 
@@ -38,9 +39,14 @@ using macro_exp::clone_macro_body;
 using macro_exp::expand_inner_macros;
 using macro_exp::MacroExpansionDef;
 
-static std::unordered_map<std::string, MacroExpansionDef>
-as_expansion_registry(const std::unordered_map<std::string, MacroDef>& macros) {
-    std::unordered_map<std::string, MacroExpansionDef> out;
+static std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                          std::equal_to<>>
+as_expansion_registry(
+    const std::unordered_map<std::string, MacroDef, aura::core::TransparentStringHash,
+                             std::equal_to<>>& macros) {
+    std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        out;
     out.reserve(macros.size());
     for (const auto& [name, md] : macros) {
         out.emplace(name, MacroExpansionDef{md.params, md.dotted, md.flat, md.pool, md.body_id});
@@ -3254,7 +3260,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // empty initially; clone_macro_body
                                 // populates it as it gensym's
                                 // template-introduced bindings.
-                                std::unordered_map<std::string, std::string> rename_map;
+                                std::unordered_map<std::string, std::string,
+                                                   aura::core::TransparentStringHash,
+                                                   std::equal_to<>>
+                                    rename_map;
                                 auto* src_pool = md.pool ? md.pool : p;
                                 auto expanded = clone_macro_body(
                                     *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
@@ -5122,8 +5131,12 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         // For each param name, find the corresponding call arg
         // by position. If params has dotted-rest, the last param
         // binds to a list of remaining args.
-        std::unordered_map<std::string, aura::ast::NodeId> subst_map;
-        std::unordered_map<std::string, std::string> rename_map;
+        std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            subst_map;
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            rename_map;
         for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i) {
             subst_map[md.params[i]] = call_args[i];
         }

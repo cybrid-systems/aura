@@ -417,6 +417,7 @@ export enum class IncrementalTypecheckMode : std::uint8_t {
 };
 
 export class CompilerService {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     // Issue #531: closure / EnvFrame / bridge_epoch /
     // linear_ownership_state observability accessors.
@@ -4333,7 +4334,9 @@ public:
             return block_dirty_per_func_;
         }
     };
-    std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
+    std::unordered_map<std::string, IRCacheEntry, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        ir_cache_v2_;
     // Issue #959 / #1042: hard cap for long-running --serve.
     // Evicts dirty-first, then oldest last_used (LRU).
     static constexpr std::size_t kIRCacheV2MaxEntries = 2048;
@@ -4524,7 +4527,9 @@ public:
         if (!flat || root == aura::ast::NULL_NODE || root >= flat->size())
             return;
         std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>> source_to_ir;
-        std::unordered_map<std::string, std::size_t> ir_cache_index;
+        std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            ir_cache_index;
         auto scope = compute_impact_scope(*flat, root, source_to_ir, ir_cache_index);
         const std::uint64_t blocks =
             scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
@@ -6025,7 +6030,8 @@ public:
                     const aura::ast::StringPool& p;
                     const std::unordered_set<std::string>& params;
                     const Evaluator& eval;
-                    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>&
+                    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                             aura::core::TransparentStringHash, std::equal_to<>>&
                         ir_cache;
                     bool skip = false;
                     void walk(aura::ast::NodeId id) {
@@ -6185,7 +6191,9 @@ public:
         return ci;
     }
 
-    [[nodiscard]] const std::unordered_map<std::string, std::size_t>* value_cells_for_lowering() {
+    [[nodiscard]] const std::unordered_map<std::string, std::size_t,
+                                           aura::core::TransparentStringHash, std::equal_to<>>*
+    value_cells_for_lowering() {
         return ir_value_cell_bindings_.empty() ? nullptr : &ir_value_cell_bindings_;
     }
 
@@ -6207,8 +6215,10 @@ public:
             const std::string& self_name;
             const std::unordered_set<std::string>& param_names;
             const Evaluator& eval;
-            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
-            const std::unordered_map<std::string, std::size_t>& value_cells;
+            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                     aura::core::TransparentStringHash, std::equal_to<>>& ir_cache;
+            const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                                     std::equal_to<>>& value_cells;
             bool needs_fallback = false;
             void walk(aura::ast::NodeId id) {
                 if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
@@ -6546,8 +6556,9 @@ public:
                             const std::string& self_name;
                             const std::unordered_set<std::string>& param_names;
                             const Evaluator& eval;
-                            const std::unordered_map<std::string,
-                                                     std::vector<aura::ir::IRFunction>>& ir_cache;
+                            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                                     aura::core::TransparentStringHash,
+                                                     std::equal_to<>>& ir_cache;
                             bool skip = false;
                             void walk(aura::ast::NodeId id) {
                                 if (skip || id == aura::ast::NULL_NODE || id >= f.size())
@@ -9039,29 +9050,41 @@ private:
     // The LAST function in the bundle is the user-defined lambda itself.
     // When inlined, all functions are added to the current module in order,
     // preserving func id references across cached calls.
-    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_cache_;
+    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        ir_cache_;
 
     // Issue #272 Cycle 4: pre-bind IR snapshots for disk cache serialization.
     // Captured in cache_define immediately after ir_cache_ is populated,
     // before IRInterpreter env binding can alias/mutate live IR state.
-    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_disk_snapshots_;
+    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        ir_disk_snapshots_;
 
     // Bridge data cached alongside ir_cache_ (same keys, parallel indices).
-    std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>> ir_cache_bridge_;
+    std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        ir_cache_bridge_;
     // Issue #741: func indices from the latest impact_scope computation,
     // wired into lowering hooks to limit bridge shared_ptr copy scope.
     std::unordered_set<std::size_t> pending_impact_func_indices_;
     // String pool cached alongside ir_cache_ (same keys).
-    std::unordered_map<std::string, std::vector<std::string>> ir_cache_strings_;
+    std::unordered_map<std::string, std::vector<std::string>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        ir_cache_strings_;
 
     // Issue #272: persistent IR runtimes for function-define env bindings.
-    std::unordered_map<std::string, std::unique_ptr<IRDefineEnvBinding>> ir_define_env_bindings_;
+    std::unordered_map<std::string, std::unique_ptr<IRDefineEnvBinding>,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        ir_define_env_bindings_;
     // Issue #272 Cycle 3: top-level value defines bound via IR (name → cell index).
-    std::unordered_map<std::string, std::size_t> ir_value_cell_bindings_;
+    std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
+        ir_value_cell_bindings_;
     std::unordered_map<aura::compiler::ClosureId, std::string> ir_define_closure_owner_;
 
     // Source code for each cached function, used for re-lowering on dependency changes.
-    std::unordered_map<std::string, std::string> function_sources_;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        function_sources_;
 
 
     // Dependency tracking for incremental compilation.
@@ -9071,7 +9094,8 @@ private:
         std::vector<std::string> calls;
         std::vector<std::string> called_by;
     };
-    std::unordered_map<std::string, DepEntry> dep_graph_;
+    std::unordered_map<std::string, DepEntry, aura::core::TransparentStringHash, std::equal_to<>>
+        dep_graph_;
 
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
@@ -9385,7 +9409,9 @@ private:
             flat.root = pr.root;
             std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>
                 source_to_ir;
-            std::unordered_map<std::string, std::size_t> ir_cache_index;
+            std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                ir_cache_index;
             auto scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index);
             selective_invalidate_bridge_for_impact(affected_name, scope);
             metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
@@ -9550,13 +9576,16 @@ private:
     // Issue #684: lower + absorb SoA dual-emit snapshot.
     aura::ir::IRModule lower_to_ir_with_cache_tracked(
         ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& /*arena*/,
-        const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+        const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                 aura::core::TransparentStringHash, std::equal_to<>>* cache,
         std::vector<std::string>* cache_hits, const Primitives* primitives,
-        const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>*
-            cache_bridge,
-        const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+        const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>,
+                                 aura::core::TransparentStringHash, std::equal_to<>>* cache_bridge,
+        const std::unordered_map<std::string, std::vector<std::string>,
+                                 aura::core::TransparentStringHash, std::equal_to<>>* cache_strings,
         const std::string* self_name, const aura::core::TypeRegistry* /*type_reg*/ = nullptr,
-        const std::unordered_map<std::string, std::size_t>* value_cells = nullptr,
+        const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                                 std::equal_to<>>* value_cells = nullptr,
         std::uint32_t narrowing_evidence = 0) {
         metrics_.hotpath_lowering_calls.fetch_add(1, std::memory_order_relaxed);
         install_lowering_compiler_core_hooks();
@@ -9654,10 +9683,13 @@ private:
     std::unordered_set<std::string> loaded_modules_;
 
     // Reverse map: module_name → set of cached function names from that module.
-    std::unordered_map<std::string, std::vector<std::string>> module_functions_;
+    std::unordered_map<std::string, std::vector<std::string>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        module_functions_;
 
     // Per-module state for incremental compilation (dirty tracking).
-    std::unordered_map<std::string, ModuleState> module_states_;
+    std::unordered_map<std::string, ModuleState, aura::core::TransparentStringHash, std::equal_to<>>
+        module_states_;
 
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
@@ -10154,7 +10186,8 @@ public:
         // Compared on cache hit; mismatch → re-compile + jit_shape_miss.
         std::uint64_t compiled_shape_version_ = 0;
     };
-    std::unordered_map<std::string, JitCachedFn> jit_cache_;
+    std::unordered_map<std::string, JitCachedFn, aura::core::TransparentStringHash, std::equal_to<>>
+        jit_cache_;
     // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
     // pattern (most lookups just probe the cache), so multiple readers
     // can hold the shared lock concurrently. Writers take the unique
@@ -11439,8 +11472,12 @@ public:
 
     // ── Static registry ──────────────────────────────────────
     // Using Scott Meyer's singletons to avoid ODR issues with module static members
-    static std::unordered_map<std::string, CompilerService*>& registry() {
-        static std::unordered_map<std::string, CompilerService*> reg;
+    static std::unordered_map<std::string, CompilerService*, aura::core::TransparentStringHash,
+                              std::equal_to<>>&
+    registry() {
+        static std::unordered_map<std::string, CompilerService*, aura::core::TransparentStringHash,
+                                  std::equal_to<>>
+            reg;
         return reg;
     }
     static std::mutex& registry_mtx() {
