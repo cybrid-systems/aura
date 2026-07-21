@@ -87,7 +87,9 @@ export struct TypeInfo {
     TypeId expected{}; // 用户标注的类型（可选）
     bool has_annotation = false;
 
-    bool matches() const { return resolved == expected || !expected.valid(); }
+    [[nodiscard]] bool matches() const noexcept {
+        return resolved == expected || !expected.valid();
+    }
 };
 
 // ── FunctionType ──────────────────────────────────────────────

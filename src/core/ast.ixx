@@ -283,7 +283,7 @@ public:
     }
 
     // Total bytes used for string data
-    std::size_t data_size() const { return buf_.size(); }
+    [[nodiscard]] std::size_t data_size() const noexcept { return buf_.size(); }
 
     // Issue #187 (P0): observability for the hash table. 0.0 = empty,
     // 1.0 = fully packed. load_factor (entries / capacity) is the
@@ -524,9 +524,9 @@ export struct NodeView {
     std::span<const NodeId> param_annotations; // annotation node IDs, may be NULL_NODE
     SyntaxMarker marker = SyntaxMarker::User;
 
-    bool has_int() const { return tag == NodeTag::LiteralInt; }
-    bool has_float() const { return tag == NodeTag::LiteralFloat; }
-    bool has_name() const { return sym_id != INVALID_SYM; }
+    [[nodiscard]] bool has_int() const noexcept { return tag == NodeTag::LiteralInt; }
+    [[nodiscard]] bool has_float() const noexcept { return tag == NodeTag::LiteralFloat; }
+    [[nodiscard]] bool has_name() const noexcept { return sym_id != INVALID_SYM; }
     NodeId child(std::uint32_t i) const { return children[i]; }
 };
 
@@ -6255,7 +6255,7 @@ public:
     // boundary-exit compact threshold check (avoids exposing
     // mutation_log_ directly to Evaluator). Cheap atomic-free
     // read; size() is O(1) on pmr vector.
-    std::size_t mutation_log_size() const noexcept { return mutation_log_.size(); }
+    [[nodiscard]] std::size_t mutation_log_size() const noexcept { return mutation_log_.size(); }
 
     // Issue #282: Occurrence Typing provenance accessors.
     // narrowing_log_ is captured at synthesize_flat_if time
@@ -7199,7 +7199,9 @@ public:
     // Issue #250: how many generation bumps the latest batch
     // saved by suppressing per-op bumps. Updated on each
     // commit. Exposed via observability snapshot.
-    std::uint64_t atomic_batch_bumps_saved() const noexcept { return atomic_batch_bumps_saved_; }
+    [[nodiscard]] std::uint64_t atomic_batch_bumps_saved() const noexcept {
+        return atomic_batch_bumps_saved_;
+    }
     [[nodiscard]] std::uint64_t atomic_batch_commits() const noexcept {
         return atomic_batch_commits_.load(std::memory_order_relaxed);
     }
@@ -7207,7 +7209,7 @@ public:
     // True iff an atomic batch is active. Used by
     // mark_dirty_upward to skip dirty propagation during
     // a batch (the commit path handles it).
-    bool atomic_batch_active() const noexcept { return bump_generation_suppressed_; }
+    [[nodiscard]] bool atomic_batch_active() const noexcept { return bump_generation_suppressed_; }
     // Issue #255: reference stability observability accessors.
     // Read by CompilerService::snapshot() (service.ixx) to
     // accumulate into CompilerMetrics for the
@@ -8073,7 +8075,7 @@ public:
         : fn_(&fn) {}
 
     void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
-    bool has_error() const { return false; }
+    [[nodiscard]] bool has_error() const noexcept { return false; }
 
 private:
     Fn* fn_;
