@@ -230,14 +230,14 @@ aura_issue_test_link_llvm_jit(test_domain_production_sweep)
 add_dependencies(all_test_issue_targets test_domain_production_sweep)
 
 # Issues #923–#940: stdlib production review Phase 1
-aura_add_issue_test(test_stdlib_production_review_923_940)
-aura_issue_test_link_llvm_jit(test_stdlib_production_review_923_940)
-set_target_properties(test_stdlib_production_review_923_940 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave1: FieldListCase in obs_schema_matrix
+aura_add_issue_test(test_stdlib_production_review_923)
+aura_issue_test_link_llvm_jit(test_stdlib_production_review_923)
+set_target_properties(test_stdlib_production_review_923 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave1: FieldListCase in obs_schema_matrix
 
 # Issues #941–#967: self-evo pipeline + bugfix Phase 1
-aura_add_issue_test(test_selfevo_bugfix_941_967)
-aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941_967)
-set_target_properties(test_selfevo_bugfix_941_967 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave1: FieldListCase in obs_schema_matrix
+aura_add_issue_test(test_selfevo_bugfix_941)
+aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941)
+set_target_properties(test_selfevo_bugfix_941 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave1: FieldListCase in obs_schema_matrix
 
 # Issues #968–#984: observability / JIT / typechecker / FFI / arena bugfixes
 aura_add_issue_test(test_bugfix_968)
@@ -245,39 +245,39 @@ aura_issue_test_link_llvm_jit(test_bugfix_968)
 add_dependencies(all_test_issue_targets test_bugfix_968)
 
 # Issues #985–#1013: production cache bounds + resource quota Phase 1
-aura_add_issue_test(test_production_hardening_985_1013)
-aura_issue_test_link_llvm_jit(test_production_hardening_985_1013)
-set_target_properties(test_production_hardening_985_1013 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_hardening_985)
+aura_issue_test_link_llvm_jit(test_production_hardening_985)
+set_target_properties(test_production_hardening_985 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1014–#1046: production stability + mutation/security bugfixes Phase 1
-aura_add_issue_test(test_production_stability_1014_1046)
-aura_issue_test_link_llvm_jit(test_production_stability_1014_1046)
-set_target_properties(test_production_stability_1014_1046 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_stability_1014)
+aura_issue_test_link_llvm_jit(test_production_stability_1014)
+set_target_properties(test_production_stability_1014 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1047–#1071: hygiene / type / mutate safety Phase 1
-aura_add_issue_test(test_production_safety_1047_1071)
-aura_issue_test_link_llvm_jit(test_production_safety_1047_1071)
-set_target_properties(test_production_safety_1047_1071 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_safety)
+aura_issue_test_link_llvm_jit(test_production_safety)
+set_target_properties(test_production_safety PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1072–#1096: security / metrics / concurrency Phase 1
-aura_add_issue_test(test_production_hardening_1072_1096)
-aura_issue_test_link_llvm_jit(test_production_hardening_1072_1096)
-set_target_properties(test_production_hardening_1072_1096 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_hardening_1072)
+aura_issue_test_link_llvm_jit(test_production_hardening_1072)
+set_target_properties(test_production_hardening_1072 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1097–#1122: serialize / fold / serve safety Phase 1
-aura_add_issue_test(test_production_safety_1097_1122)
-aura_issue_test_link_llvm_jit(test_production_safety_1097_1122)
-set_target_properties(test_production_safety_1097_1122 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_safety_1097)
+aura_issue_test_link_llvm_jit(test_production_safety_1097)
+set_target_properties(test_production_safety_1097 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1123–#1140: final open-issue sweep Phase 1
-aura_add_issue_test(test_production_sweep_1123_1140)
-aura_issue_test_link_llvm_jit(test_production_sweep_1123_1140)
-set_target_properties(test_production_sweep_1123_1140 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1144–#1148: observability wire-up / dead-bump audit Phase 1
-aura_add_issue_test(test_production_sweep_1144_1148)
-aura_issue_test_link_llvm_jit(test_production_sweep_1144_1148)
-set_target_properties(test_production_sweep_1144_1148 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1144)
+aura_issue_test_link_llvm_jit(test_production_sweep_1144)
+set_target_properties(test_production_sweep_1144 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1150–#1156: checked arithmetic / coerce safety Phase 1
 aura_add_issue_test(test_arithmetic_int64_safety)
@@ -285,14 +285,14 @@ aura_issue_test_link_llvm_jit(test_arithmetic_int64_safety)
 add_dependencies(all_test_issue_targets test_arithmetic_int64_safety)
 
 # Issues #1158–#1176: math UB + IO security + stdlib review Phase 1
-aura_add_issue_test(test_production_sweep_1158_1176)
-aura_issue_test_link_llvm_jit(test_production_sweep_1158_1176)
-set_target_properties(test_production_sweep_1158_1176 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1177–#1201: render/FFI/security/orchestration Phase 1
-aura_add_issue_test(test_production_sweep_1177_1201)
-aura_issue_test_link_llvm_jit(test_production_sweep_1177_1201)
-set_target_properties(test_production_sweep_1177_1201 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1202–#1228: orchestration / heal / memory / observability Phase 1
 aura_add_issue_test(test_production_sweep)
@@ -300,101 +300,101 @@ aura_issue_test_link_llvm_jit(test_production_sweep)
 set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1
-aura_add_issue_test(test_production_sweep_1229_1240)
-aura_issue_test_link_llvm_jit(test_production_sweep_1229_1240)
-set_target_properties(test_production_sweep_1229_1240 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1241–#1245: SoAView / arena / hygiene concurrent Phase 1
-aura_add_issue_test(test_production_sweep_1241_1245)
-aura_issue_test_link_llvm_jit(test_production_sweep_1241_1245)
-set_target_properties(test_production_sweep_1241_1245 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1246–#1250: reflect / hygiene / agent OOB / StableNodeRef Phase 1
-aura_add_issue_test(test_production_sweep_1246_1250)
-aura_issue_test_link_llvm_jit(test_production_sweep_1246_1250)
-set_target_properties(test_production_sweep_1246_1250 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1246)
+aura_issue_test_link_llvm_jit(test_production_sweep_1246)
+set_target_properties(test_production_sweep_1246 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1251–#1255: dirty/Guard/steal/pattern Phase 1
 
 # Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1
-aura_add_issue_test(test_production_sweep_1256_1260)
-aura_issue_test_link_llvm_jit(test_production_sweep_1256_1260)
-set_target_properties(test_production_sweep_1256_1260 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1256)
+aura_issue_test_link_llvm_jit(test_production_sweep_1256)
+set_target_properties(test_production_sweep_1256 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1261–#1265: dep_graph/AOT/arena/hotswap/QAR Phase 1
-aura_add_issue_test(test_production_sweep_1261_1265)
-aura_issue_test_link_llvm_jit(test_production_sweep_1261_1265)
-set_target_properties(test_production_sweep_1261_1265 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1261)
+aura_issue_test_link_llvm_jit(test_production_sweep_1261)
+set_target_properties(test_production_sweep_1261 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1266–#1270: inline/set-body/panic/SoA/steal Phase 1
-aura_add_issue_test(test_production_sweep_1266_1270)
-aura_issue_test_link_llvm_jit(test_production_sweep_1266_1270)
-set_target_properties(test_production_sweep_1266_1270 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1266)
+aura_issue_test_link_llvm_jit(test_production_sweep_1266)
+set_target_properties(test_production_sweep_1266 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1271–#1275: AOT/obs/hygiene-IR/dirty/EDSL Phase 1
-aura_add_issue_test(test_production_sweep_1271_1275)
-aura_issue_test_link_llvm_jit(test_production_sweep_1271_1275)
-set_target_properties(test_production_sweep_1271_1275 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1276–#1280: reflect/obs/inliner/StableRef/pattern Phase 1
-aura_add_issue_test(test_production_sweep_1276_1280)
-aura_issue_test_link_llvm_jit(test_production_sweep_1276_1280)
-set_target_properties(test_production_sweep_1276_1280 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1276)
+aura_issue_test_link_llvm_jit(test_production_sweep_1276)
+set_target_properties(test_production_sweep_1276 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1281–#1285: children rollback/gen wrap/provenance/fallback/JIT EH Phase 1
-aura_add_issue_test(test_production_sweep_1281_1285)
-aura_issue_test_link_llvm_jit(test_production_sweep_1281_1285)
-set_target_properties(test_production_sweep_1281_1285 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1286–#1290: invalidate/block-dirty, closure epoch, GuardShape, JIT fail-fast, ownership Lambda
-aura_add_issue_test(test_production_sweep_1286_1290)
-aura_issue_test_link_llvm_jit(test_production_sweep_1286_1290)
-set_target_properties(test_production_sweep_1286_1290 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1291–#1295: fiber fid, workspace UAF, compile/fiber/exception caps
-aura_add_issue_test(test_production_sweep_1291_1295)
-aura_issue_test_link_llvm_jit(test_production_sweep_1291_1295)
-set_target_properties(test_production_sweep_1291_1295 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1296–#1300: predicate race, inline max_slot, ghost orphan free
-aura_add_issue_test(test_production_sweep_1296_1300)
-aura_issue_test_link_llvm_jit(test_production_sweep_1296_1300)
-set_target_properties(test_production_sweep_1296_1300 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1301–#1305: mutation_log compact, arena OOB, name fallback, fn overflow, cache TOCTOU
-aura_add_issue_test(test_production_sweep_1301_1305)
-aura_issue_test_link_llvm_jit(test_production_sweep_1301_1305)
-set_target_properties(test_production_sweep_1301_1305 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1301)
+aura_issue_test_link_llvm_jit(test_production_sweep_1301)
+set_target_properties(test_production_sweep_1301 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1306–#1310: string/float pool races, last_module lock, is_arena, free envs
-aura_add_issue_test(test_production_sweep_1306_1310)
-aura_issue_test_link_llvm_jit(test_production_sweep_1306_1310)
-set_target_properties(test_production_sweep_1306_1310 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1306)
+aura_issue_test_link_llvm_jit(test_production_sweep_1306)
+set_target_properties(test_production_sweep_1306 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1311–#1315: cow pins race, jit setters, terminal buffer, present batch, render arena
-aura_add_issue_test(test_production_sweep_1311_1315)
-aura_issue_test_link_llvm_jit(test_production_sweep_1311_1315)
-set_target_properties(test_production_sweep_1311_1315 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+set_target_properties(test_production_sweep PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1316–#1320: render JIT stability, render obs meta, SoA migrate, gap buffer, defrag
-aura_add_issue_test(test_production_sweep_1316_1320)
-aura_issue_test_link_llvm_jit(test_production_sweep_1316_1320)
-add_dependencies(all_test_issue_targets test_production_sweep_1316_1320)
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+add_dependencies(all_test_issue_targets test_production_sweep)
 
 # Issues #1321–#1324: C++26 contracts expand, dirty pipeline, JIT map races
-aura_add_issue_test(test_production_sweep_1321_1324)
-aura_issue_test_link_llvm_jit(test_production_sweep_1321_1324)
-set_target_properties(test_production_sweep_1321_1324 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
+aura_add_issue_test(test_production_sweep_1321)
+aura_issue_test_link_llvm_jit(test_production_sweep_1321)
+set_target_properties(test_production_sweep_1321 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1325–#1330: primitive surface reduction architecture (META + phases 1–5)
-aura_add_issue_test(test_production_sweep_1325_1330)
-aura_issue_test_link_llvm_jit(test_production_sweep_1325_1330)
-add_dependencies(all_test_issue_targets test_production_sweep_1325_1330)
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+add_dependencies(all_test_issue_targets test_production_sweep)
 
 # Issues #1331–#1343: 5-layer TUI pixel rendering architecture
-aura_add_issue_test(test_production_sweep_1331_1343)
-aura_issue_test_link_llvm_jit(test_production_sweep_1331_1343)
-add_dependencies(all_test_issue_targets test_production_sweep_1331_1343)
+aura_add_issue_test(test_production_sweep)
+aura_issue_test_link_llvm_jit(test_production_sweep)
+add_dependencies(all_test_issue_targets test_production_sweep)
 
 # Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep
 
@@ -467,9 +467,9 @@ aura_issue_test_link_llvm_jit(test_mutation_audit_wal)
 add_dependencies(all_test_issue_targets test_mutation_audit_wal)
 
 # Issue #1568: linear boundary consistency closed-loop
-aura_add_issue_test(test_linear_boundary_consistency_1568)
-aura_issue_test_link_llvm_jit(test_linear_boundary_consistency_1568)
-add_dependencies(all_test_issue_targets test_linear_boundary_consistency_1568)
+aura_add_issue_test(test_linear_boundary_consistency)
+aura_issue_test_link_llvm_jit(test_linear_boundary_consistency)
+add_dependencies(all_test_issue_targets test_linear_boundary_consistency)
 
 # Issue #1354: render FFI hot path + c-render-bind discovery
 aura_add_issue_test(test_render_ffi_hotpath)
