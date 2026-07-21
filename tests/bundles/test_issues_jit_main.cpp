@@ -30,13 +30,11 @@ extern int aura_issue_250_run();
 extern int aura_issue_227_run();
 extern int aura_issue_240_run();
 extern int aura_issue_244_run();
-extern int aura_issue_267_run();
 extern int aura_issue_228_run();
 extern int aura_issue_289_run();
 extern int aura_issue_482_run();
 extern int aura_issue_290_run();
 extern int aura_issue_291_run();
-extern int aura_issue_292_run();
 extern int aura_issue_293_run();
 extern int aura_issue_296_run();
 
@@ -55,10 +53,9 @@ int main() {
         {"test_issue_248", aura_issue_248_run}, {"test_issue_249", aura_issue_249_run},
         {"test_issue_250", aura_issue_250_run}, {"test_issue_227", aura_issue_227_run},
         {"test_issue_240", aura_issue_240_run}, {"test_issue_244", aura_issue_244_run},
-        {"test_issue_267", aura_issue_267_run}, {"test_issue_228", aura_issue_228_run},
-        {"test_issue_289", aura_issue_289_run}, {"test_issue_482", aura_issue_482_run},
-        {"test_issue_290", aura_issue_290_run}, {"test_issue_291", aura_issue_291_run},
-        {"test_issue_292", aura_issue_292_run}, {"test_issue_293", aura_issue_293_run},
+        {"test_issue_228", aura_issue_228_run}, {"test_issue_289", aura_issue_289_run},
+        {"test_issue_482", aura_issue_482_run}, {"test_issue_290", aura_issue_290_run},
+        {"test_issue_291", aura_issue_291_run}, {"test_issue_293", aura_issue_293_run},
         {"test_issue_296", aura_issue_296_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));

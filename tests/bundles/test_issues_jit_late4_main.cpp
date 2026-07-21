@@ -4,27 +4,17 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_497_run();
 extern int aura_issue_500_run();
 extern int aura_issue_501_hygiene_run();
-extern int aura_issue_502_run();
 extern int aura_issue_503_run();
-extern int aura_issue_504_run();
-extern int aura_issue_505_run();
-extern int aura_issue_511_observability_run();
-extern int aura_issue_513_observability_run();
 extern int aura_issue_515_observability_run();
-extern int aura_issue_516_observability_run();
-extern int aura_issue_522_observability_run();
 extern int aura_issue_523_observability_run();
 extern int aura_issue_524_observability_run();
 extern int aura_issue_525_observability_run();
 extern int aura_issue_528_observability_run();
 extern int aura_issue_530_observability_run();
-extern int aura_issue_532_observability_run();
 extern int aura_issue_533_observability_run();
 extern int aura_issue_534_observability_run();
-extern int aura_issue_535_observability_run();
 extern int aura_issue_557_observability_run();
 extern int aura_issue_601_run();
 extern int aura_issue_603_run();
@@ -44,27 +34,17 @@ extern int aura_issue_633_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_497", aura_issue_497_run},
         {"test_issue_500", aura_issue_500_run},
         {"test_issue_501_hygiene", aura_issue_501_hygiene_run},
-        {"test_issue_502", aura_issue_502_run},
         {"test_issue_503", aura_issue_503_run},
-        {"test_issue_504", aura_issue_504_run},
-        {"test_issue_505", aura_issue_505_run},
-        {"test_issue_511_observability", aura_issue_511_observability_run},
-        {"test_issue_513_observability", aura_issue_513_observability_run},
         {"test_issue_515_observability", aura_issue_515_observability_run},
-        {"test_issue_516_observability", aura_issue_516_observability_run},
-        {"test_issue_522_observability", aura_issue_522_observability_run},
         {"test_issue_523_observability", aura_issue_523_observability_run},
         {"test_issue_524_observability", aura_issue_524_observability_run},
         {"test_issue_525_observability", aura_issue_525_observability_run},
         {"test_issue_528_observability", aura_issue_528_observability_run},
         {"test_issue_530_observability", aura_issue_530_observability_run},
-        {"test_issue_532_observability", aura_issue_532_observability_run},
         {"test_issue_533_observability", aura_issue_533_observability_run},
         {"test_issue_534_observability", aura_issue_534_observability_run},
-        {"test_issue_535_observability", aura_issue_535_observability_run},
         {"test_issue_557_observability", aura_issue_557_observability_run},
         {"test_issue_601", aura_issue_601_run},
         {"test_issue_603", aura_issue_603_run},

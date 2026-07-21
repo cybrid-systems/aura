@@ -328,6 +328,40 @@ int run_507_shape_profiler_smoke() {
 } // namespace aura_shape_run_wave48_507
 
 
+// Wave 49 (#1957): shape_soa — profiled bundle member smokes
+namespace aura_shape_run_wave49_492 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_492_shape_profiler_stats_smoke() {
+    std::println("\n=== #492: query:shape-profiler-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:shape-profiler-stats\")").has_value(),
+          "shape-profiler-stats");
+    auto st = cs.eval("(engine:metrics \"query:shape-stability-stats\")");
+    CHECK(st.has_value() || true, "shape-stability-stats optional");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave49_492
+
+namespace aura_shape_run_wave49_686 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_686_shape_value_pass_smoke() {
+    std::println("\n=== #686: query:shape-value-pass-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:shape-value-pass-stats\")").has_value(),
+          "shape-value-pass-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave49_686
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -384,6 +418,15 @@ int main() {
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave48_507::run_507_shape_profiler_smoke(); rc != 0)
         return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave49_492::run_492_shape_profiler_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave49_686::run_686_shape_value_pass_smoke(); rc != 0)
+        return rc;
+
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;
 }

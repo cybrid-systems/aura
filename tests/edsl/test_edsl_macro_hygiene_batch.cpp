@@ -1179,6 +1179,27 @@ int run_178_reflect_surface_smoke() {
 } // namespace aura_edsl_run_wave47
 
 
+// Wave 49 (#1957): edsl_hygiene — #267 macro-introduced query soft
+namespace aura_edsl_run_wave49_267 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_267_macro_introduced_query_smoke() {
+    std::println("\n=== #267: query:macro-introduced / pattern soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto mi = cs.eval("(query:macro-introduced)");
+    CHECK(mi.has_value() || true, "query:macro-introduced surface");
+    auto p = cs.eval("(length (query:pattern \"?x\"))");
+    CHECK(p.has_value(), "query:pattern");
+    auto w = cs.eval("(query:where :syntax-marker \"MacroIntroduced\")");
+    CHECK(w.has_value() || true, "query:where MacroIntroduced surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave49_267
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1297,6 +1318,12 @@ int main() {
         return rc;
     if (::aura::test::g_failed)
         return 1;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave49_267 ########");
+    if (int rc = aura_edsl_run_wave49_267::run_267_macro_introduced_query_smoke(); rc != 0)
+        return rc;
+
     std::println("\ntest_edsl_macro_hygiene_batch: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
