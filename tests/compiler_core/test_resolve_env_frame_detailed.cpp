@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1756 — resolve_env_frame_detailed distinguishes
+// Issue #1756 (#1978 renamed): issue# moved from filename to header.
 // NULL_ID / OOB / INVALID_VERSION / OK (not a single nullptr).
 //
 //   AC1: source cites #1756; EnvFrameResolveStatus + detailed APIs

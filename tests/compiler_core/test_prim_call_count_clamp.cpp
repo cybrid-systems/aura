@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1711 — aura_prim_call must clamp argc to the 3-element
+// Issue #1711 (#1978 renamed): issue# moved from filename to header.
 // stack args[] buffer so the dispatcher cannot read past the array.
 //
 //   AC1: dispatcher sees argc<=3 even when caller passes count>3

@@ -240,9 +240,9 @@ aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941_967)
 set_target_properties(test_selfevo_bugfix_941_967 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave1: FieldListCase in obs_schema_matrix
 
 # Issues #968–#984: observability / JIT / typechecker / FFI / arena bugfixes
-aura_add_issue_test(test_bugfix_968_984)
-aura_issue_test_link_llvm_jit(test_bugfix_968_984)
-add_dependencies(all_test_issue_targets test_bugfix_968_984)
+aura_add_issue_test(test_bugfix_968)
+aura_issue_test_link_llvm_jit(test_bugfix_968)
+add_dependencies(all_test_issue_targets test_bugfix_968)
 
 # Issues #985–#1013: production cache bounds + resource quota Phase 1
 aura_add_issue_test(test_production_hardening_985_1013)

@@ -1,6 +1,7 @@
 // test_envframe_truncate_guard_1948.cpp — Issue #1948
 // @category: unit
 // @reason: Issue #1948 — P0 EnvFrame compact/truncate dual-epoch +
+// Issue #1739/#1842/#1888/#1889/#1927/#1948 (#1978 renamed): issue# moved from filename to header.
 // MutationBoundaryGuard consistency under panic rollback (refine of
 // #1927 / #1842 / #1889 / #1739).
 //

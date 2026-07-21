@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1710 — aura_pair_car/cdr_unchecked must not raw-index
+// Issue #1710 (#1978 renamed): issue# moved from filename to header.
 // g_pair_slots without bounds + lock (UAF under concurrent realloc).
 //
 //   AC1: unchecked car/cdr on live pair matches safe path

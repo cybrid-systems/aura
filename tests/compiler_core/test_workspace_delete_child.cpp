@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1770 — WorkspaceTree::delete_child must null node
+// Issue #1770 (#1978 renamed): issue# moved from filename to header.
 // fields before delete so a throwing dtor cannot leave dangling pointers.
 //
 //   AC1: source cites #1770; nulls before delete owned_flat/pool

@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1713 — auto-evolve-tick/once must not apply_closure on
+// Issue #1713 (#1978 renamed): issue# moved from filename to header.
 // freed detect/fix ClosureIds (UAF / wrong-fn after free).
 //
 //   AC1: tick stops + returns #f when detect/fix TW-erased after loop start

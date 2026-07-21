@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1771 — verify:parse-{coverage-feedback,assert-failure,
+// Issue #1771 (#1978 renamed): issue# moved from filename to header.
 // formal-cex} share parse_verify_node_id_lines helper (no triple copy).
 //
 //   AC1: source cites #1771; single parse_verify_node_id_lines helper

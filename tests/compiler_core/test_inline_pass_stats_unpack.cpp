@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1784 — compile:inline-pass-stats must unpack the
+// Issue #1784 (#1978 renamed): issue# moved from filename to header.
 // packed uint64 via uint32_t halves so values with bit 31 set stay
 // non-negative as int64_t (no accidental int32 sign-extension).
 //

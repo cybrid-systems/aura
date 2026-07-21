@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1857 — compile_02.cpp must not re-import
+// Issue #1857 (#1978 renamed): issue# moved from filename to header.
 // hardware_backend / sv_ir (copy-paste duplicate imports).
 //
 //   AC1: source cites #1857; each import line appears once

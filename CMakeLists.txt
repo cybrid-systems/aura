@@ -1890,8 +1890,8 @@ aura_issue_test_link_llvm_jit(test_task6_production_readiness_closed_loop_514)
 aura_add_issue_test(test_production_roadmap_closed_loop_520)
 aura_issue_test_link_llvm_jit(test_production_roadmap_closed_loop_520)
 # Issue #517: Consolidated 3-pillar production priority meta tracker.
-aura_add_issue_test(test_consolidated_production_priority_517)
-aura_issue_test_link_llvm_jit(test_consolidated_production_priority_517)
+aura_add_issue_test(test_consolidated_production_priority)
+aura_issue_test_link_llvm_jit(test_consolidated_production_priority)
 # Issue #441: Consolidated compiler/runtime production-readiness closed loop
 # (meta). 7 ACs: compiler-runtime-production-readiness-stats synthesis,
 # P0 #438 fiber + #439 gc-safepoint + #440 EDSL + #437 verify-dirty pillars,
@@ -2108,7 +2108,7 @@ aura_issue_test_link_llvm_jit(test_aot_hotupdate_versioning)
 # (aura_jit_bridge.cpp + aura_jit_bridge_stub.cpp + lib/runtime.c) with
 # release/acquire protocol on both sides. Complements the existing bridge
 # epoch test suite (test_bridge_epoch_strict.cpp + test_issue_1485.cpp AC10
-# + test_truncate_env_bridge_epoch_1739.cpp + test_epoch_apply_mandate_1632.cpp)
+# + test_truncate_env_bridge_epoch.cpp + test_epoch_apply_mandate_1632.cpp)
 # by adding the storage-type safety test for the underlying global epoch
 # variable that all those tests interact with.
 # Issue #1655: apply_closure epoch-stale helper extraction (single source
@@ -4774,9 +4774,9 @@ add_dependencies(all_test_issue_targets test_envframe_truncate_epoch_1889)
 # Adds mutation_boundary_violation_on_env_compact_total +
 # mutation_boundary_violation_on_env_truncate_total metrics +
 # concurrent 4-thread × 5k-iteration stress test.
-aura_add_issue_test(test_envframe_truncate_guard_1948)
-aura_issue_test_link_llvm_jit(test_envframe_truncate_guard_1948)
-add_dependencies(all_test_issue_targets test_envframe_truncate_guard_1948)
+aura_add_issue_test(test_envframe_truncate_guard)
+aura_issue_test_link_llvm_jit(test_envframe_truncate_guard)
+add_dependencies(all_test_issue_targets test_envframe_truncate_guard)
 # Issue #1949: linear ownership safety — walk_active_closures wiring
 # to 5+ mutation/GC/JIT/fiber-steal boundaries (refine of #1928/#1895).
 # Adds linear_live_closure_scans_total metric + concurrent 4-thread stress.
@@ -5002,8 +5002,8 @@ aura_issue_test_link_llvm_jit(test_render_memory_predictability)
 aura_add_issue_test(test_render_dispatch_linear_epoch_1676)
 aura_issue_test_link_llvm_jit(test_render_dispatch_linear_epoch_1676)
 # Issue #1677: render prim template + AI Native query/mutate evolution.
-aura_add_issue_test(test_render_ai_native_template_1677)
-aura_issue_test_link_llvm_jit(test_render_ai_native_template_1677)
+aura_add_issue_test(test_render_ai_native_template)
+aura_issue_test_link_llvm_jit(test_render_ai_native_template)
 # Issue #1678: workspace_marker_macro_introduced max(walk, snapshot).
 aura_add_issue_test(test_workspace_marker_macro_max)
 aura_issue_test_link_llvm_jit(test_workspace_marker_macro_max)
@@ -5029,15 +5029,15 @@ aura_issue_test_link_llvm_jit(test_sv_closedloop_workspace_lock_1683)
 # Issue #1690: insert-child re-validate parent after parse_to_flat.
 # Issue #1691: no dead define_str string_heap_ push in refactor/extract.
 # Issue #1692: no dead circular-dep string_heap_ push in module loader.
-aura_add_issue_test(test_module_loader_dead_heap_circular_1692)
-aura_issue_test_link_llvm_jit(test_module_loader_dead_heap_circular_1692)
+aura_add_issue_test(test_module_loader_dead_heap_circular)
+aura_issue_test_link_llvm_jit(test_module_loader_dead_heap_circular)
 # Issue #1693: no dead prefix inject string_heap_ push in import.
-aura_add_issue_test(test_module_prefix_dead_heap_1693)
-aura_issue_test_link_llvm_jit(test_module_prefix_dead_heap_1693)
+aura_add_issue_test(test_module_prefix_dead_heap)
+aura_issue_test_link_llvm_jit(test_module_prefix_dead_heap)
 # Issue #1694: replace-pattern re-validate parent after each parse_to_flat.
 # Issue #1695: QueryMatcher captures are StableNodeRef (not raw NodeId).
-aura_add_issue_test(test_matcher_stable_captures_1695)
-aura_issue_test_link_llvm_jit(test_matcher_stable_captures_1695)
+aura_add_issue_test(test_matcher_stable_captures)
+aura_issue_test_link_llvm_jit(test_matcher_stable_captures)
 # Issue #1696: multi-node mutators log under NULL_NODE, not NodeId 0.
 # Issue #1697: replace-subtree re-validate/re-derive parent after parse_to_flat.
 # Issue #1699: splice re-validate parent after each multi-arg parse_to_flat.
@@ -5047,20 +5047,20 @@ aura_issue_test_link_llvm_jit(test_matcher_stable_captures_1695)
 # Issue #1703: refactor/extract re-validate parent after parse_to_flat.
 # Issue #1704: sv-add-coverpoint / sv-weaken-property MutationBoundaryGuard.
 # Issue #1707: closure cache generation seqlock (torn-read safety).
-aura_add_issue_test(test_jit_closure_cache_race_1707)
-aura_issue_test_link_llvm_jit(test_jit_closure_cache_race_1707)
+aura_add_issue_test(test_jit_closure_cache_race)
+aura_issue_test_link_llvm_jit(test_jit_closure_cache_race)
 # Issue #1710: pair car/cdr unchecked bounds+lock (UAF safety).
-aura_add_issue_test(test_pair_unchecked_safety_1710)
-aura_issue_test_link_llvm_jit(test_pair_unchecked_safety_1710)
+aura_add_issue_test(test_pair_unchecked_safety)
+aura_issue_test_link_llvm_jit(test_pair_unchecked_safety)
 # Issue #1711: aura_prim_call clamps argc to args[3] capacity.
-aura_add_issue_test(test_prim_call_count_clamp_1711)
-aura_issue_test_link_llvm_jit(test_prim_call_count_clamp_1711)
+aura_add_issue_test(test_prim_call_count_clamp)
+aura_issue_test_link_llvm_jit(test_prim_call_count_clamp)
 # Issue #1712: auto-evolve-tick has no production [DBG tick] fprintf.
 aura_add_issue_test(test_auto_evolve_tick_no_dbg)
 aura_issue_test_link_llvm_jit(test_auto_evolve_tick_no_dbg)
 # Issue #1713: auto-evolve-tick/once validate ClosureId live before apply.
-aura_add_issue_test(test_auto_evolve_closure_live_1713)
-aura_issue_test_link_llvm_jit(test_auto_evolve_closure_live_1713)
+aura_add_issue_test(test_auto_evolve_closure_live)
+aura_issue_test_link_llvm_jit(test_auto_evolve_closure_live)
 # Issue #1714: strategy:set-strategy tagged merr on invalid name/args.
 aura_add_issue_test(test_strategy_set_errors)
 aura_issue_test_link_llvm_jit(test_strategy_set_errors)
@@ -5071,8 +5071,8 @@ aura_issue_test_link_llvm_jit(test_synthesize_json_parse)
 aura_add_issue_test(test_synthesize_optimize_prng)
 aura_issue_test_link_llvm_jit(test_synthesize_optimize_prng)
 # Issue #1717: WorkspaceSwapGuard RAII for optimize child workspace.
-aura_add_issue_test(test_workspace_swap_guard_1717)
-aura_issue_test_link_llvm_jit(test_workspace_swap_guard_1717)
+aura_add_issue_test(test_workspace_swap_guard)
+aura_issue_test_link_llvm_jit(test_workspace_swap_guard)
 # Issue #1718: try_probe reuses fixed string_heap slot (no unbounded push).
 aura_add_issue_test(test_try_probe_heap_slot)
 aura_issue_test_link_llvm_jit(test_try_probe_heap_slot)
@@ -5104,11 +5104,11 @@ aura_issue_test_link_llvm_jit(test_evolve_name_collision)
 aura_add_issue_test(test_panic_checkpoint_clear_1727)
 aura_issue_test_link_llvm_jit(test_panic_checkpoint_clear_1727)
 # Issue #1728: commit_panic_checkpoint must bump bridge_epoch.
-aura_add_issue_test(test_commit_panic_bridge_epoch_1728)
-aura_issue_test_link_llvm_jit(test_commit_panic_bridge_epoch_1728)
+aura_add_issue_test(test_commit_panic_bridge_epoch)
+aura_issue_test_link_llvm_jit(test_commit_panic_bridge_epoch)
 # Issue #1729: set_workspace_flat lock + rollback on index rebuild throw.
-aura_add_issue_test(test_set_workspace_flat_1729)
-aura_issue_test_link_llvm_jit(test_set_workspace_flat_1729)
+aura_add_issue_test(test_set_workspace_flat)
+aura_issue_test_link_llvm_jit(test_set_workspace_flat)
 # Issue #1730: current_agent_fingerprint_ is atomic under concurrent fibers.
 aura_add_issue_test(test_agent_fingerprint_atomic)
 aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic)
@@ -5116,8 +5116,8 @@ aura_issue_test_link_llvm_jit(test_agent_fingerprint_atomic)
 
 
 # Issue #1739: truncate_env_frames_to_checkpoint must bump bridge_epoch.
-aura_add_issue_test(test_truncate_env_bridge_epoch_1739)
-aura_issue_test_link_llvm_jit(test_truncate_env_bridge_epoch_1739)
+aura_add_issue_test(test_truncate_env_bridge_epoch)
+aura_issue_test_link_llvm_jit(test_truncate_env_bridge_epoch)
 # Issue #1745: AURA_MUTATION_BOUNDARY_PROTECT without bare break.
 aura_add_issue_test(test_mbp_macro_no_break_1745)
 aura_issue_test_link_llvm_jit(test_mbp_macro_no_break_1745)
@@ -5140,21 +5140,21 @@ aura_issue_test_link_llvm_jit(test_guard_dtor_invariant_noexcept_1766)
 aura_add_issue_test(test_guard_move_ownership_1767)
 aura_issue_test_link_llvm_jit(test_guard_move_ownership_1767)
 # Issue #1768: try_lock_workspace_* updates lock_order TLS (with fail rollback).
-aura_add_issue_test(test_try_lock_workspace_lock_order_1768)
-aura_issue_test_link_llvm_jit(test_try_lock_workspace_lock_order_1768)
+aura_add_issue_test(test_try_lock_workspace_lock_order)
+aura_issue_test_link_llvm_jit(test_try_lock_workspace_lock_order)
 # Issue #1769: inline typecheck helpers catch exceptions + metric.
-aura_add_issue_test(test_inline_typecheck_exception_1769)
-aura_issue_test_link_llvm_jit(test_inline_typecheck_exception_1769)
+aura_add_issue_test(test_inline_typecheck_exception)
+aura_issue_test_link_llvm_jit(test_inline_typecheck_exception)
 # Issue #1770: delete_child nulls fields before delete (no dangling on throw).
-aura_add_issue_test(test_workspace_delete_child_1770)
-aura_issue_test_link_llvm_jit(test_workspace_delete_child_1770)
+aura_add_issue_test(test_workspace_delete_child)
+aura_issue_test_link_llvm_jit(test_workspace_delete_child)
 # Issue #1771: shared parse_verify_node_id_lines for verify:parse-* family.
-aura_add_issue_test(test_verify_parse_shared_helper_1771)
-aura_issue_test_link_llvm_jit(test_verify_parse_shared_helper_1771)
+aura_add_issue_test(test_verify_parse_shared_helper)
+aura_issue_test_link_llvm_jit(test_verify_parse_shared_helper)
 # Issue #1772: mutate:from-verification-feedback validates NodeId upfront.
 # Issue #1774: demo-sv-self-evolution nested Guard (no unique_lock deadlock).
-aura_add_issue_test(test_demo_sv_nested_guard_1774)
-aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard_1774)
+aura_add_issue_test(test_demo_sv_nested_guard)
+aura_issue_test_link_llvm_jit(test_demo_sv_nested_guard)
 # Issue #1779: compile:narrowing-dirty? uses read-only query (no set+restore race).
 aura_add_issue_test(test_narrowing_dirty_query_1779)
 aura_issue_test_link_llvm_jit(test_narrowing_dirty_query_1779)
@@ -5165,20 +5165,20 @@ aura_issue_test_link_llvm_jit(test_allow_macro_inline_per_eval)
 aura_add_issue_test(test_occ_cache_stats_wired_1781)
 aura_issue_test_link_llvm_jit(test_occ_cache_stats_wired_1781)
 # Issue #1782: syntax:propagate-marker visited-set (cycle guard).
-aura_add_issue_test(test_propagate_marker_cycle_guard_1782)
-aura_issue_test_link_llvm_jit(test_propagate_marker_cycle_guard_1782)
+aura_add_issue_test(test_propagate_marker_cycle_guard)
+aura_issue_test_link_llvm_jit(test_propagate_marker_cycle_guard)
 # Issue #1783: marker/provenance metadata_mtx_ cross-fiber lock.
 aura_add_issue_test(test_marker_metadata_lock_1783)
 aura_issue_test_link_llvm_jit(test_marker_metadata_lock_1783)
 # Issue #1784: compile:inline-pass-stats unpack via uint32_t halves.
-aura_add_issue_test(test_inline_pass_stats_unpack_1784)
-aura_issue_test_link_llvm_jit(test_inline_pass_stats_unpack_1784)
+aura_add_issue_test(test_inline_pass_stats_unpack)
+aura_issue_test_link_llvm_jit(test_inline_pass_stats_unpack)
 # Issue #1785: per-symbol-dirty-stats locked find_by_name (no unlocked intern).
-aura_add_issue_test(test_per_symbol_dirty_pool_lock_1785)
-aura_issue_test_link_llvm_jit(test_per_symbol_dirty_pool_lock_1785)
+aura_add_issue_test(test_per_symbol_dirty_pool_lock)
+aura_issue_test_link_llvm_jit(test_per_symbol_dirty_pool_lock)
 # Issue #1786: per-symbol-dirty-stats ancestor walk visited-set (cycle guard).
-aura_add_issue_test(test_per_symbol_dirty_cycle_guard_1786)
-aura_issue_test_link_llvm_jit(test_per_symbol_dirty_cycle_guard_1786)
+aura_add_issue_test(test_per_symbol_dirty_cycle_guard)
+aura_issue_test_link_llvm_jit(test_per_symbol_dirty_cycle_guard)
 # Issue #1787: extract shared build_kv_hash in compile_05 (dedup 6×).
 aura_add_issue_test(test_build_kv_hash_dedup_1787)
 aura_issue_test_link_llvm_jit(test_build_kv_hash_dedup_1787)
@@ -5189,8 +5189,8 @@ aura_issue_test_link_llvm_jit(test_closedloop_stats_hash_cap_1795)
 aura_add_issue_test(test_type_cache_stats_snapshot_1797)
 aura_issue_test_link_llvm_jit(test_type_cache_stats_snapshot_1797)
 # Issue #1816: coverage-holes / suggest-constraint-refine lock verification_dirty_.
-aura_add_issue_test(test_coverage_holes_workspace_lock_1816)
-aura_issue_test_link_llvm_jit(test_coverage_holes_workspace_lock_1816)
+aura_add_issue_test(test_coverage_holes_workspace_lock)
+aura_issue_test_link_llvm_jit(test_coverage_holes_workspace_lock)
 # Issue #1827: InlinePass lifetime counters atomic + acquire loads for stats.
 aura_add_issue_test(test_inline_pass_stats_atomic_1827)
 aura_issue_test_link_llvm_jit(test_inline_pass_stats_atomic_1827)
@@ -5198,8 +5198,8 @@ aura_issue_test_link_llvm_jit(test_inline_pass_stats_atomic_1827)
 aura_add_issue_test(test_compiler_metrics_ownership_1835)
 aura_issue_test_link_llvm_jit(test_compiler_metrics_ownership_1835)
 # Issue #1837: document type_registry_ non-owning ownership contract.
-aura_add_issue_test(test_type_registry_ownership_1837)
-aura_issue_test_link_llvm_jit(test_type_registry_ownership_1837)
+aura_add_issue_test(test_type_registry_ownership)
+aura_issue_test_link_llvm_jit(test_type_registry_ownership)
 # Issue #1838: hygiene:protected? metadata reader lock vs set-marker.
 aura_add_issue_test(test_hygiene_protected_metadata_lock)
 aura_issue_test_link_llvm_jit(test_hygiene_protected_metadata_lock)
@@ -5244,14 +5244,14 @@ aura_issue_test_link_llvm_jit(test_clear_instruction_dirty_guard_1853)
 aura_add_issue_test(test_incremental_effectiveness_snapshot_fail_1854)
 aura_issue_test_link_llvm_jit(test_incremental_effectiveness_snapshot_fail_1854)
 # Issue #1855: compile:relower-strategy locked ir_cache dirty snapshot.
-aura_add_issue_test(test_relower_strategy_cache_lock_1855)
-aura_issue_test_link_llvm_jit(test_relower_strategy_cache_lock_1855)
+aura_add_issue_test(test_relower_strategy_cache_lock)
+aura_issue_test_link_llvm_jit(test_relower_strategy_cache_lock)
 # Issue #1856: CompilerService::try_snapshot umbrella for compile_* stats.
 aura_add_issue_test(test_safe_snapshot_umbrella_1856)
 aura_issue_test_link_llvm_jit(test_safe_snapshot_umbrella_1856)
 # Issue #1857: compile_02 remove duplicate module imports.
-aura_add_issue_test(test_compile02_no_dup_imports_1857)
-aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports_1857)
+aura_add_issue_test(test_compile02_no_dup_imports)
+aura_issue_test_link_llvm_jit(test_compile02_no_dup_imports)
 
 # Issue #1859: Env::lookup SoA parent_id_ walk is iterative (no tmp.lookup).
 
@@ -5297,8 +5297,8 @@ aura_issue_test_link_llvm_jit(test_orch_observability)
 # Issue #1754: is_env_frame_stale vs invalid_id (NULL/OOB) split.
 # Issue #1755: validate_linear_ownership_state bridge_epoch drift metric.
 # Issue #1756: resolve_env_frame_detailed NULL/OOB/INVALID_VERSION.
-aura_add_issue_test(test_resolve_env_frame_detailed_1756)
-aura_issue_test_link_llvm_jit(test_resolve_env_frame_detailed_1756)
+aura_add_issue_test(test_resolve_env_frame_detailed)
+aura_issue_test_link_llvm_jit(test_resolve_env_frame_detailed)
 
 # Issue #1592: post-steal EnvFrame/StableNodeRef/linear closed loop.
 aura_add_issue_test(test_post_steal_closed_loop_1592)

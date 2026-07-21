@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1837 — type_registry_ is a documented non-owning
+// Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 // (or single-owner via ensure_type_registry) raw pointer. Production
 // CompilerService wires &type_registry_ once; concurrent rebind/free
 // while compile:hw-coercion-* runs is unsupported (#1835 sibling).

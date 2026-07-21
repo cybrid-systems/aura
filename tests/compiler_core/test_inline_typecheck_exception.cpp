@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1769 — run_typecheck_no_lock* / run_post_mutate_typecheck
+// Issue #1769 (#1978 renamed): issue# moved from filename to header.
 // must catch exceptions, bump inline_typecheck_exception_total, return fail.
 //
 //   AC1: source cites #1769; try/catch + metric bump in helpers

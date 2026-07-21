@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1785 — compile:per-symbol-dirty-stats must not call
+// Issue #1785 (#1978 renamed): issue# moved from filename to header.
 // workspace_pool_->intern without a lock; use find_by_name under
 // workspace_mtx_ shared_lock + FlatAST walks under the same lock.
 //

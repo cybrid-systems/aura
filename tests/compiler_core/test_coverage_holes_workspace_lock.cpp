@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1816 — verify:coverage-holes /
+// Issue #1816 (#1978 renamed): issue# moved from filename to header.
 // verify:suggest-constraint-refine must hold workspace_mtx_
 // while reading (and, for report text, writing)
 // verification_dirty_ so concurrent fibers cannot tear bits

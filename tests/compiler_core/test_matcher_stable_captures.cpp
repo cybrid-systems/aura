@@ -1,5 +1,6 @@
 // @category: unit
 // @reason: Issue #1695 — QueryMatcher captures store StableNodeRef
+// Issue #1695 (#1978 renamed): issue# moved from filename to header.
 // (not raw NodeId) so replace-pattern / query:pattern share gen-tagged
 // provenance at match time.
 //
