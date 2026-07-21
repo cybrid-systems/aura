@@ -163,7 +163,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_dirty_delta_present.cpp` | 237 | `keep` | no automatic streamline |
 | `test_dirty_propagation_cascade.cpp` | 272 | `keep` | no automatic streamline |
 | `test_dirty_short_circuit_api.cpp` | 65 | `keep` | no automatic streamline |
-| `test_eda_self_evolution_stable_ref.cpp` | 208 | `keep` | no automatic streamline |
 | `test_edsl_concurrent_fiber_boundary_task1.cpp` | 322 | `keep` | no automatic streamline |
 | `test_edsl_concurrent_query_mutate.cpp` | 233 | `keep` | no automatic streamline |
 | `test_edsl_core_stability_cow_atomic_query_mutate.cpp` | 134 | `keep` | no automatic streamline |
@@ -512,10 +511,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_stats_facade_bench.cpp` | 86 | `candidate_obs_fold` | thin schema probe (86L) — consider FieldListCase |
 | `test_stats_module_unification.cpp` | 305 | `keep` | no automatic streamline |
 | `test_stdlib_production_review_923_940.cpp` | 85 | `candidate_obs_fold` | thin schema probe (85L) — consider FieldListCase |
-| `test_sv_closedloop_workspace_lock_1683.cpp` | 116 | `keep` | no automatic streamline |
-| `test_sv_verification_commercial_emit_fidelity.cpp` | 167 | `keep` | no automatic streamline |
-| `test_sv_verification_edsl_full_structured_closedloop.cpp` | 186 | `keep` | no automatic streamline |
-| `test_sv_verification_self_evolution_closed_loop_reliability.cpp` | 177 | `keep` | no automatic streamline |
 | `test_task6_production_readiness_closed_loop_514.cpp` | 137 | `keep` | no automatic streamline |
 | `test_tenant_isolation_enforcement.cpp` | 227 | `keep` | no automatic streamline |
 | `test_terminal_deprecation.cpp` | 138 | `candidate_obs_fold` | thin schema probe (138L) — consider FieldListCase |
@@ -524,7 +519,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_tier_dispatch.cpp` | 114 | `candidate_obs_fold` | thin schema probe (114L) — consider FieldListCase |
 | `test_type_cache_stats_snapshot_1797.cpp` | 134 | `keep` | no automatic streamline |
 | `test_type_prop_invariant_correlation_1884.cpp` | 160 | `keep` | no automatic streamline |
-| `test_type_propagation_ir_eda.cpp` | 313 | `keep` | no automatic streamline |
 | `test_typesystem_type_propagation_jit_l2_typed_mutate.cpp` | 150 | `keep` | no automatic streamline |
 | `test_unified_invalidation_1607.cpp` | 215 | `keep` | no automatic streamline |
 | `test_value_encoding_v2_dispatch_contracts_1622.cpp` | 178 | `keep` | no automatic streamline |

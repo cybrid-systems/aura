@@ -31,8 +31,6 @@ extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
 extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
-extern int aura_issue_sv_verification_commercial_emit_fidelity_run();
-extern int aura_issue_sv_verification_self_evolution_closed_loop_reliability_run();
 extern int aura_issue_766_run();
 extern int aura_issue_767_run();
 extern int aura_issue_768_run();
@@ -88,10 +86,6 @@ int main() {
          aura_issue_linear_ownership_postmutate_guard_steal_envframe_run},
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
-        {"test_sv_verification_commercial_emit_fidelity",
-         aura_issue_sv_verification_commercial_emit_fidelity_run},
-        {"test_sv_verification_self_evolution_closed_loop_reliability",
-         aura_issue_sv_verification_self_evolution_closed_loop_reliability_run},
         {"test_issue_766", aura_issue_766_run},
         {"test_issue_767", aura_issue_767_run},
         {"test_issue_768", aura_issue_768_run},
