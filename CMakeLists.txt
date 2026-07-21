@@ -1776,6 +1776,11 @@ aura_add_issue_test(test_linear_ownership_batch)
 aura_issue_test_link_llvm_jit(test_linear_ownership_batch)
 set_target_properties(test_linear_ownership_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 add_dependencies(all_test_issue_targets test_linear_ownership_batch)
+
+# Wave 26 (#1957): thin observability metrics / schema smokes
+aura_add_issue_test(test_obs_metrics_smoke_batch)
+aura_issue_test_link_llvm_jit(test_obs_metrics_smoke_batch)
+add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
