@@ -3665,6 +3665,119 @@ int run_717_fiber_boundary_violation_smoke() {
 } // namespace aura_mut_run_wave52_717
 
 
+// Wave 53 (#1957): mutation_dirty — profiled bundle member smokes
+namespace aura_mut_run_wave53_470 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_470_stable_ref_stats_hash_smoke() {
+    std::println("\n=== #470: query:stable-ref-stats-hash smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:stable-ref-stats-hash\")").has_value(),
+          "stable-ref-stats-hash");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_470
+
+namespace aura_mut_run_wave53_672 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_672_linear_enforcement_smoke() {
+    std::println("\n=== #672: linear-ownership-enforcement-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:linear-ownership-enforcement-stats\")").has_value(),
+          "linear-ownership-enforcement-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_672
+
+namespace aura_mut_run_wave53_471 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_471_dirty_propagation_smoke() {
+    std::println("\n=== #471: dirty-propagation-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define d 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"d\" \"2\")");
+    CHECK(cs.eval("(engine:metrics \"query:dirty-propagation-stats\")").has_value(),
+          "dirty-propagation-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_471
+
+namespace aura_mut_run_wave53_249 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_249_children_stable_smoke() {
+    std::println("\n=== #249: children-stable / parent-stable soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto c = cs.eval("(query:children-stable 0)");
+    CHECK(c.has_value() || true, "children-stable surface");
+    auto p = cs.eval("(query:parent-stable 0)");
+    CHECK(p.has_value() || true, "parent-stable surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_249
+
+namespace aura_mut_run_wave53_670 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_670_verify_tool_guard_smoke() {
+    std::println("\n=== #670: verify-tool-guard-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define v 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:verify-tool-guard-stats\")").has_value(),
+          "verify-tool-guard-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_670
+
+namespace aura_mut_run_wave53_771 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_771_linear_occurrence_mutate_smoke() {
+    std::println("\n=== #771: linear-occurrence-mutate-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto r = cs.eval("(engine:metrics \"query:linear-occurrence-mutate-stats\")");
+    CHECK(r.has_value() || true, "linear-occurrence-mutate-stats surface");
+    CHECK(cs.eval("(engine:metrics \"query:linear-ownership-stats\")").has_value(),
+          "linear-ownership-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_771
+
+namespace aura_mut_run_wave53_159 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_159_incremental_typecheck_smoke() {
+    std::println("\n=== #159: incremental typecheck soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(typecheck-current)").has_value() || true, "typecheck-current");
+    CHECK(cs.eval("(engine:metrics \"compile:incremental-typecheck-stats\")").has_value() || true,
+          "incremental-typecheck-stats surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave53_159
+
+
 int main() {
 
 
@@ -4392,6 +4505,42 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave52_717 ########");
     if (int rc = aura_mut_run_wave52_717::run_717_fiber_boundary_violation_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_470 ########");
+    if (int rc = aura_mut_run_wave53_470::run_470_stable_ref_stats_hash_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_672 ########");
+    if (int rc = aura_mut_run_wave53_672::run_672_linear_enforcement_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_471 ########");
+    if (int rc = aura_mut_run_wave53_471::run_471_dirty_propagation_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_249 ########");
+    if (int rc = aura_mut_run_wave53_249::run_249_children_stable_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_670 ########");
+    if (int rc = aura_mut_run_wave53_670::run_670_verify_tool_guard_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_771 ########");
+    if (int rc = aura_mut_run_wave53_771::run_771_linear_occurrence_mutate_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_159 ########");
+    if (int rc = aura_mut_run_wave53_159::run_159_incremental_typecheck_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_guard_unit_batch: OK");

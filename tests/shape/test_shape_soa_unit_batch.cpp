@@ -412,6 +412,66 @@ int run_431_cxx26_invariants_smoke() {
 } // namespace aura_shape_run_wave52_431
 
 
+// Wave 53 (#1957): shape_soa — SoA / shape hotpath smokes
+namespace aura_shape_run_wave53_463 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_463_soa_adoption_smoke() {
+    std::println("\n=== #463: soa-adoption-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:soa-adoption-stats\")").has_value(),
+          "soa-adoption-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave53_463
+
+namespace aura_shape_run_wave53_766 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_766_ir_soa_migration_smoke() {
+    std::println("\n=== #766: ir-soa-migration-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:ir-soa-migration-stats\")").has_value(),
+          "ir-soa-migration-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave53_766
+
+namespace aura_shape_run_wave53_768 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_768_shape_pass_hotpath_smoke() {
+    std::println("\n=== #768: shape-pass-hotpath-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:shape-pass-hotpath-stats\")").has_value(),
+          "shape-pass-hotpath-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave53_768
+
+namespace aura_shape_run_wave53_782 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_782_terminal_rendering_smoke() {
+    std::println("\n=== #782: terminal-rendering-module-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:terminal-rendering-module-stats\")").has_value(),
+          "terminal-rendering-module-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave53_782
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -490,6 +550,23 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave52_431::run_431_cxx26_invariants_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave53_463::run_463_soa_adoption_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave53_766::run_766_ir_soa_migration_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave53_768::run_768_shape_pass_hotpath_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave53_782::run_782_terminal_rendering_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");

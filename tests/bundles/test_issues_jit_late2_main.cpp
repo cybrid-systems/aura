@@ -16,8 +16,6 @@ extern int aura_issue_733_run();
 extern int aura_issue_735_run();
 extern int aura_issue_756_run();
 extern int aura_issue_757_run();
-extern int aura_issue_759_run();
-extern int aura_issue_760_run();
 extern int aura_issue_761_run();
 extern int aura_issue_762_run();
 extern int aura_issue_763_run();
@@ -25,18 +23,13 @@ extern int aura_issue_dead_coercion_elision_narrow_evidence_run();
 extern int aura_issue_765_run();
 extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
-extern int aura_issue_766_run();
-extern int aura_issue_768_run();
 extern int aura_issue_770_run();
-extern int aura_issue_771_run();
 extern int aura_issue_772_run();
-extern int aura_issue_773_run();
 extern int aura_issue_774_run();
 extern int aura_issue_775_run();
 extern int aura_issue_776_run();
 extern int aura_issue_780_run();
 extern int aura_issue_781_run();
-extern int aura_issue_782_run();
 extern int aura_issue_783_run();
 extern int aura_issue_784_run();
 extern int aura_issue_785_run();
@@ -60,8 +53,6 @@ int main() {
         {"test_issue_735", aura_issue_735_run},
         {"test_issue_756", aura_issue_756_run},
         {"test_issue_757", aura_issue_757_run},
-        {"test_issue_759", aura_issue_759_run},
-        {"test_issue_760", aura_issue_760_run},
         {"test_issue_761", aura_issue_761_run},
         {"test_issue_762", aura_issue_762_run},
         {"test_issue_763", aura_issue_763_run},
@@ -72,18 +63,13 @@ int main() {
          aura_issue_linear_ownership_postmutate_guard_steal_envframe_run},
         {"test_typechecker_incremental_guard_steal_fidelity",
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
-        {"test_issue_766", aura_issue_766_run},
-        {"test_issue_768", aura_issue_768_run},
         {"test_issue_770", aura_issue_770_run},
-        {"test_issue_771", aura_issue_771_run},
         {"test_issue_772", aura_issue_772_run},
-        {"test_issue_773", aura_issue_773_run},
         {"test_issue_774", aura_issue_774_run},
         {"test_issue_775", aura_issue_775_run},
         {"test_issue_776", aura_issue_776_run},
         {"test_issue_780", aura_issue_780_run},
         {"test_issue_781", aura_issue_781_run},
-        {"test_issue_782", aura_issue_782_run},
         {"test_issue_783", aura_issue_783_run},
         {"test_issue_784", aura_issue_784_run},
         {"test_issue_785", aura_issue_785_run},

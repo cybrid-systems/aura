@@ -9,8 +9,7 @@
     "test_issue_171",
     "test_issue_181",
     "test_issue_182",
-    "test_issue_197",
-    "test_issue_246"
+    "test_issue_197"
   ],
   "fiber": [
     "test_issue_115"
@@ -18,7 +17,6 @@
   "jit": [
     "test_issue_135",
     "test_issue_137",
-    "test_issue_159",
     "test_issue_184",
     "test_issue_140",
     "test_issue_141",
@@ -31,9 +29,6 @@
     "test_issue_191",
     "test_issue_192",
     "test_issue_196",
-    "test_issue_247",
-    "test_issue_248",
-    "test_issue_249",
     "test_issue_240",
     "test_issue_244",
     "test_issue_228",
@@ -45,7 +40,6 @@
     "test_issue_147",
     "test_issue_148",
     "test_issue_149",
-    "test_issue_208",
     "test_issue_212",
     "test_issue_213",
     "test_issue_213_panic_fiber"
@@ -55,8 +49,7 @@
     "test_issue_254",
     "test_issue_255",
     "test_issue_256",
-    "test_issue_258",
-    "test_issue_259"
+    "test_issue_258"
   ],
   "jit_tests": [
     "test_issue_224",
@@ -80,12 +73,9 @@
     "test_issue_edsl_hygiene_atomic",
     "test_issue_428_closure",
     "test_issue_429_soa",
-    "test_issue_440_edsl_readiness",
     "test_issue_444_strategy_evolution",
     "test_issue_445_openclaw_integration",
-    "test_issue_452_aot_hot_update",
     "test_issue_462_shape_aware_folding",
-    "test_issue_463_soa_phase2_wiring",
     "test_issue_677",
     "test_per_fiber_stack_pool_high_concurrency",
     "test_aot_bridge_checkpoint_version_steal",
@@ -94,8 +84,6 @@
     "test_compiler_core_incremental_selfmod_gaps",
     "test_highperf_cpp26_gaps_arena_soa_value_shape_pass",
     "test_typesystem_typed_mutate_incremental_gaps",
-    "test_issue_711",
-    "test_issue_714",
     "test_issue_715"
   ],
   "jit_late2": [
@@ -111,8 +99,6 @@
     "test_issue_735",
     "test_issue_756",
     "test_issue_757",
-    "test_issue_759",
-    "test_issue_760",
     "test_issue_761",
     "test_issue_762",
     "test_issue_763",
@@ -120,18 +106,13 @@
     "test_issue_765",
     "test_linear_ownership_postmutate_guard_steal_envframe",
     "test_typechecker_incremental_guard_steal_fidelity",
-    "test_issue_766",
-    "test_issue_768",
     "test_issue_770",
-    "test_issue_771",
     "test_issue_772",
-    "test_issue_773",
     "test_issue_774",
     "test_issue_775",
     "test_issue_776",
     "test_issue_780",
     "test_issue_781",
-    "test_issue_782",
     "test_issue_783",
     "test_issue_784",
     "test_issue_785",
@@ -156,12 +137,8 @@
     "test_aura_result_error_policy",
     "test_open_issues_phase1_batch",
     "test_issue_804",
-    "test_issue_760",
-    "test_issue_669",
-    "test_issue_670",
     "test_atomic_batch_snapshot_stable_ref_ai_loops",
     "test_stable_ref_cow_subworkspace_concurrent_ai",
-    "test_issue_672",
     "test_prompt6_epoch_atomic_visibility_fiber_steal",
     "test_prompt6_linear_jit_l2_post_invalidate_arena_gc",
     "test_prompt2_6_impact_scope_quote_lambda_bridge_env",
@@ -178,24 +155,12 @@
     "test_runtime_concurrent_full_cycle_chaos",
     "test_issue_485"
   ],
-  "jit_late4": [
-    "test_issue_618"
-  ],
+  "jit_late4": [],
   "jit_late5": [
-    "test_issue_644",
-    "test_issue_649",
-    "test_issue_650",
-    "test_issue_651",
-    "test_issue_589",
-    "test_issue_590",
-    "test_issue_479",
-    "test_issue_465_cxx26_hotpath",
-    "test_issue_470_stable_ref_sv_scale",
-    "test_issue_471_dirty_sv_scale"
+    "test_issue_479"
   ],
   "light_late": [
     "test_issue_178",
-    "test_issue_473",
-    "test_issue_237"
+    "test_issue_473"
   ]
 }

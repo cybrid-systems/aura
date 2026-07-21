@@ -4,29 +4,11 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_644_run();
-extern int aura_issue_649_run();
-extern int aura_issue_650_run();
-extern int aura_issue_651_run();
-extern int aura_issue_589_run();
-extern int aura_issue_590_run();
 extern int aura_issue_479_run();
-extern int aura_issue_465_cxx26_hotpath_run();
-extern int aura_issue_470_stable_ref_sv_scale_run();
-extern int aura_issue_471_dirty_sv_scale_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_644", aura_issue_644_run},
-        {"test_issue_649", aura_issue_649_run},
-        {"test_issue_650", aura_issue_650_run},
-        {"test_issue_651", aura_issue_651_run},
-        {"test_issue_589", aura_issue_589_run},
-        {"test_issue_590", aura_issue_590_run},
         {"test_issue_479", aura_issue_479_run},
-        {"test_issue_465_cxx26_hotpath", aura_issue_465_cxx26_hotpath_run},
-        {"test_issue_470_stable_ref_sv_scale", aura_issue_470_stable_ref_sv_scale_run},
-        {"test_issue_471_dirty_sv_scale", aura_issue_471_dirty_sv_scale_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late5", members, n);
