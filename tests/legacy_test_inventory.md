@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 499 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 495 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **507** | |
+| **Total scanned** | **503** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 155 | 0 | 1 | 156 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 151 | 0 | 1 | 152 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 1 | 47 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 7 | 0 | 0 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
@@ -47,24 +47,24 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 454 | Integration path via `CompilerService` / eval |
-| `test_harness` | 285 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 127 | `aura_issue_*_run()` entry for issue bundles |
+| `CompilerService` | 451 | Integration path via `CompilerService` / eval |
+| `test_harness` | 281 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 123 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
-| `own_main` | 41 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 37 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 332
-- `unknown`: 102
+- `integration`: 330
+- `unknown`: 100
 - `unit`: 58
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 267
+- `test_harness.hpp` — 263
 - `compiler/observability_metrics.h` — 49
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 15
@@ -82,10 +82,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 314
-- `aura.compiler.service` — 305
-- `aura.compiler.evaluator` — 282
-- `std` — 277
+- `aura.compiler.value` — 312
+- `aura.compiler.service` — 302
+- `aura.compiler.evaluator` — 279
+- `std` — 273
 - `aura.core.ast` — 178
 - `aura.core.type` — 92
 - `aura.core.arena` — 89
@@ -110,7 +110,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - Issue numbers with **multiple** `tests/issues/` files: **10**
 - Phase-slice files (`*_phase*`): **9**
-- Small files (< 4 KiB, possible thin probes): **6**
+- Small files (< 4 KiB, possible thin probes): **5**
 - Existing `*_batch` drivers (migration milestones): **7**
 
 ### Multi-file issue groups (consolidate first)
@@ -128,26 +128,26 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Smallest issue tests (triage for obs-matrix fold or drop)
 
-- `test_issue_347.cpp` (2322 B) → `mutation_dirty` — test_issue_347.cpp — Issue #347 (StableNodeRef, generation_
 - `test_issue_484_minimal.cpp` (2451 B) → `mutation_dirty` — 
 - `test_issue_263.cpp` (3192 B) → `observability` — 
 - `test_issue_264.cpp` (3686 B) → `fiber_orch` — 
 - `test_issue_197_observability.cpp` (3711 B) → `observability` — test_issue_197_observability.cpp — Issue #197 Aura
 - `test_issue_178.cpp` (3933 B) → `edsl_hygiene` — test_issue_178.cpp — Issue #178 / #268: production NodeView
-- `test_issue_1400.cpp` (4171 B) → `mutation_dirty` — test_issue_1400.cpp — Issue #1400: bridge_epoch ↔ mutation_epoch sync
 - `test_issue_131.cpp` (4176 B) → `edsl_hygiene` — test_issue_131.cpp — Verify the FFI primitives
 - `test_issue_478.cpp` (4308 B) → `observability` — Validates:
-- `test_issue_1399.cpp` (4337 B) → `mutation_dirty` — test_issue_1399.cpp — Issue #1399: set-car!/set-cdr! pair mutation race
 - `test_issue_1403.cpp` (4521 B) → `fiber_orch` — test_issue_1403.cpp — Issue #1403:
 - `test_issue_262.cpp` (4528 B) → `shape_soa` — 
 - `test_issue_270.cpp` (4740 B) → `mutation_dirty` — test_issue_270.cpp — Issue #270: end_id snapshot + StableNodeRef
-- `test_issue_285.cpp` (4862 B) → `mutation_dirty` — installation is verified indirectly through the build
 - `test_issue_274.cpp` (4868 B) → `mutation_dirty` — test_issue_274.cpp — Issue #274: MutationVisitor concept +
 - `test_issue_677.cpp` (4879 B) → `observability` — 
 - `test_issue_1408_followup_edsl.cpp` (4927 B) → `mutation_dirty` — AC1: happy path — 3 mutations all applied
 - `test_issue_287.cpp` (4952 B) → `jit_incremental` — ── AC1: set/get module_version roundtrip ──
 - `test_issue_286.cpp` (4996 B) → `shape_soa` — ── AC1: Env::env_version() default 0, set/get works ──
 - `test_issue_507.cpp` (5020 B) → `shape_soa` — 
+- `test_issue_1406.cpp` (5029 B) → `mutation_dirty` — test_issue_1406.cpp — Issue #1406: propagate_cow_pins_after_clone
+- `test_issue_1405.cpp` (5047 B) → `mutation_dirty` — test_issue_1405.cpp — Issue #1405: workspace_flat_ generation counter
+- `test_issue_1404.cpp` (5147 B) → `fiber_orch` — test_issue_1404.cpp — Issue #1404: restamp_yield_checkpoint_top
+- `test_issue_1477.cpp` (5154 B) → `jit_incremental` — Issue #1477 — JIT-side dual-epoch fence (capture_fn_epoch +
 
 ### Batch drivers already present
 
@@ -220,7 +220,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (156)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (152)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -230,11 +230,9 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (155)
+#### issues/ (151)
 
 - `tests/issues/test_issue_1396.cpp` (#1396) — test_issue_1396.cpp — Issue #1396: AOT hot-reload counter helpers —
-- `tests/issues/test_issue_1399.cpp` (#1399) — test_issue_1399.cpp — Issue #1399: set-car!/set-cdr! pair mutation race
-- `tests/issues/test_issue_1400.cpp` (#1400) — test_issue_1400.cpp — Issue #1400: bridge_epoch ↔ mutation_epoch sync
 - `tests/issues/test_issue_1405.cpp` (#1405) — test_issue_1405.cpp — Issue #1405: workspace_flat_ generation counter
 - `tests/issues/test_issue_1406.cpp` (#1406) — test_issue_1406.cpp — Issue #1406: propagate_cow_pins_after_clone
 - `tests/issues/test_issue_1408_followup_edsl.cpp` (#1408) [followup] — AC1: happy path — 3 mutations all applied
@@ -297,7 +295,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_281.cpp` (#281) — memoization for analyze_predicate_flat (Issue #281:
 - `tests/issues/test_issue_282.cpp` (#282) — (Issue #282: NarrowingRecord + query:provenance-of
 - `tests/issues/test_issue_284.cpp` (#284) — accessors, and Verilog emitter (Issue #284 Phase 2
-- `tests/issues/test_issue_285.cpp` (#285) — installation is verified indirectly through the build
 - `tests/issues/test_issue_289.cpp` (#289) — test_issue_289.cpp — Issue #289 / #481 acceptance tests.
 - `tests/issues/test_issue_291.cpp` (#291) — workspace_id + serialization
 - `tests/issues/test_issue_301.cpp` (#301) — test_issue_301.cpp — Issue #301: C++26 std::meta migration
@@ -319,7 +316,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_344.cpp` (#344) — test_issue_344.cpp — Verify Issue #344 acceptance
 - `tests/issues/test_issue_345.cpp` (#345) — test_issue_345.cpp — Issue #345: Comprehensive stress testing
 - `tests/issues/test_issue_346.cpp` (#346) — test_issue_346.cpp — Verify Issue #346 acceptance
-- `tests/issues/test_issue_347.cpp` (#347) [small] — test_issue_347.cpp — Issue #347 (StableNodeRef, generation_
 - `tests/issues/test_issue_348.cpp` (#348) — test_issue_348.cpp — Verify Issue #348 acceptance
 - `tests/issues/test_issue_349.cpp` (#349) — test_issue_349.cpp — Verify Issue #349 acceptance
 - `tests/issues/test_issue_350.cpp` (#350) — test_issue_350.cpp — Verify Issue #350 acceptance
