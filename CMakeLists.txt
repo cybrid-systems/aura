@@ -1795,6 +1795,10 @@ add_dependencies(all_test_issue_targets test_pixel_framebuffer)
 # Issue #1981 / Epic #1979: camera + primary rays (header-only, headless).
 aura_add_issue_test(test_camera_rays)
 add_dependencies(all_test_issue_targets test_camera_rays)
+
+# Issue #1982 / Epic #1979: dense voxel volume + chunk grid (header-only).
+aura_add_issue_test(test_voxel_volume)
+add_dependencies(all_test_issue_targets test_voxel_volume)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 
