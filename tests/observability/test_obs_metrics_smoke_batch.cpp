@@ -391,6 +391,88 @@ int run_341_metrics_smoke() {
 }
 } // namespace aura_obs_run_wave30_341
 
+// ═══ Wave 31 (#1957): observability metrics smokes ═══
+
+namespace aura_obs_run_wave31_1515 {
+int run_1515_metrics_smoke() {
+    std::println("\n=== #1515: query:linear-ownership-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(r.has_value(), "query:linear-ownership-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_1515
+
+namespace aura_obs_run_wave31_1517 {
+int run_1517_metrics_smoke() {
+    std::println("\n=== #1517: query:soa-view-enforcement-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:soa-view-enforcement-stats\")");
+    CHECK(r.has_value(), "query:soa-view-enforcement-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_1517
+
+namespace aura_obs_run_wave31_1625 {
+int run_1625_metrics_smoke() {
+    std::println("\n=== #1625: query:production-sweep-1261-1265-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:production-sweep-1261-1265-stats\")");
+    CHECK(r.has_value(), "query:production-sweep-1261-1265-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_1625
+
+namespace aura_obs_run_wave31_1908 {
+int run_1908_metrics_smoke() {
+    std::println("\n=== #1908: query:macro-provenance-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:macro-provenance-stats\")");
+    CHECK(r.has_value(), "query:macro-provenance-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_1908
+
+namespace aura_obs_run_wave31_343 {
+int run_343_metrics_smoke() {
+    std::println("\n=== #343: query:stable-ref-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    CHECK(r.has_value(), "query:stable-ref-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_343
+
+namespace aura_obs_run_wave31_383 {
+int run_383_metrics_smoke() {
+    std::println("\n=== #383: compile:constraint-solver-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:constraint-solver-stats\")");
+    CHECK(r.has_value(), "compile:constraint-solver-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_383
+
+namespace aura_obs_run_wave31_385 {
+int run_385_metrics_smoke() {
+    std::println("\n=== #385: compile:let-poly-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:let-poly-stats\")");
+    CHECK(r.has_value(), "compile:let-poly-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_385
+
+namespace aura_obs_run_wave31_386 {
+int run_386_metrics_smoke() {
+    std::println("\n=== #386: compile:occurrence-typing-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:occurrence-typing-stats\")");
+    CHECK(r.has_value(), "compile:occurrence-typing-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave31_386
+
 int main() {
 
 
@@ -480,6 +562,38 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave30_341::run_341_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_1515::run_1515_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_1517::run_1517_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_1625::run_1625_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_1908::run_1908_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_343::run_343_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_383::run_383_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_385::run_385_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave31_386::run_386_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
