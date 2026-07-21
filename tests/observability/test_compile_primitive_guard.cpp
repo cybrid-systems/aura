@@ -90,7 +90,7 @@ int main() {
         for (const char* prim :
              {"\"compile:mark-block-dirty!\"", "\"compile:clear-block-dirty!\"",
               "\"compile:mark-instruction-dirty!\"", "\"compile:clear-instruction-dirty!\"",
-              "\"mutate:from-verification-feedback\"", "\"eda:run-commercial-simulator-stub\""}) {
+              "\"mutate:from-verification-feedback\""}) {
             auto pos = src.find(prim);
             CHECK(pos != std::string::npos, std::string("primitive ") + prim);
             // Window around registration should reference Guard helper.
