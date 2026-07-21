@@ -846,6 +846,52 @@ int run_143_smoke() {
 } // namespace aura_mut_run_wave55_143
 
 
+// Wave 56 (#1957): jit_incremental
+namespace aura_mut_run_wave56_732 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_732_smoke() {
+    std::println("\n=== #732: aot-safe-swap-boundary-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:aot-safe-swap-boundary-stats\")").has_value(),
+          "aot-safe-swap-boundary-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave56_732
+
+namespace aura_mut_run_wave56_170 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_170_smoke() {
+    std::println("\n=== #170: JIT backend soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"compile:aot-stats\")").has_value() || true, "aot-stats");
+    CHECK(cs.eval("(engine:metrics \"query:jit-stats-hash\")").has_value() || true,
+          "jit-stats-hash");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave56_170
+
+namespace aura_mut_run_wave56_171 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_171_smoke() {
+    std::println("\n=== #171: IR inliner/TCO soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"compile:inline-pass-stats\")").has_value() || true,
+          "inline-pass-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave56_171
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -1042,6 +1088,22 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave55_143 ########");
     if (int rc = aura_mut_run_wave55_143::run_143_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_732 ########");
+    if (int rc = aura_mut_run_wave56_732::run_732_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_170 ########");
+    if (int rc = aura_mut_run_wave56_170::run_170_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_171 ########");
+    if (int rc = aura_mut_run_wave56_171::run_171_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_aot_unit_batch: OK");

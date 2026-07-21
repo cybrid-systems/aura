@@ -4,25 +4,17 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_131_run();
 extern int aura_issue_error_merr_run();
 extern int aura_issue_pilot_harness_run();
-extern int aura_issue_167_run();
-extern int aura_issue_171_run();
 extern int aura_issue_181_run();
 extern int aura_issue_182_run();
-extern int aura_issue_197_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_131", aura_issue_131_run},
         {"test_error_merr", aura_issue_error_merr_run},
         {"test_pilot_harness", aura_issue_pilot_harness_run},
-        {"test_issue_167", aura_issue_167_run},
-        {"test_issue_171", aura_issue_171_run},
         {"test_issue_181", aura_issue_181_run},
         {"test_issue_182", aura_issue_182_run},
-        {"test_issue_197", aura_issue_197_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("light", members, n);

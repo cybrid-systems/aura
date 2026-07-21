@@ -2163,6 +2163,44 @@ int run_765_metrics_smoke() {
 } // namespace aura_obs_run_wave55_765
 
 
+// ═══ Wave 56 (#1957): observability ═══
+namespace aura_obs_run_wave56_776 {
+int run_776_metrics_smoke() {
+    std::println("\n=== #776: primitives-hotpath-slo-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:primitives-hotpath-slo-stats\")").has_value(),
+          "primitives-hotpath-slo-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave56_776
+
+namespace aura_obs_run_wave56_756 {
+int run_756_metrics_smoke() {
+    std::println("\n=== #756: envframe-dualpath-policy-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:envframe-dualpath-policy-stats\")").has_value(),
+          "envframe-dualpath-policy-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave56_756
+
+namespace aura_obs_run_wave56_149 {
+int run_149_metrics_smoke() {
+    std::println("\n=== #149: type-propagation-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"compile:type-propagation-stats\")").has_value(),
+          "type-propagation-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave56_149
+
+
 int main() {
 
 
@@ -2906,6 +2944,21 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave55_765 ########");
     if (int rc = aura_obs_run_wave55_765::run_765_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_776 ########");
+    if (int rc = aura_obs_run_wave56_776::run_776_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_756 ########");
+    if (int rc = aura_obs_run_wave56_756::run_756_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave56_149 ########");
+    if (int rc = aura_obs_run_wave56_149::run_149_metrics_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");

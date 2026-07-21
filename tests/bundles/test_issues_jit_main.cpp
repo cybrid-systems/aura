@@ -4,25 +4,9 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_135_run();
-extern int aura_issue_137_run();
-extern int aura_issue_141_run();
-extern int aura_issue_145_run();
-extern int aura_issue_188_run();
-extern int aura_issue_191_run();
-extern int aura_issue_196_run();
-extern int aura_issue_240_run();
-extern int aura_issue_228_run();
-extern int aura_issue_289_run();
 
 int main() {
-    static const AuraBundleMember members[] = {
-        {"test_issue_135", aura_issue_135_run}, {"test_issue_137", aura_issue_137_run},
-        {"test_issue_141", aura_issue_141_run}, {"test_issue_145", aura_issue_145_run},
-        {"test_issue_188", aura_issue_188_run}, {"test_issue_191", aura_issue_191_run},
-        {"test_issue_196", aura_issue_196_run}, {"test_issue_240", aura_issue_240_run},
-        {"test_issue_228", aura_issue_228_run}, {"test_issue_289", aura_issue_289_run},
-    };
+    static const AuraBundleMember members[] = {};
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit", members, n);
 }

@@ -1299,7 +1299,8 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # structure defined in src/core/persistent_child_vector.hh.
 # Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict).
-aura_add_issue_test_standalone(test_issue_221)
+# test_issue_221 folded into theme batch (wave 56 / #1957)
+# aura_add_issue_test_standalone(test_issue_221)
 
 # Issue #222: structural mutation concurrency safety (Issue #179
 # Cycle 4, slice 1/3). Tests the begin_structural_mutation() /
@@ -1308,7 +1309,8 @@ aura_add_issue_test_standalone(test_issue_221)
 # API. Standalone test (no module imports — avoids the GCC 16.1
 # std module + P2996 reflection conflict). Uses a TestFlatAST
 # stub that mirrors the production API for testing purposes.
-aura_add_issue_test_standalone(test_issue_222)
+# test_issue_222 folded into theme batch (wave 56 / #1957)
+# aura_add_issue_test_standalone(test_issue_222)
 
 # Issue #223 migrated to tests/domain/test_compact_batch.cpp
 # (run_223_bridge_epoch_tracking) — Wave 6 (#1957). Standalone

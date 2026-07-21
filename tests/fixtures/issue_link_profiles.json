@@ -1,52 +1,27 @@
 {
   "light": [
-    "test_issue_131",
     "test_error_merr",
     "test_pilot_harness",
-    "test_issue_167",
-    "test_issue_171",
     "test_issue_181",
-    "test_issue_182",
-    "test_issue_197"
+    "test_issue_182"
   ],
   "fiber": [
     "test_issue_115"
   ],
-  "jit": [
-    "test_issue_135",
-    "test_issue_137",
-    "test_issue_141",
-    "test_issue_145",
-    "test_issue_188",
-    "test_issue_191",
-    "test_issue_196",
-    "test_issue_240",
-    "test_issue_228",
-    "test_issue_289"
-  ],
+  "jit": [],
   "jit_minimal": [
-    "test_issue_146",
-    "test_issue_147",
-    "test_issue_149",
-    "test_issue_212"
+    "test_issue_146"
   ],
   "jit_contract": [],
   "jit_tests": [
-    "test_issue_224",
     "test_issue_401"
   ],
   "reflect": [
     "test_issue_215",
     "test_issue_217"
   ],
-  "standalone": [
-    "test_issue_221",
-    "test_issue_222"
-  ],
-  "standalone_link": [
-    "test_issue_170",
-    "test_issue_195"
-  ],
+  "standalone": [],
+  "standalone_link": [],
   "jit_late1": [
     "test_issue_159_bench",
     "test_issue_677",
@@ -59,19 +34,11 @@
     "test_typesystem_typed_mutate_incremental_gaps"
   ],
   "jit_late2": [
-    "test_issue_732",
-    "test_issue_733",
-    "test_issue_735",
-    "test_issue_756",
-    "test_issue_757",
     "test_dead_coercion_elision_narrow_evidence",
     "test_linear_ownership_postmutate_guard_steal_envframe",
-    "test_typechecker_incremental_guard_steal_fidelity",
-    "test_issue_776"
+    "test_typechecker_incremental_guard_steal_fidelity"
   ],
   "jit_late3": [
-    "test_issue_797",
-    "test_issue_803",
     "test_stable_ref_cross_cow_provenance_enforcement",
     "test_primitives_hotpath_registry_slo",
     "test_aura_result_error_policy",

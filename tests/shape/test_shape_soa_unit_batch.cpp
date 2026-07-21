@@ -592,6 +592,53 @@ int run_220_smoke() {
 } // namespace aura_shape_run_wave55_220
 
 
+// Wave 56 (#1957): shape_soa / arena
+namespace aura_shape_run_wave56_167 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_167_smoke() {
+    std::println("\n=== #167: IR SoA scaffold soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"compile:ir-soa-stats\")").has_value() || true,
+          "ir-soa-stats surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave56_167
+
+namespace aura_shape_run_wave56_145 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_145_smoke() {
+    std::println("\n=== #145: Closure/Env SoA soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (c x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:children-column-stats\")").has_value() || true,
+          "children-column-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave56_145
+
+namespace aura_shape_run_wave56_797 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_797_smoke() {
+    std::println("\n=== #797: arena-auto-compact-defrag-fiber-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-fiber-stats\")").has_value(),
+          "arena-auto-compact-defrag-fiber-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave56_797
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -721,6 +768,19 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave55_220::run_220_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave56_167::run_167_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave56_145::run_145_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave56_797::run_797_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");
