@@ -45,6 +45,8 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 import std;
@@ -1153,6 +1155,447 @@ static void run_623_arena_auto_compact_threshold_setter() {
         cs.eval("(arena:set-auto-compact-threshold 50)");
     }
 }
+}
+
+// ── Issue #464 — Arena auto-compaction policy + fiber scheduler integration ──
+// Folded from tests/issues/test_issue_464_arena_auto_compaction.cpp via #1957.
+// 10 ACs: direct ArenaGroup API + EDSL observability + guard-dtor + long-session signal.
+
+static void run_464_arena_auto_compaction() {
+    std::println("\n=== #464: Arena auto-compaction policy + fiber scheduler integration ===");
+    // AC1: empty group auto_compact_with_safety returns 0 + bumps counters
+    {
+        std::println("\n--- #464 AC1: empty group auto_compact_with_safety ---");
+        aura::ast::ArenaGroup g;
+        auto saved = g.auto_compact_with_safety();
+        CHECK(saved == 0, "0 bytes reclaimed on empty group");
+        CHECK(g.auto_compact_guard_call_count() == 1,
+              "guard-call counter == 1 (one call bumps once)");
+        CHECK(g.compaction_yield_checks_group() == 1, "yield-check counter == 1");
+    }
+    // AC2: bump_auto_compact_guard_call bumps the counter
+    {
+        std::println("\n--- #464 AC2: bump_auto_compact_guard_call ---");
+        aura::ast::ArenaGroup g;
+        CHECK(g.auto_compact_guard_call_count() == 0, "starts at 0");
+        g.bump_auto_compact_guard_call();
+        g.bump_auto_compact_guard_call();
+        g.bump_auto_compact_guard_call();
+        CHECK(g.auto_compact_guard_call_count() == 3, "after 3 bumps == 3");
+    }
+    // AC3: bump_compaction_yield_check
+    {
+        std::println("\n--- #464 AC3: bump_compaction_yield_check ---");
+        aura::ast::ArenaGroup g;
+        CHECK(g.compaction_yield_checks_group() == 0, "starts at 0");
+        g.bump_compaction_yield_check();
+        g.bump_compaction_yield_check();
+        CHECK(g.compaction_yield_checks_group() == 2, "after 2 bumps == 2");
+    }
+    // AC4: auto_compact_with_safety bumps both counters
+    {
+        std::println("\n--- #464 AC4: auto_compact_with_safety bumps both ---");
+        aura::ast::ArenaGroup g;
+        (void)g.module_arena("test_module", 4096);
+        auto before_guard = g.auto_compact_guard_call_count();
+        auto before_yield = g.compaction_yield_checks_group();
+        g.auto_compact_with_safety();
+        CHECK(g.auto_compact_guard_call_count() == before_guard + 1, "guard-call advances by 1");
+        CHECK(g.compaction_yield_checks_group() == before_yield + 1, "yield-check advances by 1");
+    }
+    // AC5: EDSL (engine:metrics "query:arena-auto-stats") returns a hash with 4 fields
+    CompilerService cs;
+    {
+        std::println("\n--- #464 AC5: EDSL (engine:metrics \"query:arena-auto-stats\") hash ---");
+        auto r = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+        CHECK(r.has_value() && aura::compiler::types::is_hash(*r),
+              "(engine:metrics \"query:arena-auto-stats\") returns a hash");
+        for (const char* key : {"auto-compact-guard-call-count", "compaction-yield-checks",
+                                "auto-compact-trigger-count", "auto-compact-skip-count"}) {
+            auto rr = cs.eval(
+                std::format("(hash-ref (engine:metrics \"query:arena-auto-stats\") '{}')", key));
+            CHECK(rr.has_value() && aura::compiler::types::is_int(*rr),
+                  std::format("hash-ref '{}' returns int", key));
+        }
+    }
+    // AC6: guard-call counter observable (post-mutate increments via the guard dtor)
+    {
+        std::println("\n--- #464 AC6: guard dtor bumps counter ---");
+        auto before = cs.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
+                              "'auto-compact-guard-call-count)");
+        auto before_n = (before && aura::compiler::types::is_int(*before))
+                            ? aura::compiler::types::as_int(*before)
+                            : 0;
+        cs.eval(R"((mutate:rebind 'foo 42))");
+        auto after = cs.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
+                             "'auto-compact-guard-call-count)");
+        auto after_n = (after && aura::compiler::types::is_int(*after))
+                           ? aura::compiler::types::as_int(*after)
+                           : 0;
+        CHECK(after_n > before_n,
+              std::format("guard-call count advances (before={}, after={})", before_n, after_n));
+    }
+    // AC7: stats:count > 0 (loose check; cumulative count grows each wave)
+    {
+        std::println("\n--- #464 AC7: stats:count ---");
+        auto r = cs.eval("(stats:count)");
+        CHECK(r.has_value() && aura::compiler::types::is_int(*r), "stats:count returns int");
+        CHECK(aura::compiler::types::as_int(*r) > 0, "stats:count > 0 (cumulative)");
+    }
+    // AC8: (stats:list) includes query:arena-auto-stats
+    {
+        std::println("\n--- #464 AC8: (stats:list) includes query:arena-auto-stats ---");
+        auto r = cs.eval(R"((if (member "query:arena-auto-stats" (stats:list)) #t #f))");
+        CHECK(r.has_value(), "stats:list + member returns a value (#t if present)");
+    }
+    // AC9: fresh service: all 4 counters default to 0
+    {
+        std::println("\n--- #464 AC9: fresh service defaults ---");
+        CompilerService cs2;
+        for (const char* k : {"auto-compact-guard-call-count", "compaction-yield-checks",
+                              "auto-compact-trigger-count", "auto-compact-skip-count"}) {
+            std::string src =
+                std::format("(hash-ref (engine:metrics \"query:arena-auto-stats\") '{}')", k);
+            auto v = cs2.eval(src);
+            CHECK(v.has_value() && aura::compiler::types::is_int(*v) &&
+                      aura::compiler::types::as_int(*v) == 0,
+                  std::format("fresh counter '{}' == 0", k));
+        }
+    }
+    // AC10: long AI session signal (5 mutates bump guard-call by >= 5)
+    {
+        std::println("\n--- #464 AC10: long AI session signal ---");
+        CompilerService cs3;
+        auto before = cs3.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
+                               "'auto-compact-guard-call-count)");
+        auto before_n = (before && aura::compiler::types::is_int(*before))
+                            ? aura::compiler::types::as_int(*before)
+                            : 0;
+        for (int i = 0; i < 5; ++i)
+            cs3.eval(std::format(R"((mutate:rebind 'foo_{} {}))", i, i * 10));
+        auto after = cs3.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
+                              "'auto-compact-guard-call-count)");
+        auto after_n = (after && aura::compiler::types::is_int(*after))
+                           ? aura::compiler::types::as_int(*after)
+                           : 0;
+        CHECK(after_n >= before_n + 5,
+              std::format("5 mutates bump guard-call by >= 5 (before={}, after={})", before_n,
+                          after_n));
+    }
+}
+
+// ── Issue #604 — arena auto-compact + defrag + fiber/GC safepoint ──
+// Folded from tests/issues/test_issue_604.cpp via #1957.
+// 6 ACs: snapshot hash shape + fiber-context yield check + concurrent churn.
+
+static void run_604_arena_auto_compact_defrag_fiber_safepoint() {
+    std::println("\n=== #604: arena auto-compact + defrag + fiber/GC safepoint ===");
+    auto stat_int = [](CompilerService& cs, std::string_view key) -> int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-fragmentation-snapshot\") '{}')", key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    auto stat_float = [](CompilerService& cs, std::string_view key) -> double {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-fragmentation-snapshot\") '{}')", key));
+        if (!r || !aura::compiler::types::is_float(*r))
+            return -1.0;
+        return aura::compiler::types::as_float(*r);
+    };
+    CompilerService cs;
+    // AC1: snapshot returns a hash with documented fields
+    {
+        std::println("\n--- #604 AC1: snapshot hash shape ---");
+        auto stats = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
+        CHECK(stats.has_value() && aura::compiler::types::is_hash(*stats),
+              "snapshot returns a hash");
+        CHECK(stat_int(cs, "auto-compact-triggers") >= 0, "auto-compact-triggers present");
+        CHECK(stat_int(cs, "yield-deferred") >= 0, "yield-deferred present");
+        CHECK(stat_int(cs, "defrag-saved-bytes") >= 0, "defrag-saved-bytes present");
+    }
+    // AC2: fragmentation-ratio is a float in [0, 1]
+    {
+        std::println("\n--- #604 AC2: fragmentation-ratio range ---");
+        double frag = stat_float(cs, "fragmentation-ratio");
+        CHECK(frag >= 0.0 && frag <= 1.0, std::format("frag in [0,1] (got {:.3f})", frag));
+    }
+    // AC3 + AC4: compact() + defrag() fiber-context yield check
+    {
+        std::println("\n--- #604 AC3+AC4: compact()/defrag() fiber-context yield check ---");
+        std::atomic<int> safepoint_hits{0};
+        static std::atomic<int>* s_hits = &safepoint_hits;
+        s_hits->store(0);
+        aura::gc_hooks::g_arena_safepoint_check.store(
+            +[]() noexcept { s_hits->fetch_add(1, std::memory_order_relaxed); });
+        aura::ast::ASTArena arena(1 << 20);
+        struct SmallNode {
+            char data[48];
+        };
+        for (int i = 0; i < 32; ++i)
+            (void)arena.create<SmallNode>();
+        // Outside fiber: no yield-bump
+        aura::gc_hooks::g_fiber_active.store(+[]() noexcept { return false; });
+        auto yc_pre = arena.stats().compaction_yield_checks;
+        (void)arena.compact();
+        CHECK(arena.stats().compaction_yield_checks == yc_pre,
+              "compact() outside fiber does not bump yield checks");
+        // Inside fiber: yield-bump + safepoint-hit
+        aura::gc_hooks::g_fiber_active.store(+[]() noexcept { return true; });
+        for (int i = 0; i < 32; ++i)
+            (void)arena.create<SmallNode>();
+        auto yc_pre_fiber = arena.stats().compaction_yield_checks;
+        int sp_pre = s_hits->load();
+        (void)arena.compact();
+        CHECK(arena.stats().compaction_yield_checks >= yc_pre_fiber + 1,
+              "compact() inside fiber bumps yield checks");
+        CHECK(s_hits->load() >= sp_pre + 1, "compact() inside fiber hits the GC safepoint");
+        // defrag honors fiber coordination too
+        arena.request_defrag();
+        for (int i = 0; i < 16; ++i)
+            (void)arena.create<SmallNode>();
+        auto yc_pre_d = arena.stats().compaction_yield_checks;
+        (void)arena.defrag();
+        CHECK(arena.stats().compaction_yield_checks >= yc_pre_d + 1,
+              "defrag() inside fiber bumps yield checks");
+        aura::gc_hooks::g_fiber_active.store(nullptr);
+        aura::gc_hooks::g_arena_safepoint_check.store(nullptr);
+    }
+    // AC5: EDSL mutate keeps snapshot coherent
+    {
+        std::println("\n--- #604 AC5: EDSL mutate keeps snapshot coherent ---");
+        auto triggers_before = stat_int(cs, "auto-compact-triggers");
+        cs.eval("(set-code \"(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\")");
+        cs.eval("(eval-current)");
+        (void)cs.eval("(arena:request-defrag)");
+        for (int i = 0; i < 40; ++i)
+            (void)cs.eval("(fib 6)");
+        cs.eval("(mutate:rebind \"fib\" "
+                "\"(lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\" "
+                "\"issue-604\")");
+        cs.eval("(eval-current)");
+        CHECK(stat_int(cs, "auto-compact-triggers") >= triggers_before,
+              "auto-compact-triggers non-decreasing");
+        double frag = stat_float(cs, "fragmentation-ratio");
+        CHECK(frag >= 0.0 && frag <= 1.0, "frag still valid after mutate");
+    }
+    // AC6: concurrent churn correctness (2 threads x 40 iters)
+    {
+        std::println("\n--- #604 AC6: concurrent churn correctness ---");
+        cs.eval("(set-code \"(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\")");
+        cs.eval("(eval-current)");
+        std::mutex eval_mtx;
+        std::atomic<int> ok_count{0};
+        constexpr int k_iters = 40;
+        auto worker = [&] {
+            for (int i = 0; i < k_iters; ++i) {
+                std::lock_guard<std::mutex> lk(eval_mtx);
+                (void)cs.eval("(mutate:request-gc-safepoint)");
+                auto r = cs.eval("(fib 6)");
+                if (r && aura::compiler::types::is_int(*r) &&
+                    aura::compiler::types::as_int(*r) == 8)
+                    ok_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        std::thread t1(worker);
+        std::thread t2(worker);
+        t1.join();
+        t2.join();
+        CHECK(ok_count.load() == k_iters * 2,
+              std::format("concurrent churn: {} / {} correct", ok_count.load(), k_iters * 2));
+    }
+}
+
+// ── Issue #642 — query:arena-auto-compaction-stats structured companion ──
+// Folded from tests/issues/test_issue_642.cpp via #1957.
+// 6 ACs: hash shape + back-compat + naming distinction + concurrent reads.
+
+static void run_642_arena_auto_compaction_stats_companion() {
+    std::println("\n=== #642: query:arena-auto-compaction-stats structured companion ===");
+    auto hash_int = [](CompilerService& cs, std::string_view key) -> int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-auto-compaction-stats\") '{}')", key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: hash shape with documented fields + schema == 642
+    {
+        std::println("\n--- #642 AC1: hash shape ---");
+        auto h = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        CHECK(h.has_value() && aura::compiler::types::is_hash(*h),
+              "arena-auto-compaction-stats returns a hash");
+        for (const char* k : {"auto-trigger", "live-move-yield", "guard-defrag", "schema"}) {
+            auto rr = hash_int(cs, k);
+            CHECK(rr >= 0, std::format("'{}' >= 0 (got {})", k, rr));
+        }
+        CHECK(hash_int(cs, "schema") == 642, "schema == 642 (sentinel)");
+    }
+    // AC2: existing primitives back-compat (#569 + earlier + #641 + #640 + #637)
+    {
+        std::println("\n--- #642 AC2: existing primitives back-compat ---");
+        auto s_acd = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
+        CHECK(s_acd.has_value(),
+              "(engine:metrics \"query:arena-auto-compact-defrag-stats\") reachable (#569)");
+        auto s_ac = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        CHECK(s_ac.has_value(), "(engine:metrics \"query:arena-auto-compact-stats\") reachable");
+        auto s_as = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+        CHECK(s_as.has_value(), "(engine:metrics \"query:arena-auto-stats\") reachable");
+        auto s_641 = cs.eval("(engine:metrics \"query:stable-ref-provenance-sv-stats\")");
+        CHECK(s_641.has_value(),
+              "(engine:metrics \"query:stable-ref-provenance-sv-stats\") reachable (#641)");
+        auto s_640 = cs.eval("(engine:metrics \"query:sv-verification-closedloop-stats\")");
+        CHECK(s_640.has_value(),
+              "(engine:metrics \"query:sv-verification-closedloop-stats\") reachable (#640)");
+        auto s_637 = cs.eval("(engine:metrics \"query:closure-bridge-safety-stats-hash\")");
+        CHECK(s_637.has_value(),
+              "(engine:metrics \"query:closure-bridge-safety-stats-hash\") reachable (#637)");
+    }
+    // AC3: derived-metric invariants (counters well-formed + schema still 642)
+    {
+        std::println("\n--- #642 AC3: derived-metric invariants ---");
+        for (const char* k : {"auto-trigger", "live-move-yield", "guard-defrag"}) {
+            auto rr = hash_int(cs, k);
+            CHECK(rr >= 0, std::format("'{}' well-formed >= 0 (got {})", k, rr));
+        }
+        CHECK(hash_int(cs, "schema") == 642, "schema still 642 after traffic");
+    }
+    // AC4: schema sentinel exactly 642 (not 641/640/637)
+    {
+        std::println("\n--- #642 AC4: schema sentinel ---");
+        CHECK(hash_int(cs, "schema") == 642, "schema == 642");
+    }
+    // AC5: naming distinction from existing arena primitives
+    {
+        std::println("\n--- #642 AC5: naming distinction ---");
+        auto new_p = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+        auto old_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        auto old_defrag = cs.eval("(engine:metrics \"query:arena-auto-compact-defrag-stats\")");
+        CHECK(new_p.has_value(), "new (-compaction with -ion) primitive reachable");
+        CHECK(old_compact.has_value(), "existing (-compact, no -ion) primitive still reachable");
+        CHECK(old_defrag.has_value(), "existing (#569) defrag primitive still reachable");
+    }
+    // AC6: concurrent reads
+    {
+        std::println("\n--- #642 AC6: concurrent reads ---");
+        std::mutex eval_mtx;
+        std::atomic<int> ok_count{0};
+        constexpr int k_iters = 4;
+        auto worker = [&] {
+            for (int i = 0; i < k_iters; ++i) {
+                std::lock_guard<std::mutex> lk(eval_mtx);
+                auto r = cs.eval("(engine:metrics \"query:arena-auto-compaction-stats\")");
+                if (r.has_value())
+                    ok_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        std::thread t1(worker);
+        std::thread t2(worker);
+        t1.join();
+        t2.join();
+        CHECK(ok_count.load() == k_iters * 2,
+              std::format("concurrent: {} / {} returned value", ok_count.load(), k_iters * 2));
+    }
+}
+
+// ── Issue #685 — arena auto-compact + defrag/shape synergy ──
+// Folded from tests/issues/test_issue_685.cpp via #1957.
+// 5 ACs: stats hash + alloc-path auto-trigger via on_compact_hook +
+// EDSL integrate + fiber stress + stats registry.
+
+static void run_685_arena_auto_compact_defrag_shape_synergy() {
+    std::println("\n=== #685: arena auto-compact + defrag/shape synergy ===");
+    auto stat_int = [](CompilerService& cs, std::string_view key) -> int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:arena-auto-compact-stats\") '{}')", key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    CompilerService cs;
+    // AC1: stats hash fields all present
+    {
+        std::println("\n--- #685 AC1: stats hash fields ---");
+        auto stats = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        CHECK(stats.has_value() && aura::compiler::types::is_hash(*stats), "stats returns a hash");
+        for (const char* key : {"auto-triggers", "frag-reduced", "shape-inval-on-compact",
+                                "defrag-savings", "yield-checks-hit"}) {
+            auto rr = stat_int(cs, key);
+            CHECK(rr >= 0, std::format("'{}' >= 0 (got {})", key, rr));
+        }
+    }
+    // AC2: alloc-path auto-trigger via request-defrag + on_compact_hook fires
+    {
+        std::println("\n--- #685 AC2: alloc-path auto-trigger ---");
+        aura::ast::ASTArena arena(8192);
+        std::atomic<int> hook_hits{0};
+        arena.set_on_compact_hook([&]() { hook_hits.fetch_add(1, std::memory_order_relaxed); });
+        arena.request_defrag();
+        struct SmallNode {
+            char data[32];
+        };
+        for (int i = 0; i < 64; ++i)
+            (void)arena.create<SmallNode>();
+        CHECK(arena.stats().auto_alloc_trigger_count >= 1,
+              "auto_alloc_trigger_count >= 1 after defrag request + alloc");
+        CHECK(hook_hits.load() >= 1, "on_compact_hook fired");
+    }
+    // AC3: EDSL mutate + arena:request-defrag integration
+    {
+        std::println("\n--- #685 AC3: mutate + arena defrag path ---");
+        auto triggers_before = stat_int(cs, "auto-triggers");
+        auto defrag_before = stat_int(cs, "defrag-savings");
+        cs.eval("(set-code \"(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))\" )");
+        cs.eval("(eval-current)");
+        (void)cs.eval("(arena:request-defrag)");
+        for (int i = 0; i < 30; ++i)
+            (void)cs.eval("(fact 3)");
+        cs.eval("(mutate:rebind \"fact\" "
+                "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
+                "\"issue-685\")");
+        cs.eval("(eval-current)");
+        CHECK(stat_int(cs, "auto-triggers") >= triggers_before, "auto-triggers non-decreasing");
+        CHECK(stat_int(cs, "defrag-savings") >= defrag_before, "defrag-savings non-decreasing");
+    }
+    // AC4: adaptive compact + fiber stress
+    {
+        std::println("\n--- #685 AC4: adaptive compact + fiber stress ---");
+        for (int i = 0; i < 6; ++i)
+            (void)cs.eval("(eval-current)");
+        (void)cs.eval("(arena:adaptive-compact)");
+        CHECK(stat_int(cs, "shape-inval-on-compact") >= 0,
+              "shape-inval-on-compact readable after compact");
+        std::mutex eval_mtx;
+        std::atomic<int> ok_count{0};
+        constexpr int k_iters = 25;
+        auto worker = [&] {
+            for (int i = 0; i < k_iters; ++i) {
+                std::lock_guard<std::mutex> lk(eval_mtx);
+                (void)cs.eval("(mutate:request-gc-safepoint)");
+                auto r = cs.eval("(fact 3)");
+                if (r && aura::compiler::types::is_int(*r) &&
+                    aura::compiler::types::as_int(*r) == 6)
+                    ok_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        std::thread t1(worker);
+        std::thread t2(worker);
+        t1.join();
+        t2.join();
+        CHECK(ok_count.load() == k_iters * 2,
+              std::format("fiber stress: {} / {} correct", ok_count.load(), k_iters * 2));
+    }
+    // AC5: stats:count > 0 (cumulative health)
+    {
+        std::println("\n--- #685 AC5: stats:count ---");
+        auto r = cs.eval("(stats:count)");
+        CHECK(r.has_value() && aura::compiler::types::is_int(*r), "stats:count returns int");
+        CHECK(aura::compiler::types::as_int(*r) > 0,
+              "stats:count > 0 (cumulative count is healthy)");
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -1195,6 +1638,10 @@ int main() {
     run_322_dual_path_soa_envid();
     run_335_arena_adaptive_compact_heuristics();
     run_623_arena_auto_compact_threshold_setter();
+    run_464_arena_auto_compaction();
+    run_604_arena_auto_compact_defrag_fiber_safepoint();
+    run_642_arena_auto_compaction_stats_companion();
+    run_685_arena_auto_compact_defrag_shape_synergy();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
