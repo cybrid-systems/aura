@@ -702,6 +702,39 @@ int run_1506_metrics_smoke() {
 } // namespace aura_obs_run_wave39_1506
 
 
+// ═══ Wave 40 (#1957): observability metrics smokes ═══
+namespace aura_obs_run_wave40_1497 {
+int run_1497_metrics_smoke() {
+    std::println("\n=== #1497: StableNodeRef auto-restamp metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto s = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    CHECK(s.has_value(), "query:stable-ref-stats reachable");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1497\")");
+    auto s2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
+    CHECK(s2.has_value(), "stable-ref-stats post mutate");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave40_1497
+
+namespace aura_obs_run_wave40_1555 {
+int run_1555_metrics_smoke() {
+    std::println("\n=== #1555: relower clean-hit / define path smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto r1 = cs.eval("(h 2)");
+    CHECK(r1.has_value(), "(h 2)");
+    auto r2 = cs.eval("(h 2)");
+    CHECK(r2.has_value(), "re-eval (h 2)");
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "incremental-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave40_1555
+
+
 int main() {
 
 
@@ -899,6 +932,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave39_1506::run_1506_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave40_1497::run_1497_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave40_1555::run_1555_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;

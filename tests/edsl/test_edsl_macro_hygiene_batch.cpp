@@ -996,6 +996,43 @@ int run_364_nested_macro_mutate_smoke() {
 } // namespace aura_edsl_run_wave39
 
 
+// Wave 40 (#1957): edsl_hygiene — #1650 only-macro filter + #316 surface
+namespace aura_edsl_run_wave40 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::is_hash;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+int run_1650_only_macro_pattern_smoke() {
+    std::println("\n=== #1650: only_macro_introduced pattern hygiene smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define-hygienic-macro (id x) x) (id 1) (define u 2)\")")
+              .has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto def = cs.eval("(length (query:pattern \"*\"))");
+    auto allow = cs.eval("(length (query:pattern \"*\" :allow-macro-introduced #t))");
+    CHECK(def.has_value() && allow.has_value(), "pattern counts");
+    auto ph = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
+    CHECK(ph.has_value(), "pattern-hygiene-stats reachable");
+    return g_failed ? 1 : 0;
+}
+
+int run_316_edsl_hygiene_surface_smoke() {
+    std::println("\n=== #316: edsl hygiene surface smoke ===");
+    CompilerService cs;
+    auto h = cs.eval("(engine:metrics \"query:hygiene-stats\")");
+    CHECK(h.has_value(), "query:hygiene-stats reachable");
+    auto m = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
+    CHECK(m.has_value(), "query:macro-hygiene-stats reachable");
+    CHECK(cs.eval("(define smoke-316 1)").has_value(), "define smoke");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave40
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1061,6 +1098,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave39_364 ########");
     if (int rc = aura_edsl_run_wave39::run_364_nested_macro_mutate_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave40_1650 ########");
+    if (int rc = aura_edsl_run_wave40::run_1650_only_macro_pattern_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave40_316 ########");
+    if (int rc = aura_edsl_run_wave40::run_316_edsl_hygiene_surface_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;

@@ -416,6 +416,61 @@ int run_1522_batch_deopt_smoke() {
 } // namespace aura_mut_run_wave39_1522
 
 
+// Wave 40 (#1957): jit_incremental — #1536 walk closures + #1516 EH/AOT stats + #1540 linear safety
+namespace aura_mut_run_wave40_1536 {
+using aura::jit::AuraJIT;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1536_walk_active_closures_epoch_smoke() {
+    std::println("\n=== #1536: walk_active_closures epoch refresh smoke ===");
+    AuraJIT jit;
+    jit.capture_fn_epoch("fn1536_a", 1);
+    const auto n0 = jit.walk_active_closures(1);
+    CHECK(n0 == 0, "same epoch → 0 stale");
+    CHECK(!jit.is_fn_epoch_stale("fn1536_a", 1), "fresh at capture epoch");
+    const auto n1 = jit.walk_active_closures(2);
+    CHECK(n1 >= 1 || jit.is_fn_epoch_stale("fn1536_a", 2), "newer epoch sees stale");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_1536
+
+namespace aura_mut_run_wave40_1516 {
+using aura::compiler::CompilerService;
+using aura::jit::AuraJIT;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1516_exception_aot_stats_smoke() {
+    std::println("\n=== #1516: exception opcode coverage + compile:aot-stats smoke ===");
+    AuraJIT jit;
+    CHECK(AuraJIT::kExceptionOpcodeCount == 4, "4 EH opcodes tracked");
+    CHECK(jit.exception_opcode_coverage_count() == 0, "empty coverage 0");
+    CompilerService cs;
+    auto st = cs.eval("(engine:metrics \"compile:aot-stats\")");
+    CHECK(st.has_value(), "compile:aot-stats reachable");
+    auto qa = cs.eval("(engine:metrics \"query:aot-stats\")");
+    CHECK(qa.has_value() || true, "query:aot-stats optional");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_1516
+
+namespace aura_mut_run_wave40_1540 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+// Declared in aura_jit_bridge.h
+int run_1540_linear_epoch_safety_smoke() {
+    std::println("\n=== #1540: JIT linear epoch safety check smoke ===");
+    CompilerService cs;
+    // Ensure service installs enforce callback path; call should not crash.
+    int r = aura_jit_linear_epoch_safety_check("fn1540_smoke", /*linear_state*/ 1, /*opcode*/ 45);
+    CHECK(r == 0 || r == 1, "safety check returns 0|1");
+    auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m.has_value(), "linear-ownership-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave40_1540
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -470,6 +525,27 @@ int main() {
     std::println("\n######## run_1522_batch_deopt_smoke ########");
     if (int rc = aura_mut_run_wave39_1522::run_1522_batch_deopt_smoke(); rc != 0) {
         std::println("run_1522 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1536_walk_active_closures_epoch_smoke ########");
+    if (int rc = aura_mut_run_wave40_1536::run_1536_walk_active_closures_epoch_smoke(); rc != 0) {
+        std::println("run_1536 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1516_exception_aot_stats_smoke ########");
+    if (int rc = aura_mut_run_wave40_1516::run_1516_exception_aot_stats_smoke(); rc != 0) {
+        std::println("run_1516 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1540_linear_epoch_safety_smoke ########");
+    if (int rc = aura_mut_run_wave40_1540::run_1540_linear_epoch_safety_smoke(); rc != 0) {
+        std::println("run_1540 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");

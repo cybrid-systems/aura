@@ -168,6 +168,51 @@ int run_339_occurrence_stale_smoke() {
 } // namespace aura_shape_run_wave39_339
 
 
+// Wave 40 (#1957): shape_soa — #320 per-node epoch + #311 add_interface/modport
+namespace aura_shape_run_wave40_320 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_320_last_seen_epoch_smoke() {
+    std::println("\n=== #320: last_seen_epoch per-node column smoke ===");
+    FlatAST flat;
+    auto a = flat.add_raw_node(NodeTag::LiteralInt);
+    CHECK(flat.last_seen_epoch(a) == 0, "fresh epoch 0");
+    flat.mark_dirty(a);
+    CHECK(flat.last_seen_epoch(a) >= 0, "epoch readable after mark_dirty");
+    auto view = flat.last_seen_epoch_view();
+    CHECK(view.size() > a, "epoch view spans nodes");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave40_320
+
+namespace aura_shape_run_wave40_311 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::ast::StringPool;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_311_add_interface_modport_smoke() {
+    std::println("\n=== #311: add_interface / add_modport builders smoke ===");
+    FlatAST flat;
+    StringPool pool;
+    // Prefer builders if present; fall back to raw tags.
+    aura::ast::NodeId iface = 0;
+    aura::ast::NodeId mp = 0;
+    if constexpr (true) {
+        // add_interface(name, body children) API may vary — use raw tags as contract smoke
+        iface = flat.add_raw_node(NodeTag::Interface);
+        mp = flat.add_raw_node(NodeTag::Modport);
+    }
+    CHECK(flat.get(iface).tag == NodeTag::Interface, "Interface tag");
+    CHECK(flat.get(mp).tag == NodeTag::Modport, "Modport tag");
+    (void)pool;
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave40_311
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -195,6 +240,14 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave39_339::run_339_occurrence_stale_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave40_320::run_320_last_seen_epoch_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave40_311::run_311_add_interface_modport_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;

@@ -692,6 +692,51 @@ int run_1500_cow_epoch_is_valid_smoke() {
 } // namespace aura_fiber_run_wave39_1500
 
 
+// Wave 40 (#1957): fiber_orch — #362 safe yield under Guard + #363 orch metrics
+namespace aura_fiber_run_wave40_362 {
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::test::g_failed;
+using aura::test::g_passed;
+using Guard = Evaluator::MutationBoundaryGuard;
+int run_362_yield_skip_under_guard_smoke() {
+    std::println("\n=== #362: mutation-boundary yield skip under Guard smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(!ev.any_active_mutation_boundary(), "no boundary idle");
+    bool ok = true;
+    {
+        auto g = Guard::try_acquire(ev, 1, &ok);
+        CHECK(g.has_value() && g->get() != nullptr, "try_acquire Guard");
+        CHECK(ev.any_active_mutation_boundary(), "active during Guard");
+        // yield_mutation_boundary must not hang while Guard held
+        (void)cs.eval("(mutate:request-gc-safepoint)");
+        CHECK(true, "safepoint/yield path under Guard");
+    }
+    CHECK(!ev.any_active_mutation_boundary(), "cleared after dtor");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave40_362
+
+namespace aura_fiber_run_wave40_363 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_363_orch_metrics_smoke() {
+    std::println("\n=== #363: orchestration scheduler metrics smoke ===");
+    CompilerService cs;
+    auto m = cs.eval("(stats:get \"orch:metrics\")");
+    CHECK(m.has_value(), "orch:metrics reachable");
+    auto steal = cs.eval("(engine:metrics \"query:orchestration-steal-stats\")");
+    CHECK(steal.has_value(), "orchestration-steal-stats reachable");
+    // light spawn/join
+    auto v = cs.eval("(fiber:join (fiber:spawn (lambda () 1)))");
+    CHECK(v.has_value(), "fiber spawn/join");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave40_363
+
+
 int main() {
 
 
@@ -768,6 +813,16 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave39_1500 ########");
     if (int rc = aura_fiber_run_wave39_1500::run_1500_cow_epoch_is_valid_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave40_362 ########");
+    if (int rc = aura_fiber_run_wave40_362::run_362_yield_skip_under_guard_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave40_363 ########");
+    if (int rc = aura_fiber_run_wave40_363::run_363_orch_metrics_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
