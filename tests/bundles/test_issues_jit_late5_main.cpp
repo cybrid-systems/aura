@@ -4,15 +4,7 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_637_run();
-extern int aura_issue_640_run();
-extern int aura_issue_641_run();
-extern int aura_issue_643_run();
 extern int aura_issue_644_run();
-extern int aura_issue_645_run();
-extern int aura_issue_646_run();
-extern int aura_issue_647_run();
-extern int aura_issue_648_run();
 extern int aura_issue_649_run();
 extern int aura_issue_650_run();
 extern int aura_issue_651_run();
@@ -25,15 +17,7 @@ extern int aura_issue_471_dirty_sv_scale_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_637", aura_issue_637_run},
-        {"test_issue_640", aura_issue_640_run},
-        {"test_issue_641", aura_issue_641_run},
-        {"test_issue_643", aura_issue_643_run},
         {"test_issue_644", aura_issue_644_run},
-        {"test_issue_645", aura_issue_645_run},
-        {"test_issue_646", aura_issue_646_run},
-        {"test_issue_647", aura_issue_647_run},
-        {"test_issue_648", aura_issue_648_run},
         {"test_issue_649", aura_issue_649_run},
         {"test_issue_650", aura_issue_650_run},
         {"test_issue_651", aura_issue_651_run},

@@ -1240,25 +1240,17 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # Heavy target (full evaluator + serve + parser + JIT runtime)
 # so the MutationBoundaryGuard + workspace_flat_ + workspace_pool_
 # are available, matching the test_issue_210 / 211 pattern.
-aura_add_issue_test_reflect_standalone(test_issue_214)
+# Issue #214 folded into test_edsl_macro_hygiene_batch (wave 52 / #1957).
 
 # Issue #215: auto_deserialize for containers + nested struct
 # (Issue #178 Cycle 2).
 #
-# Standalone C++ test (like test_issue_214) because the
-# test exercises the reflect.hh header directly with the
-# -freflection compile flag.
+# Standalone C++ test because the test exercises the reflect.hh
+# header directly with the -freflection compile flag.
 aura_add_issue_test_reflect_standalone(test_issue_215)
 
-# Issue #216: query:schema + mutate integration
-# (Issue #178 Cycle 3).
-#
-# Standalone C++ test (like test_issue_214/215) because
-# the test exercises the reflect_schema.hh header directly
-# with the -freflection compile flag. Tests 3-6 shell out
-# to the ./build/aura binary to test the Aura-side
-# query:schema primitive.
-aura_add_issue_test_reflect_standalone(test_issue_216)
+# Issue #216 folded into test_edsl_macro_hygiene_batch (wave 52 / #1957)
+# — query:schema soft smoke.
 
 # Issue #217: AST/IR migration to reflect_members +
 # auto_serialize (Issue #178 Cycle 4). The full scope is

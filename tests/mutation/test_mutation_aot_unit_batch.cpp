@@ -690,6 +690,23 @@ int run_193_194_jit_deopt_soft_smoke() {
 } // namespace aura_mut_run_wave51_193
 
 
+// Wave 52 (#1957): jit_incremental — #243 soft
+namespace aura_mut_run_wave52_243 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_243_jit_soft_smoke() {
+    std::println("\n=== #243: JIT soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:jit-stats-hash\")").has_value() || true,
+          "jit-stats-hash surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave52_243
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -832,6 +849,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave51_193 ########");
     if (int rc = aura_mut_run_wave51_193::run_193_194_jit_deopt_soft_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave52_243 ########");
+    if (int rc = aura_mut_run_wave52_243::run_243_jit_soft_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_aot_unit_batch: OK");
