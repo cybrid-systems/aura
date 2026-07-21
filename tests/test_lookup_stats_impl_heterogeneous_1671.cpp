@@ -3,6 +3,12 @@
 // find(string_view) so hot-path stats catalog walks do not allocate a
 // temporary std::string key per name.
 //
+// Paired note (transparent hash migration repair): production maps now use
+// aura::core::TransparentStringHash (single string_view overload) shared via
+// src/core/transparent_string_hash.hh. This suite remains the regression
+// gate for heterogeneous stats-catalog lookup after the batch-3 include/
+// map-template repairs (Primitives table_/hot_map_/name_to_slot_ + JIT).
+//
 //   AC1: engine:metrics by-name resolves a registered stats impl
 //   AC2: engine:metrics :all returns hash with stats-count > 0
 //   AC3: engine:metrics :prefix "query:" returns hash

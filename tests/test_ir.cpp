@@ -4295,9 +4295,12 @@ int main() {
             aura::ast::FlatAST flat2(alloc);
             auto inner = flat2.add_literal(42);
             flat2.set_type(inner, 1); // inner = Int (type_id=1)
-            // Coercion from Int→String: type_id=3 (String)
-            // The coercion's int_val_ stores the type_tag (mapped from TypeTag)
-            auto coerce = flat2.add_coercion(inner, 3, 3); // (inner, type_tag=String(3), type_id=3)
+            // Coercion from Int→String: type_id=3 (String registry index in this test).
+            // CastOp type_tag encoding (#1925 type_tag_for_coercion):
+            //   INT=0 STRING=1 BOOL=2 DYNAMIC=3 FLOAT=4
+            // Note: type_tag==3 means Dynamic passthrough and elides CastOp at
+            // lower time — do NOT pass 3 for String. Use 1 for STRING.
+            auto coerce = flat2.add_coercion(inner, 1, 3); // (inner, type_tag=String, type_id=3)
             flat2.root = coerce;
             auto mod = aura::compiler::lower_to_ir(flat2, pool2, arena2);
             int cast_type_ok = 0, total_cast = 0;
