@@ -1,3 +1,14 @@
+// test_stress_alloc_storage_lock.cpp — Issue #1397
+// Standalone long stress; EXCLUDE_FROM_ALL optional.
+
+#include "test_harness.hpp"
+import std;
+using namespace std::chrono_literals;
+
+import aura.compiler.evaluator;
+import aura.compiler.value;
+import aura.compiler.service;
+
 // test_stress_alloc_storage_lock.cpp - Issue #1397:
 // cells_/pairs/string_heap_ uniform alloc_storage_lock_ stress test.
 //
@@ -13,13 +24,8 @@
 //   AC2: `set-car!` contract: pair index stable across `push_back`
 //   AC3: stress 4 threads × 100K (cons) ops → no UB
 
-#include "test_harness.hpp"
-import std;
 using namespace std::chrono_literals;
 
-import aura.compiler.evaluator;
-import aura.compiler.value;
-import aura.compiler.service;
 
 namespace test_stress_alloc_storage_lock_detail {
 
@@ -109,6 +115,7 @@ int aura_stress_alloc_storage_lock_run() {
                  ::aura::test::g_failed, ::aura::test::g_passed + ::aura::test::g_failed);
     return ::aura::test::g_failed == 0 ? 0 : 1;
 }
+
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
 int main() {

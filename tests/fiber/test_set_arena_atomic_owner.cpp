@@ -1,15 +1,5 @@
-// @category: unit
-// @reason: Issue #1663 — set_arena owner pair atomic w.r.t. concurrent
-// Issue #1663 (#1978 renamed): issue# moved from filename to header.
-// allocate_raw (no torn owner/fn → silent quota bypass)
-// (refine #1546 / #1554 / #1662).
-//
-//   AC1: has_arena_owner is all-or-nothing under concurrent set/clear
-//   AC2: concurrent try_allocate + set_arena_owner/clear does not crash
-//   AC3: concurrent set_arena flip + allocate under Evaluator
-//   AC4: quota still enforced after set_arena (not bypassed)
-//   AC5: #1662 dtor clear still holds under concurrent allocate
-//   AC6: stress 4 threads × 2000 ops; no crash; owner consistent
+// test_set_arena_atomic_owner.cpp — Issue #1663
+// Standalone concurrent arena owner stress (not co-linked in unit batch).
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -25,6 +15,20 @@ import std;
 import aura.core.arena;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+
+// @category: unit
+// @reason: Issue #1663 — set_arena owner pair atomic w.r.t. concurrent
+// Issue #1663 (#1978 renamed): issue# moved from filename to header.
+// allocate_raw (no torn owner/fn → silent quota bypass)
+// (refine #1546 / #1554 / #1662).
+//
+//   AC1: has_arena_owner is all-or-nothing under concurrent set/clear
+//   AC2: concurrent try_allocate + set_arena_owner/clear does not crash
+//   AC3: concurrent set_arena flip + allocate under Evaluator
+//   AC4: quota still enforced after set_arena (not bypassed)
+//   AC5: #1662 dtor clear still holds under concurrent allocate
+//   AC6: stress 4 threads × 2000 ops; no crash; owner consistent
+
 
 namespace {
 

@@ -1,8 +1,4 @@
-// test_terminal_concurrent.cpp — Issue #1352: per-buffer locks under threads
-//
-// Note: a single CompilerService/Evaluator is not fully thread-safe for eval.
-// Buffer IDs are process-global (#1352 registry), so each thread uses its own
-// CompilerService while sharing buffer ids — that stresses registry + rwlocks.
+// test_terminal_concurrent.cpp — Issue #1352 (standalone; free-corruption when co-linked)
 
 #include "test_harness.hpp"
 
@@ -14,6 +10,13 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+
+// test_terminal_concurrent.cpp — Issue #1352: per-buffer locks under threads
+//
+// Note: a single CompilerService/Evaluator is not fully thread-safe for eval.
+// Buffer IDs are process-global (#1352 registry), so each thread uses its own
+// CompilerService while sharing buffer ids — that stresses registry + rwlocks.
+
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
