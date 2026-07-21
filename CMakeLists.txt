@@ -588,7 +588,9 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 #
 # Layers still present:
 #   1. Domain suites — tests/domain/test_domain_*.cpp, test_obs_schema_matrix
-#      (cmake/AuraDomainTests.cmake; resolved via aura_resolve_test_cpp).
+#      (registered via aura_add_issue_test in CMakeLists.txt; resolved via
+#      aura_resolve_test_cpp). AuraDomainTests.cmake removed in Anqi 2026-07-21
+#      wave (was dead code — never included in CMakeLists.txt).
 #   2. Bundle executables — tests/bundles/test_issues_<profile>_main.cpp
 #      + members from tests/issues/ (link profiles in fixtures/).
 #   3. Family batch drivers — tests/test_*_batch.cpp (EXCLUDE_FROM_ALL
