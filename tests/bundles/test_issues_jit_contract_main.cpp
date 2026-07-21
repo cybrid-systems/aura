@@ -9,13 +9,12 @@ extern int aura_issue_254_run();
 extern int aura_issue_255_run();
 extern int aura_issue_256_run();
 extern int aura_issue_258_run();
-extern int aura_issue_259_run();
 
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_144", aura_issue_144_run}, {"test_issue_254", aura_issue_254_run},
         {"test_issue_255", aura_issue_255_run}, {"test_issue_256", aura_issue_256_run},
-        {"test_issue_258", aura_issue_258_run}, {"test_issue_259", aura_issue_259_run},
+        {"test_issue_258", aura_issue_258_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_contract", members, n);

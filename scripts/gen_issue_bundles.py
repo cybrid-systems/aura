@@ -423,7 +423,13 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         members = profiles.get(profile, [])
         cmake_list = ";".join(members)
         uc = profile.upper()
-        chunks.append(f"set(AURA_ISSUE_BUNDLE_{uc}_MEMBERS {cmake_list})")
+        # Empty members must be an explicit empty string: bare
+        # `set(VAR )` *unsets* the variable in CMake, which then
+        # trips "Unknown issue bundle profile" in aura_add_issue_bundle.
+        if cmake_list:
+            chunks.append(f"set(AURA_ISSUE_BUNDLE_{uc}_MEMBERS {cmake_list})")
+        else:
+            chunks.append(f'set(AURA_ISSUE_BUNDLE_{uc}_MEMBERS "")')
 
     chunks.append("")
 
@@ -481,8 +487,10 @@ def generate_outputs() -> tuple[dict[str, str], str]:
     mains: dict[str, str] = {}
     for profile in BUNDLE_PROFILES:
         members = profiles.get(profile, [])
+        # Empty is allowed during #1957 fold-down (profile shell kept until
+        # the CMake/fixture entry is removed in a dedicated cleanup).
         if not members:
-            raise SystemExit(f"profile {profile!r} has no members in {PROFILES_JSON}")
+            print(f"note: profile {profile!r} has 0 members (empty bundle stub)", flush=True)
         mains[profile] = render_bundle_main(profile, members)
 
     cmake = render_cmake(profiles, all_extras)

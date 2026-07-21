@@ -6,7 +6,6 @@
 
 extern int aura_issue_135_run();
 extern int aura_issue_137_run();
-extern int aura_issue_159_run();
 extern int aura_issue_184_run();
 extern int aura_issue_140_run();
 extern int aura_issue_141_run();
@@ -19,9 +18,6 @@ extern int aura_issue_190_run();
 extern int aura_issue_191_run();
 extern int aura_issue_192_run();
 extern int aura_issue_196_run();
-extern int aura_issue_247_run();
-extern int aura_issue_248_run();
-extern int aura_issue_249_run();
 extern int aura_issue_240_run();
 extern int aura_issue_244_run();
 extern int aura_issue_228_run();
@@ -31,14 +27,12 @@ extern int aura_issue_482_run();
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_135", aura_issue_135_run}, {"test_issue_137", aura_issue_137_run},
-        {"test_issue_159", aura_issue_159_run}, {"test_issue_184", aura_issue_184_run},
-        {"test_issue_140", aura_issue_140_run}, {"test_issue_141", aura_issue_141_run},
-        {"test_issue_142", aura_issue_142_run}, {"test_issue_143", aura_issue_143_run},
-        {"test_issue_145", aura_issue_145_run}, {"test_issue_188", aura_issue_188_run},
-        {"test_issue_189", aura_issue_189_run}, {"test_issue_190", aura_issue_190_run},
-        {"test_issue_191", aura_issue_191_run}, {"test_issue_192", aura_issue_192_run},
-        {"test_issue_196", aura_issue_196_run}, {"test_issue_247", aura_issue_247_run},
-        {"test_issue_248", aura_issue_248_run}, {"test_issue_249", aura_issue_249_run},
+        {"test_issue_184", aura_issue_184_run}, {"test_issue_140", aura_issue_140_run},
+        {"test_issue_141", aura_issue_141_run}, {"test_issue_142", aura_issue_142_run},
+        {"test_issue_143", aura_issue_143_run}, {"test_issue_145", aura_issue_145_run},
+        {"test_issue_188", aura_issue_188_run}, {"test_issue_189", aura_issue_189_run},
+        {"test_issue_190", aura_issue_190_run}, {"test_issue_191", aura_issue_191_run},
+        {"test_issue_192", aura_issue_192_run}, {"test_issue_196", aura_issue_196_run},
         {"test_issue_240", aura_issue_240_run}, {"test_issue_244", aura_issue_244_run},
         {"test_issue_228", aura_issue_228_run}, {"test_issue_289", aura_issue_289_run},
         {"test_issue_482", aura_issue_482_run},

@@ -14,7 +14,6 @@ extern int aura_issue_171_run();
 extern int aura_issue_181_run();
 extern int aura_issue_182_run();
 extern int aura_issue_197_run();
-extern int aura_issue_246_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -28,7 +27,6 @@ int main() {
         {"test_issue_181", aura_issue_181_run},
         {"test_issue_182", aura_issue_182_run},
         {"test_issue_197", aura_issue_197_run},
-        {"test_issue_246", aura_issue_246_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("light", members, n);

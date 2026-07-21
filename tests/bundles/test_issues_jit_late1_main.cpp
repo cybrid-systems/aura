@@ -8,12 +8,9 @@ extern int aura_issue_159_bench_run();
 extern int aura_issue_edsl_hygiene_atomic_run();
 extern int aura_issue_428_closure_run();
 extern int aura_issue_429_soa_run();
-extern int aura_issue_440_edsl_readiness_run();
 extern int aura_issue_444_strategy_evolution_run();
 extern int aura_issue_445_openclaw_integration_run();
-extern int aura_issue_452_aot_hot_update_run();
 extern int aura_issue_462_shape_aware_folding_run();
-extern int aura_issue_463_soa_phase2_wiring_run();
 extern int aura_issue_677_run();
 extern int aura_issue_per_fiber_stack_pool_high_concurrency_run();
 extern int aura_issue_aot_bridge_checkpoint_version_steal_run();
@@ -22,8 +19,6 @@ extern int aura_issue_edsl_core_stability_cow_atomic_query_mutate_run();
 extern int aura_issue_compiler_core_incremental_selfmod_gaps_run();
 extern int aura_issue_highperf_cpp26_gaps_arena_soa_value_shape_pass_run();
 extern int aura_issue_typesystem_typed_mutate_incremental_gaps_run();
-extern int aura_issue_711_run();
-extern int aura_issue_714_run();
 extern int aura_issue_715_run();
 
 int main() {
@@ -32,12 +27,9 @@ int main() {
         {"test_issue_edsl_hygiene_atomic", aura_issue_edsl_hygiene_atomic_run},
         {"test_issue_428_closure", aura_issue_428_closure_run},
         {"test_issue_429_soa", aura_issue_429_soa_run},
-        {"test_issue_440_edsl_readiness", aura_issue_440_edsl_readiness_run},
         {"test_issue_444_strategy_evolution", aura_issue_444_strategy_evolution_run},
         {"test_issue_445_openclaw_integration", aura_issue_445_openclaw_integration_run},
-        {"test_issue_452_aot_hot_update", aura_issue_452_aot_hot_update_run},
         {"test_issue_462_shape_aware_folding", aura_issue_462_shape_aware_folding_run},
-        {"test_issue_463_soa_phase2_wiring", aura_issue_463_soa_phase2_wiring_run},
         {"test_issue_677", aura_issue_677_run},
         {"test_per_fiber_stack_pool_high_concurrency",
          aura_issue_per_fiber_stack_pool_high_concurrency_run},
@@ -53,8 +45,6 @@ int main() {
          aura_issue_highperf_cpp26_gaps_arena_soa_value_shape_pass_run},
         {"test_typesystem_typed_mutate_incremental_gaps",
          aura_issue_typesystem_typed_mutate_incremental_gaps_run},
-        {"test_issue_711", aura_issue_711_run},
-        {"test_issue_714", aura_issue_714_run},
         {"test_issue_715", aura_issue_715_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));

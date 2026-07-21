@@ -946,6 +946,83 @@ int run_648_panic_checkpoint_fiber_smoke() {
 } // namespace aura_fiber_run_wave52_648
 
 
+// Wave 53 (#1957): fiber_orch — scheduler/gc/checkpoint smokes
+namespace aura_fiber_run_wave53_649 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_649_yield_checkpoint_panic_smoke() {
+    std::println("\n=== #649: yield-checkpoint-panic-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:yield-checkpoint-panic-stats\")").has_value(),
+          "yield-checkpoint-panic-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave53_649
+
+namespace aura_fiber_run_wave53_650 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_650_stealbudget_yield_class_smoke() {
+    std::println("\n=== #650: scheduler-stealbudget-yield-class-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:scheduler-stealbudget-yield-class-stats\")").has_value(),
+          "scheduler-stealbudget-yield-class-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave53_650
+
+namespace aura_fiber_run_wave53_618 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_618_scheduler_mutation_coord_smoke() {
+    std::println("\n=== #618: scheduler-mutation-coord-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:scheduler-mutation-coord-stats\")").has_value(),
+          "scheduler-mutation-coord-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave53_618
+
+namespace aura_fiber_run_wave53_651 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_651_gc_panic_deferral_smoke() {
+    std::println("\n=== #651: gc-panic-deferral-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")").has_value(),
+          "gc-panic-deferral-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave53_651
+
+namespace aura_fiber_run_wave53_773 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_773_workspace_closedloop_fiber_smoke() {
+    std::println("\n=== #773: workspace-closedloop-fiber-eda-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:workspace-closedloop-fiber-eda-stats\")").has_value(),
+          "workspace-closedloop-fiber-eda-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave53_773
+
+
 int main() {
 
 
@@ -1091,6 +1168,32 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave52_648 ########");
     if (int rc = aura_fiber_run_wave52_648::run_648_panic_checkpoint_fiber_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_649 ########");
+    if (int rc = aura_fiber_run_wave53_649::run_649_yield_checkpoint_panic_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_650 ########");
+    if (int rc = aura_fiber_run_wave53_650::run_650_stealbudget_yield_class_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_618 ########");
+    if (int rc = aura_fiber_run_wave53_618::run_618_scheduler_mutation_coord_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_651 ########");
+    if (int rc = aura_fiber_run_wave53_651::run_651_gc_panic_deferral_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave53_773 ########");
+    if (int rc = aura_fiber_run_wave53_773::run_773_workspace_closedloop_fiber_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);

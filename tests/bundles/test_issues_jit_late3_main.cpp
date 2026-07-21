@@ -18,12 +18,8 @@ extern int aura_issue_primitives_hotpath_registry_slo_run();
 extern int aura_issue_aura_result_error_policy_run();
 extern int aura_issue_open_issues_phase1_batch_run();
 extern int aura_issue_804_run();
-extern int aura_issue_760_run();
-extern int aura_issue_669_run();
-extern int aura_issue_670_run();
 extern int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run();
 extern int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run();
-extern int aura_issue_672_run();
 extern int aura_issue_prompt6_epoch_atomic_visibility_fiber_steal_run();
 extern int aura_issue_prompt6_linear_jit_l2_post_invalidate_arena_gc_run();
 extern int aura_issue_prompt2_6_impact_scope_quote_lambda_bridge_env_run();
@@ -57,14 +53,10 @@ int main() {
         {"test_aura_result_error_policy", aura_issue_aura_result_error_policy_run},
         {"test_open_issues_phase1_batch", aura_issue_open_issues_phase1_batch_run},
         {"test_issue_804", aura_issue_804_run},
-        {"test_issue_760", aura_issue_760_run},
-        {"test_issue_669", aura_issue_669_run},
-        {"test_issue_670", aura_issue_670_run},
         {"test_atomic_batch_snapshot_stable_ref_ai_loops",
          aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run},
         {"test_stable_ref_cow_subworkspace_concurrent_ai",
          aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run},
-        {"test_issue_672", aura_issue_672_run},
         {"test_prompt6_epoch_atomic_visibility_fiber_steal",
          aura_issue_prompt6_epoch_atomic_visibility_fiber_steal_run},
         {"test_prompt6_linear_jit_l2_post_invalidate_arena_gc",
