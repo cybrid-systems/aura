@@ -16,7 +16,6 @@ tests/
 ├── e2e/              # Strengthened .aura E2E + commercial_readiness (#1934)
 ├── bench/            # Benchmarks (C++ + Python drivers + baseline)
 ├── fuzz/             # Fuzz orchestrator / drivers / corpus (#1935)
-├── memory/           # Long-run leak / soak scripts
 ├── bundles/          # Generated issue-test bundles
 ├── run.py            # Thin entry → python/run.py
 ├── migrate_test_layout.py  # Idempotent mover + --status (#1937 / #1939)
@@ -24,7 +23,7 @@ tests/
 ```
 
 **#1939 final cleanup:** full Python harness lives only under `python/` /
-`bench/` / `fuzz/` / `memory/` / `e2e/`. Top-level `tests/*.py` are **thin
+`bench/` / `fuzz/` / `e2e/`. Top-level `tests/*.py` are **thin
 entrypoints** (stable CLI). C++ `test_*.cpp` bulk remains at root until domain
 migration waves (#1957).
 
@@ -106,14 +105,14 @@ python3 tests/python/test_layout_1939.py        # unit invariants
 | Issue | Role | Status |
 |-------|------|--------|
 | #1937 | Design + `migrate_test_layout.py` | Done (parent #1932) |
-| #1938 | fuzz / bench / memory moves | Done (parent #1932) |
+| #1938 | fuzz / bench moves | Done (parent #1932) |
 | #1939 | Final cleanup, docs, root policy | This doc + README “What changed” |
 
 ## Contribution checklist
 
 1. Prefer `tests/domain/` for new C++ coverage (see `tests/README.md`).
 2. Put new Python drivers under `tests/python/`, `tests/bench/`,
-   `tests/fuzz/`, `tests/memory/`, or `tests/e2e/` — **not** the top-level
+   `tests/fuzz/`, or `tests/e2e/` — **not** the top-level
    `tests/` root.
 3. Keep or add a thin entrypoint only when a public path must stay stable.
 4. Run `python3 tests/migrate_test_layout.py --status` and `./build.py gate`
