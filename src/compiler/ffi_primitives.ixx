@@ -90,7 +90,7 @@ public:
         }
         auto arg_part = sig.substr(1, close_paren - 1);
         auto ret_part = sig.substr(arrow + 2);
-        auto type_to_int = [](const std::string& tn, std::string* err = nullptr) -> int {
+        auto type_to_int = [](std::string_view tn, std::string* err = nullptr) -> int {
             auto t = tn;
             while (!t.empty() && t.front() == ' ')
                 t = t.substr(1);
@@ -107,7 +107,7 @@ public:
             if (t == "Void")
                 return 0;
             if (err)
-                *err = t.empty() ? "empty type" : "unknown type: " + t;
+                *err = t.empty() ? std::string{"empty type"} : "unknown type: " + std::string{t};
             return -1;
         };
         std::string cur;
