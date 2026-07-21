@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 565 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 561 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **572** | |
+| **Total scanned** | **568** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 59 | 0 | 5 | 64 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 55 | 0 | 5 | 60 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
@@ -47,10 +47,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 514 | Integration path via `CompilerService` / eval |
-| `test_harness` | 338 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 510 | Integration path via `CompilerService` / eval |
+| `test_harness` | 334 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 140 | `aura_issue_*_run()` entry for issue bundles |
-| `RUN_ALL_TESTS` | 81 | Harness runner main |
+| `RUN_ALL_TESTS` | 77 | Harness runner main |
 | `own_main` | 44 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
@@ -58,13 +58,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - `integration`: 359
 - `unknown`: 114
-- `unit`: 83
+- `unit`: 79
 - `issue_specific`: 7
 - `regression`: 2
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 319
+- `test_harness.hpp` — 315
 - `compiler/observability_metrics.h` — 58
 - `compiler/aura_jit_bridge.h` — 19
 - `serve/scheduler.h` — 16
@@ -82,18 +82,18 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 360
+- `aura.compiler.value` — 356
 - `aura.compiler.service` — 335
-- `std` — 328
+- `std` — 324
 - `aura.compiler.evaluator` — 307
-- `aura.core.ast` — 215
-- `aura.core.arena` — 126
-- `aura.core.type` — 117
+- `aura.core.ast` — 211
+- `aura.core.arena` — 122
+- `aura.core.type` — 113
 - `aura.compiler.ir` — 52
-- `aura.compiler.type_checker` — 43
-- `aura.diag` — 43
+- `aura.compiler.type_checker` — 39
+- `aura.diag` — 39
 - `aura.core` — 35
-- `aura.parser.parser` — 30
+- `aura.parser.parser` — 26
 - `aura.compiler.pass_manager` — 17
 - `aura.core.mutation` — 17
 - `aura.compiler.ir_executor` — 11
@@ -202,7 +202,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (64)
+### `arena_compaction` — Arena / compaction / GC (60)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
@@ -216,12 +216,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 - `tests/domain/arena/test_gc_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
 
-#### issues/ (59)
+#### issues/ (55)
 
-- `tests/issues/test_issue_116.cpp` (#116) [early_issue] — test_issue_116.cpp — Verify deferred CoercionNode insertion
-- `tests/issues/test_issue_118.cpp` (#118) [early_issue] — test_issue_118.cpp — Verify the constraint solver timeout fix
-- `tests/issues/test_issue_121.cpp` (#121) [early_issue] — test_issue_121.cpp — Verify the gensym / symbol-append / recursive
-- `tests/issues/test_issue_122.cpp` (#122) [early_issue] — test_issue_122.cpp — Verify the reflection primitive fixes
 - `tests/issues/test_issue_123.cpp` (#123) [early_issue] — test_issue_123.cpp — Verify the IR-level require pre-execution
 - `tests/issues/test_issue_124.cpp` (#124) [early_issue] — test_issue_124.cpp — Verify try/catch exception support fix
 - `tests/issues/test_issue_127.cpp` (#127) [early_issue] — test_issue_127.cpp — Verify the Result<T> aliases
