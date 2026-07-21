@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**528** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**518** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 100 primitives (19%)
-- **core**: 375 primitives (71%)
+- **core**: 365 primitives (70%)
 - **internal-observable**: 45 primitives (9%)
 - **convenience**: 8 primitives (2%)
 
@@ -488,21 +488,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `dirty:ppa-reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 
-## Eda: (13)
+## Eda: (3)
 
 - `eda:demo-sv-self-evolution` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:ingest-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:invoke-simulator` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:load-sv` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:mutate-add-instance` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:parse-netlist` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:parse-verification-result` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:query-nodes` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:run-commercial-simulator-stub` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-hardware-feedback` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:run-verification-feedback` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:validate-sv-emit-roundtrip` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:waveform-snapshot` *[core]* — `src/compiler/evaluator_primitives_eda.cpp`
 
 ## Edsl: (1)
 
@@ -786,7 +776,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (375)
+### Core builtins (must remain primitive) (365)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -876,18 +866,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` — `src/compiler/evaluator_primitives_list.cpp`
 - `eda:demo-sv-self-evolution` — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:ingest-result` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:invoke-simulator` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:load-sv` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:mutate-add-instance` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:parse-netlist` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:parse-verification-result` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:query-nodes` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:run-commercial-simulator-stub` — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:run-hardware-feedback` — `src/compiler/evaluator_primitives_eda.cpp`
 - `eda:run-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
-- `eda:validate-sv-emit-roundtrip` — `src/compiler/evaluator_primitives_eda.cpp`
-- `eda:waveform-snapshot` — `src/compiler/evaluator_primitives_eda.cpp`
 - `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:metrics` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` — `src/compiler/evaluator_primitives_obs_jit.cpp`

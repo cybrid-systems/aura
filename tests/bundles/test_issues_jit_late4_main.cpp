@@ -31,7 +31,6 @@ extern int aura_issue_532_observability_run();
 extern int aura_issue_533_observability_run();
 extern int aura_issue_534_observability_run();
 extern int aura_issue_535_observability_run();
-extern int aura_issue_541_observability_run();
 extern int aura_issue_557_observability_run();
 extern int aura_issue_567_observability_run();
 extern int aura_issue_601_run();
@@ -40,7 +39,6 @@ extern int aura_issue_604_run();
 extern int aura_issue_606_run();
 extern int aura_issue_614_run();
 extern int aura_issue_615_run();
-extern int aura_issue_617_run();
 extern int aura_issue_618_run();
 extern int aura_issue_620_run();
 extern int aura_issue_621_run();
@@ -82,7 +80,6 @@ int main() {
         {"test_issue_533_observability", aura_issue_533_observability_run},
         {"test_issue_534_observability", aura_issue_534_observability_run},
         {"test_issue_535_observability", aura_issue_535_observability_run},
-        {"test_issue_541_observability", aura_issue_541_observability_run},
         {"test_issue_557_observability", aura_issue_557_observability_run},
         {"test_issue_567_observability", aura_issue_567_observability_run},
         {"test_issue_601", aura_issue_601_run},
@@ -91,7 +88,6 @@ int main() {
         {"test_issue_606", aura_issue_606_run},
         {"test_issue_614", aura_issue_614_run},
         {"test_issue_615", aura_issue_615_run},
-        {"test_issue_617", aura_issue_617_run},
         {"test_issue_618", aura_issue_618_run},
         {"test_issue_620", aura_issue_620_run},
         {"test_issue_621", aura_issue_621_run},
