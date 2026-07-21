@@ -21,6 +21,7 @@ import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.core.error;
+import aura.core.ast;
 
 
 // ─── from test_guard_dtor_invariant_noexcept.cpp →
@@ -1987,6 +1988,80 @@ int run_1557_walk_active_closures_smoke() {
 }
 } // namespace aura_mut_run_wave37_1557
 
+// Wave 38 (#1957): mutation_dirty — #303 SafeStableNodeRef + #1494/#1545 linear scan smokes
+namespace aura_mut_run_wave38_303 {
+using aura::ast::FlatAST;
+using aura::ast::NodeTag;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_303_safe_stable_node_ref_smoke() {
+    std::println("\n=== #303: SafeStableNodeRef / make_safe_ref smoke ===");
+    FlatAST ast;
+    auto n0 = ast.add_raw_node(NodeTag::LiteralInt);
+    auto ref = ast.make_ref(n0);
+    CHECK(ref.fiber_id == 0, "make_ref default fiber_id 0");
+    CHECK(ref.is_valid_in(ast), "make_ref valid");
+    auto safe = ast.make_safe_ref(n0, /*workspace_id=*/2, /*fiber_id=*/7);
+    auto prov = safe.get_provenance();
+    CHECK(prov.captured_id == n0, "provenance id");
+    CHECK(prov.workspace_id == 2, "workspace_id 2");
+    CHECK(prov.fiber_id == 7, "fiber_id 7");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave38_303
+
+namespace aura_mut_run_wave38_1494 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1494_live_closure_scan_metrics_smoke() {
+    std::println("\n=== #1494: live-closure scan metrics smoke ===");
+    CompilerService cs;
+    auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m.has_value(), "linear-ownership-stats reachable");
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    // invalidate path may run live-closure scan (#1494 lineage)
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1494\")");
+    auto m2 = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
+    CHECK(m2.has_value(), "stats still reachable post rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave38_1494
+
+namespace aura_mut_run_wave38_1545 {
+using aura::compiler::Closure;
+using aura::compiler::CompilerService;
+using aura::compiler::NULL_ENV_ID;
+using aura::compiler::types::make_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+constexpr std::uint8_t kOwned = 1;
+int run_1545_walk_active_closures_smoke() {
+    std::println("\n=== #1545: walk_active_closures smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    if (ev.current_bridge_epoch() == 0)
+        cs.bump_bridge_epoch();
+    aura::compiler::Env src;
+    src.bind_symid_with_linear_state(99, make_int(1), kOwned);
+    auto eid = ev.alloc_env_frame_from_env(src);
+    Closure cl;
+    cl.env_id = eid;
+    auto cid = ev.register_active_closure(std::move(cl));
+    int n = 0;
+    bool saw = false;
+    ev.walk_active_closures([&](auto id, auto&) {
+        ++n;
+        if (id == cid)
+            saw = true;
+    });
+    CHECK(n >= 1 && saw, "walk visits registered");
+    CHECK(eid != NULL_ENV_ID, "env allocated");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave38_1545
+
 int main() {
 
 
@@ -2210,6 +2285,27 @@ int main() {
     std::println("\n######## run_1557_walk_active_closures_smoke ########");
     if (int rc = aura_mut_run_wave37_1557::run_1557_walk_active_closures_smoke(); rc != 0) {
         std::println("run_1557 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_303_safe_stable_node_ref_smoke ########");
+    if (int rc = aura_mut_run_wave38_303::run_303_safe_stable_node_ref_smoke(); rc != 0) {
+        std::println("run_303 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1494_live_closure_scan_metrics_smoke ########");
+    if (int rc = aura_mut_run_wave38_1494::run_1494_live_closure_scan_metrics_smoke(); rc != 0) {
+        std::println("run_1494 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1545_walk_active_closures_smoke ########");
+    if (int rc = aura_mut_run_wave38_1545::run_1545_walk_active_closures_smoke(); rc != 0) {
+        std::println("run_1545 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");

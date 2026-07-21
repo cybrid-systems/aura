@@ -87,6 +87,40 @@ int run_1521_shape_arena_compact_stats_smoke() {
 }
 } // namespace aura_shape_run_wave37_1521
 
+// Wave 38 (#1957): shape_soa — #398 for_each_stable_child + children-stable
+namespace aura_shape_run_wave38_398 {
+using aura::ast::FlatAST;
+using aura::ast::StringPool;
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_398_for_each_stable_child_smoke() {
+    std::println("\n=== #398: for_each_stable_child + query:children-stable smoke ===");
+    FlatAST flat;
+    StringPool pool;
+    auto c0 = flat.add_literal(0);
+    auto c1 = flat.add_literal(1);
+    auto parent = flat.add_define(pool.intern("p"), c0);
+    flat.insert_child(parent, 1, c1);
+    int n = 0;
+    flat.for_each_stable_child(parent, [&](FlatAST::StableNodeRef r) {
+        ++n;
+        CHECK(r.id == c0 || r.id == c1, "child id expected");
+    });
+    CHECK(n == 2, "two stable children");
+    CHECK(flat.stable_child_count(parent) == 2, "stable_child_count == 2");
+    flat.for_each_stable_child(999999, [&](FlatAST::StableNodeRef) { ++n; });
+    CHECK(n == 2, "OOB parent no-op");
+    CompilerService cs;
+    auto q = cs.eval("(engine:metrics \"query:children-column-stats\")");
+    CHECK(q.has_value(), "column stats still reachable");
+    auto csb = cs.eval("(query:children-stable 0)");
+    (void)csb;
+    CHECK(true, "query:children-stable invoked");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave38_398
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -102,6 +136,10 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave37_1521::run_1521_shape_arena_compact_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave38_398::run_398_for_each_stable_child_smoke(); rc != 0)
         return rc;
     std::println("\ntest_shape_soa_unit_batch: OK");
     return 0;

@@ -647,6 +647,26 @@ int run_569_metrics_smoke() {
 }
 } // namespace aura_obs_run_wave37_569
 
+// ═══ Wave 38 (#1957): observability metrics smokes ═══
+
+namespace aura_obs_run_wave38_1514 {
+int run_1514_metrics_smoke() {
+    std::println("\n=== #1514: partial recompile / nested-lambda dirty metrics smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    // Surfaces from #1514 lineage (may be hash keys under linear/jit stats).
+    auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc.has_value(), "query:compiler-incremental-stats reachable");
+    auto cache = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
+    CHECK(cache.has_value(), "query:compiler-cache-stats reachable");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1514\")");
+    auto inc2 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(inc2.has_value(), "incremental stats post-rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave38_1514
+
 int main() {
 
 
@@ -832,6 +852,10 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave37_569::run_569_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave38_1514::run_1514_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;

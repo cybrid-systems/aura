@@ -3,13 +3,16 @@
 // Prefer adding a section here over a new tests/mutation binary.
 
 #include "test_harness.hpp"
+#include "compiler/aot_mangle.h"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/aura_jit.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <unordered_set>
 #include "compiler/typed_mutation_audit.h"
 #include <print>
 
@@ -336,6 +339,47 @@ int run_461_jit_fallback_smoke() {
 }
 } // namespace aura_mut_run_wave37_461
 
+// Wave 38 (#1957): jit_incremental — #1477 dual-epoch fence + #323 AOT mangle
+namespace aura_mut_run_wave38_1477 {
+using aura::jit::AuraJIT;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1477_dual_epoch_fence_smoke() {
+    std::println("\n=== #1477: AuraJIT dual-epoch fence smoke ===");
+    AuraJIT jit;
+    CHECK(!jit.is_fn_epoch_stale("never_compiled", 42), "never-captured → not stale");
+    CHECK(!jit.is_fn_epoch_stale(nullptr, 1), "nullptr → not stale");
+    jit.capture_fn_epoch("f", 10);
+    CHECK(!jit.is_fn_epoch_stale("f", 10), "same epoch → fresh");
+    CHECK(jit.is_fn_epoch_stale("f", 11), "different epoch → stale");
+    jit.capture_fn_epoch("g", 1);
+    jit.capture_fn_epoch("g", 5);
+    CHECK(jit.is_fn_epoch_stale("g", 1), "old capture stale after re-capture");
+    CHECK(!jit.is_fn_epoch_stale("g", 5), "new capture fresh");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave38_1477
+
+namespace aura_mut_run_wave38_323 {
+using aura::compiler::mangle_aot_name;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_323_aot_mangle_smoke() {
+    std::println("\n=== #323: mangle_aot_name uniqueness + version smoke ===");
+    std::unordered_set<std::string> seen;
+    for (int i = 0; i < 200; ++i) {
+        auto m = mangle_aot_name("fn_" + std::to_string(i), static_cast<std::uint32_t>(i), 0);
+        CHECK(seen.insert(m).second, "mangle unique");
+    }
+    auto v0 = mangle_aot_name("hot", 0, 0);
+    auto v1 = mangle_aot_name("hot", 0, 1);
+    CHECK(v0 != v1, "version suffix differs");
+    auto top = mangle_aot_name("__top__", 0, 0);
+    CHECK(top.substr(0, 7) == "__top__", "__top__ preserved prefix");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave38_323
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -362,6 +406,20 @@ int main() {
     std::println("\n######## run_461_jit_fallback_smoke ########");
     if (int rc = aura_mut_run_wave37_461::run_461_jit_fallback_smoke(); rc != 0) {
         std::println("run_461 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1477_dual_epoch_fence_smoke ########");
+    if (int rc = aura_mut_run_wave38_1477::run_1477_dual_epoch_fence_smoke(); rc != 0) {
+        std::println("run_1477 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_323_aot_mangle_smoke ########");
+    if (int rc = aura_mut_run_wave38_323::run_323_aot_mangle_smoke(); rc != 0) {
+        std::println("run_323 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_aot_unit_batch: OK");
