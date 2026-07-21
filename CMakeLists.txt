@@ -125,6 +125,8 @@ target_sources(aura PRIVATE
     src/compiler/value_impl.cpp
     # Issue #1559: present_batch / draw_batch engine (header-based, non-module).
     src/renderer/render_primitives.cpp
+    # Issue #1980 / Epic #1979: half-block pixel framebuffer for 3D TUI base.
+    src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
@@ -488,7 +490,9 @@ target_sources(test_ir PRIVATE
     # (term-render-draw-batch) primitive in evaluator_primitives_io.cpp:1318.
     # Without this the test_ir link fails with
     # "undefined reference to aura::renderer::draw_batch".
-    src/renderer/render_primitives.cpp)
+    src/renderer/render_primitives.cpp
+    # Issue #1980 / Epic #1979: half-block pixel framebuffer.
+    src/renderer/pixel_framebuffer.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
@@ -640,6 +644,8 @@ add_library(aura_test_objects STATIC
     src/compiler/fiber_bridge.cpp
     # Issue #1559: present_batch / draw_batch engine.
     src/renderer/render_primitives.cpp
+    # Issue #1980 / Epic #1979: half-block pixel framebuffer.
+    src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -1781,6 +1787,10 @@ add_dependencies(all_test_issue_targets test_linear_ownership_batch)
 aura_add_issue_test(test_obs_metrics_smoke_batch)
 aura_issue_test_link_llvm_jit(test_obs_metrics_smoke_batch)
 add_dependencies(all_test_issue_targets test_obs_metrics_smoke_batch)
+
+# Issue #1980 / Epic #1979: half-block pixel framebuffer (headless).
+aura_add_issue_test(test_pixel_framebuffer)
+add_dependencies(all_test_issue_targets test_pixel_framebuffer)
 aura_issue_test_link_llvm_jit(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)
 

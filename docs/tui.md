@@ -54,9 +54,25 @@ requires an explicit PR edit to `COMMERCIAL_DOMAIN_BUDGETS` + justification
 Implementation: `src/tui/tui_runtime.hh`, `src/tui/tui_input.hh`,
 `src/compiler/evaluator_primitives_tui.cpp`. Stdlib: `lib/std/tui/`.
 
+## 3D TUI foundation (Epic #1979)
+
+Software voxel raycasting base on the terminal path (no GPU). Child order:
+
+1. **#1980** half-block pixel framebuffer — landed as C++ engine API  
+   `src/renderer/pixel_framebuffer.{hh,cpp}`  
+   Each cell = two vertical pixels via U+2580 `▀` (upper=fg, lower=bg RGB).  
+   View over `FramebufferSoA` + `DirtyRegion`; headless via `pixel_present_to_string`.  
+   Tests: `tests/arena/test_pixel_framebuffer.cpp`
+2. Camera + primary rays
+3. Voxel volume / chunks
+4. DDA raycaster
+5. Shading / fog / sky
+6. Frame loop + Aura surface
+
 ## Related
 
 - SlimSurface: #1448 / #1449
 - TUI original series: #1331–#1343 / #1353
+- 3D rendering epic: #1979 / first child #1980
 - Sibling deferred domains: #1968–#1976
 - Orch multi-agent remove (contrast): #1966
