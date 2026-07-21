@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 518 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 514 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **525** | |
+| **Total scanned** | **521** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 12 | 0 | 5 | 17 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 8 | 0 | 5 | 13 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 472 | Integration path via `CompilerService` / eval |
-| `test_harness` | 304 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 129 | `aura_issue_*_run()` entry for issue bundles |
+| `CompilerService` | 468 | Integration path via `CompilerService` / eval |
+| `test_harness` | 300 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 128 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 62 | Harness runner main |
-| `own_main` | 42 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 41 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 341
+- `integration`: 337
 - `unknown`: 105
 - `unit`: 64
 - `issue_specific`: 6
@@ -64,9 +64,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 286
-- `compiler/observability_metrics.h` — 57
-- `compiler/aura_jit_bridge.h` — 19
+- `test_harness.hpp` — 282
+- `compiler/observability_metrics.h` — 56
+- `compiler/aura_jit_bridge.h` — 18
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit.h` — 12
 - `serve/fiber.h` — 10
@@ -74,18 +74,18 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `compiler/shape_profiler.h` — 4
 - `reflect/reflect.hh` — 4
 - `compiler/aot_mangle.h` — 3
-- `compiler/messaging_bridge.h` — 3
-- `compiler/runtime_shared.h` — 3
-- `core/gc_hooks.h` — 2
-- `serve/gc_coordinator.h` — 2
+- `compiler/runtime_shared.h` — 2
 - `serve/metrics.h` — 2
+- `core/arena_auto_policy_stats.h` — 2
+- `compiler/spec_jit_controller.h` — 2
+- `compiler/messaging_bridge.h` — 2
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 332
-- `aura.compiler.service` — 319
-- `std` — 296
-- `aura.compiler.evaluator` — 291
+- `aura.compiler.value` — 328
+- `aura.compiler.service` — 315
+- `std` — 292
+- `aura.compiler.evaluator` — 289
 - `aura.core.ast` — 186
 - `aura.core.type` — 98
 - `aura.core.arena` — 97
@@ -200,7 +200,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (17)
+### `arena_compaction` — Arena / compaction / GC (13)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
@@ -214,13 +214,9 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 - `tests/domain/arena/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
 
-#### issues/ (12)
+#### issues/ (8)
 
 - `tests/issues/test_issue_1469.cpp` (#1469) — test_issue_1469.cpp — orphan restored (AC drift; not in CI batch)
-- `tests/issues/test_issue_1488.cpp` (#1488) — AC1: arena:adaptive-stats returns int pair (no dead heap push) — #1072
-- `tests/issues/test_issue_1489.cpp` (#1489) — AC1: save_panic_checkpoint arms process-wide GC defer
-- `tests/issues/test_issue_1508.cpp` (#1508) — AC1: aura_is_jit_closure_fresh matches table + defuse epochs
-- `tests/issues/test_issue_1510.cpp` (#1510) — AC1: compact bumps defuse_version_ + bridge_epoch
 - `tests/issues/test_issue_1518.cpp` (#1518) — Issue #1518 — full live-object compact + freelist relocate + Shape/JIT
 - `tests/issues/test_issue_1519.cpp` (#1519) — #1466 (const eval expansion). This issue is hot-path Contract density
 - `tests/issues/test_issue_1526.cpp` (#1526) — AC1: compact bumps defuse + bridge + AOT table epochs
