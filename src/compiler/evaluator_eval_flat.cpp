@@ -1988,7 +1988,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             flat.add_structural_mutation_log_entry(parent, ci, target, aura::ast::NULL_NODE,
                                                    "remove-node");
         });
-    if (!result)
+    if (!result) [[unlikely]]
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       std::string("batch :remove-node: ") +
                                                           std::string(result.error().message)});
@@ -2043,7 +2043,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
                                    "batch :insert-child: parent invalid after parse"});
     auto result = aura::ast::mutators::apply_mutation(
         flat, parent, aura::ast::mutators::InsertChildMutator{pos, pr.root});
-    if (!result)
+    if (!result) [[unlikely]]
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       std::string("batch :insert-child: ") +
                                                           std::string(result.error().message)});
@@ -2225,7 +2225,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
                 }
             }
         }
-        if (!found) {
+        if (!found) [[unlikely]] {
             // Fallback scan limited to pre-parse nodes only.
             for (aura::ast::NodeId pid = 0; static_cast<std::size_t>(pid) < size_before_parse;
                  ++pid) {
@@ -2244,7 +2244,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
                     break;
             }
         }
-        if (!found)
+        if (!found) [[unlikely]]
             continue;
         flat.set_child(parent_id, child_idx, repl_pr.root);
         ++replaced_count;
@@ -3064,7 +3064,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 break;
                             }
                         }
-                        if (!found) {
+                        if (!found) [[unlikely]] {
                             kidx = keyword_table_.size();
                             keyword_table_.push_back(kwstr);
                         }
@@ -3917,7 +3917,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                         // Also check for "*" wildcard
                                         if (provided_caps_str == "*")
                                             found = true;
-                                        if (!found)
+                                        if (!found) [[unlikely]]
                                             missing.push_back(req);
                                     }
                                     if (!missing.empty()) {
@@ -4970,7 +4970,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return EvalResult(make_void());
                     const auto inner = v.child(0);
                     auto result = eval_flat(*f, *p, inner, eval_env);
-                    if (!result)
+                    if (!result) [[unlikely]]
                         return result;
                     if (inner != aura::ast::NULL_NODE && inner < f->size() &&
                         f->get(inner).tag == aura::ast::NodeTag::Variable) {
