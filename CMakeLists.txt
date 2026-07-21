@@ -1261,17 +1261,16 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # test_issue_217 folded into edsl batch (wave 57 / #1957)
 # aura_add_issue_test_reflect_standalone(test_issue_217)
 
-# Issue #268: production aura::ast::NodeView roundtrip (split TU:
-# module side uses real NodeView; reflect side uses nodeview_wire.hh).
-# Bridge header: tests/issues/test_issue_178_bridge.h
-# Only the reflect TU needs -freflection; applying it to the whole
-# target forces aura_test_objects BMI synth into a reflection partition
-# that conflicts with import std (GCC 16 modules).
-add_executable(test_issue_178 tests/issues/test_issue_178.cpp tests/issues/test_issue_178_reflect.cpp)
+# Issue #268 / #178: production NodeView roundtrip (split TU) — edsl_hygiene theme.
+# Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
+# test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection
+# on the reflect TU only (GCC 16 ICE if mixed with import aura.core.ast).
+# Bridge: tests/edsl/test_issue_178_bridge.h
+add_executable(test_issue_178 tests/edsl/test_issue_178.cpp tests/edsl/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
 aura_test_compile_options(test_issue_178)
-set_source_files_properties(tests/issues/test_issue_178_reflect.cpp
+set_source_files_properties(tests/edsl/test_issue_178_reflect.cpp
                             PROPERTIES COMPILE_OPTIONS "-freflection")
 target_compile_features(test_issue_178 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
@@ -1743,7 +1742,7 @@ add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
 
 # tests/issues/ orphan range batches folded into theme batches (wave 58 / #1957).
 # Soft smokes live under domain/arena, mutation, obs, edsl, fiber, shape, linear.
-# Remaining under tests/issues/: only #178 P2996 split TU (light_late).
+# tests/issues/ empty of sources — #178 relocated to tests/edsl/ (wave 59).
 
 # tests/mutation/ unit consolidations (unregistered standalones → theme batches).
 # Existing large family batches (mutate/linear/boundary/…) stay separate.

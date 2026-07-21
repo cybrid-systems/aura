@@ -447,6 +447,18 @@
       "issue": null
     },
     {
+      "file": "tests/edsl/test_issue_178.cpp",
+      "category": "unit",
+      "reason": "no CompilerService usage; pure C++ test",
+      "issue": 178
+    },
+    {
+      "file": "tests/edsl/test_issue_178_reflect.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": 178
+    },
+    {
       "file": "tests/fiber/test_concurrent.cpp",
       "category": "unknown",
       "reason": "",
@@ -529,18 +541,6 @@
       "category": "unknown",
       "reason": "",
       "issue": null
-    },
-    {
-      "file": "tests/issues/test_issue_178.cpp",
-      "category": "unit",
-      "reason": "no CompilerService usage; pure C++ test",
-      "issue": 178
-    },
-    {
-      "file": "tests/issues/test_issue_178_reflect.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": 178
     },
     {
       "file": "tests/jit/test_jit_aot_hot_update_batch.cpp",

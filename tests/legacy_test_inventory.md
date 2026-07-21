@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 2 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **10** | |
+| **Total scanned** | **8** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 1 | 1 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 1 | 1 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 0 | 0 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 2 | 0 | 0 | 2 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 0 | 0 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 0 | 0 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 0 | 0 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 1 | 1 | P2 — often thin schema probes; collapse into obs matrix |
@@ -47,25 +47,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 1 | Integration path via `CompilerService` / eval |
-| `own_main` | 1 | File defines `int main()` (standalone or bundle source) |
-| `bundle_run_fn` | 1 | `aura_issue_*_run()` entry for issue bundles |
 
 ### `@category` distribution (issues/)
 
-- `unit`: 1
-- `unknown`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `reflect/reflect.hh` — 1
-- `nodeview_wire.hh` — 1
-- `issues/test_issue_178_bridge.h` — 1
 
 ### Top module imports (first 50 lines, issues/)
 
-- `std` — 1
-- `aura.core.ast` — 1
 
 ### Coupling notes
 
@@ -77,19 +67,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ## Multi-file issues, phase slices, low-value signals
 
-- Issue numbers with **multiple** `tests/issues/` files: **1**
+- Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
-- Small files (< 4 KiB, possible thin probes): **1**
+- Small files (< 4 KiB, possible thin probes): **0**
 - Existing `*_batch` drivers (migration milestones): **6**
 
 ### Multi-file issue groups (consolidate first)
 
-- **#178** (2): `test_issue_178.cpp`, `test_issue_178_reflect.cpp`
 
 ### Smallest issue tests (triage for obs-matrix fold or drop)
 
-- `test_issue_178.cpp` (3933 B) → `edsl_hygiene` — test_issue_178.cpp — Issue #178 / #268: production NodeView
-- `test_issue_178_reflect.cpp` (8177 B) → `edsl_hygiene` — Non-module TU: P2996 reflection (Issue #268).
 
 ### Batch drivers already present
 
@@ -176,17 +163,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (1)
 
 - `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
-
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (2)
-
-**Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
-
-**Priority:** P1 — domain hygiene suite exists
-
-#### issues/ (2)
-
-- `tests/issues/test_issue_178.cpp` (#178) [small, early_issue] — test_issue_178.cpp — Issue #178 / #268: production NodeView
-- `tests/issues/test_issue_178_reflect.cpp` (#178) [early_issue] — Non-module TU: P2996 reflection (Issue #268).
 
 ### `observability` — Observability / metrics / query:*-stats (1)
 
