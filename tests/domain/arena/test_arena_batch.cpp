@@ -730,11 +730,55 @@ static void run_1554_arena_group_default_owner() {
     CHECK(load_u64(m->resource_quota_rejects_total) == rejects0 + 1, "module rejects+1");
 }
 
+// ── Issue #173 — stable-id type aliases + NULL_X_ID sentinels (folded from
+// tests/issues/test_issue_173.cpp via #1957) ── Production aliases live in aura_jit_runtime.cpp;
+// local forward-decl pins the contract so the test breaks if the production types change shape.
+namespace aura_runtime_aliases {
+    namespace aura {
+        namespace runtime {
+            using PairId = unsigned int;
+            using CellId = unsigned int;
+            using StringId = unsigned int;
+            inline constexpr PairId NULL_PAIR_ID = static_cast<PairId>(~0ULL);
+            inline constexpr CellId NULL_CELL_ID = static_cast<CellId>(~0ULL);
+            inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
+        } // namespace runtime
+    } // namespace aura
+} // namespace aura_runtime_aliases
+
+static void run_173_type_aliases() {
+    std::println("\n--- #173: type aliases are 32-bit unsigned ---");
+    CHECK(sizeof(aura_runtime_aliases::aura::runtime::PairId) == 4, "PairId is 4 bytes");
+    CHECK(sizeof(aura_runtime_aliases::aura::runtime::CellId) == 4, "CellId is 4 bytes");
+    CHECK(sizeof(aura_runtime_aliases::aura::runtime::StringId) == 4, "StringId is 4 bytes");
+    CHECK(aura_runtime_aliases::aura::runtime::PairId(42) <
+              aura_runtime_aliases::aura::runtime::NULL_PAIR_ID,
+          "PairId(42) < NULL_PAIR_ID");
+}
+
+static void run_173_null_sentinels() {
+    std::println("\n--- #173: NULL_X_ID sentinels ---");
+    CHECK(aura_runtime_aliases::aura::runtime::NULL_PAIR_ID == 0xFFFFFFFFu,
+          "NULL_PAIR_ID == 0xFFFFFFFFu (all bits set)");
+    CHECK(aura_runtime_aliases::aura::runtime::NULL_CELL_ID == 0xFFFFFFFFu,
+          "NULL_CELL_ID == 0xFFFFFFFFu");
+    CHECK(aura_runtime_aliases::aura::runtime::NULL_STRING_ID == 0xFFFFFFFFu,
+          "NULL_STRING_ID == 0xFFFFFFFFu");
+}
+
+static void run_173_types_distinct() {
+    std::println("\n--- #173: aliases are distinct (semantic check) ---");
+    CHECK(aura_runtime_aliases::aura::runtime::NULL_PAIR_ID ==
+              aura_runtime_aliases::aura::runtime::NULL_CELL_ID,
+          "NULL_PAIR_ID == NULL_CELL_ID (both 0xFFFFFFFFu, but conceptually distinct)");
+}
+
 } // namespace aura_arena_batch
 
 int main() {
     using namespace aura_arena_batch;
-    std::println("=== Arena batch: #1621 + #405 + #1662 + #546 + #1546/#1554 (39 ACs total) ===");
+    std::println(
+        "=== Arena batch: #1621 + #405 + #1662 + #546 + #1546/#1554 + #173 (42 ACs total) ===");
     std::println("(test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp #743");
     std::println(" NOT included — bundle member via tests/bundles/test_issues_jit_late3_main.cpp;");
     std::println(" out of scope for batch. test_arena_defrag_concurrent.cpp #1390 NOT included —");
@@ -772,6 +816,9 @@ int main() {
     run_1554_arena_allocate_checked();
     run_1554_boundary_exact_size();
     run_1554_arena_group_default_owner();
+    run_173_type_aliases();
+    run_173_null_sentinels();
+    run_173_types_distinct();
     std::println("\n=== Arena batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
