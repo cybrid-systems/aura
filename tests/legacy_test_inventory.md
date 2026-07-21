@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 596 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 594 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **603** | |
+| **Total scanned** | **601** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 63 | 0 | 5 | 68 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 168 | 0 | 1 | 169 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 167 | 0 | 1 | 168 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 57 | 0 | 0 | 57 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 186 | 0 | 1 | 187 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 185 | 0 | 1 | 186 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -48,7 +48,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Pattern | Count | Meaning |
 |---------|------:|---------|
 | `CompilerService` | 543 | Integration path via `CompilerService` / eval |
-| `test_harness` | 350 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `test_harness` | 348 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 152 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
 | `own_main` | 50 | File defines `int main()` (standalone or bundle source) |
@@ -56,7 +56,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 388
+- `integration`: 386
 - `unknown`: 115
 - `unit`: 84
 - `issue_specific`: 7
@@ -64,7 +64,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 331
+- `test_harness.hpp` — 329
 - `compiler/observability_metrics.h` — 58
 - `compiler/aura_jit_bridge.h` — 19
 - `serve/scheduler.h` — 16
@@ -84,7 +84,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - `aura.compiler.value` — 387
 - `aura.compiler.service` — 363
-- `std` — 341
+- `std` — 339
 - `aura.compiler.evaluator` — 335
 - `aura.core.ast` — 236
 - `aura.core.arena` — 127
@@ -283,7 +283,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_767.cpp` (#767) — test_issue_767.cpp — Issue #767: Arena Auto-Compact Policy +
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (169)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (168)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -293,7 +293,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (168)
+#### issues/ (167)
 
 - `tests/issues/test_issue_125.cpp` (#125) [small, early_issue] — test_issue_125.cpp — Verify the per-module dirty-skip
 - `tests/issues/test_issue_126.cpp` (#126) [early_issue] — test_issue_126.cpp — Verify the pure functions extracted
@@ -367,7 +367,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_285.cpp` (#285) — installation is verified indirectly through the build
 - `tests/issues/test_issue_289.cpp` (#289) — test_issue_289.cpp — Issue #289 / #481 acceptance tests.
 - `tests/issues/test_issue_291.cpp` (#291) — workspace_id + serialization
-- `tests/issues/test_issue_295.cpp` (#295) — Validates:
 - `tests/issues/test_issue_301.cpp` (#301) — test_issue_301.cpp — Issue #301: C++26 std::meta migration
 - `tests/issues/test_issue_302.cpp` (#302) — test_issue_302.cpp — Issue #302: Expand Contracts + runtime
 - `tests/issues/test_issue_303.cpp` (#303) — test_issue_303.cpp — Issue #303: SafeStableNodeRef
@@ -688,7 +687,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (187)
+### `observability` — Observability / metrics / query:*-stats (186)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -698,7 +697,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (186)
+#### issues/ (185)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -747,7 +746,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_258.cpp` (#258) — test_issue_258.cpp — Issue #258 scope-limited close:
 - `tests/issues/test_issue_259.cpp` (#259) — test_issue_259.cpp — Issue #259 scope-limited close:
 - `tests/issues/test_issue_263.cpp` (#263) [small] — uses CompilerService snapshot/restore + post-restore validation
-- `tests/issues/test_issue_294.cpp` (#294) — Validates the 3 Phase 0 query helpers added to lib/std/eda.aura:
 - `tests/issues/test_issue_296.cpp` (#296) — Validates the Bridge Lifetime Contract documented in
 - `tests/issues/test_issue_298.cpp` (#298) — Validates (engine:metrics \"query:incremental-effectiveness\") returns a 4-tuple:
 - `tests/issues/test_issue_308.cpp` (#308) — test_issue_308.cpp — Verify Issue #308 acceptance criteria
