@@ -1320,6 +1320,331 @@ static void run_272_ir_native_env_binding() {
     }
 }
 
+}
+
+// ── Wave 9 (#330 FlatAST guard unit tests / #356 EnvFrame #242-2 / #375 IR stats) ──
+
+static void run_330_structural_mutation_guard_reader_lock_guard() {
+    std::println(
+        "\n=== #330: StructuralMutationGuard + ReaderLockGuard unit tests for FlatAST ===");
+    // T1: default-constructed StructuralMutationGuard is no-op
+    {
+        std::println("\n--- #330 T1: default-constructed StructuralMutationGuard ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto g = aura::ast::FlatAST::StructuralMutationGuard{};
+            (void)g;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0, "default guard does not bump generation on dtor");
+    }
+    // T2: active guard bumps generation on dtor
+    {
+        std::println("\n--- #330 T2: active guard bumps generation on dtor ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto guard = ast.begin_structural_mutation();
+            (void)guard;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0 + 1, "generation_ incremented by 1 after dtor");
+    }
+    // T3: move semantics — move-from leaves source empty
+    {
+        std::println("\n--- #330 T3: move semantics ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto g1 = ast.begin_structural_mutation();
+            auto g2 = std::move(g1);
+            (void)g1;
+            (void)g2;
+        }
+        std::uint16_t g1_after = ast.generation();
+        CHECK(g1_after == g0 + 1, "after move, exactly one guard (g2) bumps on dtor");
+    }
+    // T4: exception unwind still bumps generation
+    {
+        std::println("\n--- #330 T4: exception unwind still bumps generation ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        try {
+            auto guard = ast.begin_structural_mutation();
+            (void)guard;
+            throw std::runtime_error("simulated failure");
+        } catch (const std::exception&) {
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0 + 1, "generation bumped even after exception unwind (RAII safety)");
+    }
+    // T5: lock released on dtor (acquire-again succeeds)
+    {
+        std::println("\n--- #330 T5: lock released on dtor ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto g = ast.begin_structural_mutation();
+            (void)g;
+        }
+        {
+            auto g2 = ast.begin_structural_mutation();
+            (void)g2;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0 + 2, "second guard acquires + bumps after first released");
+    }
+    // T6: generation_ monotonic across 5 mutations
+    {
+        std::println("\n--- #330 T6: generation_ monotonic across 5 mutations ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t prev = ast.generation();
+        for (int i = 0; i < 5; ++i) {
+            {
+                auto g = ast.begin_structural_mutation();
+                (void)g;
+            }
+            std::uint16_t cur = ast.generation();
+            CHECK(cur == prev + 1, "each mutation bumps gen by exactly 1");
+            prev = cur;
+        }
+    }
+    // T7: ReaderLockGuard — multiple concurrent readers OK
+    {
+        std::println("\n--- #330 T7: ReaderLockGuard multiple concurrent readers ---");
+        aura::ast::FlatAST ast;
+        auto r1 = ast.try_acquire_reader_lock();
+        auto r2 = ast.try_acquire_reader_lock();
+        auto r3 = ast.try_acquire_reader_lock();
+        (void)r1;
+        (void)r2;
+        (void)r3;
+        CHECK(true, "3 concurrent readers acquired without blocking");
+    }
+    // T8: ReaderLockGuard default-constructed is no-op
+    {
+        std::println("\n--- #330 T8: ReaderLockGuard default-constructed ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto g = aura::ast::FlatAST::ReaderLockGuard{};
+            (void)g;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0, "default ReaderLockGuard doesn't affect generation");
+    }
+    // T9: ReaderLockGuard move semantics
+    {
+        std::println("\n--- #330 T9: ReaderLockGuard move semantics ---");
+        aura::ast::FlatAST ast;
+        auto r1 = ast.try_acquire_reader_lock();
+        auto r2 = std::move(r1);
+        (void)r1;
+        (void)r2;
+        CHECK(true, "ReaderLockGuard move-ctor works");
+    }
+    // T10: writer-waits-for-readers handoff
+    {
+        std::println("\n--- #330 T10: writer-waits-for-readers handoff ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto r = ast.try_acquire_reader_lock();
+            (void)r;
+        }
+        {
+            auto w = ast.begin_structural_mutation();
+            (void)w;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0 + 1, "writer acquires + bumps after reader release");
+    }
+    // T11: nested default guards are no-ops
+    {
+        std::println("\n--- #330 T11: nested default-constructed guards are no-ops ---");
+        aura::ast::FlatAST ast;
+        std::uint16_t g0 = ast.generation();
+        {
+            auto gd1 = aura::ast::FlatAST::StructuralMutationGuard{};
+            {
+                auto gd2 = aura::ast::FlatAST::StructuralMutationGuard{};
+                (void)gd2;
+            }
+            (void)gd1;
+        }
+        std::uint16_t g1 = ast.generation();
+        CHECK(g1 == g0, "nested default guards don't bump generation");
+    }
+}
+
+static void run_356_envframe_post_rollback_invalidation() {
+    std::println(
+        "\n=== #356: Arena rollback for env_frames_ via INVALID_VERSION indirection (#242-2) ===");
+    // L1: INVALID_VERSION sentinel + is_env_frame_invalid
+    {
+        std::println("\n--- #356 L1.1: INVALID_VERSION sentinel = UINT64_MAX ---");
+        CHECK(aura::compiler::INVALID_VERSION == std::numeric_limits<std::uint64_t>::max(),
+              "INVALID_VERSION == UINT64_MAX (monotonic counter never reaches this)");
+    }
+    {
+        std::println("\n--- #356 L1.2: fresh frame is NOT invalid ---");
+        aura::compiler::Evaluator ev;
+        aura::compiler::EnvId id = ev.alloc_env_frame();
+        CHECK(!ev.is_env_frame_invalid(id), "fresh frame: version_ != INVALID_VERSION");
+    }
+    {
+        std::println("\n--- #356 L1.3: NULL_ENV_ID is reported as invalid ---");
+        aura::compiler::Evaluator ev;
+        CHECK(ev.is_env_frame_invalid(aura::compiler::NULL_ENV_ID),
+              "NULL_ENV_ID treated as invalid (safety net for callers)");
+    }
+    // L2: invalidate_post_rollback_env_frames helper
+    {
+        std::println("\n--- #356 L2.1: helper marks doomed frames ---");
+        aura::compiler::Evaluator ev;
+        constexpr int PRE = 3, POST = 4;
+        for (int i = 0; i < PRE; ++i)
+            ev.alloc_env_frame();
+        const std::size_t base_size = ev.env_frames_size();
+        ev.set_panic_safe_env_frames_size_for_test(base_size);
+        for (int i = 0; i < POST; ++i)
+            ev.alloc_env_frame();
+        auto before = ev.get_envframe_post_rollback_invalidations();
+        ev.invalidate_post_rollback_env_frames();
+        auto after = ev.get_envframe_post_rollback_invalidations();
+        CHECK(after == before + POST, "envframe_post_rollback_invalidations_ incremented by POST");
+        for (std::size_t i = 0; i < base_size; ++i)
+            CHECK(!ev.is_env_frame_invalid(static_cast<aura::compiler::EnvId>(i)),
+                  "pre-checkpoint frame not invalid");
+        for (std::size_t i = base_size; i < base_size + POST; ++i)
+            CHECK(ev.is_env_frame_invalid(static_cast<aura::compiler::EnvId>(i)),
+                  "post-checkpoint frame invalid");
+    }
+    {
+        std::println("\n--- #356 L2.2: no-op when no doomed frames ---");
+        aura::compiler::Evaluator ev;
+        const std::size_t base_size = ev.env_frames_size();
+        ev.set_panic_safe_env_frames_size_for_test(base_size);
+        auto before = ev.get_envframe_post_rollback_invalidations();
+        ev.invalidate_post_rollback_env_frames();
+        auto after = ev.get_envframe_post_rollback_invalidations();
+        CHECK(after == before, "no invalidations when size matches checkpoint");
+    }
+    {
+        std::println("\n--- #356 L2.3: invalidate idempotent ---");
+        aura::compiler::Evaluator ev;
+        constexpr int PRE = 2, POST = 3;
+        for (int i = 0; i < PRE + POST; ++i)
+            ev.alloc_env_frame();
+        ev.set_panic_safe_env_frames_size_for_test(PRE);
+        ev.invalidate_post_rollback_env_frames();
+        auto first = ev.get_envframe_post_rollback_invalidations();
+        ev.invalidate_post_rollback_env_frames();
+        auto second = ev.get_envframe_post_rollback_invalidations();
+        CHECK(first == second, "second invalidate call does not re-bump the counter");
+    }
+    // L3: materialize_call_env skips invalid frames
+    {
+        std::println("\n--- #356 L3.1: materialize skips invalid frame ---");
+        aura::compiler::Evaluator ev;
+        aura::compiler::EnvId fid = ev.alloc_env_frame();
+        ev.bump_defuse_version_for_test();
+        ev.set_panic_safe_env_frames_size_for_test(0);
+        ev.invalidate_post_rollback_env_frames();
+        aura::compiler::Closure cl;
+        cl.env_id = fid;
+        auto ne = ev.materialize_call_env(cl);
+        CHECK(ne.bindings().empty(), "materialize_call_env returns empty Env for invalid frame");
+    }
+}
+
+static void run_375_ir_encoding_observability_foundation() {
+    std::println("\n=== #375: IR encoding observability foundation + AoS-vs-compact baselines ===");
+    auto run_workload = [](CompilerService& cs, const std::string& workload) {
+        auto r = cs.eval_ir(workload);
+        (void)r;
+        return cs.last_ir_stats();
+    };
+    // AC1: initial snapshot zero on fresh CompilerService
+    {
+        std::println("\n--- #375 AC1: snapshot zero on fresh CompilerService ---");
+        CompilerService cs;
+        const auto& s = cs.last_ir_stats();
+        CHECK(s.total_instructions == 0u, "total-instructions is 0 on fresh service");
+        CHECK(s.total_functions == 0u, "total-functions is 0");
+        CHECK(s.total_blocks == 0u, "total-blocks is 0");
+        CHECK(s.aos_bytes_total == 0u, "aos-bytes-total is 0");
+        CHECK(s.compact_bytes_projection == 0u, "compact-bytes-projection is 0");
+        CHECK(s.compact_ratio_bp == 0u, "compact-ratio-bp is 0");
+    }
+    // AC2: simple expression populates snapshot
+    {
+        std::println("\n--- #375 AC2: snapshot populates after simple workload ---");
+        CompilerService cs;
+        const auto& s = run_workload(cs, "((lambda (n) (* n n)) 7)");
+        CHECK(s.total_instructions > 0, "total-instructions > 0 after eval(f 7)");
+        CHECK(s.total_functions >= 1, "total-functions >= 1");
+        CHECK(s.aos_bytes_total == s.total_instructions * 40, "aos-bytes-total = total-instr * 40");
+        CHECK(s.padding_bytes_total == s.total_instructions * 3,
+              "padding-bytes-total = total-instr * 3");
+    }
+    // AC3: compact ratio in range
+    {
+        std::println("\n--- #375 AC3: compact-ratio-bp in [0, 10000] ---");
+        CompilerService cs;
+        const auto& s = run_workload(cs, "((lambda (n)\n"
+                                         "  (let loop ((i 0) (acc 0))\n"
+                                         "    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))\n"
+                                         " 10)");
+        CHECK(s.total_instructions > 0, "sum-to lowered to > 0 instructions");
+        CHECK(s.compact_ratio_bp <= 10000, "compact-ratio-bp <= 10000 (no overflow)");
+        CHECK(s.operands_used_sum > 0, "operands-used-sum > 0");
+        CHECK(s.compact_bytes_projection < s.aos_bytes_total,
+              "compact-bytes-projection < aos-bytes-total");
+    }
+    // AC4: heavier recursive workload
+    {
+        std::println("\n--- #375 AC4: heavier recursive workload has more instructions ---");
+        CompilerService cs;
+        const auto& s = run_workload(
+            cs, "((lambda (n)\n"
+                "  (if (<= n 1) 1\n"
+                "    (* n ((lambda (m)\n"
+                "      (if (<= m 1) 1 (* m ((lambda (k) (if (<= k 1) 1 (* k 1))) (- m 1)))))\n"
+                "      (- n 1)))))\n"
+                " 5)");
+        CHECK(s.total_instructions >= 5, "fact lowered to >= 5 instructions");
+        bool any_op_count_nonzero = false;
+        for (std::size_t i = 0; i < 5; ++i)
+            if (s.operand_count_distribution[i] > 0) {
+                any_op_count_nonzero = true;
+                break;
+            }
+        CHECK(any_op_count_nonzero, "operand-count-distribution has at least one non-zero bucket");
+        bool any_opcode_nonzero = false;
+        for (auto c : s.opcode_histogram)
+            if (c > 0) {
+                any_opcode_nonzero = true;
+                break;
+            }
+        CHECK(any_opcode_nonzero, "opcode-histogram has at least one non-zero bucket");
+    }
+    // AC5: no regression — basic eval still works
+    {
+        std::println("\n--- #375 AC5: no regression ---");
+        CompilerService cs;
+        auto r = cs.eval("(+ 1 2 3 4 5)");
+        CHECK(r.has_value() && is_int(*r), "(+ 1 2 3 4 5) returns int");
+        if (r)
+            CHECK(as_int(*r) == 15, "(+ 1 2 3 4 5) == 15");
+        auto r2 = cs.eval("(define g (lambda (x) (+ x 10))) (g 5)");
+        CHECK(r2.has_value() && is_int(*r2), "(g 5) returns int");
+        if (r2)
+            CHECK(as_int(*r2) == 15, "(g 5) == 15");
+    }
+}
+
 } // namespace aura_domain_gates_batch
 
 int aura_issue_domain_gates_batch_run() {
@@ -1330,6 +1655,9 @@ int aura_issue_domain_gates_batch_run() {
     aura_domain_gates_batch::run_260_adt_match_exhaustiveness_mutation();
     aura_domain_gates_batch::run_265_clone_macro_body_hygiene();
     aura_domain_gates_batch::run_272_ir_native_env_binding();
+    aura_domain_gates_batch::run_330_structural_mutation_guard_reader_lock_guard();
+    aura_domain_gates_batch::run_356_envframe_post_rollback_invalidation();
+    aura_domain_gates_batch::run_375_ir_encoding_observability_foundation();
     return RUN_ALL_TESTS();
 }
 
