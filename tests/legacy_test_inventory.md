@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 561 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 557 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **568** | |
+| **Total scanned** | **564** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 55 | 0 | 5 | 60 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 51 | 0 | 5 | 56 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
@@ -47,10 +47,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 510 | Integration path via `CompilerService` / eval |
-| `test_harness` | 334 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 140 | `aura_issue_*_run()` entry for issue bundles |
-| `RUN_ALL_TESTS` | 77 | Harness runner main |
+| `CompilerService` | 506 | Integration path via `CompilerService` / eval |
+| `test_harness` | 330 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 139 | `aura_issue_*_run()` entry for issue bundles |
+| `RUN_ALL_TESTS` | 73 | Harness runner main |
 | `own_main` | 44 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
@@ -58,13 +58,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - `integration`: 359
 - `unknown`: 114
-- `unit`: 79
+- `unit`: 75
 - `issue_specific`: 7
 - `regression`: 2
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 315
+- `test_harness.hpp` — 311
 - `compiler/observability_metrics.h` — 58
 - `compiler/aura_jit_bridge.h` — 19
 - `serve/scheduler.h` — 16
@@ -82,18 +82,18 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 356
+- `aura.compiler.value` — 352
 - `aura.compiler.service` — 335
-- `std` — 324
+- `std` — 320
 - `aura.compiler.evaluator` — 307
-- `aura.core.ast` — 211
-- `aura.core.arena` — 122
-- `aura.core.type` — 113
-- `aura.compiler.ir` — 52
-- `aura.compiler.type_checker` — 39
-- `aura.diag` — 39
+- `aura.core.ast` — 207
+- `aura.core.arena` — 118
+- `aura.core.type` — 111
+- `aura.compiler.ir` — 51
+- `aura.compiler.type_checker` — 37
+- `aura.diag` — 35
 - `aura.core` — 35
-- `aura.parser.parser` — 26
+- `aura.parser.parser` — 24
 - `aura.compiler.pass_manager` — 17
 - `aura.core.mutation` — 17
 - `aura.compiler.ir_executor` — 11
@@ -147,9 +147,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_1403.cpp` (4521 B) → `fiber_orch` — test_issue_1403.cpp — Issue #1403:
 - `test_issue_262.cpp` (4528 B) → `shape_soa` — 
 - `test_issue_130.cpp` (4579 B) → `arena_compaction` — test_issue_130.cpp — Verify the cache hit rate metric
-- `test_issue_127.cpp` (4587 B) → `arena_compaction` — test_issue_127.cpp — Verify the Result<T> aliases
 - `test_issue_169.cpp` (4615 B) → `arena_compaction` — test_issue_169.cpp — Issue #169: Fine-grained Incremental
 - `test_issue_270.cpp` (4740 B) → `mutation_dirty` — test_issue_270.cpp — Issue #270: end_id snapshot + StableNodeRef
+- `test_issue_285.cpp` (4862 B) → `mutation_dirty` — installation is verified indirectly through the build
 
 ### Batch drivers already present
 
@@ -202,7 +202,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (60)
+### `arena_compaction` — Arena / compaction / GC (56)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
@@ -216,12 +216,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 - `tests/domain/arena/test_gc_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
 
-#### issues/ (55)
+#### issues/ (51)
 
-- `tests/issues/test_issue_123.cpp` (#123) [early_issue] — test_issue_123.cpp — Verify the IR-level require pre-execution
-- `tests/issues/test_issue_124.cpp` (#124) [early_issue] — test_issue_124.cpp — Verify try/catch exception support fix
-- `tests/issues/test_issue_127.cpp` (#127) [early_issue] — test_issue_127.cpp — Verify the Result<T> aliases
-- `tests/issues/test_issue_128.cpp` (#128) [early_issue] — test_issue_128.cpp — Verify the std::span adoption
 - `tests/issues/test_issue_130.cpp` (#130) [early_issue] — test_issue_130.cpp — Verify the cache hit rate metric
 - `tests/issues/test_issue_132.cpp` (#132) [early_issue] — test_issue_132.cpp — Verify the AST walker extractions
 - `tests/issues/test_issue_134.cpp` (#134) [small, early_issue] — test_issue_134.cpp — Verify the complete ADT support
@@ -282,7 +278,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_domain_gates_batch.cpp` (—) [batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
+- `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
 #### issues/ (159)
 

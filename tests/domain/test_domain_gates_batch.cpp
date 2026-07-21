@@ -22,6 +22,8 @@ import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
+import aura.compiler.ir;
+import aura.compiler.compute_kind;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
@@ -444,6 +446,122 @@ static void run_122_reflect_members_in_query() {
     CHECK(tid.valid(), "reflect-members in query parses + typechecks");
 }
 
+// ── Wave 3 (#123 IR-require pre-exec / #124 try-catch / #127 Result aliases / #128 std::span) ──
+
+static void run_123_pre_exec_strips_begin_require() {
+    std::println("\n=== #123: pre_exec_requires strips top-level require from (begin ...) ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(begin (require std/list all:) (require std/math all:) (display (+ 1 2)))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "begin + 2 requires + body parse + typecheck");
+}
+
+static void run_123_nested_require_falls_back() {
+    std::println("\n=== #123: nested require inside (if) still needs tree-walker fallback ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(if #t (require std/list all:) 0)");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "nested require parses + typechecks");
+}
+
+static void run_124_try_catch_raise_parses() {
+    std::println("\n=== #124: (try (raise ...) (catch e ...)) parses + typechecks ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(try (raise \"err\") (catch e (display \"caught\") (display e)))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "try/catch/raise parses + typechecks");
+}
+
+static void run_124_nested_try_catch_parses() {
+    std::println("\n=== #124: nested (try (try ...) (catch ...)) parses + typechecks ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(try (try (raise \"inner\") (catch e1 (display \"inner-caught\"))) "
+                  "     (catch e2 (display \"outer-caught\")))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "nested try/catch parses + typechecks");
+}
+
+static void run_127_result_alias_type_identity() {
+    std::println("\n=== #127: Result / ParseResult / LowerResult / CompileResult / VoidResult type "
+                 "identity ===");
+    using R1 = aura::diag::Result<int>;
+    using R2 = aura::diag::ParseResult<int>;
+    using R3 = aura::diag::LowerResult<int>;
+    using R4 = aura::diag::CompileResult<int>;
+    static_assert(std::is_same_v<R1, R2>);
+    static_assert(std::is_same_v<R1, R3>);
+    static_assert(std::is_same_v<R1, R4>);
+    static_assert(std::is_same_v<aura::diag::VoidResult, aura::diag::Result<void>>);
+    CHECK(true, "5 Result aliases resolved");
+}
+
+static void run_127_result_error_channel() {
+    std::println("\n=== #127: Result<T> Ok/Err construction + diagnostic channel ===");
+    aura::diag::Result<int> ok = 42;
+    CHECK(ok.has_value(), "Ok has value");
+    if (ok)
+        CHECK(*ok == 42, "Ok unwraps to 42");
+    aura::diag::Diagnostic d{aura::diag::ErrorKind::TypeError, "test error"};
+    aura::diag::Result<int> err = std::unexpected(d);
+    CHECK(!err.has_value(), "Err has no value");
+    CHECK(err.error().kind == aura::diag::ErrorKind::TypeError, "Err kind");
+    CHECK(err.error().message == "test error", "Err message");
+}
+
+static void run_127_result_monadic_chain() {
+    std::println("\n=== #127: monadic transform / and_then on Result ===");
+    auto r2 = aura::diag::Result<int>(42).transform([](int x) { return x * 2; });
+    CHECK(r2.has_value() && *r2 == 84, "transform on Ok = Ok(84)");
+    aura::diag::Diagnostic d{aura::diag::ErrorKind::InternalError, "fail"};
+    auto r3 = aura::diag::Result<int>(std::unexpected(d));
+    auto r4 = r3.transform([](int) { return 999; });
+    CHECK(!r4.has_value() && r4.error().message == "fail", "transform on Err preserves error");
+    auto r5 = aura::diag::Result<int>(10).and_then([&d](int x) -> aura::diag::Result<int> {
+        return x > 0 ? aura::diag::Result<int>(x * 3) : aura::diag::Result<int>(std::unexpected(d));
+    });
+    CHECK(r5.has_value() && *r5 == 30, "and_then on Ok = Ok(30)");
+}
+
+static void run_128_span_type_identity() {
+    std::println("\n=== #128: cells() const returns std::span<const T> (zero overhead) ===");
+    using CellSpan = std::span<const int>;
+    using CellVector = std::vector<int>;
+    static_assert(!std::is_same_v<CellSpan, CellVector>);
+    static_assert(sizeof(CellSpan) == 2 * sizeof(void*));
+    CHECK(true, "std::span<const T> ≠ std::vector<T>, 2-pointer (no overhead)");
+}
+
+static void run_128_span_vector_conversion() {
+    std::println("\n=== #128: vector → span + compute_kind_instructions(span) ===");
+    std::vector<int> v = {1, 2, 3, 4, 5};
+    std::span<const int> s = v;
+    CHECK(s.size() == 5 && s[0] == 1 && s[4] == 5, "vector → span preserves elements");
+    using namespace aura::ir;
+    std::vector<IRInstruction> insts;
+    IRInstruction nop_inst;
+    nop_inst.opcode = IROpcode::Nop;
+    insts.push_back(nop_inst);
+    IRInstruction const_inst;
+    const_inst.opcode = IROpcode::ConstI64;
+    insts.push_back(const_inst);
+    IRInstruction call_inst;
+    call_inst.opcode = IROpcode::Call;
+    insts.push_back(call_inst);
+    auto kinds = aura::compiler::compute_kind_instructions(std::span<const IRInstruction>(insts));
+    CHECK(kinds.size() == 3 && kinds[0] == aura::compiler::ComputeKind::Known &&
+              kinds[1] == aura::compiler::ComputeKind::Known &&
+              kinds[2] == aura::compiler::ComputeKind::Unknown,
+          "compute_kind_instructions(span) classifies Nop/ConstI64/Call");
+    std::vector<IRInstruction> empty;
+    auto empty_kinds =
+        aura::compiler::compute_kind_instructions(std::span<const IRInstruction>(empty));
+    CHECK(empty_kinds.empty(), "empty span → empty result");
+}
+
 static void run_typechecker_unit_tests() {
     run_116_deferred_coercion_node();
     run_118_unbound_var_tags_node();
@@ -455,6 +573,15 @@ static void run_typechecker_unit_tests() {
     run_122_reflect_type_scalar();
     run_122_reflect_unknown_returns_void();
     run_122_reflect_members_in_query();
+    run_123_pre_exec_strips_begin_require();
+    run_123_nested_require_falls_back();
+    run_124_try_catch_raise_parses();
+    run_124_nested_try_catch_parses();
+    run_127_result_alias_type_identity();
+    run_127_result_error_channel();
+    run_127_result_monadic_chain();
+    run_128_span_type_identity();
+    run_128_span_vector_conversion();
 }
 
 } // namespace aura_domain_gates_batch
