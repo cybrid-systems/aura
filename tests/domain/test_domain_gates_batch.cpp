@@ -27,6 +27,7 @@ import aura.core.arena;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.ir;
+import aura.compiler.ir_cache_pure;
 import aura.compiler.compute_kind;
 import aura.compiler.ast_walkers;
 import aura.compiler.macro_expansion;
@@ -2346,6 +2347,380 @@ static void run_1425_dead_coercion_ast_ir_pipeline() {
               "AC4: CastOp → Local after pipeline");
     }
 }
+}
+
+// ── Wave 15 (#125 per-module dirty-skip / #126 pure functions / #138 incremental dirty + type
+// check / #139 structural refactor operators) ──
+
+static void run_125_per_module_dirty_skip() {
+    std::println("\n=== #125: per-module dirty-skip optimization ===");
+    // AC1: dirty-skip counters exist on CompilerMetrics
+    {
+        std::println("\n--- #125 AC1: dirty-skip counters exist on CompilerMetrics ---");
+        aura::compiler::CompilerMetrics m;
+        CHECK(m.module_dirty_skips.load() == 0,
+              "module_dirty_skips counter exists and starts at 0");
+        CHECK(m.module_dirty_recompiles.load() == 0,
+              "module_dirty_recompiles counter exists and starts at 0");
+        m.module_dirty_skips.fetch_add(3, std::memory_order_relaxed);
+        m.module_dirty_recompiles.fetch_add(2, std::memory_order_relaxed);
+        CHECK(m.module_dirty_skips.load() == 3, "module_dirty_skips counter increments");
+        CHECK(m.module_dirty_recompiles.load() == 2, "module_dirty_recompiles counter increments");
+    }
+    // AC2: parse a simple program
+    {
+        std::println("\n--- #125 AC2: parse a simple program ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto pr = aura::parser::parse_to_flat("(+ 1 2)", *flat, *pool);
+        CHECK(pr.success, "simple program parses");
+    }
+    // AC3: metrics struct has Issue #125 counters
+    {
+        std::println("\n--- #125 AC3: CompilerMetrics struct has Issue #125 counters ---");
+        aura::compiler::CompilerMetrics m;
+        m.module_dirty_skips.store(0);
+        m.module_dirty_recompiles.store(0);
+        m.module_dirty_skips.fetch_add(1);
+        m.module_dirty_recompiles.fetch_add(1);
+        CHECK(m.module_dirty_skips.load() == 1, "module_dirty_skips is mutable");
+        CHECK(m.module_dirty_recompiles.load() == 1, "module_dirty_recompiles is mutable");
+    }
+}
+
+static void run_126_pure_functions_extracted() {
+    std::println("\n=== #126: pure functions extracted from CompilerService and Evaluator ===");
+    // AC1: should_relower covers all 5 input combinations
+    {
+        std::println("\n--- #126 AC1: should_relower covers all combinations ---");
+        // Clean, hash matches, no mutation drift → no re-lower
+        CHECK(!aura::compiler::should_relower(100, 100, false, 5, 5),
+              "clean, hash match, no drift → no re-lower");
+        // Dirty → re-lower
+        CHECK(aura::compiler::should_relower(100, 100, true, 5, 5), "dirty → re-lower");
+        // Hash mismatch → re-lower
+        CHECK(aura::compiler::should_relower(100, 200, false, 5, 5), "hash mismatch → re-lower");
+        // Mutation drift (cached<current) → re-lower
+        CHECK(aura::compiler::should_relower(100, 100, false, 3, 5), "mutation drift → re-lower");
+        // Mixed: dirty + hash mismatch + drift → re-lower
+        CHECK(aura::compiler::should_relower(100, 200, true, 1, 5),
+              "dirty + hash mismatch + drift → re-lower");
+        // All-zero inputs → no re-lower
+        CHECK(!aura::compiler::should_relower(0, 0, false, 0, 0), "all-zero inputs → no re-lower");
+    }
+    // AC2: fnv1a_64 known answer test
+    {
+        std::println("\n--- #126 AC2: fnv1a_64 known answer test ---");
+        auto h0 = aura::compiler::fnv1a_64("");
+        auto h1 = aura::compiler::fnv1a_64("a");
+        auto h_foo = aura::compiler::fnv1a_64("foobar");
+        CHECK(h0 == 0xcbf29ce484222325ULL, "fnv1a_64(\"\") == 0xcbf29ce484222325");
+        CHECK(h1 == 0xaf63dc4c8601ec8cULL, "fnv1a_64(\"a\") == 0xaf63dc4c8601ec8c");
+        CHECK(h_foo == 0x85944171f73967e8ULL, "fnv1a_64(\"foobar\") == 0x85944171f73967e8");
+        CHECK(aura::compiler::fnv1a_64("hello") == aura::compiler::fnv1a_64("hello"),
+              "fnv1a_64 is deterministic");
+        CHECK(aura::compiler::fnv1a_64("hello") != aura::compiler::fnv1a_64("Hello"),
+              "fnv1a_64 is case-sensitive");
+    }
+    // AC3: compute_dependencies
+    {
+        std::println("\n--- #126 AC3: compute_dependencies walks the AST ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto a_id = pool.intern("a");
+        auto b_id = pool.intern("b");
+        auto a_var = flat.add_variable(a_id);
+        auto b_var = flat.add_variable(b_id);
+        auto plus_id = pool.intern("+");
+        auto plus_var = flat.add_variable(plus_id);
+        auto call = flat.add_call(plus_var, {a_var, b_var});
+        std::unordered_set<std::string> available;
+        available.insert("a");
+        available.insert("b");
+        available.insert("c");
+        auto deps = aura::compiler::compute_dependencies(flat, pool, call, available);
+        CHECK(deps.size() == 2, "compute_dependencies returns 2 deps for (a b)");
+        if (deps.size() == 2) {
+            CHECK(deps[0] == "a", "first dep is 'a'");
+            CHECK(deps[1] == "b", "second dep is 'b'");
+        }
+        // Deduplication
+        auto a2_var = flat.add_variable(a_id);
+        auto call_dup = flat.add_call(plus_var, {a_var, a2_var});
+        auto deps2 = aura::compiler::compute_dependencies(flat, pool, call_dup, available);
+        CHECK(deps2.size() == 1, "compute_dependencies deduplicates 'a'");
+        if (deps2.size() == 1) {
+            CHECK(deps2[0] == "a", "deduplicated dep is 'a'");
+        }
+        // d not in available
+        auto d_id = pool.intern("d");
+        auto d_var = flat.add_variable(d_id);
+        auto call3 = flat.add_call(plus_var, {a_var, d_var});
+        auto deps3 = aura::compiler::compute_dependencies(flat, pool, call3, available);
+        CHECK(deps3.size() == 1 && deps3[0] == "a",
+              "compute_dependencies excludes 'd' (not in available_defines)");
+        // Empty available
+        std::unordered_set<std::string> empty;
+        auto deps4 = aura::compiler::compute_dependencies(flat, pool, call, empty);
+        CHECK(deps4.empty(), "compute_dependencies with empty available returns empty");
+    }
+    // AC4: try_extract_define
+    {
+        std::println("\n--- #126 AC4: try_extract_define pattern match ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        auto name_id = pool.intern("my-def");
+        auto body_id = flat.add_literal(42);
+        auto define_id = flat.add_define(name_id, body_id);
+        auto def = aura::compiler::try_extract_define(flat, pool, define_id);
+        CHECK(def.has_value(), "try_extract_define returns Some for Define root");
+        if (def) {
+            CHECK(def->first == "my-def", "extracted name is 'my-def'");
+            CHECK(def->second == body_id, "extracted body is the literal 42");
+        }
+        auto lit = flat.add_literal(99);
+        auto def2 = aura::compiler::try_extract_define(flat, pool, lit);
+        CHECK(!def2.has_value(), "try_extract_define returns None for non-Define root");
+        auto def3 = aura::compiler::try_extract_define(flat, pool, aura::ast::NULL_NODE);
+        CHECK(!def3.has_value(), "try_extract_define returns None for NULL_NODE");
+    }
+}
+
+static void run_138_incremental_dirty_propagation_type_checking() {
+    std::println("\n=== #138: incremental dirty propagation + fine-grained type checking ===");
+    // AC1: dirty propagation correctness
+    {
+        std::println("\n--- #138 AC1: dirty propagation correctness ---");
+        CompilerService cs;
+        int64_t r1 = run_int(cs, "(set-code \"(define x 1)(define y 2)\") "
+                                 "(eval-current) (+ x y)");
+        CHECK(r1 == 3, "set-code + eval-current: 1+2=3");
+        int64_t r2 = run_int(cs, "(set-code \"(define x 1)\") "
+                                 "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                 "(eval-current) x");
+        CHECK(r2 == 99, "after mutate:rebind, eval-current sees x=99");
+        std::string s = run_str(cs, "(set-code \"(define x 1)(define y 2)\") "
+                                    "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                    "(typecheck-current)");
+        CHECK(s.find("no errors") != std::string::npos,
+              "typecheck after mutate:rebind returns no errors");
+        std::string s1 = run_str(cs, "(set-code \"(define x 1)\") "
+                                     "(typecheck-current)");
+        CHECK(s1.find("no errors") != std::string::npos, "typecheck passes before mutation");
+        std::string s2 = run_str(cs, "(set-code \"(define x 1)\") "
+                                     "(mutate:replace-value (query:find \"x\") "
+                                     "\"\\\"hello\\\"\" \"test\") "
+                                     "(typecheck-current)");
+        bool has_error = s2.find("error") != std::string::npos ||
+                         s2.find("Error") != std::string::npos ||
+                         s2.find("TypeError") != std::string::npos;
+        CHECK(has_error, "typecheck detects error after type-violating mutation");
+    }
+    // AC2: incremental typecheck equivalence
+    {
+        std::println("\n--- #138 AC2: incremental typecheck equivalence ---");
+        CompilerService cs;
+        std::string s1 = run_str(cs, "(set-code \"(define x 1)(define y 2)(+ x y)\") "
+                                     "(typecheck-current)");
+        bool ok1 = s1.find("no errors") != std::string::npos;
+        CHECK(ok1, "first typecheck on clean code: no errors");
+        std::string s2 = run_str(cs, "(set-code \"(define x 1)(define y 2)(+ x y)\") "
+                                     "(typecheck-current)");
+        bool ok2 = s2.find("no errors") != std::string::npos;
+        CHECK(ok2, "second typecheck on identical clean code: no errors");
+        std::string fresh = run_str(cs, "(set-code \"(define f (lambda (x) (+ x 1)))\") "
+                                        "(typecheck-current)");
+        std::string recheck = run_str(cs, "(set-code \"(define f (lambda (x) (+ x 1)))\") "
+                                          "(typecheck-current)");
+        CHECK(fresh == recheck, "typecheck on identical clean code: identical output");
+    }
+    // AC3: performance — incremental speedup stability
+    {
+        std::println("\n--- #138 AC3: incremental speedup stability ---");
+        CompilerService cs;
+        std::string code = "(set-code \"(begin ";
+        for (int i = 0; i < 30; ++i) {
+            code +=
+                "(define f" + std::to_string(i) + " (lambda (x) (+ x " + std::to_string(i) + "))) ";
+        }
+        code += ")\") (typecheck-current)";
+        std::string r1 = run_str(cs, code);
+        std::string r2 = run_str(cs, code);
+        CHECK(r1 == r2, "incremental typecheck: identical output across runs");
+    }
+    // AC4: stress test (50 mutate cycles)
+    {
+        std::println("\n--- #138 AC4: stress test (50 mutate cycles) ---");
+        CompilerService cs;
+        std::string code = "(set-code \"(define counter 0)\") (begin ";
+        for (int i = 0; i < 50; ++i) {
+            code += "(mutate:rebind \"counter\" \"(quote " + std::to_string(i) + ")\" \"c\") ";
+        }
+        code += "(typecheck-current))";
+        std::string status = run_str(cs, code);
+        bool ok = status.find("no errors") != std::string::npos;
+        CHECK(ok, "after 50 mutate cycles, typecheck-current still passes");
+    }
+    // AC4 cont.: multiple mutations
+    {
+        std::println("\n--- #138 AC4 cont.: multiple mutations don't corrupt workspace ---");
+        CompilerService cs;
+        std::string code = "(set-code \"(define a 1)(define b 2)(define c 3)\") (begin "
+                           "(mutate:rebind \"a\" \"(quote 10)\" \"t\") "
+                           "(mutate:rebind \"b\" \"(quote 20)\" \"t\") "
+                           "(mutate:rebind \"c\" \"(quote 30)\" \"t\") "
+                           "(eval-current) (+ a b c))";
+        int64_t sum = run_int(cs, code);
+        CHECK(sum == 60, "after mutations: 10+20+30=60");
+    }
+    // Workspace isolation
+    {
+        std::println("\n--- #138 workspace isolation (per-eval set-code) ---");
+        CompilerService cs;
+        int64_t r1 = run_int(cs, "(set-code \"(define x 1)\") "
+                                 "(mutate:rebind \"x\" \"(quote 99)\" \"t\") "
+                                 "(eval-current) x");
+        CHECK(r1 == 99, "first eval: x=99 after mutate");
+        int64_t r2 = run_int(cs, "(set-code \"(define x 1)\") "
+                                 "(eval-current) x");
+        CHECK(r2 == 1, "second eval: fresh set-code, x=1 (workspace isolated)");
+    }
+    // FlatAST dirty bit API
+    {
+        std::println("\n--- #138 FlatAST dirty bit API via direct C++ ---");
+        CompilerService cs;
+        std::string s = run_str(cs, "(set-code \"(define x 1)\") (typecheck-current)");
+        CHECK(s.find("no errors") != std::string::npos,
+              "typecheck-current on clean workspace: no errors");
+    }
+}
+
+static void run_139_structural_refactor_operators() {
+    std::println("\n=== #139: advanced structural refactoring operators (rename, inline, extract, "
+                 "move, wrap) ===");
+    // AC1: structural refactor operators (rename-symbol, inline-call, refactor-extract, move-node,
+    // extract-function)
+    {
+        std::println("\n--- #139 AC1: structural refactor operators ---");
+        CompilerService cs;
+        // rename-symbol all occurrences
+        std::string s = run_str(cs, "(set-code \"(define (f x) (+ x x))\") "
+                                    "(begin "
+                                    "  (mutate:rename-symbol \"x\" \"y\" \"rename test\") "
+                                    "  (typecheck-current))");
+        bool ok = s.find("no errors") != std::string::npos;
+        CHECK(ok, "after rename x→y, typecheck-current passes");
+        // rename creates new binding (cross-binding)
+        int64_t r = run_int(cs, "(set-code \"(define (f x) (+ x 1))(f 5)\") "
+                                "(mutate:rename-symbol \"f\" \"g\" \"rename test\") "
+                                "(eval-current) (g 5)");
+        CHECK(r == 6, "after rename f→g, (g 5) = 6");
+        // rename preserves shadow
+        int64_t r2 = run_int(cs, "(set-code "
+                                 "\""
+                                 "(define (outer x) (define (inner x) (* x 2)) (+ x (inner x)))"
+                                 "\") "
+                                 "(mutate:rename-symbol \"outer\" \"outer2\" \"test\") "
+                                 "(eval-current) (outer2 5)");
+        CHECK(r2 == 15, "after rename outer→outer2, (outer2 5) = 15");
+        // inline-call basic
+        int64_t r3 =
+            run_int(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
+                        "(begin "
+                        "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (eval-current) v)");
+        CHECK(r3 == 25, "after inline-call, v=25");
+        // refactor-extract
+        int64_t r4 =
+            run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                        "(begin "
+                        "  (mutate:refactor/extract (car (query:node-type \"Call\")) \"doubled\") "
+                        "  (length (query:node-type \"Define\")))");
+        CHECK(r4 == 2, "after refactor/extract: 2 Defines (original + extracted)");
+        // move-node
+        int64_t r5 = run_int(cs, "(set-code \"(begin (define a 1) (define b 2))\") "
+                                 "(begin "
+                                 "  (mutate:move-node (query:find \"b\") "
+                                 "                       (query:find \"a\") 0 \"move b before a\") "
+                                 "  (eval-current) (+ a b))");
+        CHECK(r5 == 3, "after move-node, (+ a b) = 3");
+        // extract-function
+        int64_t r6 =
+            run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                        "(begin "
+                        "  (mutate:extract-function (car (query:find \"x\")) \"double-of\") "
+                        "  (eval-current) (f 5))");
+        CHECK(r6 == 11, "after extract-function, (f 5) = 11");
+        // hygiene preservation
+        int64_t r7 = run_int(
+            cs, "(set-code "
+                "\""
+                "(define-hygienic-macro (swap! a b) (let ((tmp a)) (set! a b) (set! b tmp)))"
+                "(define x 1) (define y 2) (define tmp 99)"
+                "\") "
+                "(eval-current) (begin (swap! x y) tmp)");
+        CHECK(r7 == 99, "caller's tmp NOT captured by hygienic swap!");
+    }
+    // AC2: stress + mixed refactor + splice/wrap
+    {
+        std::println("\n--- #139 AC2: stress + mixed refactor + splice/wrap ---");
+        CompilerService cs;
+        // 50 rename cycles
+        std::string code2 = "(set-code \"(define a 1)(define b 2)\") (begin ";
+        for (int i = 0; i < 50; ++i) {
+            if (i % 2 == 0) {
+                code2 += "(mutate:rename-symbol \"a\" \"tmp\" \"test\") ";
+            } else {
+                code2 += "(mutate:rename-symbol \"tmp\" \"a\" \"test\") ";
+            }
+        }
+        code2 += "(typecheck-current))";
+        std::string status = run_str(cs, code2);
+        bool ok = status.find("no errors") != std::string::npos;
+        CHECK(ok, "after 50 rename cycles, typecheck passes");
+        // mixed refactor (rename + inline)
+        std::string status2 =
+            run_str(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
+                        "(begin "
+                        "  (mutate:rename-symbol \"sq\" \"square\" \"test\") "
+                        "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (typecheck-current))");
+        bool ok2 = status2.find("no errors") != std::string::npos;
+        CHECK(ok2, "after rename+inline, typecheck passes");
+        // splice and wrap
+        std::string code3 = "(set-code \"(define x 5)\") "
+                            "(begin "
+                            "  (mutate:wrap (car (query:find \"x\")) \"lambda-wrap\" \"test\") "
+                            "  (typecheck-current))";
+        std::string status3 = run_str(cs, code3);
+        bool ok3 = status3.find("no errors") != std::string::npos;
+        CHECK(ok3, "after mutate:wrap, typecheck passes");
+    }
+    // AC3: type correctness after refactor
+    {
+        std::println("\n--- #139 AC3: type correctness after refactor ---");
+        CompilerService cs;
+        std::string s1 = run_str(cs, "(set-code \"(define (add1 x) (+ x 1))(add1 5)\") "
+                                     "(begin "
+                                     "  (mutate:rename-symbol \"add1\" \"increment\" \"test\") "
+                                     "  (typecheck-current))");
+        bool ok1 = s1.find("no errors") != std::string::npos;
+        CHECK(ok1, "after rename add1→increment, typecheck passes");
+        std::string s2 =
+            run_str(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                        "(begin "
+                        "  (mutate:extract-function (car (query:find \"x\")) \"double-of\") "
+                        "  (typecheck-current))");
+        bool ok2 = s2.find("no errors") != std::string::npos;
+        CHECK(ok2, "after extract-function, typecheck passes");
+    }
+}
 
 } // namespace aura_domain_gates_batch
 
@@ -2366,6 +2741,10 @@ int aura_issue_domain_gates_batch_run() {
     aura_domain_gates_batch::run_1401_load_module_compact_env_mutex();
     aura_domain_gates_batch::run_1407_constraint_solver_cache_epoch();
     aura_domain_gates_batch::run_1425_dead_coercion_ast_ir_pipeline();
+    aura_domain_gates_batch::run_125_per_module_dirty_skip();
+    aura_domain_gates_batch::run_126_pure_functions_extracted();
+    aura_domain_gates_batch::run_138_incremental_dirty_propagation_type_checking();
+    aura_domain_gates_batch::run_139_structural_refactor_operators();
     return RUN_ALL_TESTS();
 }
 

@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 514 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 510 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **521** | |
+| **Total scanned** | **517** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 8 | 0 | 5 | 13 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 155 | 0 | 1 | 156 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
@@ -47,25 +47,25 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 468 | Integration path via `CompilerService` / eval |
-| `test_harness` | 300 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 128 | `aura_issue_*_run()` entry for issue bundles |
-| `RUN_ALL_TESTS` | 62 | Harness runner main |
+| `CompilerService` | 464 | Integration path via `CompilerService` / eval |
+| `test_harness` | 296 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `bundle_run_fn` | 127 | `aura_issue_*_run()` entry for issue bundles |
+| `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 41 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 337
+- `integration`: 335
 - `unknown`: 105
-- `unit`: 64
+- `unit`: 63
 - `issue_specific`: 6
-- `regression`: 2
+- `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 282
-- `compiler/observability_metrics.h` — 56
+- `test_harness.hpp` — 278
+- `compiler/observability_metrics.h` — 55
 - `compiler/aura_jit_bridge.h` — 18
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit.h` — 12
@@ -82,18 +82,18 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 328
-- `aura.compiler.service` — 315
-- `std` — 292
-- `aura.compiler.evaluator` — 289
-- `aura.core.ast` — 186
-- `aura.core.type` — 98
-- `aura.core.arena` — 97
+- `aura.compiler.value` — 325
+- `aura.compiler.service` — 314
+- `std` — 288
+- `aura.compiler.evaluator` — 288
+- `aura.core.ast` — 182
+- `aura.core.type` — 95
+- `aura.core.arena` — 93
 - `aura.compiler.ir` — 44
 - `aura.core` — 34
-- `aura.compiler.type_checker` — 31
-- `aura.diag` — 29
-- `aura.parser.parser` — 20
+- `aura.compiler.type_checker` — 29
+- `aura.diag` — 27
+- `aura.parser.parser` — 18
 - `aura.core.mutation` — 17
 - `aura.compiler.pass_manager` — 15
 - `aura.compiler.ir_executor` — 8
@@ -110,7 +110,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 - Issue numbers with **multiple** `tests/issues/` files: **10**
 - Phase-slice files (`*_phase*`): **9**
-- Small files (< 4 KiB, possible thin probes): **7**
+- Small files (< 4 KiB, possible thin probes): **6**
 - Existing `*_batch` drivers (migration milestones): **6**
 
 ### Multi-file issue groups (consolidate first)
@@ -134,7 +134,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_264.cpp` (3686 B) → `fiber_orch` — 
 - `test_issue_197_observability.cpp` (3711 B) → `observability` — test_issue_197_observability.cpp — Issue #197 Aura
 - `test_issue_178.cpp` (3933 B) → `edsl_hygiene` — test_issue_178.cpp — Issue #178 / #268: production NodeView
-- `test_issue_125.cpp` (3980 B) → `mutation_dirty` — test_issue_125.cpp — Verify the per-module dirty-skip
 - `test_issue_1400.cpp` (4171 B) → `mutation_dirty` — test_issue_1400.cpp — Issue #1400: bridge_epoch ↔ mutation_epoch sync
 - `test_issue_131.cpp` (4176 B) → `edsl_hygiene` — test_issue_131.cpp — Verify the FFI primitives
 - `test_issue_478.cpp` (4308 B) → `observability` — Validates:
@@ -148,6 +147,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_1408_followup_edsl.cpp` (4927 B) → `mutation_dirty` — AC1: happy path — 3 mutations all applied
 - `test_issue_287.cpp` (4952 B) → `jit_incremental` — ── AC1: set/get module_version roundtrip ──
 - `test_issue_286.cpp` (4996 B) → `shape_soa` — ── AC1: Env::env_version() default 0, set/get works ──
+- `test_issue_507.cpp` (5020 B) → `shape_soa` — 
 
 ### Batch drivers already present
 
@@ -225,7 +225,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1655.cpp` (#1655) — test_issue_1655.cpp — orphan restored (AC drift; not in CI batch)
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (160)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (156)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -235,12 +235,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (159)
+#### issues/ (155)
 
-- `tests/issues/test_issue_125.cpp` (#125) [small, early_issue] — test_issue_125.cpp — Verify the per-module dirty-skip
-- `tests/issues/test_issue_126.cpp` (#126) [early_issue] — test_issue_126.cpp — Verify the pure functions extracted
-- `tests/issues/test_issue_138.cpp` (#138) [early_issue] — test_issue_138.cpp — Verify Issue #138 acceptance criteria
-- `tests/issues/test_issue_139.cpp` (#139) [early_issue] — test_issue_139.cpp — Verify Issue #139 acceptance criteria
 - `tests/issues/test_issue_1396.cpp` (#1396) — test_issue_1396.cpp — Issue #1396: AOT hot-reload counter helpers —
 - `tests/issues/test_issue_1399.cpp` (#1399) — test_issue_1399.cpp — Issue #1399: set-car!/set-cdr! pair mutation race
 - `tests/issues/test_issue_1400.cpp` (#1400) — test_issue_1400.cpp — Issue #1400: bridge_epoch ↔ mutation_epoch sync
