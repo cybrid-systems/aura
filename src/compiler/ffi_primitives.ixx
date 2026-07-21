@@ -91,11 +91,12 @@ public:
         auto arg_part = sig.substr(1, close_paren - 1);
         auto ret_part = sig.substr(arrow + 2);
         auto type_to_int = [](std::string_view tn, std::string* err = nullptr) -> int {
+            // tn is string_view — trim with remove_prefix/suffix (no pop_back).
             auto t = tn;
             while (!t.empty() && t.front() == ' ')
-                t = t.substr(1);
+                t.remove_prefix(1);
             while (!t.empty() && t.back() == ' ')
-                t.pop_back();
+                t.remove_suffix(1);
             if (t == "Int")
                 return 1;
             if (t == "Float")
