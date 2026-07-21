@@ -400,9 +400,109 @@ int run_intend_heap_slots() {
     return g_failed ? 1 : 0;
 }
 
+
 } // namespace aura_fiber_run_intend_heap_slots
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 25 (#1957): fiber_orch theme — #438 #354 #451 #1490
+// ═══════════════════════════════════════════════════════════════
+
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+extern "C" std::uint64_t aura_fiber_static_gc_pause_attributed_to_mutation();
+
+namespace aura_fiber_run_wave25_438 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_438_fiber_migration_boundary_smoke() {
+    std::println("\n=== #438: fiber-migration-stats + boundary depth smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:fiber-migration-stats\")");
+    CHECK(r && is_int(*r), "fiber-migration-stats int");
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "depth 0 idle");
+    auto r1 = cs.eval("(engine:metrics \"query:mutation-coordination-stats\")");
+    CHECK(r1 && is_int(*r1), "mutation-coordination-stats regression");
+    CHECK(cs.eval("(define smoke-438-a 15)").has_value(), "define a");
+    CHECK(cs.eval("(define smoke-438-b 27)").has_value(), "define b");
+    auto sum = cs.eval("(+ smoke-438-a smoke-438-b)");
+    CHECK(sum && is_int(*sum) && as_int(*sum) == 42, "15+27=42");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave25_438
+
+namespace aura_fiber_run_wave25_354 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_354_mutation_boundary_held_smoke() {
+    std::println("\n=== #354: mutation_boundary_held flag smoke ===");
+    CompilerService cs;
+    CHECK(!cs.mutation_boundary_held(), "idle: held=false");
+    CHECK(cs.eval("(set-code \"(begin (define g 42))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    CHECK(cs.eval("(mutate:rebind \"g\" \"99\" \"#354\")").has_value(), "mutate:rebind");
+    CHECK(!cs.mutation_boundary_held(), "post-mutate held=false");
+    CHECK(cs.eval("(mutate:rebind \"g\" \"1\" \"#354b\")").has_value(), "second mutate");
+    CHECK(!cs.mutation_boundary_held(), "post-2nd held=false");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave25_354
+
+namespace aura_fiber_run_wave25_451 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_451_orchestration_metrics_smoke() {
+    std::println("\n=== #451: orchestration-metrics + gc pause attr smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(stats:get \"query:orchestration-metrics\")");
+    CHECK(r && is_string(*r), "orchestration-metrics string");
+    const auto count = aura_fiber_static_gc_pause_attributed_to_mutation();
+    CHECK(count >= 0, "C-linkage gc pause attr >= 0");
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    auto r2 = cs.eval("(stats:get \"query:orchestration-metrics\")");
+    CHECK(r2 && is_string(*r2), "metrics after set-code");
+    auto r3 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
+    CHECK(r3 && is_int(*r3), "gc-safepoint-stats regression");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave25_451
+
+namespace aura_fiber_run_wave25_1490 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1490_post_steal_refresh_smoke() {
+    std::println("\n=== #1490: refresh_stale_frames_after_steal smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (define y (f 40))\")").has_value(),
+          "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto& ev = cs.evaluator();
+    const auto c0 = ev.get_post_steal_refresh_count();
+    const auto n = ev.refresh_stale_frames_after_steal(0, 0);
+    CHECK(ev.get_post_steal_refresh_count() == c0 + 1, "post_steal_refresh_count +1");
+    CHECK(n >= 0, "refresh size_t");
+    (void)cs.eval("(let ((a 1)) a)");
+    const auto before = ev.defuse_version_for_test();
+    ev.bump_defuse_version_for_test();
+    CHECK(ev.defuse_version_for_test() > before, "defuse advanced");
+    (void)ev.refresh_stale_frames_after_steal(0, 0);
+    ev.probe_and_repin_linear_on_steal();
+    CHECK(ev.test_re_pin_cow_children_from_snapshot(), "re_pin after probe");
+    const auto c1 = ev.get_post_steal_refresh_count();
+    ev.transfer_mutation_stack_to_current_fiber();
+    CHECK(ev.get_post_steal_refresh_count() > c1, "transfer advanced refresh count");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave25_1490
+
 int main() {
+
     std::println("\n######## fingerprint ########");
     if (int rc = aura_fiber_run_agent_fingerprint_1730::run_agent_fingerprint_1730(); rc != 0)
         return rc;
@@ -411,6 +511,26 @@ int main() {
         return rc;
     std::println("\n######## intend_heap_slots ########");
     if (int rc = aura_fiber_run_intend_heap_slots::run_intend_heap_slots(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave25_438 ########");
+    if (int rc = aura_fiber_run_wave25_438::run_438_fiber_migration_boundary_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave25_354 ########");
+    if (int rc = aura_fiber_run_wave25_354::run_354_mutation_boundary_held_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave25_451 ########");
+    if (int rc = aura_fiber_run_wave25_451::run_451_orchestration_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave25_1490 ########");
+    if (int rc = aura_fiber_run_wave25_1490::run_1490_post_steal_refresh_smoke(); rc != 0)
         return rc;
     if (::aura::test::g_failed)
         return 1;
