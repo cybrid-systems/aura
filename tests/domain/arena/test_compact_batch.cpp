@@ -1962,6 +1962,103 @@ static void run_767_arena_auto_compact_defrag_fiber_stats() {
               "#642 schema == 642 (no drift)");
     }
 }
+}
+
+// ── Issue #1397 — ASTArena::request_defrag atomic CAS newly_set semantics ──
+// Folded from tests/issues/test_issue_1397.cpp via #1957. Extended
+// coverage for (arena:defrag)/(arena:request-defrag)/(arena:defrag-requested?)
+// beyond the 5 sub-steps in test_issue_300.cpp AC5. 50-cycle + 2-service
+// independence tests. Pure CompilerService-driven, fits compact_batch.
+
+static void run_1397_arena_request_defrag_atomic_cas() {
+    std::println("\n=== #1397: ASTArena::request_defrag atomic CAS newly_set semantics ===");
+    // AC1: 50-cycle set->dup->defrag->request consistency (single service)
+    {
+        std::println("\n--- #1397 AC1: 50-cycle set->dup->defrag->request consistency ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 1)\")");
+        int newly_true = 0, dup_false = 0;
+        for (int i = 0; i < 50; ++i) {
+            cs.eval("(arena:defrag)");
+            auto r1 = cs.eval("(arena:request-defrag)");
+            if (r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1))
+                ++newly_true;
+            auto r2 = cs.eval("(arena:request-defrag)");
+            if (r2 && aura::compiler::types::is_bool(*r2) && !aura::compiler::types::as_bool(*r2))
+                ++dup_false;
+        }
+        CHECK(newly_true == 50,
+              std::format("50 cycles first call returned #t (got {})", newly_true));
+        CHECK(dup_false == 50, std::format("50 cycles duplicate returned #f (got {})", dup_false));
+        cs.eval("(arena:defrag)"); // cleanup
+    }
+    // AC2: defrag clears flag, cycle resets
+    {
+        std::println("\n--- #1397 AC2: defrag clears flag (cycle reset) ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 1)\")");
+        cs.eval("(arena:defrag)");
+        auto r1 = cs.eval("(arena:request-defrag)");
+        CHECK(r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1),
+              "first request after defrag: #t (newly_set)");
+        auto r2 = cs.eval("(arena:request-defrag)");
+        CHECK(r2 && aura::compiler::types::is_bool(*r2) && !aura::compiler::types::as_bool(*r2),
+              "duplicate: #f (CAS already-set)");
+        cs.eval("(arena:defrag)");
+        auto r3 = cs.eval("(arena:request-defrag)");
+        CHECK(r3 && aura::compiler::types::is_bool(*r3) && aura::compiler::types::as_bool(*r3),
+              "after second defrag: #t (defrag clears -> cycle resets)");
+        auto r4 = cs.eval("(arena:request-defrag)");
+        CHECK(r4 && aura::compiler::types::is_bool(*r4) && !aura::compiler::types::as_bool(*r4),
+              "second-cycle duplicate: #f");
+    }
+    // AC3: two CompilerService instances have independent flags
+    {
+        std::println("\n--- #1397 AC3: two CompilerService instances have independent flags ---");
+        CompilerService cs1;
+        CompilerService cs2;
+        cs1.eval("(set-code \"(define x 1)\")");
+        cs2.eval("(set-code \"(define x 1)\")");
+        auto a1 = cs1.eval("(arena:request-defrag)");
+        CHECK(a1 && aura::compiler::types::is_bool(*a1) && aura::compiler::types::as_bool(*a1),
+              "cs1 first request: #t");
+        auto a2 = cs2.eval("(arena:request-defrag)");
+        CHECK(a2 && aura::compiler::types::is_bool(*a2) && aura::compiler::types::as_bool(*a2),
+              "cs2 first request: #t (independent of cs1)");
+        auto a3 = cs1.eval("(arena:request-defrag)");
+        CHECK(a3 && aura::compiler::types::is_bool(*a3) && !aura::compiler::types::as_bool(*a3),
+              "cs1 duplicate: #f");
+        auto a4 = cs2.eval("(arena:request-defrag)");
+        CHECK(a4 && aura::compiler::types::is_bool(*a4) && !aura::compiler::types::as_bool(*a4),
+              "cs2 duplicate: #f (cs1 dup did not affect cs2)");
+        cs1.eval("(arena:defrag)");
+        auto a5 = cs1.eval("(arena:request-defrag)");
+        CHECK(a5 && aura::compiler::types::is_bool(*a5) && aura::compiler::types::as_bool(*a5),
+              "cs1 after own defrag: #t");
+        auto a6 = cs2.eval("(arena:request-defrag)");
+        CHECK(a6 && aura::compiler::types::is_bool(*a6) && !aura::compiler::types::as_bool(*a6),
+              "cs2 still operates independently (no cross-talk)");
+    }
+    // AC4: (arena:defrag-requested?) tracks each transition
+    {
+        std::println("\n--- #1397 AC4: (arena:defrag-requested?) tracks each transition ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define x 1)\")");
+        cs.eval("(arena:defrag)");
+        auto q0 = cs.eval("(arena:defrag-requested?)");
+        CHECK(q0 && aura::compiler::types::is_bool(*q0) && !aura::compiler::types::as_bool(*q0),
+              "after defrag: requested? = #f");
+        cs.eval("(arena:request-defrag)");
+        auto q1 = cs.eval("(arena:defrag-requested?)");
+        CHECK(q1 && aura::compiler::types::is_bool(*q1) && aura::compiler::types::as_bool(*q1),
+              "after request: requested? = #t");
+        cs.eval("(arena:defrag)");
+        auto q2 = cs.eval("(arena:defrag-requested?)");
+        CHECK(q2 && aura::compiler::types::is_bool(*q2) && !aura::compiler::types::as_bool(*q2),
+              "after another defrag: requested? = #f (cycle resets)");
+        cs.eval("(arena:defrag)"); // cleanup
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -2012,6 +2109,7 @@ int main() {
     run_731_arena_concurrent_compact_stats();
     run_764_compiler_arena_closure_lifetime_stats();
     run_767_arena_auto_compact_defrag_fiber_stats();
+    run_1397_arena_request_defrag_atomic_cas();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -12,8 +12,11 @@
 #include "test_harness.hpp"
 #include "core/transparent_string_hash.hh"
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <string>
+#include <thread>
 
 import std;
 import aura.compiler.evaluator;
@@ -1973,6 +1976,376 @@ static void run_508_dead_coercion_elimination_pass() {
         CHECK(r.has_value(), "Mixed coercion program eval succeeds");
     }
 }
+}
+
+// ── Issue #1401 — load_module_file ↔ compact_env_frames() mutex interlock ──
+// Folded from tests/issues/test_issue_1401.cpp via #1957. Pure C++
+// Evaluator::compact_env_frames / load_module_file mutex test.
+// std::thread preserved verbatim for AC2 (multi-thread mutex exclusion).
+
+static void run_1401_load_module_compact_env_mutex() {
+    std::println("\n=== #1401: load_module_file ↔ compact_env_frames() mutex interlock ===");
+    // AC1: single-threaded alternating calls
+    {
+        std::println("\n--- #1401 AC1: single-thread alternating compact+load ---");
+        CompilerService cs;
+        constexpr int N = 100;
+        int errors = 0;
+        for (int i = 0; i < N; ++i) {
+            try {
+                (void)cs.evaluator().compact_env_frames();
+            } catch (...) {
+                ++errors;
+            }
+            try {
+                auto r = cs.evaluator().load_module_file("__nonexistent_test_path_1401__.aura");
+                (void)r;
+            } catch (...) {
+                ++errors;
+            }
+        }
+        CHECK(errors == 0,
+              std::format("{} alternating compact+load calls: 0 errors (got {})", N, errors));
+    }
+    // AC2: multi-thread mutex exclusion
+    {
+        std::println("\n--- #1401 AC2: multi-thread mutex exclusion ---");
+        CompilerService cs;
+        constexpr int N = 200;
+        std::atomic<int> compact_count{0};
+        std::atomic<int> load_count{0};
+        std::atomic<int> errors{0};
+        auto compact_worker = [&]() {
+            try {
+                for (int i = 0; i < N; ++i) {
+                    (void)cs.evaluator().compact_env_frames();
+                    compact_count.fetch_add(1);
+                }
+            } catch (...) {
+                errors.fetch_add(1);
+            }
+        };
+        auto load_worker = [&]() {
+            try {
+                for (int i = 0; i < N; ++i) {
+                    auto r = cs.evaluator().load_module_file("__nonexistent_test_path_1401__.aura");
+                    (void)r;
+                    load_count.fetch_add(1);
+                }
+            } catch (...) {
+                errors.fetch_add(1);
+            }
+        };
+        std::thread t1(compact_worker);
+        std::thread t2(load_worker);
+        t1.join();
+        t2.join();
+        CHECK(compact_count.load() == N,
+              std::format("compact_worker ran {} times (got {})", N, compact_count.load()));
+        CHECK(load_count.load() == N,
+              std::format("load_worker ran {} times (got {})", N, load_count.load()));
+        CHECK(errors.load() == 0,
+              std::format("2 threads x {} compact+load: 0 errors (got {})", N, errors.load()));
+    }
+}
+
+// ── Issue #1407 — ConstraintSolver engine-level cache + typed_mutation epoch bump ──
+// Folded from tests/issues/test_issue_1407_constraint_solver_cache.cpp via
+// #1957. Pure C++ TypeChecker cache + epoch + direct API tests. 7 ACs.
+
+static void run_1407_constraint_solver_cache_epoch() {
+    std::println("\n=== #1407: ConstraintSolver cache + typed_mutation epoch bump ===");
+    // AC1: cache hit on repeated infer_flat
+    {
+        std::println("\n--- #1407 AC1: cache hit on repeated infer_flat ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(42);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(100);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "first infer_flat returns a valid type");
+        tc.set_cache_epoch(100);
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "second infer_flat returns same type (cache hit)");
+        const auto stats = tc.stats();
+        CHECK(stats.cs_cache_lookups >= 2, "cs_cache_lookups >= 2 (one per call)");
+        CHECK(stats.cs_cache_hits >= 1, "cs_cache_hits >= 1 (second call hit)");
+    }
+    // AC2: cache miss when epoch advances
+    {
+        std::println("\n--- #1407 AC2: cache miss on epoch advance ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(42);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(200);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "first infer_flat at epoch=200 returns valid type");
+        tc.set_cache_epoch(201);
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "miss-path still returns correct type");
+        tc.set_cache_epoch(201);
+        auto r3 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r3.index == r1.index, "post-201 hit returns same type");
+        const auto stats = tc.stats();
+        CHECK(stats.cs_cache_lookups >= 2, "cs_cache_lookups >= 2 (epoch advance + recovery)");
+        CHECK(stats.cs_cache_hits >= 1, "cs_cache_hits >= 1 (post-advance recovery hit)");
+    }
+    // AC3: cache miss when AST shape changes
+    {
+        std::println("\n--- #1407 AC3: cache miss on AST shape change ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(42);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(300);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "first infer_flat at shape=42 returns valid type");
+        flat.set_int(id, 999); // shape change
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "post-shape-change miss returns correct type");
+        auto r3 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r3.index == r1.index, "recovery call returns correct type");
+        const auto stats = tc.stats();
+        CHECK(stats.cs_cache_lookups >= 3, "cs_cache_lookups >= 3 (2 misses + 1 hit)");
+        CHECK(stats.cs_cache_hits >= 1, "cs_cache_hits >= 1 (recovery hit)");
+    }
+    // AC4: typed_mutate epoch bump (set_cache_epoch simulates)
+    {
+        std::println("\n--- #1407 AC4: typed_mutate epoch bump ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(7);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(400);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "first infer_flat at epoch=400 returns valid type");
+        tc.set_cache_epoch(401); // simulate typed_mutate epoch bump
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "post-bump infer_flat still returns correct type");
+        CHECK(tc.cs_cache_size() >= 1, "cs_cache_size >= 1 after at least one store");
+    }
+    // AC5: epoch bump invalidates cache
+    {
+        std::println("\n--- #1407 AC5: epoch bump invalidates cache ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(13);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        tc.set_cache_epoch(500);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "first infer_flat at epoch=500 returns valid type");
+        CHECK(tc.cs_cache_size() >= 1, "cs_cache populated after first call");
+        tc.set_cache_epoch(501);
+        auto r2 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r2.index == r1.index, "post-bump infer_flat returns correct type");
+        const auto stats = tc.stats();
+        CHECK(stats.cs_cache_lookups >= 2, "cs_cache_lookups bumped");
+    }
+    // Backward compat: no set_cache_epoch means no cache
+    {
+        std::println("\n--- #1407 backward compat: cache inactive without set_cache_epoch ---");
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool;
+        auto id = flat.add_literal(99);
+        flat.set_type(id, 0);
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(true);
+        auto r1 = tc.infer_flat(flat, pool, id, diag);
+        CHECK(r1.index > 0, "infer_flat works without set_cache_epoch");
+        CHECK(tc.cs_cache_size() == 0, "cache stays empty without set_cache_epoch");
+        CHECK(tc.stats().cs_cache_lookups == 0, "no cache lookups without epoch");
+    }
+    // Direct API: cs_cache_lookup / store / clear
+    {
+        std::println("\n--- #1407 direct cs_cache_lookup / store / clear ---");
+        aura::core::TypeRegistry reg;
+        aura::compiler::TypeChecker tc(reg);
+        aura::compiler::SolveResult res{};
+        aura::core::TypeId ty{};
+        CHECK(!tc.cs_cache_lookup(42, 1, 0xDEADBEEF, res, ty), "lookup on empty cache misses");
+        tc.cs_cache_store(42, 1, 0xDEADBEEF, aura::compiler::SolveResult::SOLVED,
+                          aura::core::TypeId{7});
+        CHECK(tc.cs_cache_size() == 1, "store increments cache size");
+        CHECK(tc.cs_cache_lookup(42, 1, 0xDEADBEEF, res, ty), "lookup after store hits");
+        CHECK(res == aura::compiler::SolveResult::SOLVED, "stored SolveResult roundtrips");
+        CHECK(ty.index == 7, "stored TypeId roundtrips");
+        aura::compiler::SolveResult res2{};
+        aura::core::TypeId ty2{};
+        CHECK(!tc.cs_cache_lookup(42, 2, 0xDEADBEEF, res2, ty2), "epoch mismatch misses");
+        CHECK(!tc.cs_cache_lookup(42, 1, 0xCAFEBABE, res, ty), "hash mismatch misses");
+        tc.cs_cache_clear();
+        CHECK(tc.cs_cache_size() == 0, "clear empties cache");
+    }
+}
+
+// ── Issue #1425 — DeadCoercion AST elision + IR pipeline integration ──
+// Folded from tests/issues/test_issue_1425.cpp via #1957. Pure C++
+// CoercionMap apply + DeadCoercionEliminationPass run_pipeline.
+// Complements #508 (#508 covered IR-side DCE; #1425 covers AST-side
+// identity elision + run_pipeline integration).
+
+static void run_1425_dead_coercion_ast_ir_pipeline() {
+    std::println("\n=== #1425: DeadCoercion AST elision + IR pipeline ===");
+    // AC1: AST identity elision (2 of 5)
+    {
+        std::println("\n--- #1425 AC1: AST CoercionMap identity elision (2 of 5) ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto f_sym = pool->intern("f");
+        auto f_var = flat->add_variable(f_sym);
+        aura::ast::NodeId args[5];
+        for (int i = 0; i < 5; ++i)
+            args[i] = flat->add_literal(i + 1);
+        flat->set_type(args[0], 1);
+        flat->set_type(args[1], 1);
+        auto call = flat->add_call(f_var, args);
+        flat->root = call;
+        aura::compiler::CoercionMap cm;
+        for (int i = 0; i < 5; ++i) {
+            cm.add(call, static_cast<std::uint32_t>(i + 1), args[i], 0, 1, 0, 0);
+        }
+        CHECK(cm.size() == 5, "AC1.setup: 5 coercion entries");
+        aura::compiler::DeadCoercionAstStats stats;
+        const auto applied = aura::compiler::apply_coercion_map(*flat, cm, &stats, &cm);
+        int coercion_nodes = 0;
+        for (aura::ast::NodeId i = 0; i < flat->size(); ++i)
+            if (flat->get(i).tag == aura::ast::NodeTag::Coercion)
+                ++coercion_nodes;
+        CHECK(stats.eliminated == 2, "AC1: 2 identity coercions eliminated");
+        CHECK(applied == 3, "AC1: 3 CoercionNodes applied");
+        CHECK(stats.kept == 3, "AC1: kept == 3");
+        CHECK(coercion_nodes == 3, "AC1: FlatAST has exactly 3 Coercion nodes");
+        CHECK(cm.eliminated_count() == 2, "AC1: CoercionMap.mark_eliminated count == 2");
+    }
+    // AC2: non-identity coercions are kept (no false elision)
+    {
+        std::println("\n--- #1425 AC2: non-identity coercions are kept ---");
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto f_sym = pool->intern("g");
+        auto f_var = flat->add_variable(f_sym);
+        auto a0 = flat->add_literal(1);
+        auto a1 = flat->add_literal(2);
+        flat->set_type(a0, 2);
+        flat->set_type(a1, 2);
+        std::array<aura::ast::NodeId, 2> call_args = {a0, a1};
+        auto call = flat->add_call(f_var, call_args);
+        flat->root = call;
+        aura::compiler::CoercionMap cm;
+        cm.add(call, 1, a0, 0, 1, 0, 0);
+        cm.add(call, 2, a1, 0, 1, 0, 0);
+        aura::compiler::DeadCoercionAstStats stats;
+        aura::compiler::apply_coercion_map(*flat, cm, &stats, &cm);
+        int coercion_nodes = 0;
+        for (aura::ast::NodeId i = 0; i < flat->size(); ++i)
+            if (flat->get(i).tag == aura::ast::NodeTag::Coercion)
+                ++coercion_nodes;
+        CHECK(stats.eliminated == 0, "AC2: no false identity elision");
+        CHECK(stats.applied == 2, "AC2: both non-identity applied");
+        CHECK(coercion_nodes == 2, "AC2: 2 Coercion nodes present");
+    }
+    // AC3: IR DCE 2 of 5 (regression of #1418 AC)
+    {
+        std::println("\n--- #1425 AC3: IR DeadCoercionEliminationPass 2 of 5 ---");
+        aura::ir::IRModule mod;
+        aura::ir::IRFunction func;
+        func.id = 0;
+        func.name = "dce1425";
+        func.entry_block = 0;
+        func.local_count = 16;
+        aura::ir::BasicBlock blk;
+        blk.id = 0;
+        auto& ins = blk.instructions;
+        // 2 identity CastOps
+        ins.push_back({aura::ir::IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::CastOp, {1, 0, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::ConstI64, {2, 9, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::CastOp, {3, 2, 0, 0}, 0, 1});
+        // 3 necessary CastOps
+        ins.push_back({aura::ir::IROpcode::ConstI64, {4, 1, 0, 0}, 0, 0});
+        ins.push_back({aura::ir::IROpcode::CastOp, {5, 4, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::ConstI64, {6, 2, 0, 0}, 0, 0});
+        ins.push_back({aura::ir::IROpcode::CastOp, {7, 6, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::ConstI64, {8, 3, 0, 0}, 0, 0});
+        ins.push_back({aura::ir::IROpcode::CastOp, {9, 8, 0, 0}, 0, 1});
+        ins.push_back({aura::ir::IROpcode::Return, {5, 0, 0, 0}, 0, 0});
+        func.blocks.push_back(std::move(blk));
+        mod.functions.push_back(std::move(func));
+        aura::compiler::DeadCoercionEliminationPass dce;
+        dce.run(mod);
+        int remaining = 0;
+        for (const auto& f : mod.functions)
+            for (const auto& b : f.blocks)
+                for (const auto& i : b.instructions)
+                    if (i.opcode == aura::ir::IROpcode::CastOp)
+                        ++remaining;
+        CHECK(dce.eliminated_count() == 2, "AC3: IR DCE eliminates 2");
+        CHECK(remaining == 3, "AC3: 3 CastOps remain");
+    }
+    // AC4: run_pipeline invokes DCE
+    {
+        std::println("\n--- #1425 AC4: run_pipeline includes DeadCoercionEliminationPass ---");
+        aura::ir::IRModule mod;
+        aura::ir::IRFunction func;
+        func.name = "pipe";
+        func.local_count = 4;
+        aura::ir::BasicBlock blk;
+        blk.id = 0;
+        blk.instructions = {
+            {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+            {aura::ir::IROpcode::CastOp, {1, 0, 0, 0}, 0, 1},
+            {aura::ir::IROpcode::Return, {1, 0, 0, 0}, 0, 0},
+        };
+        func.blocks.push_back(std::move(blk));
+        mod.functions.push_back(std::move(func));
+        aura::compiler::DeadCoercionEliminationPass dce;
+        const bool ok = aura::compiler::run_pipeline(mod, dce);
+        CHECK(ok, "AC4: run_pipeline ok");
+        CHECK(dce.eliminated_count() == 1, "AC4: DCE inside run_pipeline elided identity CastOp");
+        CHECK(mod.functions[0].blocks[0].instructions[1].opcode == aura::ir::IROpcode::Local,
+              "AC4: CastOp → Local after pipeline");
+    }
+}
 
 } // namespace aura_domain_gates_batch
 
@@ -1990,6 +2363,9 @@ int aura_issue_domain_gates_batch_run() {
     aura_domain_gates_batch::run_430_arena_compaction_policy_observability();
     aura_domain_gates_batch::run_456_mutation_observability_primitives();
     aura_domain_gates_batch::run_508_dead_coercion_elimination_pass();
+    aura_domain_gates_batch::run_1401_load_module_compact_env_mutex();
+    aura_domain_gates_batch::run_1407_constraint_solver_cache_epoch();
+    aura_domain_gates_batch::run_1425_dead_coercion_ast_ir_pipeline();
     return RUN_ALL_TESTS();
 }
 
