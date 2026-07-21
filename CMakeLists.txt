@@ -1811,3 +1811,11 @@ set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 aura_add_issue_test(test_gc_batch)
 aura_issue_test_link_llvm_jit(test_gc_batch)
 set_target_properties(test_gc_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+# ── Wave 8 (#1957): tests/domain/fiber_integration_batch (Issue #226) ──
+# Closure-bridge Cycle-4 integration tests (raw Scheduler + std::thread +
+# many fibers). On-demand build; default-build skips.
+aura_add_issue_test(test_fiber_integration_batch)
+aura_issue_test_link_llvm_jit(test_fiber_integration_batch)
+set_target_properties(test_fiber_integration_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+add_dependencies(all_test_issue_targets test_fiber_integration_batch)

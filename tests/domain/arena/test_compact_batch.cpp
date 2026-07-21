@@ -35,6 +35,7 @@
 //                  all-dead returns 0 + return type unsigned
 
 #include "test_harness.hpp"
+#include "core/gc_hooks.h"
 
 #include <atomic>
 #include <cstddef>
@@ -729,6 +730,247 @@ static void run_187_arena_compaction_double_arena() {
     }
 }
 
+}
+
+// ── Issue #300 — Live-object defragmentation observability foundation ──
+// Folded from tests/issues/test_issue_300.cpp via #1957.
+// Verifies (stats:get "arena:defrag-stats") returns a 5-tuple:
+// (compaction-count, defrag-attempted-count, fragmentation-bp,
+//  wasted-bytes, compact-estimate-bytes) + request/safepoint flag.
+
+static bool extract_300_5tuple(CompilerService& cs, const aura::compiler::types::EvalValue& v,
+                               int64_t& e1, int64_t& e2, int64_t& e3, int64_t& e4, int64_t& e5) {
+    if (!aura::compiler::types::is_pair(v))
+        return false;
+    auto& pairs = cs.evaluator().pairs();
+    auto p1_idx = aura::compiler::types::as_pair_idx(v);
+    if (p1_idx >= pairs.size())
+        return false;
+    auto& p1 = pairs[p1_idx];
+    if (!aura::compiler::types::is_int(p1.car))
+        return false;
+    e1 = aura::compiler::types::as_int(p1.car);
+    if (!aura::compiler::types::is_pair(p1.cdr))
+        return false;
+    auto p2_idx = aura::compiler::types::as_pair_idx(p1.cdr);
+    if (p2_idx >= pairs.size())
+        return false;
+    auto& p2 = pairs[p2_idx];
+    if (!aura::compiler::types::is_int(p2.car))
+        return false;
+    e2 = aura::compiler::types::as_int(p2.car);
+    if (!aura::compiler::types::is_pair(p2.cdr))
+        return false;
+    auto p3_idx = aura::compiler::types::as_pair_idx(p2.cdr);
+    if (p3_idx >= pairs.size())
+        return false;
+    auto& p3 = pairs[p3_idx];
+    if (!aura::compiler::types::is_int(p3.car))
+        return false;
+    e3 = aura::compiler::types::as_int(p3.car);
+    if (!aura::compiler::types::is_pair(p3.cdr))
+        return false;
+    auto p4_idx = aura::compiler::types::as_pair_idx(p3.cdr);
+    if (p4_idx >= pairs.size())
+        return false;
+    auto& p4 = pairs[p4_idx];
+    if (!aura::compiler::types::is_int(p4.car))
+        return false;
+    e4 = aura::compiler::types::as_int(p4.car);
+    if (!aura::compiler::types::is_int(p4.cdr))
+        return false;
+    e5 = aura::compiler::types::as_int(p4.cdr);
+    return true;
+}
+
+static void run_300_arena_defrag_stats_observability() {
+    std::println("\n=== #300: arena:defrag-stats 5-tuple observability foundation ===");
+    // AC5 needs the safepoint stub registered (Issue #1397).
+    static auto s_done = []() {
+        aura::gc_hooks::g_arena_safepoint_check.store(+[] {});
+        return true;
+    }();
+    (void)s_done;
+    // T1: result is a 5-tuple
+    {
+        std::println("\n--- #300 T1: returns 5-tuple ---");
+        CompilerService cs;
+        auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
+        if (!r) {
+            ++g_failed;
+            return;
+        }
+        int64_t e1, e2, e3, e4, e5;
+        bool ok = extract_300_5tuple(cs, *r, e1, e2, e3, e4, e5);
+        CHECK(ok, "result is a 5-tuple (compaction-count, defrag-attempted-count, "
+                  "fragmentation-bp, wasted-bytes, compact-estimate-bytes)");
+    }
+    // T2: empty workspace counters
+    {
+        std::println("\n--- #300 T2: empty workspace counters ---");
+        CompilerService cs;
+        auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
+        if (!r) {
+            ++g_failed;
+            return;
+        }
+        int64_t e1, e2, e3, e4, e5;
+        if (!extract_300_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
+            ++g_failed;
+            return;
+        }
+        CHECK(e1 >= 0, "compaction-count >= 0");
+        CHECK(e2 == 0, "defrag-attempted-count == 0 on fresh workspace");
+        CHECK(e4 == 0, "wasted-bytes == 0 on fresh workspace");
+        CHECK(e3 >= 0 && e3 <= 10000, "fragmentation-bp in [0, 10000] basis points");
+    }
+    // T3: shape via Aura
+    {
+        std::println("\n--- #300 T3: 5-tuple shape via Aura ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define q 100)\")");
+        auto r = cs.eval("(let ((t (stats:get \"arena:defrag-stats\")))"
+                         " (and (pair? t)"
+                         "       (pair? (cdr t))"
+                         "       (pair? (cdr (cdr t)))"
+                         "       (pair? (cdr (cdr (cdr t))))"
+                         "       (integer? (cdr (cdr (cdr (cdr t)))))"
+                         "       (integer? (car t))"
+                         "       (integer? (car (cdr t)))"
+                         "       (integer? (car (cdr (cdr t))))"
+                         "       (integer? (car (cdr (cdr (cdr t)))))))");
+        if (!r) {
+            ++g_failed;
+            return;
+        }
+        bool is_t = aura::compiler::types::is_bool(*r) && aura::compiler::types::as_bool(*r);
+        CHECK(is_t, "5-tuple shape: 4 pairs + terminal int + all 4 cars are int");
+    }
+    // T4: (arena:defrag) bumps defrag-attempted-count
+    {
+        std::println("\n--- #300 T4: (arena:defrag) bumps defrag-attempted-count ---");
+        CompilerService cs;
+        cs.eval("(set-code \"(define a 1) (define b 2)\")");
+        auto r0 = cs.eval("(stats:get \"arena:defrag-stats\")");
+        if (!r0) {
+            ++g_failed;
+            return;
+        }
+        int64_t e1, e2, e3, e4, e5;
+        if (!extract_300_5tuple(cs, *r0, e1, e2, e3, e4, e5)) {
+            ++g_failed;
+            return;
+        }
+        auto defrag_before = e2, compact_est_before = e5;
+        cs.eval("(arena:defrag)");
+        auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
+        if (!r) {
+            ++g_failed;
+            return;
+        }
+        if (!extract_300_5tuple(cs, *r, e1, e2, e3, e4, e5)) {
+            ++g_failed;
+            return;
+        }
+        CHECK(e2 == defrag_before + 1, "defrag-attempted-count incremented by 1 (was " +
+                                           std::to_string(defrag_before) + ", now " +
+                                           std::to_string(e2) + ")");
+        CHECK(e5 <= compact_est_before, "compact-estimate did not grow");
+        CHECK(e3 >= 0 && e3 <= 10000, "fragmentation-bp in [0, 10000] after defrag");
+    }
+    // T5: defrag request flag lifecycle (fresh=#f / request=#t / set=#t /
+    //     duplicate=#f / after-defrag=#f)
+    {
+        std::println("\n--- #300 T5: defrag request flag (safepoint scaffold) ---");
+        CompilerService cs;
+        auto r0 = cs.eval("(arena:defrag-requested?)");
+        if (!r0) {
+            ++g_failed;
+            return;
+        }
+        bool fresh = aura::compiler::types::is_bool(*r0) && !aura::compiler::types::as_bool(*r0);
+        auto r1 = cs.eval("(arena:request-defrag)");
+        if (!r1) {
+            ++g_failed;
+            return;
+        }
+        bool request_ok =
+            aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1);
+        auto r2 = cs.eval("(arena:defrag-requested?)");
+        if (!r2) {
+            ++g_failed;
+            return;
+        }
+        bool set = aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2);
+        auto r3 = cs.eval("(arena:request-defrag)");
+        if (!r3) {
+            ++g_failed;
+            return;
+        }
+        bool dup = aura::compiler::types::is_bool(*r3) && !aura::compiler::types::as_bool(*r3);
+        cs.eval("(set-code \"(define x 1)\")");
+        cs.eval("(arena:defrag)");
+        auto r4 = cs.eval("(arena:defrag-requested?)");
+        if (!r4) {
+            ++g_failed;
+            return;
+        }
+        bool cleared = aura::compiler::types::is_bool(*r4) && !aura::compiler::types::as_bool(*r4);
+        CHECK(fresh && request_ok && set && dup && cleared,
+              "defrag flag lifecycle: fresh=#f, request=#t, set=#t, dup=#f, after-defrag=#f");
+    }
+}
+
+// ── Issue #322 — Dual-Path SoA/EnvId + arena compaction ──
+// Folded from tests/issues/test_issue_322.cpp via #1957.
+// S2/S3/S6/S7/S8 deferred (pre-existing bugs in arena:* primitives — see
+// test_issue_322.cpp close comments + issue follow-up). S4 (FlatAST
+// compaction) and S5 (dual-path mutation) overlap with #187/#324 — kept
+// here for inventory fidelity.
+
+static void run_322_dual_path_soa_envid() {
+    std::println("\n=== #322: Dual-Path SoA/EnvId + arena compaction ===");
+    // S1: workspace integrity with bindings
+    {
+        std::println("\n--- #322 S1: workspace integrity ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
+        (void)cs.eval("(eval-current)");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "eval succeeds with bindings");
+    }
+    // S4: FlatAST compaction via (ast:compact-nodes)
+    {
+        std::println("\n--- #322 S4: FlatAST compaction via (ast:compact-nodes) ---");
+        CompilerService cs;
+        (void)cs.eval(
+            "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
+        (void)cs.eval("(eval-current)");
+        auto r = cs.eval("(ast:compact-nodes)");
+        CHECK(r.has_value(), "(ast:compact-nodes) callable");
+        auto q = cs.eval("(query:pattern \"a\")");
+        CHECK(q.has_value(), "query:pattern works post-compact");
+    }
+    // S5: dual-path consistency across mutations
+    {
+        std::println("\n--- #322 S5: dual-path consistency across mutations ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
+        (void)cs.eval("(eval-current)");
+        for (int i = 0; i < 5; ++i) {
+            std::string code = "(mutate:replace-value (define a ";
+            code += std::to_string(100 + i * 11);
+            code += ") (define a ";
+            code += std::to_string(100 + i * 11);
+            code += "))";
+            auto r = cs.eval(code);
+            CHECK(r.has_value(), std::string("mutate #") + std::to_string(i) + " succeeds");
+        }
+        auto re = cs.eval("(eval-current)");
+        CHECK(re.has_value(), "eval succeeds after 5 mutations");
+    }
+}
+
 } // namespace aura_compact_batch
 
 int main() {
@@ -766,6 +1008,8 @@ int main() {
     run_324_dual_path_consistency();
     run_324_yield_field();
     run_187_arena_compaction_double_arena();
+    run_300_arena_defrag_stats_observability();
+    run_322_dual_path_soa_envid();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

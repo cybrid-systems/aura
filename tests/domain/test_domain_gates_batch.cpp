@@ -1176,6 +1176,150 @@ static void run_265_clone_macro_body_hygiene() {
     }
 }
 
+// ── Wave 8 (#272 IR-native env binding for defines) ──
+
+static void run_272_ir_native_env_binding() {
+    std::println("\n=== #272: IR-native env binding for function defines ===");
+    auto run_ok = [](CompilerService& cs, std::string_view src) {
+        return static_cast<bool>(cs.eval(src));
+    };
+    auto run_int = [](CompilerService& cs, std::string_view src) -> int64_t {
+        auto r = cs.eval(src);
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    // AC1: define_ir_env_bind_count bumps on function define
+    {
+        std::println("\n--- #272 AC1: define_ir_env_bind_count bumps on function define ---");
+        CompilerService cs;
+        CHECK(cs.define_ir_env_bind_count() == 0, "metric starts at 0");
+        CHECK(run_ok(cs, "(define (dbl x) (* x 2))"), "define succeeds");
+        CHECK(cs.define_ir_env_bind_count() == 1, "one IR env bind after define");
+    }
+    // AC2: defined function callable via IR closure bridge
+    {
+        std::println("\n--- #272 AC2: defined function callable via IR closure bridge ---");
+        CompilerService cs;
+        CHECK(run_ok(cs, "(define (mul2 x) (* x 2))"), "define succeeds");
+        CHECK(run_int(cs, "(mul2 7)") == 14, "(mul2 7) = 14");
+        CHECK(run_int(cs, "(mul2 0)") == 0, "(mul2 0) = 0");
+    }
+    // AC3: redefine re-binds via IR + new body used
+    {
+        std::println("\n--- #272 AC3: redefine re-binds via IR ---");
+        CompilerService cs;
+        CHECK(run_ok(cs, "(define (f x) (+ x 1))"), "first define succeeds");
+        CHECK(run_int(cs, "(f 5)") == 6, "(f 5) = 6 first body");
+        auto binds_after_first = cs.define_ir_env_bind_count();
+        CHECK(run_ok(cs, "(define (f x) (* x 3))"), "redefine succeeds");
+        CHECK(cs.define_ir_env_bind_count() == binds_after_first + 1,
+              "redefine bumps define_ir_env_bind_count");
+        CHECK(run_int(cs, "(f 5)") == 15, "(f 5) = 15 new body");
+    }
+    // AC5: compile_module binds via IR
+    {
+        std::println("\n--- #272 AC5: compile_module binds via IR ---");
+        CompilerService cs;
+        auto binds_before = cs.define_ir_env_bind_count();
+        auto r = cs.compile_module("mod272", "(define (mod-fn x) (* x 10))");
+        CHECK(r.has_value() && *r, "compile_module succeeds");
+        CHECK(cs.define_ir_env_bind_count() == binds_before + 1,
+              "compile_module bumps define_ir_env_bind_count");
+        CHECK(run_int(cs, "(mod-fn 3)") == 30, "(mod-fn 3) = 30 after compile_module");
+    }
+    // AC6: redefine invalidates + re-binds dependents via IR
+    {
+        std::println("\n--- #272 AC6: redefine invalidates and re-binds dependents ---");
+        CompilerService cs;
+        CHECK(run_ok(cs, "(define (base x) (+ x 1))"), "first define base succeeds");
+        CHECK(run_ok(cs, "(define (wrap x) (base x))"), "wrap defined");
+        CHECK(run_int(cs, "(wrap 5)") == 6, "wrap uses (+ x 1) base initially");
+        CHECK(run_ok(cs, "(define (base x) (* x 2))"), "redefine base succeeds");
+        CHECK(run_int(cs, "(wrap 5)") == 10, "wrap uses re-bound (* x 2) base after redefine");
+    }
+    // AC8: value define bound via IR + TopCellLoad
+    {
+        std::println("\n--- #272 AC8: value define bound via IR ---");
+        CompilerService cs;
+        CHECK(cs.value_define_ir_env_bind_count() == 0, "value metric starts at 0");
+        auto r = cs.eval("(define y (+ 1 2))");
+        CHECK(r.has_value() && *r, "value define succeeds");
+        CHECK(cs.value_define_ir_env_bind_count() == 1, "value define bumps IR bind metric");
+        CHECK(run_int(cs, "(+ y 10)") == 13, "(+ y 10) = 13 via TopCellLoad");
+    }
+    // AC9: value define does not need tree-walker fallback
+    {
+        std::println("\n--- #272 AC9: value define no tree-walker fallback ---");
+        CompilerService cs;
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto pr = aura::parser::parse_to_flat("(define n 42)", *flat, *pool);
+        CHECK(pr.success, "value define parses");
+        flat->root = pr.root;
+        CHECK(!cs.public_needs_tree_walker_fallback(*flat, *pool, pr.root),
+              "needs_tree_walker_fallback false for value define");
+    }
+    // AC7: function define no tree-walker fallback
+    {
+        std::println("\n--- #272 AC7: function define no tree-walker fallback ---");
+        CompilerService cs;
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto pr = aura::parser::parse_to_flat("(define (f x) (+ x 1))", *flat, *pool);
+        CHECK(pr.success, "function define parses");
+        flat->root = pr.root;
+        CHECK(!cs.public_needs_tree_walker_fallback(*flat, *pool, pr.root),
+              "needs_tree_walker_fallback false for function define");
+    }
+    // AC10: compile_module disk IR cache hit on second service
+    {
+        std::println("\n--- #272 AC10: compile_module disk IR cache hit ---");
+        const std::string mod = "mod272disk";
+        const std::string src = "(define (disk-fn x) (+ x 100))";
+        {
+            CompilerService cs;
+            CHECK(cs.compile_module(mod, src).has_value() && *cs.compile_module(mod, src),
+                  "first compile_module writes disk cache");
+            CHECK(run_int(cs, "(disk-fn 5)") == 105, "(disk-fn 5) = 105 after first compile");
+        }
+        {
+            CompilerService cs2;
+            auto binds_before = cs2.define_ir_env_bind_count();
+            CHECK(cs2.compile_module(mod, src).has_value(),
+                  "second compile_module hits disk cache");
+            CHECK(cs2.define_ir_env_bind_count() == binds_before + 1,
+                  "disk cache hit still binds via IR");
+            CHECK(run_int(cs2, "(disk-fn 5)") == 105, "(disk-fn 5) = 105 after disk cache hit");
+        }
+    }
+    // AC11: JIT TopCellLoad (skipped if LLVM not built)
+    {
+        std::println("\n--- #272 AC11: JIT TopCellLoad via evaluator cells bridge ---");
+#ifndef AURA_HAVE_LLVM
+        std::println("  SKIP: LLVM JIT not built");
+#else
+        CompilerService cs;
+        CHECK(run_ok(cs, "(define y (+ 1 2))"), "value define for TopCellLoad");
+        CHECK(run_ok(cs, "(define (add-y x) (+ x y))"), "function refs value define");
+        CHECK(run_int(cs, "(add-y 10)") == 13, "(add-y 10) = 13 via JIT TopCellLoad");
+#endif
+    }
+    // AC4: nested defines both IR-bound
+    {
+        std::println("\n--- #272 AC4: nested defines both IR-bound ---");
+        CompilerService cs;
+        CHECK(run_ok(cs, "(define (inc x) (+ x 1))"), "inc defined");
+        CHECK(run_ok(cs, "(define (twice x) (* x 2))"), "twice defined");
+        CHECK(run_int(cs, "(twice (inc 3))") == 8, "(twice (inc 3)) = 8");
+        CHECK(cs.define_ir_env_bind_count() == 2, "two defines = two IR env binds");
+    }
+}
+
 } // namespace aura_domain_gates_batch
 
 int aura_issue_domain_gates_batch_run() {
@@ -1185,6 +1329,7 @@ int aura_issue_domain_gates_batch_run() {
     aura_domain_gates_batch::run_242_envframe_soa_version_stamping();
     aura_domain_gates_batch::run_260_adt_match_exhaustiveness_mutation();
     aura_domain_gates_batch::run_265_clone_macro_body_hygiene();
+    aura_domain_gates_batch::run_272_ir_native_env_binding();
     return RUN_ALL_TESTS();
 }
 
