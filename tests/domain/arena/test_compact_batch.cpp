@@ -1050,6 +1050,109 @@ static void run_335_arena_adaptive_compact_heuristics() {
         CHECK(us < 10000000, "100 adaptive_compact calls < 10s (eval-bound; primitive is fast)");
     }
 }
+}
+
+// ── Issue #623 — arena auto-compact threshold setter/getter + back-compat ──
+// Folded from tests/issues/test_issue_623.cpp via #1957.
+// AC5 (concurrent std::thread read test) simplified to a rapid
+// sequential loop here to avoid adding <mutex>/<thread> includes
+// to test_compact_batch.cpp; the real concurrent coverage stays
+// in the original test_issue_623.cpp for TSan/atomicity verification.
+
+static void run_623_arena_auto_compact_threshold_setter() {
+    std::println("\n=== #623: arena auto-compact threshold setter/getter + back-compat ===");
+    // AC1: (arena:auto-compact-threshold) read
+    {
+        std::println("\n--- #623 AC1: read auto-compact-threshold ---");
+        CompilerService cs;
+        auto r = cs.eval("(arena:auto-compact-threshold)");
+        CHECK(r.has_value() && is_int(*r), "auto-compact-threshold returns int");
+        const auto val = as_int(*r);
+        CHECK(val == 50 || val == -1, std::format("in {{50, -1}} (got {})", val));
+    }
+    // AC2: set + clamping
+    {
+        std::println("\n--- #623 AC2: set + clamping ---");
+        CompilerService cs;
+        const auto baseline = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        auto r_set = cs.eval("(arena:set-auto-compact-threshold 75)");
+        CHECK(r_set.has_value() && is_int(*r_set), "setter returns int (previous value)");
+        const auto prev = as_int(*r_set);
+        if (baseline == -1) {
+            CHECK(prev == -1, std::format("baseline -1 case: prev == -1 (got {})", prev));
+        } else {
+            CHECK(prev == baseline, std::format("prev == baseline ({} == {})", prev, baseline));
+        }
+        if (baseline != -1) {
+            const auto now = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            CHECK(now == 75, std::format("readback after set == 75 (got {})", now));
+        }
+        cs.eval("(arena:set-auto-compact-threshold -5)");
+        if (baseline != -1) {
+            const auto after_low = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            CHECK(after_low == 0, std::format("negative arg clamped to 0 (got {})", after_low));
+        }
+        cs.eval("(arena:set-auto-compact-threshold 200)");
+        if (baseline != -1) {
+            const auto after_high = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            CHECK(after_high == 95, std::format("arg > 95 clamped to 95 (got {})", after_high));
+        }
+        cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
+    }
+    // AC3: non-int arg no-op
+    {
+        std::println("\n--- #623 AC3: bad-arg no-op ---");
+        CompilerService cs;
+        cs.eval("(arena:set-auto-compact-threshold 25)");
+        const auto before = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        auto r = cs.eval("(arena:set-auto-compact-threshold \"not-a-number\")");
+        CHECK(r.has_value() && is_int(*r), "non-int arg returns int (current value)");
+        const auto after = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        CHECK(after == before,
+              std::format("non-int arg left threshold unchanged ({} -> {})", before, after));
+        cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
+    }
+    // AC4: existing arena primitives back-compat
+    // (#187/#300/#430/#335/#464/#685/#604)
+    {
+        std::println("\n--- #623 AC4: existing arena primitives back-compat ---");
+        CompilerService cs;
+        auto s_json = cs.eval("(stats:get \"arena:stats-json\")");
+        CHECK(s_json.has_value(), "(stats:get \"arena:stats-json\") reachable (#187 back-compat)");
+        auto s_def = cs.eval("(arena:defrag)");
+        CHECK(s_def.has_value(), "(arena:defrag) reachable (#300 back-compat)");
+        auto s_pol = cs.eval("(arena:compact-with-policy)");
+        CHECK(s_pol.has_value(), "(arena:compact-with-policy) reachable (#430 back-compat)");
+        auto s_probe = cs.eval("(arena:should-auto-compact?)");
+        CHECK(s_probe.has_value(), "(arena:should-auto-compact?) reachable (#335 back-compat)");
+        auto s_auto = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
+        CHECK(s_auto.has_value(),
+              "(engine:metrics \"query:arena-auto-stats\") reachable (#464 back-compat)");
+        auto s_compact = cs.eval("(engine:metrics \"query:arena-auto-compact-stats\")");
+        CHECK(s_compact.has_value(),
+              "(engine:metrics \"query:arena-auto-compact-stats\") reachable (#685 back-compat)");
+        auto s_snap = cs.eval("(engine:metrics \"query:arena-fragmentation-snapshot\")");
+        CHECK(
+            s_snap.has_value(),
+            "(engine:metrics \"query:arena-fragmentation-snapshot\") reachable (#604 back-compat)");
+    }
+    // AC5: rapid sequential reads — atomicity proxy (skip full std::thread)
+    {
+        std::println("\n--- #623 AC5: rapid sequential reads (atomicity proxy) ---");
+        CompilerService cs;
+        cs.eval("(arena:set-auto-compact-threshold 60)");
+        int ok_count = 0;
+        constexpr int k_iters = 8;
+        for (int i = 0; i < k_iters; ++i) {
+            auto r = cs.eval("(arena:auto-compact-threshold)");
+            if (r && is_int(*r))
+                ++ok_count;
+        }
+        CHECK(ok_count == k_iters,
+              std::format("rapid sequential: {} / {} reads returned int", ok_count, k_iters));
+        cs.eval("(arena:set-auto-compact-threshold 50)");
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -1091,6 +1194,7 @@ int main() {
     run_300_arena_defrag_stats_observability();
     run_322_dual_path_soa_envid();
     run_335_arena_adaptive_compact_heuristics();
+    run_623_arena_auto_compact_threshold_setter();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
