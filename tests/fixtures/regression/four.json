@@ -1,0 +1,74 @@
+[
+  {
+    "name": "m4-borrow",
+    "code": "(display (borrow 42))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "m4-drop",
+    "code": "(display (drop 42))",
+    "expect_out": "",
+    "expect_err": ""
+  },
+  {
+    "name": "m4-linear-move",
+    "code": "(display (move (Linear 42)))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "m4-move-let",
+    "code": "(let ((x (move 42))) (display x))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "tc-runtime-unbound-var-has-location",
+    "code": "(undefined-var-xyz)",
+    "expect_out": "",
+    "expect_err": "1:2: unbound variable"
+  },
+  {
+    "name": "tc-strict-pass-int-eq-int",
+    "code": "(+ 1 2)",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "tc-strict-runtime-typed-arg-mismatch",
+    "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  },
+  {
+    "name": "tc-type-var-name-from-param",
+    "code": "(begin (define (f x) (+ x 1)) (f \"hello\"))",
+    "expect_out": "1",
+    "expect_err": "type mismatch"
+  },
+  {
+    "name": "vec-argmin",
+    "code": "(require \"std/vector-math\" all:)(vec:argmin (vector 5 1 9 2))",
+    "expect_out": "1",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-dot",
+    "code": "(require \"std/vector-math\" all:)(vec:dot (vector 1 2 3) (vector 4 5 6))",
+    "expect_out": "32",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-scale",
+    "code": "(require \"std/vector-math\" all:)(vec:sum (vec:scale (vector 1 2 3) 2))",
+    "expect_out": "12",
+    "expect_err": ""
+  },
+  {
+    "name": "vec-sum",
+    "code": "(require \"std/vector-math\" all:)(vec:sum (vec:range 0 5))",
+    "expect_out": "10",
+    "expect_err": ""
+  }
+]

@@ -58,5 +58,29 @@
     "code": "(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))",
     "expect_out": "1",
     "expect_err": ""
+  },
+  {
+    "name": "colony-no-fns",
+    "code": "(begin (set-code \"(display 42)\")(require \"std/ant\" all:)(colony:search \"42\" 5))",
+    "expect_out": "colony:no-fns",
+    "expect_err": ""
+  },
+  {
+    "name": "colony-search",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(display (f 41))\")(require \"std/ant\" all:)(colony:search \"42\" 5))",
+    "expect_out": "colony:ref-42",
+    "expect_err": ""
+  },
+  {
+    "name": "ast-viz-dot",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(require \"std/ast-viz\" all:)(string? (ast:to-dot)))",
+    "expect_out": "#t",
+    "expect_err": ""
+  },
+  {
+    "name": "ast-viz-dot-mutation",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(require \"std/ast-viz\" all:)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"m\")(string-contains? (ast:to-dot) \"*\"))",
+    "expect_out": "#t",
+    "expect_err": ""
   }
 ]

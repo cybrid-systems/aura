@@ -1,5 +1,35 @@
 [
   {
+    "name": "annot-3arg-expr",
+    "code": "(: x Int (+ 1 2))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "annot-3arg-int",
+    "code": "(: x Int 42)",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "annot-chain",
+    "code": "(+ (: x Int 1) 2)",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "annot-in-expr",
+    "code": "(+ (: total Int 10) 5)",
+    "expect_out": "15",
+    "expect_err": ""
+  },
+  {
+    "name": "annot-unbound",
+    "code": "(: x Int)",
+    "expect_out": "",
+    "expect_err": "unbound variable"
+  },
+  {
     "name": "ffi-error-stdout",
     "code": "(c-func 999 \"nonexistent\" \"(String) -> Int\")",
     "expect_out": "0",
