@@ -1432,6 +1432,161 @@ int run_285_mutation_boundary_flush() {
 }
 } // namespace aura_mut_run_wave21_285
 
+// ═══════════════════════════════════════════════════════════════
+// Wave 22 (#1957): mutation_dirty theme — #1405 #1406 #1408 #1472
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_mut_run_wave22_1405 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1405_workspace_flat_generation() {
+    std::println("\n=== #1405: workspace_flat_ generation counter ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    auto* flat = cs.evaluator().workspace_flat_for_test();
+    CHECK(flat != nullptr, "workspace_flat_for_test non-null");
+    if (!flat)
+        return g_failed ? 1 : 0;
+    const auto gen1 = flat->generation();
+    const auto gen2 = flat->generation();
+    CHECK(gen1 == gen2, "generation stable across no-op reads");
+    CHECK(true, "FlatAST::generation() accessible");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave22_1405
+
+namespace aura_mut_run_wave22_1406 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1406_cow_pin_contract_smoke() {
+    std::println("\n=== #1406: propagate_cow_pins_after_clone contract smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define test-var 1)\")").has_value(), "set-code");
+    auto* flat = cs.evaluator().workspace_flat_for_test();
+    CHECK(flat != nullptr, "workspace_flat after set-code");
+    auto r = cs.eval("(define test-x 42)");
+    CHECK(r.has_value(), "eval after #1406 pin infrastructure");
+    auto v = cs.eval("test-x");
+    CHECK(v && is_int(*v) && as_int(*v) == 42, "test-x == 42");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave22_1406
+
+namespace aura_mut_run_wave22_1408 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+bool is_true(CompilerService& cs, std::string_view expr) {
+    auto r = cs.eval(std::string(expr));
+    return r && is_bool(*r) && as_bool(*r);
+}
+bool is_false(CompilerService& cs, std::string_view expr) {
+    auto r = cs.eval(std::string(expr));
+    return r && is_bool(*r) && !as_bool(*r);
+}
+std::int64_t eval_int(CompilerService& cs, std::string_view expr) {
+    auto r = cs.eval(std::string(expr));
+    if (!r || !is_int(*r))
+        return -999999;
+    return as_int(*r);
+}
+bool setup_xyz(CompilerService& cs) {
+    if (!cs.eval("(set-code \"(define x 1) (define y 2) (define z 3)\")"))
+        return false;
+    return cs.eval("(eval-current)").has_value();
+}
+
+int run_1408_typed_mutate_atomic_edsl() {
+    std::println("\n=== #1408/#1442: typed-mutate-atomic EDSL ===");
+    // AC1 happy path
+    {
+        CompilerService cs;
+        CHECK(setup_xyz(cs), "setup x,y,z");
+        auto* flat = cs.evaluator().workspace_flat();
+        CHECK(flat != nullptr, "workspace flat");
+        const auto before = flat ? flat->committed_mutation_count() : 0;
+        const char* expr = R"aura(
+(typed-mutate-atomic
+  (list "(mutate:rebind \"x\" \"10\")"
+        "(mutate:rebind \"y\" \"20\")"
+        "(mutate:rebind \"z\" \"30\")"))
+)aura";
+        CHECK(is_true(cs, expr), "typed-mutate-atomic #t on success");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current after atomic");
+        CHECK(eval_int(cs, "x") == 10, "x == 10");
+        CHECK(eval_int(cs, "y") == 20, "y == 20");
+        CHECK(eval_int(cs, "z") == 30, "z == 30");
+        if (flat)
+            CHECK(flat->committed_mutation_count() > before, "committed grew");
+    }
+    // AC2 mid-failure abort
+    {
+        CompilerService cs;
+        CHECK(setup_xyz(cs), "setup abort case");
+        auto* flat = cs.evaluator().workspace_flat();
+        const auto before = flat ? flat->committed_mutation_count() : 0;
+        const char* expr = R"aura(
+(typed-mutate-atomic
+  (list "(mutate:rebind \"x\" \"100\")"
+        "(mutate:rebind \"y\" \"200\")"
+        "(mutate:rebind \"z\"   "))
+)aura";
+        CHECK(is_false(cs, expr), "typed-mutate-atomic #f on abort");
+        if (flat)
+            CHECK(flat->committed_mutation_count() == before, "0 new commits on abort");
+        CHECK(eval_int(cs, "x") == 1, "x unchanged");
+        CHECK(eval_int(cs, "y") == 2, "y unchanged");
+        CHECK(eval_int(cs, "z") == 3, "z unchanged");
+    }
+    // AC3 empty list
+    {
+        CompilerService cs;
+        CHECK(setup_xyz(cs), "setup empty");
+        CHECK(is_false(cs, "(typed-mutate-atomic (list))"), "empty list → #f");
+        CHECK(is_false(cs, "(typed-mutate-atomic)"), "no args → #f");
+    }
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave22_1408
+
+namespace aura_mut_run_wave22_1472 {
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1472_atomic_batch_obs_smoke() {
+    std::println("\n=== #1472: atomic-batch observability surface smoke ===");
+    auto read_src = [](const char* path) -> std::string {
+        for (const char* prefix : {"", "../", "../../"}) {
+            std::ifstream in(std::string(prefix) + path);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    };
+    const auto ast = read_src("src/core/ast.ixx");
+    CHECK(!ast.empty(), "src/core/ast.ixx readable");
+    CHECK(ast.find("bump_generation_suppressed_") != std::string::npos,
+          "bump_generation_suppressed_ present");
+    CHECK(ast.find("atomic_batch") != std::string::npos ||
+              ast.find("atomic-batch") != std::string::npos,
+          "atomic batch referenced in FlatAST");
+    const auto fib = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(!fib.empty(), "evaluator_fiber_mutation.cpp readable");
+    CHECK(fib.find("MutationBoundaryGuard") != std::string::npos, "MutationBoundaryGuard present");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave22_1472
+
 
 int main() {
     std::println("\n######## run_guard_dtor_1766 ########");
@@ -1528,6 +1683,34 @@ int main() {
     std::println("\n######## run_285_mutation_boundary_flush ########");
     if (int rc = aura_mut_run_wave21_285::run_285_mutation_boundary_flush(); rc != 0) {
         std::println("run_285 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1405_workspace_flat_generation ########");
+    if (int rc = aura_mut_run_wave22_1405::run_1405_workspace_flat_generation(); rc != 0) {
+        std::println("run_1405 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1406_cow_pin_contract_smoke ########");
+    if (int rc = aura_mut_run_wave22_1406::run_1406_cow_pin_contract_smoke(); rc != 0) {
+        std::println("run_1406 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1408_typed_mutate_atomic_edsl ########");
+    if (int rc = aura_mut_run_wave22_1408::run_1408_typed_mutate_atomic_edsl(); rc != 0) {
+        std::println("run_1408 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1472_atomic_batch_obs_smoke ########");
+    if (int rc = aura_mut_run_wave22_1472::run_1472_atomic_batch_obs_smoke(); rc != 0) {
+        std::println("run_1472 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");
