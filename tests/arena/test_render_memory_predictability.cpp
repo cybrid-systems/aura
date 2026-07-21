@@ -1,3 +1,9 @@
+// test_render_memory_predictability.cpp — Issue #1675 (#1978 renamed):
+// render hot-path memory predictability: FrameBumpArena capacity
+// stable after warm-up; GC safepoint defers in hotpath;
+// query:render-memory-stats schema 1675; present does not grow string_heap.
+// Issue# moved from filename to header per #1978.
+//
 // @category: unit
 // @reason: Issue #1675 — render hot-path memory predictability:
 // FrameBumpArena capacity stable after warm-up; GC safepoint defers in hotpath;
