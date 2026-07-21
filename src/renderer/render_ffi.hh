@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::renderer::ffi {
 
@@ -41,7 +42,9 @@ struct RenderFfiRegistry {
     // Process-wide: enter_render_hotpath calls from c-* / c-render-* paths.
     std::atomic<std::uint64_t> ffi_hotpath_enter_total{0};
     std::mutex registry_mtx;
-    std::unordered_map<std::string, RenderFfiDescriptor> bindings;
+    std::unordered_map<std::string, RenderFfiDescriptor, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        bindings;
 
     // Register / replace binding. fn_ptr may be null (unresolved).
     // Returns 0 on success, -1 on empty name.

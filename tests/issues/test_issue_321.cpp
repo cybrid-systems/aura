@@ -1,5 +1,18 @@
 // test_issue_321.cpp — Issue #321: P0 Multi-Fiber Mutation
 // Boundary + Yield Stress Suite.
+
+// Paired note (transparent hash sweep batch 3): this multi-fiber
+// mutation stress exercises the migrate:* / compile:* / workspace:*
+// primitive surfaces (src/compiler/evaluator_primitives_mutation.cpp,
+// evaluator_primitives_query.cpp, evaluator_primitives_eval.cpp,
+// evaluator_primitives_ast.cpp, etc.) plus the arena / mutation_impl
+// hot paths (src/core/arena.ixx, src/core/mutation_impl.cpp) — all
+// migrated to aura::core::TransparentStringHash + std::equal_to<> in
+// this batch. The workspace_flat_ map lookups (workspace name →
+// state, symbol name → binding, agent name → handle) now accept
+// string_view keys without per-call std::string allocation, which
+// matters here because every concurrent fiber's yield/resume cycle
+// triggers workspace-side name lookups under the mutation guard.
 //
 // Extends #332 (4 std::thread workers + Fiber::yield) with
 // the production-readiness surface that #321 specifically

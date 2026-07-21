@@ -230,11 +230,13 @@ export inline FFIMarshalled ffi_marshal_args_pure(std::span<const types::EvalVal
 // dotted macros, the caller is expected to extend this
 // map with the rest-param binding (a synthesized pair
 // list) after this returns.
-export inline std::unordered_map<std::string, aura::ast::NodeId>
+export inline std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                                 std::equal_to<>>
 compute_macro_subst_pure(const std::vector<std::string>& params,
                          const std::vector<aura::ast::NodeId>& call_args, bool dotted) {
     using aura::ast::NodeId;
-    std::unordered_map<std::string, NodeId> subst;
+    std::unordered_map<std::string, NodeId, aura::core::TransparentStringHash, std::equal_to<>>
+        subst;
     std::size_t regular_count = dotted && params.size() > 0 ? params.size() - 1 : params.size();
     for (std::size_t ai = 0; ai < regular_count && ai + 1 < call_args.size(); ++ai) {
         subst[params[ai]] = call_args[ai + 1];
@@ -635,6 +637,7 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
 // of args that were non-zero. Useful for callers that want to
 // short-circuit on all-zeros.
 export inline aura::diag::Result<types::EvalValue>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 arithmetic_div_pure(std::span<const types::EvalValue> args,
                     std::span<const std::string> string_heap, std::ostream* diag = nullptr)
     // Issue #213 follow-up: C++26 contract. Division by

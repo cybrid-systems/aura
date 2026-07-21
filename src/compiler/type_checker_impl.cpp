@@ -37,6 +37,7 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "bounded_lru.h"
 // Issue #1877: last hygiene provenance stamp for truncated blame frames.
 #include "core/provenance_tracker.hh"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #1884: C bridge (avoid <mutex> from typed_mutation_audit.h in this module).
 extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n);
 
@@ -5577,8 +5578,11 @@ void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeVie
 // TypeChecker — Public API
 // ═══════════════════════════════════════════════════════════
 
-void TypeChecker::inject_type_sigs(const std::unordered_map<std::string, std::string>& sigs,
-                                   const std::unordered_map<std::string, std::string>& module_src) {
+void TypeChecker::inject_type_sigs(
+    const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                             std::equal_to<>>& sigs,
+    const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                             std::equal_to<>>& module_src) {
     auto lookup = [&](const std::string& name) -> TypeId {
         if (name == "Int")
             return types.int_type();
@@ -5720,13 +5724,15 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
 // checking. Mirrors the pattern of constant_fold_function /
 // compute_kind / check_arity — takes all dependencies as
 // parameters, returns a result struct, no member state.
-TypeCheckResult type_check_flat_pure(FlatAST& flat, StringPool& pool, NodeId root,
-                                     TypeRegistry& types, DiagnosticCollector& diag,
-                                     const std::unordered_map<std::string, TypeId>& sigs,
-                                     const std::unordered_map<std::string, std::string>& module_src,
-                                     bool strict, std::uint64_t cache_epoch,
-                                     void* metrics, // Issue #258: optional metrics pointer
-                                     bool bidirectional_mode) // Issue #283 f/u #5
+TypeCheckResult type_check_flat_pure(
+    FlatAST& flat, StringPool& pool, NodeId root, TypeRegistry& types, DiagnosticCollector& diag,
+    const std::unordered_map<std::string, TypeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>& sigs,
+    const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                             std::equal_to<>>& module_src,
+    bool strict, std::uint64_t cache_epoch,
+    void* metrics,           // Issue #258: optional metrics pointer
+    bool bidirectional_mode) // Issue #283 f/u #5
 {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);

@@ -84,10 +84,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 ### Top module imports (first 50 lines, issues/)
 
 - `aura.compiler.value` — 401
-- `aura.compiler.service` — 378
-- `std` — 353
-- `aura.compiler.evaluator` — 351
-- `aura.core.ast` — 249
+- `aura.compiler.service` — 377
+- `std` — 352
+- `aura.compiler.evaluator` — 350
+- `aura.core.ast` — 248
 - `aura.core.arena` — 128
 - `aura.core.type` — 125
 - `aura.compiler.ir` — 55

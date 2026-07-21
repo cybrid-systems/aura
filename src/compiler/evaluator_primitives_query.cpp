@@ -30,6 +30,7 @@ import aura.compiler.ir;
 import aura.compiler.pass_manager;
 import aura.compiler.service;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
@@ -128,7 +129,8 @@ namespace module_export_cache {
     };
 
     std::mutex g_mtx;
-    std::unordered_map<std::string, Entry> g_by_path;
+    std::unordered_map<std::string, Entry, aura::core::TransparentStringHash, std::equal_to<>>
+        g_by_path;
     std::atomic<std::uint64_t> g_hit{0};
     std::atomic<std::uint64_t> g_miss{0};
     std::atomic<std::uint64_t> g_stat_fail{0};

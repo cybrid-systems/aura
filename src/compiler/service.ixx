@@ -417,7 +417,7 @@ export enum class IncrementalTypecheckMode : std::uint8_t {
 };
 
 export class CompilerService {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 public:
     // Issue #531: closure / EnvFrame / bridge_epoch /
     // linear_ownership_state observability accessors.

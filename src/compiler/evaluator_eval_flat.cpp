@@ -20,7 +20,7 @@ import aura.compiler.macro_expansion;
 import aura.diag;
 import aura.parser.parser;
 import aura.compiler.soa_view;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::compiler {
 

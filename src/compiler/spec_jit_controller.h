@@ -12,6 +12,7 @@
 #include <vector>
 #include "shape.h"
 #include "aura_jit.h"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::shape {
 
@@ -121,7 +122,9 @@ private:
     void maybe_evict_();
 
     aura::jit::AuraJIT& jit_;
-    std::unordered_map<std::string, std::vector<SpecEntry>> specializations_;
+    std::unordered_map<std::string, std::vector<SpecEntry>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        specializations_;
     uint32_t global_version_ = 0;
     std::size_t max_specializations_ = 2048; // Issue #985
     std::uint64_t access_clock_ = 0;

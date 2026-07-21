@@ -35,6 +35,7 @@ import aura.diag;
 import aura.compiler.cache;
 import aura.compiler.value;
 import aura.repl;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // C-linkage bridge to reflection-based --inspect
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
@@ -222,8 +223,11 @@ static void print_typed_mutate_response(const aura::compiler::CompilerService::M
 // Minimal JSON parser for --serve protocol messages.
 // Only supports flat objects: {"key":"value","key2":"value2"}
 // Returns an empty map on parse failure.
-static std::unordered_map<std::string, std::string> parse_json_command(std::string_view line) {
-    std::unordered_map<std::string, std::string> result;
+static std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                          std::equal_to<>>
+parse_json_command(std::string_view line) {
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        result;
     if (line.empty())
         return result;
 
@@ -651,7 +655,9 @@ int main(int argc, char* argv[]) {
     // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve") {
         // ── Multi-session ────────────────────────────────────
-        std::unordered_map<std::string, aura::compiler::CompilerService> sessions;
+        std::unordered_map<std::string, aura::compiler::CompilerService,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            sessions;
         std::string active_session = "default";
         sessions.try_emplace(active_session);
         auto& cs = sessions[active_session];

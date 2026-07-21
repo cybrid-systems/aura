@@ -44,6 +44,7 @@ struct AdtCtorEntry {
 
 // Per-Evaluator ADT runtime (replaces the old global table + registration logic).
 export class AdtRuntime {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     using RegisterFn = std::function<void(std::string, PrimFn)>;
 
@@ -82,8 +83,11 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, AdtCtorEntry> ctors_;
-    std::unordered_map<std::string, std::size_t> ctor_slots_;
+    std::unordered_map<std::string, AdtCtorEntry, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        ctors_;
+    std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash, std::equal_to<>>
+        ctor_slots_;
 };
 
 } // namespace aura::compiler

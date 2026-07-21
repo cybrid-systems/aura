@@ -12,6 +12,7 @@ import aura.core.ast;
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -562,7 +563,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             auto total_nodes = flat.size();
 
             // Count nodes by type
-            std::unordered_map<std::string, std::uint64_t> type_counts;
+            std::unordered_map<std::string, std::uint64_t, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                type_counts;
             for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
                 auto v = flat.get(id);
                 auto& m = aura::ast::meta(v.tag);

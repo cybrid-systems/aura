@@ -54,6 +54,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 
@@ -710,7 +711,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
             return make_bool(false);
 
         // Build substitution map
-        std::unordered_map<std::string, std::string> subst;
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            subst;
         if (static_cast<std::size_t>(ti) < g_template_params.size()) {
             auto& pnames = g_template_params[ti];
             for (std::size_t i = 0; i < pnames.size() && i + 1 < a.size(); ++i) {
@@ -2699,7 +2702,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return it == agents_.end() ? nullptr : &it->second;
         }
         std::mutex mu_;
-        std::unordered_map<std::string, aura::orch::AgentHandle> agents_;
+        std::unordered_map<std::string, aura::orch::AgentHandle, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            agents_;
     };
     static OrchAgentNameTable orch_agent_names;
 

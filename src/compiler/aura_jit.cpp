@@ -3814,7 +3814,7 @@ bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
 #else
 
 #include <cstdio>
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::jit {
 
