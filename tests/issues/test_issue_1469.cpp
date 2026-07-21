@@ -1,3 +1,9 @@
+// test_issue_1469.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // @category: unit
 // @reason: pure C++ FlatAST wrap-around observability; no CompilerService
 //
@@ -26,27 +32,12 @@
 //   AC5: StableNodeRef's wrap_epoch_ capture exists in public surface
 //   AC6: code-presence checks confirm wrap_epoch_ bump + restamp flag wire
 
-#include "test_harness.hpp"
 
-import aura.core.ast;
-
-import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
 namespace test_issue_1469_detail {
 
-#undef CHECK
-#define CHECK(cond, msg)                                                                           \
-    do {                                                                                           \
-        if (!(cond)) {                                                                             \
-            std::println("  FAIL: {} (line {})", msg, __LINE__);                                   \
-            ++g_failed;                                                                            \
-        } else {                                                                                   \
-            std::println("  PASS: {}", msg);                                                       \
-            ++g_passed;                                                                            \
-        }                                                                                          \
-    } while (0)
 
 void ac1_bump_generation_count() {
     std::println("\n--- AC1: bump_generation_count() increments per bump_generation ---");
@@ -146,8 +137,8 @@ void ac5_stable_node_ref_wrap_epoch_capture() {
     auto* pool = arena->create<aura::ast::StringPool>(alloc);
     const auto sym = pool->intern("y");
     const auto id = flat->add_variable(sym);
-    auto ref = flat->capture_stable_ref(id);
-    CHECK(ref.is_valid(*flat), "fresh StableNodeRef is valid");
+    auto ref = flat->make_ref(id);
+    CHECK(ref.is_valid_in(*flat), "fresh StableNodeRef is valid");
 }
 
 void ac6_wrap_path_code_presence() {
@@ -158,6 +149,10 @@ void ac6_wrap_path_code_presence() {
     //   2. generation_wrap_count_.fetch_add when generation_ wraps
     //   3. auto_restamp_pending_ store when generation_ wraps
     std::ifstream f("src/core/ast.ixx");
+    if (!f)
+        f.open("../src/core/ast.ixx");
+    if (!f)
+        f.open("../../src/core/ast.ixx");
     CHECK(f.is_open(), "src/core/ast.ixx openable");
     if (!f.is_open())
         return;

@@ -1,3 +1,9 @@
+// test_issue_1904.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // @category: integration
 // @reason: uses Evaluator + MutationBoundaryGuard + CompilerMetrics + CI linter
 //
@@ -49,15 +55,10 @@
 //   AC9: mutation_legacy_manual_lock_total stays 0 after running
 //        a known-migrated mutate primitive (Guard path only)
 
-#include "test_harness.hpp"
 
-import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
-import aura.compiler.evaluator;
-import aura.compiler.value;
-import aura.compiler.service;
 
 namespace aura_issue_1904_detail {
 

@@ -1,3 +1,9 @@
+// test_issue_1472.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // @category: unit
 // @reason: pure C++ atomic-batch observability; no CompilerService
 //
@@ -23,33 +29,20 @@
 //   AC5: atomic_batch_commits_ counter (lifetime commits) exists
 //   AC6: lockless helpers (mutate:query-and-replace family) present
 
-#include "test_harness.hpp"
 
-#include "core/cpp26_contract_stats.h"
-
-import aura.core.ast;
-
-import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
 namespace test_issue_1472_detail {
 
-#undef CHECK
-#define CHECK(cond, msg)                                                                           \
-    do {                                                                                           \
-        if (!(cond)) {                                                                             \
-            std::println("  FAIL: {} (line {})", msg, __LINE__);                                   \
-            ++g_failed;                                                                            \
-        } else {                                                                                   \
-            std::println("  PASS: {}", msg);                                                       \
-            ++g_passed;                                                                            \
-        }                                                                                          \
-    } while (0)
 
 void ac1_bump_generation_suppressed() {
     std::println("\n--- AC1: bump_generation_suppressed_ flag accessible ---");
     std::ifstream f("src/core/ast.ixx");
+    if (!f)
+        f.open("../src/core/ast.ixx");
+    if (!f)
+        f.open("../../src/core/ast.ixx");
     CHECK(f.is_open(), "src/core/ast.ixx openable");
     if (!f.is_open())
         return;
@@ -78,6 +71,10 @@ void ac2_mutation_boundary_guard() {
 void ac3_atomic_batch_depth_counter() {
     std::println("\n--- AC3: atomic_batch_depth_ counter accessible ---");
     std::ifstream f("src/core/ast.ixx");
+    if (!f)
+        f.open("../src/core/ast.ixx");
+    if (!f)
+        f.open("../../src/core/ast.ixx");
     CHECK(f.is_open(), "src/core/ast.ixx openable");
     if (!f.is_open())
         return;
@@ -89,6 +86,10 @@ void ac3_atomic_batch_depth_counter() {
 void ac4_auto_compact_with_safety() {
     std::println("\n--- AC4: auto_compact_with_safety in atomic-batch path ---");
     std::ifstream f("src/core/ast.ixx");
+    if (!f)
+        f.open("../src/core/ast.ixx");
+    if (!f)
+        f.open("../../src/core/ast.ixx");
     CHECK(f.is_open(), "src/core/ast.ixx openable");
     if (!f.is_open())
         return;
@@ -102,6 +103,10 @@ void ac4_auto_compact_with_safety() {
 void ac5_atomic_batch_commits_counter() {
     std::println("\n--- AC5: atomic_batch_commits_ lifetime counter ---");
     std::ifstream f("src/core/ast.ixx");
+    if (!f)
+        f.open("../src/core/ast.ixx");
+    if (!f)
+        f.open("../../src/core/ast.ixx");
     CHECK(f.is_open(), "src/core/ast.ixx openable");
     if (!f.is_open())
         return;

@@ -1,3 +1,9 @@
+// test_issue_1655.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // tests/test_issue_1655.cpp — Issue #1655
 //
 // AC list (per docs/design/1655-apply-closure-epoch-stale-helper.md):
@@ -35,19 +41,6 @@
 // (9 ACs source-driven), tests/test_issue_1654.cpp (10 ACs source-
 // driven + runtime baseline).
 
-#include "test_harness.hpp"
-#include "compiler/observability_metrics.h"
-
-#include <cstdint>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_1655_detail {
 
@@ -56,10 +49,13 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& pth : {path, std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(pth);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 bool contains(const std::string& s, std::string_view needle) noexcept {
