@@ -1585,10 +1585,139 @@ int run_1472_atomic_batch_obs_smoke() {
     CHECK(fib.find("MutationBoundaryGuard") != std::string::npos, "MutationBoundaryGuard present");
     return g_failed ? 1 : 0;
 }
+
 } // namespace aura_mut_run_wave22_1472
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 23 (#1957): mutation_dirty theme — #281 #282 #459 #1457
+// ═══════════════════════════════════════════════════════════════
+
+namespace aura_mut_run_wave23_281 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_281_predicate_memo_smoke() {
+    std::println("\n=== #281: predicate memo (analyze_predicate_flat) smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define (g x) (if (string? x) 1 0)) "
+                  "(define (h x) (if (string? x) 2 0)) "
+                  "(define (i x) (if (string? x) 3 0))\")")
+              .has_value(),
+          "set-code multi-if");
+    CHECK(cs.eval("(g \"hi\")").has_value(), "(g \"hi\")");
+    CHECK(cs.eval("(h \"hi\")").has_value(), "(h \"hi\")");
+    CHECK(cs.eval("(i \"hi\")").has_value(), "(i \"hi\")");
+    // mutation invalidates / reuses reflattened path
+    CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) 1 0))\")").has_value(), "set-code f");
+    CHECK(cs.eval("(f \"hi\")").has_value(), "f before mutate");
+    CHECK(cs.eval("(mutate:rebind \"f\" \"(define (f x) (if (string? x) 99 0))\" \"bump\")")
+              .has_value(),
+          "mutate rebind f");
+    CHECK(cs.eval("(f \"hi\")").has_value(), "f after mutate");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave23_281
+
+namespace aura_mut_run_wave23_282 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+static int64_t run_int(CompilerService& cs, const std::string& src) {
+    auto r = cs.eval(src);
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+int run_282_provenance_of_smoke() {
+    std::println("\n=== #282: query:provenance-of narrowing records smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")").has_value(),
+          "set-code f");
+    CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck-current");
+    auto count = run_int(cs, "(length (query:provenance-of \"x\"))");
+    CHECK(count >= 1, "provenance of x >= 1");
+    CHECK(cs.eval("(f \"hi\")").has_value(), "f evaluates");
+    auto unk = run_int(cs, "(length (query:provenance-of \"no-such-var\"))");
+    CHECK(unk == 0, "unknown var provenance = 0");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave23_282
+
+namespace aura_mut_run_wave23_459 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_459_atomic_batch_metrics_smoke() {
+    std::println("\n=== #459: atomic-batch metrics + mutate:atomic-batch smoke ===");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(ev.get_atomic_batch_steal_violation() == 0, "steal_violation 0");
+    CHECK(ev.get_suppressed_bump_lost_on_gc() == 0, "suppressed_bump 0");
+    CHECK(ev.atomic_batch_count() == 0, "atomic_batch_count 0");
+    const auto s0 = ev.get_atomic_batch_steal_violation();
+    ev.bump_atomic_batch_steal_violation();
+    CHECK(ev.get_atomic_batch_steal_violation() == s0 + 1, "steal_violation +1");
+    auto r = cs.eval("(engine:metrics \"query:atomic-batch-stats\")");
+    CHECK(r && is_int(*r), "query:atomic-batch-stats int");
+    if (r && is_int(*r))
+        CHECK(static_cast<std::uint64_t>(as_int(*r)) == ev.get_atomic_batch_steal_violation(),
+              "stats == steal_violation");
+    CHECK(cs.eval("(set-code \"(define f x)\")").has_value(), "set-code");
+    auto ab = cs.eval(R"aur((mutate:atomic-batch
+                 (list (list "mutate:rebind" "f" "42" "test"))
+                 "smoke"))aur");
+    CHECK(ab.has_value(), "mutate:atomic-batch callable");
+    CHECK(cs.eval("(define smoke-459-a 10)").has_value(), "define a");
+    CHECK(cs.eval("(define smoke-459-b 20)").has_value(), "define b");
+    auto sum = cs.eval("(+ smoke-459-a smoke-459-b)");
+    CHECK(sum && is_int(*sum) && as_int(*sum) == 30, "10+20=30");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave23_459
+
+namespace aura_mut_run_wave23_1457 {
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+static bool setup_typed(CompilerService& cs) {
+    if (!cs.eval("(set-code \"(define (f x) (if (number? x) (+ x 1) 0)) "
+                 "(define (g a b) (+ a b)) "
+                 "(define n 42) "
+                 "(f 3) (g 1 2) n\")"))
+        return false;
+    return cs.eval("(eval-current)").has_value();
+}
+int run_1457_type_prop_dce_smoke() {
+    std::println("\n=== #1457: type-propagation + cast zero-overhead smoke ===");
+    CompilerService cs;
+    const auto runs0 = cs.get_type_propagation_runs();
+    CHECK(setup_typed(cs), "setup typed");
+    CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
+    CHECK(cs.get_type_propagation_runs() > runs0, "type_propagation_runs grew");
+    auto dce = cs.eval("(engine:metrics \"query:dead-coercion-stats\")");
+    CHECK(dce.has_value(), "dead-coercion-stats reachable");
+    CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+                  "\"issue-1457\")")
+              .has_value(),
+          "rebind f");
+    auto r = cs.eval("(f 5)");
+    CHECK(r && is_int(*r) && as_int(*r) == 15, "f 5 == 15 after rebind");
+    auto g = cs.eval("(g 4 6)");
+    CHECK(g && is_int(*g) && as_int(*g) == 10, "g 4 6 == 10");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave23_1457
 
 
 int main() {
+
     std::println("\n######## run_guard_dtor_1766 ########");
     if (int rc = aura_mut_run_guard_dtor_1766::run_guard_dtor_1766(); rc != 0) {
         std::println("run_guard_dtor_1766 FAILED rc={}", rc);
@@ -1711,6 +1840,34 @@ int main() {
     std::println("\n######## run_1472_atomic_batch_obs_smoke ########");
     if (int rc = aura_mut_run_wave22_1472::run_1472_atomic_batch_obs_smoke(); rc != 0) {
         std::println("run_1472 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_281_predicate_memo_smoke ########");
+    if (int rc = aura_mut_run_wave23_281::run_281_predicate_memo_smoke(); rc != 0) {
+        std::println("run_281 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_282_provenance_of_smoke ########");
+    if (int rc = aura_mut_run_wave23_282::run_282_provenance_of_smoke(); rc != 0) {
+        std::println("run_282 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_459_atomic_batch_metrics_smoke ########");
+    if (int rc = aura_mut_run_wave23_459::run_459_atomic_batch_metrics_smoke(); rc != 0) {
+        std::println("run_459 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_1457_type_prop_dce_smoke ########");
+    if (int rc = aura_mut_run_wave23_1457::run_1457_type_prop_dce_smoke(); rc != 0) {
+        std::println("run_1457 FAILED rc={}", rc);
         return rc;
     }
     std::println("\ntest_mutation_guard_unit_batch: OK");

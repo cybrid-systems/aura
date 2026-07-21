@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 491 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 487 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **499** | |
+| **Total scanned** | **495** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 1 | 0 | 5 | 6 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 147 | 0 | 1 | 148 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 143 | 0 | 1 | 144 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 1 | 47 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 7 | 0 | 0 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
@@ -47,8 +47,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 447 | Integration path via `CompilerService` / eval |
-| `test_harness` | 277 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 443 | Integration path via `CompilerService` / eval |
+| `test_harness` | 273 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 121 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 58 | Harness runner main |
 | `own_main` | 34 | File defines `int main()` (standalone or bundle source) |
@@ -56,15 +56,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### `@category` distribution (issues/)
 
-- `integration`: 329
-- `unknown`: 98
+- `integration`: 326
+- `unknown`: 97
 - `unit`: 57
 - `issue_specific`: 6
 - `regression`: 1
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 259
+- `test_harness.hpp` — 255
 - `compiler/observability_metrics.h` — 49
 - `serve/scheduler.h` — 15
 - `compiler/aura_jit_bridge.h` — 15
@@ -82,20 +82,20 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 308
-- `aura.compiler.service` — 298
-- `aura.compiler.evaluator` — 276
-- `std` — 269
-- `aura.core.ast` — 177
-- `aura.core.type` — 92
+- `aura.compiler.value` — 304
+- `aura.compiler.service` — 294
+- `aura.compiler.evaluator` — 273
+- `std` — 265
+- `aura.core.ast` — 175
+- `aura.core.type` — 91
 - `aura.core.arena` — 89
 - `aura.compiler.ir` — 44
 - `aura.core` — 34
 - `aura.compiler.type_checker` — 27
 - `aura.diag` — 26
 - `aura.parser.parser` — 18
-- `aura.core.mutation` — 16
 - `aura.compiler.pass_manager` — 15
+- `aura.core.mutation` — 14
 - `aura.compiler.ir_executor` — 8
 
 ### Coupling notes
@@ -219,7 +219,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (148)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (144)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
@@ -229,7 +229,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
-#### issues/ (147)
+#### issues/ (143)
 
 - `tests/issues/test_issue_1396.cpp` (#1396) — test_issue_1396.cpp — Issue #1396: AOT hot-reload counter helpers —
 - `tests/issues/test_issue_1408_followup_rebind_rollback.cpp` (#1408) [followup] — AC1: bind x=1, rebind x=100, rollback, eval x → 1
@@ -239,7 +239,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_142.cpp` (#142) [early_issue] — test_issue_142.cpp — Verify Issue #142 acceptance criteria
 - `tests/issues/test_issue_1455_occurrence_stale_propagation.cpp` (#1455) — test_issue_1455_occurrence_stale_propagation.cpp
 - `tests/issues/test_issue_1456_affected_subtree_locality.cpp` (#1456) — test_issue_1456_affected_subtree_locality.cpp
-- `tests/issues/test_issue_1457_type_propagation_castop_zerooverhead.cpp` (#1457) — test_issue_1457_type_propagation_castop_zerooverhead.cpp
 - `tests/issues/test_issue_147.cpp` (#147) [early_issue] — test_issue_147.cpp — Verify Issue #147 acceptance criteria
 - `tests/issues/test_issue_148.cpp` (#148) [early_issue] — test_issue_148.cpp — Verify Issue #148 acceptance criteria
 - `tests/issues/test_issue_1486.cpp` (#1486) — AC1: apply / materialize / enforce entry intercepts Moved
@@ -287,8 +286,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_278.cpp` (#278) — (Issue #278: lib/std query/mutate wrappers +
 - `tests/issues/test_issue_279.cpp` (#279) — (Issue #279: pair? returns Pair type, list? predicate,
 - `tests/issues/test_issue_280.cpp` (#280) — (Issue #280).
-- `tests/issues/test_issue_281.cpp` (#281) — memoization for analyze_predicate_flat (Issue #281:
-- `tests/issues/test_issue_282.cpp` (#282) — (Issue #282: NarrowingRecord + query:provenance-of
 - `tests/issues/test_issue_284.cpp` (#284) — accessors, and Verilog emitter (Issue #284 Phase 2
 - `tests/issues/test_issue_289.cpp` (#289) — test_issue_289.cpp — Issue #289 / #481 acceptance tests.
 - `tests/issues/test_issue_291.cpp` (#291) — workspace_id + serialization
@@ -344,7 +341,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_435_phase6.cpp` (#435) [phase_slice] — — ClassIR + list IR baseline for the same).
 - `tests/issues/test_issue_445_openclaw_integration.cpp` (#445) — test_issue_445_openclaw_integration.cpp — Issue #445:
 - `tests/issues/test_issue_453.cpp` (#453) — Validates:
-- `tests/issues/test_issue_459.cpp` (#459) — ── AC1: atomic-batch metrics start at 0 ──
 - `tests/issues/test_issue_470_stable_ref_sv_scale.cpp` (#470) — test_issue_470_stable_ref_sv_scale.cpp — Issue #470:
 - `tests/issues/test_issue_474.cpp` (#474) — test_issue_474.cpp — Issue #474: Aura unified error type
 - `tests/issues/test_issue_482.cpp` (#482) — replace-pattern share the same matcher (issue #482)
