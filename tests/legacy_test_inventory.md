@@ -135,9 +135,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_484_minimal.cpp` (2451 B) → `mutation_dirty` — 
 - `test_issue_261.cpp` (2460 B) → `arena_compaction` — 
 - `test_issue_263.cpp` (3192 B) → `observability` — 
-- `test_issue_178.cpp` (3525 B) → `edsl_hygiene` — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `test_issue_264.cpp` (3686 B) → `fiber_orch` — 
 - `test_issue_197_observability.cpp` (3711 B) → `observability` — test_issue_197_observability.cpp — Issue #197 Aura
+- `test_issue_178.cpp` (3933 B) → `edsl_hygiene` — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `test_issue_134.cpp` (3949 B) → `arena_compaction` — test_issue_134.cpp — Verify the complete ADT support
 - `test_issue_125.cpp` (3980 B) → `mutation_dirty` — test_issue_125.cpp — Verify the per-module dirty-skip
 - `test_issue_1400.cpp` (4171 B) → `mutation_dirty` — test_issue_1400.cpp — Issue #1400: bridge_epoch ↔ mutation_epoch sync
