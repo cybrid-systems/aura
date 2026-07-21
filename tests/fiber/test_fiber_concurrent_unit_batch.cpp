@@ -899,6 +899,53 @@ int run_707_stack_pool_stats_smoke() {
 } // namespace aura_fiber_run_wave51_707
 
 
+// Wave 52 (#1957): fiber_orch — gc/scheduler/panic stats smokes
+namespace aura_fiber_run_wave52_646 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_646_gc_safepoint_deferral_smoke() {
+    std::println("\n=== #646: gc-safepoint-deferral-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:gc-safepoint-deferral-stats\")").has_value(),
+          "gc-safepoint-deferral-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave52_646
+
+namespace aura_fiber_run_wave52_645 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_645_scheduler_steal_bias_smoke() {
+    std::println("\n=== #645: scheduler-steal-bias-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:scheduler-steal-bias-stats\")").has_value(),
+          "scheduler-steal-bias-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave52_645
+
+namespace aura_fiber_run_wave52_648 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_648_panic_checkpoint_fiber_smoke() {
+    std::println("\n=== #648: panic-checkpoint-fiber-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:panic-checkpoint-fiber-stats\")").has_value(),
+          "panic-checkpoint-fiber-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave52_648
+
+
 int main() {
 
 
@@ -1028,6 +1075,22 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave51_707 ########");
     if (int rc = aura_fiber_run_wave51_707::run_707_stack_pool_stats_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave52_646 ########");
+    if (int rc = aura_fiber_run_wave52_646::run_646_gc_safepoint_deferral_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave52_645 ########");
+    if (int rc = aura_fiber_run_wave52_645::run_645_scheduler_steal_bias_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave52_648 ########");
+    if (int rc = aura_fiber_run_wave52_648::run_648_panic_checkpoint_fiber_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);

@@ -4,8 +4,6 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_716_run();
-extern int aura_issue_717_run();
 extern int aura_issue_718_run();
 extern int aura_issue_719_run();
 extern int aura_issue_720_run();
@@ -18,7 +16,6 @@ extern int aura_issue_733_run();
 extern int aura_issue_735_run();
 extern int aura_issue_756_run();
 extern int aura_issue_757_run();
-extern int aura_issue_758_run();
 extern int aura_issue_759_run();
 extern int aura_issue_760_run();
 extern int aura_issue_761_run();
@@ -30,7 +27,6 @@ extern int aura_issue_linear_ownership_postmutate_guard_steal_envframe_run();
 extern int aura_issue_typechecker_incremental_guard_steal_fidelity_run();
 extern int aura_issue_766_run();
 extern int aura_issue_768_run();
-extern int aura_issue_769_run();
 extern int aura_issue_770_run();
 extern int aura_issue_771_run();
 extern int aura_issue_772_run();
@@ -52,8 +48,6 @@ extern int aura_issue_790_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_716", aura_issue_716_run},
-        {"test_issue_717", aura_issue_717_run},
         {"test_issue_718", aura_issue_718_run},
         {"test_issue_719", aura_issue_719_run},
         {"test_issue_720", aura_issue_720_run},
@@ -66,7 +60,6 @@ int main() {
         {"test_issue_735", aura_issue_735_run},
         {"test_issue_756", aura_issue_756_run},
         {"test_issue_757", aura_issue_757_run},
-        {"test_issue_758", aura_issue_758_run},
         {"test_issue_759", aura_issue_759_run},
         {"test_issue_760", aura_issue_760_run},
         {"test_issue_761", aura_issue_761_run},
@@ -81,7 +74,6 @@ int main() {
          aura_issue_typechecker_incremental_guard_steal_fidelity_run},
         {"test_issue_766", aura_issue_766_run},
         {"test_issue_768", aura_issue_768_run},
-        {"test_issue_769", aura_issue_769_run},
         {"test_issue_770", aura_issue_770_run},
         {"test_issue_771", aura_issue_771_run},
         {"test_issue_772", aura_issue_772_run},

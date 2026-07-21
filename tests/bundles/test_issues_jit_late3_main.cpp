@@ -19,8 +19,6 @@ extern int aura_issue_aura_result_error_policy_run();
 extern int aura_issue_open_issues_phase1_batch_run();
 extern int aura_issue_804_run();
 extern int aura_issue_760_run();
-extern int aura_issue_667_primitives_apply_stats_run();
-extern int aura_issue_668_run();
 extern int aura_issue_669_run();
 extern int aura_issue_670_run();
 extern int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run();
@@ -60,8 +58,6 @@ int main() {
         {"test_open_issues_phase1_batch", aura_issue_open_issues_phase1_batch_run},
         {"test_issue_804", aura_issue_804_run},
         {"test_issue_760", aura_issue_760_run},
-        {"test_issue_667_primitives_apply_stats", aura_issue_667_primitives_apply_stats_run},
-        {"test_issue_668", aura_issue_668_run},
         {"test_issue_669", aura_issue_669_run},
         {"test_issue_670", aura_issue_670_run},
         {"test_atomic_batch_snapshot_stable_ref_ai_loops",

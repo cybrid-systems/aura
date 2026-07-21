@@ -398,6 +398,20 @@ int run_624_shape_stability_jit_smoke() {
 } // namespace aura_shape_run_wave51_624
 
 
+// Wave 52 (#1957): shape_soa — #431 cxx26-invariants
+namespace aura_shape_run_wave52_431 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_431_cxx26_invariants_smoke() {
+    std::println("\n=== #431: query:cxx26-invariants smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:cxx26-invariants\")").has_value(), "cxx26-invariants");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave52_431
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -471,6 +485,11 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave51_624::run_624_shape_stability_jit_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave52_431::run_431_cxx26_invariants_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");
