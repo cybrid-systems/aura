@@ -12,7 +12,7 @@ via `DOMAIN_STATUS["tui:"] = "deferred"` (`scripts/check_primitive_surface.py`).
 
 | Option | Chosen | Why |
 |---|---|---|
-| Remove | No | Active tests (`test_terminal_input`, production sweep, render tier), `lib/std/tui/*`, and headless CI paths depend on them. |
+| Remove | No | Active tests (`test_terminal_domain_batch`, production sweep, render tier), `lib/std/tui/*`, and headless CI paths depend on them. |
 | Keep + gate | **Yes** | Formalize as optional commercial surface with a budget freeze. |
 
 ## Build flag: `AURA_ENABLE_TUI`
