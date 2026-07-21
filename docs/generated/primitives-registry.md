@@ -4,7 +4,7 @@
 
 Central orchestration: `src/compiler/evaluator_primitives_registry.cpp` → `Evaluator::register_all_primitives()`.
 
-Scanned registrations in `src/**/*.cpp`: **518** (see [primitives.md](primitives.md) for the full name list).
+Scanned registrations in `src/**/*.cpp`: **515** (see [primitives.md](primitives.md) for the full name list).
 
 ## Agent discovery entry points
 

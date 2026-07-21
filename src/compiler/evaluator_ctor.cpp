@@ -121,13 +121,11 @@ Evaluator::Evaluator() {
 
     // Issue #697: backfill SV/EDA PrimMeta after compile partition registers
     // eda:run-verification-feedback and eda:demo-sv-self-evolution.
-    backfill_eda_sv_primitive_meta();
 
     // Issue #1416: tier-assign the 7 EDSL escape-hatch primitives
     // (Part 4 #1396) to kPrimSecPrivileged so the dispatch-site
     // capability gate in invoke_prim_with_telemetry can deny
-    // unauthorized calls. Called after backfill_eda_sv_primitive_meta
-    // so the dispatch gate sees the tier-assigned security_level.
+    // unauthorized calls.
     backfill_capability_tiers();
 
     // Issue #1356: rebuild HotTierTable after all registrations + meta backfill.
@@ -139,59 +137,6 @@ Evaluator::Evaluator() {
     }
 }
 
-void Evaluator::backfill_eda_sv_primitive_meta() {
-    primitives_.set_meta_for_name(
-        "eda:weaken-property",
-        DEFINE_PRIMITIVE_META(2, false, kPrimSafetyMutates, "sva",
-                              "Weaken SVA property with disable-iff clause on Property nodes.",
-                              "(int string) -> bool"));
-    primitives_.set_meta_for_name(
-        "eda:add-coverpoint-bin",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Append a named bin to a structured Coverpoint AST node.",
-                 .category = "sva",
-                 .schema = "(int string) -> bool"});
-    primitives_.set_meta_for_name(
-        "eda:update-constraint",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Append a constraint expression to a native Constraint AST node.",
-                 .category = "sva",
-                 .schema = "(int string) -> bool"});
-    primitives_.set_meta_for_name(
-        "eda:run-verification-feedback",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
-                 .doc = "Parse verification report and apply targeted SV mutate + re-emit.",
-                 .category = "verification",
-                 .schema = "(string string) -> bool"});
-    primitives_.set_meta_for_name(
-        "eda:demo-sv-self-evolution",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
-                 .doc = "Bounded EDA-SV verification self-evolution demo harness.",
-                 .category = "eda",
-                 .schema = "(string int) -> int"});
-    primitives_.set_meta_for_name(
-        "eda:run-commercial-simulator-stub",
-        PrimMeta{.arity = 2,
-                 .pure = false,
-                 .safety_flags = static_cast<std::uint8_t>(kPrimSafetyMutates | kPrimSafetyFiber),
-                 .doc = "Run commercial simulator stub: re-emit + validate SV for node.",
-                 .category = "eda",
-                 .schema = "(string int) -> bool"});
-    ;
-    ;
-    ;
-    ;
-    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-        m->primitive_eda_meta_backfill_total.fetch_add(10, std::memory_order_relaxed);
-}
 
 // Issue #1416: tier-assign the 7 EDSL escape-hatch primitives (Part 4
 // #1396) to kPrimSecPrivileged so the dispatch-site capability gate

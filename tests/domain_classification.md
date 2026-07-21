@@ -346,9 +346,7 @@
 - `test_issue_492.cpp`
 - `test_issue_493.cpp`
 - `test_issue_494.cpp`
-- `test_issue_496.cpp`
 - `test_issue_497.cpp`
-- `test_issue_498.cpp`
 - `test_issue_499.cpp`
 - `test_issue_501_hygiene.cpp`
 - `test_issue_501_phase4.cpp`
@@ -374,7 +372,6 @@
 - `test_issue_539_observability.cpp`
 - `test_issue_540_observability.cpp`
 - `test_issue_557_observability.cpp`
-- `test_issue_567_observability.cpp`
 - `test_issue_568_observability.cpp`
 - `test_issue_569_observability.cpp`
 - `test_issue_572_observability.cpp`
@@ -385,7 +382,6 @@
 - `test_issue_584_observability.cpp`
 - `test_issue_585_observability.cpp`
 - `test_issue_586_observability.cpp`
-- `test_issue_587_observability.cpp`
 - `test_issue_589.cpp`
 - `test_issue_590.cpp`
 - `test_issue_601.cpp`
@@ -433,13 +429,9 @@
 - `test_issue_689.cpp`
 - `test_issue_690.cpp`
 - `test_issue_691.cpp`
-- `test_issue_694.cpp`
 - `test_issue_695.cpp`
-- `test_issue_697.cpp`
-- `test_issue_698.cpp`
 - `test_issue_708.cpp`
 - `test_issue_709.cpp`
-- `test_issue_710.cpp`
 - `test_issue_711.cpp`
 - `test_issue_713.cpp`
 - `test_issue_715.cpp`

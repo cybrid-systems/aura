@@ -53,9 +53,7 @@ extern int aura_issue_633_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_496", aura_issue_496_run},
         {"test_issue_497", aura_issue_497_run},
-        {"test_issue_498", aura_issue_498_run},
         {"test_issue_500", aura_issue_500_run},
         {"test_issue_501_hygiene", aura_issue_501_hygiene_run},
         {"test_issue_502", aura_issue_502_run},
@@ -81,7 +79,6 @@ int main() {
         {"test_issue_534_observability", aura_issue_534_observability_run},
         {"test_issue_535_observability", aura_issue_535_observability_run},
         {"test_issue_557_observability", aura_issue_557_observability_run},
-        {"test_issue_567_observability", aura_issue_567_observability_run},
         {"test_issue_601", aura_issue_601_run},
         {"test_issue_603", aura_issue_603_run},
         {"test_issue_604", aura_issue_604_run},

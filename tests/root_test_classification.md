@@ -479,7 +479,6 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_query_pattern_hygiene_1609.cpp` | 157 | `keep` | no automatic streamline |
 | `test_query_pattern_hygiene_macrointroduced.cpp` | 315 | `keep` | no automatic streamline |
 | `test_raw_pointer_safety_1898.cpp` | 203 | `keep` | no automatic streamline |
-| `test_reflection_runtime_validate_macro_edsl_mutate.cpp` | 172 | `keep` | no automatic streamline |
 | `test_render_dispatch_linear_epoch_1676.cpp` | 158 | `keep` | no automatic streamline |
 | `test_render_ffi_hotpath.cpp` | 245 | `keep` | no automatic streamline |
 | `test_render_hotpath_observability_1674.cpp` | 150 | `keep` | no automatic streamline |
