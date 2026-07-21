@@ -17,6 +17,18 @@
     "add": {
       "description": "Micro eval path",
       "owner": "evaluator"
+    },
+    "query_pattern_simple": {
+      "min_delta_ms": 40,
+      "tolerance_percent": 30,
+      "description": "query:pattern after set-code; noisy under full-suite load (spikes 7→25ms)",
+      "owner": "query"
+    },
+    "query_pattern_with_let": {
+      "min_delta_ms": 40,
+      "tolerance_percent": 30,
+      "description": "query:pattern sibling; same suite-load variance as query_pattern_simple",
+      "owner": "query"
     }
   }
 }

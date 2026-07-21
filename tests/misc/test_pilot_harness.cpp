@@ -43,7 +43,9 @@ int aura_issue_harness_pilot_run() {
 
 // Bundle entry — AURA_ISSUE_BUNDLE_LIGHT calls this single entry which runs
 // both Step 1.2 + Step 1.3 demos in sequence (#1978 merged from 2 pilots).
-extern "C" int aura_issue_pilot_harness_run() {
+// C++ linkage (not extern "C"): matches generated tests/bundles/*_main.cpp
+// `extern int aura_issue_*_run()` declarations used by all issue bundles.
+int aura_issue_pilot_harness_run() {
     int rc1 = aura_issue_primitives_init_run();
     int rc2 = aura_issue_harness_pilot_run();
     return rc1 != 0 ? rc1 : rc2;
