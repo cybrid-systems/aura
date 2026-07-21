@@ -1397,8 +1397,8 @@ aura_add_issue_test(test_mutation_rollback_coverage)
 aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
-aura_add_issue_test(test_dirty_reason_verification_propagation_415)
-aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation_415)
+aura_add_issue_test(test_dirty_reason_verification_propagation)
+aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation)
 # Issue #508 slice: dead-coercion-zerooverhead-stats hash observability.
 # Issue #510 slice: eda-verification-stats hash observability.
 # Issue #511 slice: workspace-snapshot-stats hash observability.
@@ -1748,8 +1748,8 @@ aura_issue_test_link_llvm_jit(test_stable_ref_provenance_fiber_cow)
 # Issue #454: Reflection-to-EDSL bridge closed loop (FlatAST/marker/mutate).
 
 # Issue #594: Static reflection self-mod validation hook (Task6).
-aura_add_issue_test(test_static_reflect_selfmod_validation_task6_594)
-aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6_594)
+aura_add_issue_test(test_static_reflect_selfmod_validation_task6)
+aura_issue_test_link_llvm_jit(test_static_reflect_selfmod_validation_task6)
 # Issue #550: Dirty/Epoch Propagation + Incremental
 # solve_delta + Occurrence Re-Narrowing + Pass Short-Circuit
 # for reliable typed self-mod (P0). 9 scenarios validating:
