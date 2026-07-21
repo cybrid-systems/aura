@@ -23,6 +23,7 @@ module;
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.adt_runtime;
 
@@ -44,7 +45,6 @@ struct AdtCtorEntry {
 
 // Per-Evaluator ADT runtime (replaces the old global table + registration logic).
 export class AdtRuntime {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     using RegisterFn = std::function<void(std::string, PrimFn)>;
 

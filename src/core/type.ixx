@@ -37,6 +37,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.core.type;
 
@@ -153,7 +154,6 @@ export struct BitVecType {
 
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     TypeRegistry();
     ~TypeRegistry();

@@ -33,14 +33,14 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"                     // FNV constants (#901)
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.ir_cache_pure;
 
 import aura.core.ast;
 
 export namespace aura::compiler {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // ── should_relower ────────────────────────────────────────
 // Issue #126: pure decision function extracted from

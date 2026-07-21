@@ -16,6 +16,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 export module aura.core.arena;
 import std;
 import aura.core.error;
@@ -1269,7 +1270,6 @@ export struct ArenaAutoCompactPolicyStats {
 // or compilation unit. Enables fine-grained reset and memory reporting.
 //
 export class ArenaGroup {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     // Issue #187: compaction policy. When the fragmentation ratio
     // (capacity - used) / capacity exceeds this threshold (0.0-1.0),

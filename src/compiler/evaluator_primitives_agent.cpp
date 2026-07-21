@@ -37,6 +37,7 @@ module;
 #include <random>
 #include <thread>
 #include <unordered_map>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_AUTO_EVOLVE
@@ -54,7 +55,6 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 

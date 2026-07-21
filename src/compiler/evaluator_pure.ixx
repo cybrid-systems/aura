@@ -39,6 +39,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.evaluator_pure;
 
@@ -637,7 +638,6 @@ export inline types::EvalValue arithmetic_mul_pure(std::span<const types::EvalVa
 // of args that were non-zero. Useful for callers that want to
 // short-circuit on all-zeros.
 export inline aura::diag::Result<types::EvalValue>
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 arithmetic_div_pure(std::span<const types::EvalValue> args,
                     std::span<const std::string> string_heap, std::ostream* diag = nullptr)
     // Issue #213 follow-up: C++26 contract. Division by

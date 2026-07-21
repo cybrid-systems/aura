@@ -7,7 +7,8 @@ module;
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
-#include "prim_names.h" // #904
+#include "prim_names.h"                    // #904
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
@@ -18,7 +19,6 @@ import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
 import aura.diag;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 

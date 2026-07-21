@@ -4,13 +4,13 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
 import aura.compiler.value;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler::primitives_detail {
 

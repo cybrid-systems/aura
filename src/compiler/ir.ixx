@@ -11,6 +11,7 @@ module;
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.ir;
 import std;
@@ -885,7 +886,6 @@ export struct IRStatsSnapshot {
 };
 
 export inline IRStatsSnapshot compute_ir_stats(const IRModule& mod) {
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
     IRStatsSnapshot s;
     s.total_functions = mod.functions.size();
     for (const auto& func : mod.functions) {

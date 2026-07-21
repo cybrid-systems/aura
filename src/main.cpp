@@ -17,6 +17,7 @@
 #include "serve/http_health.h"
 #include "serve/aura_platform.h"
 #include "compiler/runtime_paths.h" // #906
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 import std;
 import aura.core;
@@ -35,7 +36,6 @@ import aura.diag;
 import aura.compiler.cache;
 import aura.compiler.value;
 import aura.repl;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // C-linkage bridge to reflection-based --inspect
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)

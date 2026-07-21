@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
@@ -20,7 +21,6 @@ import aura.compiler.macro_expansion;
 import aura.diag;
 import aura.parser.parser;
 import aura.compiler.soa_view;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::compiler {
 

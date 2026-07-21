@@ -6,13 +6,13 @@ module;
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.macro_expansion;
 
 import std;
 import aura.core.ast;
 import aura.compiler.evaluator_pure;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();

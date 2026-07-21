@@ -2,13 +2,13 @@ module;
 #include <bit>
 
 #include "jit_typed_mutation_stats.h"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.lowering;
 import std;
 import aura.core.ast;
 import aura.compiler.lowering_linear_types;
 import aura.compiler.value;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 namespace aura::compiler {
 

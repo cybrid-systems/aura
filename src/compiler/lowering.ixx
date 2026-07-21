@@ -7,6 +7,7 @@ module;
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 export module aura.compiler.lowering;
 import std;
@@ -446,6 +447,5 @@ export struct LowerSoAEmitSnapshot {
 };
 
 export const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept;
-#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V, aura::core::TransparentStringHash, std::equal_to<>>
 
 } // namespace aura::compiler
