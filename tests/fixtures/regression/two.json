@@ -1,0 +1,62 @@
+[
+  {
+    "name": "occ-hash",
+    "code": "(let ((x (hash))) (if (hash? x) 42 0))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "occ-integer",
+    "code": "(let ((x 42)) (if (integer? x) (+ x 1) 0))",
+    "expect_out": "43",
+    "expect_err": ""
+  },
+  {
+    "name": "try-catch-error",
+    "code": "(try (display (car ())) (catch (e) \"caught\"))",
+    "expect_out": "caught",
+    "expect_err": ""
+  },
+  {
+    "name": "try-catch-ok",
+    "code": "(try \"ok\" (catch (e) \"error\"))",
+    "expect_out": "ok",
+    "expect_err": ""
+  },
+  {
+    "name": "eval-async-stdin-fallback",
+    "code": "(display (eval:async \"(+ 1 2)\"))",
+    "expect_out": "3",
+    "expect_err": ""
+  },
+  {
+    "name": "eval-capture",
+    "code": "(begin (set-code \"(display 42)\") (eval-current-output))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "effect-mutate-basic",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(display (f 41))\")(typecheck-current)(eval-current))",
+    "expect_out": "42",
+    "expect_err": ""
+  },
+  {
+    "name": "effect-type-IO",
+    "code": "(type-of 42)",
+    "expect_out": "Int",
+    "expect_err": ""
+  },
+  {
+    "name": "match-missing",
+    "code": "(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((B) 2)))",
+    "expect_out": "1",
+    "expect_err": "match warning"
+  },
+  {
+    "name": "match-wildcard",
+    "code": "(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))",
+    "expect_out": "1",
+    "expect_err": ""
+  }
+]
