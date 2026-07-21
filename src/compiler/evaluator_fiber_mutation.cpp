@@ -934,7 +934,11 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
     struct Slot {
         std::unordered_map<std::uint64_t, int> depths;
     };
-    thread_local Slot* slot = new Slot();
+    // thread_local unique_ptr auto-deletes the Slot on thread exit;
+    // the raw `Slot*` pattern leaks one Slot per thread that ever
+    // touched this path. std::unique_ptr keeps the same `slot->depths`
+    // access pattern for callers.
+    thread_local std::unique_ptr<Slot> slot = std::make_unique<Slot>();
     const auto id = ev->instance_id();
     auto it = slot->depths.find(id);
     if (it == slot->depths.end()) {
