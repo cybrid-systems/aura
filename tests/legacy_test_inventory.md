@@ -16,8 +16,8 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 635 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 18 | Preferred destination suites |
-| **Total scanned** | **653** | |
+| `tests/domain/test_*.cpp` | 10 | Preferred destination suites |
+| **Total scanned** | **645** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 68 | 0 | 5 | 73 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 0 | 3 | 179 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 176 | 0 | 1 | 177 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 50 | 0 | 1 | 51 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 12 | 0 | 0 | 12 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 58 | 0 | 1 | 59 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 36 | 0 | 3 | 39 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 36 | 0 | 0 | 36 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 32 | 0 | 0 | 32 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 203 | 0 | 5 | 208 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 203 | 0 | 2 | 205 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -171,14 +171,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/domain/test_domain_production_sweep.cpp`
 - `tests/domain/test_domain_typed_mutate.cpp`
 - `tests/domain/arena/test_gc_batch.cpp`
-- `tests/domain/test_issue_1943.cpp`
-- `tests/domain/test_issue_1950.cpp`
-- `tests/domain/test_issue_1951.cpp`
-- `tests/domain/test_issue_1952.cpp`
-- `tests/domain/test_issue_1953.cpp`
-- `tests/domain/test_issue_1954.cpp`
-- `tests/domain/test_issue_1955.cpp`
-- `tests/domain/test_issue_1956.cpp`
 - `tests/domain/test_obs_schema_matrix.cpp`
 
 ## Migration priority roadmap
@@ -298,17 +290,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_767.cpp` (#767) — test_issue_767.cpp — Issue #767: Arena Auto-Compact Policy +
 - `tests/issues/test_issue_797.cpp` (#797) — test_issue_797.cpp — Issue #797: P0 high-perf C++26
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (179)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (177)
 
 **Target:** tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (3)
+#### domain/ (1)
 
 - `tests/domain/test_domain_typed_mutate.cpp` (—) [domain_suite] — test_domain_typed_mutate.cpp — Domain suite: typed mutate / type-system gates
-- `tests/domain/test_issue_1950.cpp` (#1950) [small, domain_suite] — tests/domain/test_issue_1950.cpp — Wave 4 relocate from tests/test_issue_1950.cpp
-- `tests/domain/test_issue_1951.cpp` (#1951) [small, domain_suite] — tests/domain/test_issue_1951.cpp — Wave 4 relocate from tests/test_issue_1951.cpp
 
 #### issues/ (176)
 
@@ -644,17 +634,11 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_788.cpp` (#788) — test_issue_788.cpp — Issue #788: P0 first-class
 - `tests/issues/test_issue_edsl_hygiene_atomic.cpp` (—) — test_issue_edsl_hygiene_atomic.cpp — Issue #425: EDSL hygiene
 
-### `jit_incremental` — JIT / AOT / incremental relower (39)
+### `jit_incremental` — JIT / AOT / incremental relower (36)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
-
-#### domain/ (3)
-
-- `tests/domain/test_issue_1943.cpp` (#1943) [domain_suite] — tests/domain/test_issue_1943.cpp — Wave 4 relocate from tests/test_issue_1943.cpp
-- `tests/domain/test_issue_1952.cpp` (#1952) [small, domain_suite] — tests/domain/test_issue_1952.cpp — Wave 4 relocate from tests/test_issue_1952.cpp
-- `tests/domain/test_issue_1956.cpp` (#1956) [domain_suite] — tests/domain/test_issue_1956.cpp — Wave 4 relocate from tests/test_issue_1956.cpp
 
 #### issues/ (36)
 
@@ -736,18 +720,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (208)
+### `observability` — Observability / metrics / query:*-stats (205)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (5)
+#### domain/ (2)
 
 - `tests/domain/test_domain_production_sweep.cpp` (—) [small, domain_suite] — test_domain_production_sweep.cpp — Domain suite: production sweep/hardening/safety
-- `tests/domain/test_issue_1953.cpp` (#1953) [domain_suite] — tests/domain/test_issue_1953.cpp — Wave 4 relocate from tests/test_issue_1953.cpp
-- `tests/domain/test_issue_1954.cpp` (#1954) [domain_suite] — tests/domain/test_issue_1954.cpp — Wave 4 relocate from tests/test_issue_1954.cpp
-- `tests/domain/test_issue_1955.cpp` (#1955) [domain_suite] — tests/domain/test_issue_1955.cpp — Wave 4 relocate from tests/test_issue_1955.cpp
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability query schemas
 
 #### issues/ (203)
