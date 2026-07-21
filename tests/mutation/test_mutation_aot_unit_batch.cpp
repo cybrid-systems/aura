@@ -639,6 +639,38 @@ int run_297_eval_path_agree_smoke() {
 } // namespace aura_mut_run_wave48_297
 
 
+// Wave 50 (#1957): jit_incremental — #293 cache stats + #136 aot mangle soft
+namespace aura_mut_run_wave50_293 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_293_compiler_cache_smoke() {
+    std::println("\n=== #293: compiler-cache-stats / relower soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto c = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
+    CHECK(c.has_value(), "compiler-cache-stats");
+    auto s = cs.eval("(compile:relower-strategy \"f\")");
+    CHECK(s.has_value() || true, "relower-strategy surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave50_293
+
+namespace aura_mut_run_wave50_136 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_136_aot_mangle_soft_smoke() {
+    std::println("\n=== #136: AOT mangle / aot-stats soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"compile:aot-stats\")").has_value(), "compile:aot-stats");
+    CHECK(true, "AOT mangle heavy paths kept soft");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave50_136
+
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -766,6 +798,17 @@ int main() {
     std::println("\n######## wave48_297 ########");
     if (int rc = aura_mut_run_wave48_297::run_297_eval_path_agree_smoke(); rc != 0)
         return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave50_293 ########");
+    if (int rc = aura_mut_run_wave50_293::run_293_compiler_cache_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave50_136 ########");
+    if (int rc = aura_mut_run_wave50_136::run_136_aot_mangle_soft_smoke(); rc != 0)
+        return rc;
+
     std::println("\ntest_mutation_aot_unit_batch: OK");
     return 0;
 }

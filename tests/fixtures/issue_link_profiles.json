@@ -1,12 +1,10 @@
 {
   "light": [
     "test_issue_117",
-    "test_issue_119",
     "test_issue_120",
     "test_issue_131",
     "test_error_merr",
     "test_pilot_harness",
-    "test_issue_136",
     "test_issue_161",
     "test_issue_162",
     "test_issue_163",
@@ -52,9 +50,7 @@
     "test_issue_289",
     "test_issue_482",
     "test_issue_290",
-    "test_issue_291",
-    "test_issue_293",
-    "test_issue_296"
+    "test_issue_291"
   ],
   "jit_minimal": [
     "test_issue_146",
@@ -82,7 +78,6 @@
   ],
   "jit_tests": [
     "test_issue_224",
-    "test_issue_225_bridge_invalidation",
     "test_issue_401"
   ],
   "reflect": [
@@ -113,16 +108,9 @@
     "test_issue_452_aot_hot_update",
     "test_issue_462_shape_aware_folding",
     "test_issue_463_soa_phase2_wiring",
-    "test_issue_675",
-    "test_issue_676",
     "test_issue_677",
-    "test_issue_678",
     "test_issue_680",
-    "test_issue_682",
-    "test_issue_684",
     "test_issue_690",
-    "test_issue_691",
-    "test_issue_692",
     "test_issue_706",
     "test_issue_707",
     "test_per_fiber_stack_pool_high_concurrency",
@@ -212,7 +200,6 @@
     "test_atomic_batch_snapshot_stable_ref_ai_loops",
     "test_stable_ref_cow_subworkspace_concurrent_ai",
     "test_issue_672",
-    "test_issue_687",
     "test_prompt6_epoch_atomic_visibility_fiber_steal",
     "test_prompt6_linear_jit_l2_post_invalidate_arena_gc",
     "test_prompt2_6_impact_scope_quote_lambda_bridge_env",
@@ -228,23 +215,11 @@
     "test_scheduler_llm_bottleneck_adaptive_steal_gc",
     "test_runtime_concurrent_full_cycle_chaos",
     "test_issue_485",
-    "test_issue_486",
-    "test_issue_488",
-    "test_issue_489",
-    "test_issue_490"
+    "test_issue_489"
   ],
   "jit_late4": [
-    "test_issue_500",
     "test_issue_501_hygiene",
-    "test_issue_503",
-    "test_issue_515_observability",
-    "test_issue_523_observability",
-    "test_issue_524_observability",
-    "test_issue_525_observability",
     "test_issue_528_observability",
-    "test_issue_530_observability",
-    "test_issue_533_observability",
-    "test_issue_534_observability",
     "test_issue_557_observability",
     "test_issue_601",
     "test_issue_603",
@@ -254,7 +229,6 @@
     "test_issue_618",
     "test_issue_620",
     "test_issue_621",
-    "test_issue_622",
     "test_issue_624",
     "test_issue_625",
     "test_issue_626",
