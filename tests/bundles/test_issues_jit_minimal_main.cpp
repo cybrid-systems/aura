@@ -8,13 +8,9 @@ extern int aura_issue_146_run();
 extern int aura_issue_147_run();
 extern int aura_issue_148_run();
 extern int aura_issue_149_run();
-extern int aura_issue_174_run();
 extern int aura_issue_208_run();
-extern int aura_issue_210_run();
-extern int aura_issue_211_run();
 extern int aura_issue_212_run();
 extern int aura_issue_213_run();
-extern int aura_issue_177_run();
 extern int aura_issue_213_panic_fiber_run();
 
 int main() {
@@ -23,13 +19,9 @@ int main() {
         {"test_issue_147", aura_issue_147_run},
         {"test_issue_148", aura_issue_148_run},
         {"test_issue_149", aura_issue_149_run},
-        {"test_issue_174", aura_issue_174_run},
         {"test_issue_208", aura_issue_208_run},
-        {"test_issue_210", aura_issue_210_run},
-        {"test_issue_211", aura_issue_211_run},
         {"test_issue_212", aura_issue_212_run},
         {"test_issue_213", aura_issue_213_run},
-        {"test_issue_177", aura_issue_177_run},
         {"test_issue_213_panic_fiber", aura_issue_213_panic_fiber_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));

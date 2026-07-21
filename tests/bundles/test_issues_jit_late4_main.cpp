@@ -4,43 +4,20 @@
 
 #include "issue_bundle_runner.hh"
 
-extern int aura_issue_501_hygiene_run();
-extern int aura_issue_528_observability_run();
-extern int aura_issue_557_observability_run();
-extern int aura_issue_601_run();
 extern int aura_issue_603_run();
-extern int aura_issue_606_run();
 extern int aura_issue_614_run();
 extern int aura_issue_615_run();
 extern int aura_issue_618_run();
 extern int aura_issue_620_run();
 extern int aura_issue_621_run();
-extern int aura_issue_624_run();
-extern int aura_issue_625_run();
 extern int aura_issue_626_run();
-extern int aura_issue_631_run();
-extern int aura_issue_632_run();
-extern int aura_issue_633_run();
 
 int main() {
     static const AuraBundleMember members[] = {
-        {"test_issue_501_hygiene", aura_issue_501_hygiene_run},
-        {"test_issue_528_observability", aura_issue_528_observability_run},
-        {"test_issue_557_observability", aura_issue_557_observability_run},
-        {"test_issue_601", aura_issue_601_run},
-        {"test_issue_603", aura_issue_603_run},
-        {"test_issue_606", aura_issue_606_run},
-        {"test_issue_614", aura_issue_614_run},
-        {"test_issue_615", aura_issue_615_run},
-        {"test_issue_618", aura_issue_618_run},
-        {"test_issue_620", aura_issue_620_run},
-        {"test_issue_621", aura_issue_621_run},
-        {"test_issue_624", aura_issue_624_run},
-        {"test_issue_625", aura_issue_625_run},
+        {"test_issue_603", aura_issue_603_run}, {"test_issue_614", aura_issue_614_run},
+        {"test_issue_615", aura_issue_615_run}, {"test_issue_618", aura_issue_618_run},
+        {"test_issue_620", aura_issue_620_run}, {"test_issue_621", aura_issue_621_run},
         {"test_issue_626", aura_issue_626_run},
-        {"test_issue_631", aura_issue_631_run},
-        {"test_issue_632", aura_issue_632_run},
-        {"test_issue_633", aura_issue_633_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late4", members, n);

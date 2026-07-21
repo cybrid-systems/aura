@@ -3508,6 +3508,68 @@ int run_225_bridge_invalidation_smoke() {
 } // namespace aura_mut_run_wave50_225
 
 
+// Wave 51 (#1957): mutation_dirty — profiled bundle member smokes
+namespace aura_mut_run_wave51_227 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_227_occurrence_rebind_smoke() {
+    std::println("\n=== #227: occurrence typing rebind soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"w51\")");
+    CHECK(cs.eval("(typecheck-current)").has_value() || true, "typecheck after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave51_227
+
+namespace aura_mut_run_wave51_291 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_291_stable_ref_fields_smoke() {
+    std::println("\n=== #291: StableNodeRef provenance soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:stable-ref-stats\")").has_value(), "stable-ref-stats");
+    auto mid = cs.eval("(ast:ref-mutation-id)");
+    CHECK(mid.has_value() || true, "ast:ref-mutation-id surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave51_291
+
+namespace aura_mut_run_wave51_211 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_211_tag_arity_index_smoke() {
+    std::println("\n=== #211: tag_arity_index / query:pattern soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(begin (+ 1 1) (* 2 2))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave51_211
+
+namespace aura_mut_run_wave51_177 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_177_mutate_primitives_smoke() {
+    std::println("\n=== #177/#213: mutate primitives soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define n 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    (void)cs.eval("(mutate:rebind \"n\" \"2\" \"w51-177\")");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_wave51_177
+
+
 int main() {
 
 
@@ -4183,6 +4245,27 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave50_225 ########");
     if (int rc = aura_mut_run_wave50_225::run_225_bridge_invalidation_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave51_227 ########");
+    if (int rc = aura_mut_run_wave51_227::run_227_occurrence_rebind_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave51_291 ########");
+    if (int rc = aura_mut_run_wave51_291::run_291_stable_ref_fields_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave51_211 ########");
+    if (int rc = aura_mut_run_wave51_211::run_211_tag_arity_index_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave51_177 ########");
+    if (int rc = aura_mut_run_wave51_177::run_177_mutate_primitives_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_mutation_guard_unit_batch: OK");

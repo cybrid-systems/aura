@@ -882,6 +882,23 @@ int run_119_fiber_join_type_smoke() {
 } // namespace aura_fiber_run_wave50_119
 
 
+// Wave 51 (#1957): fiber_orch — #707 per-fiber stack pool stats soft
+namespace aura_fiber_run_wave51_707 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_707_stack_pool_stats_smoke() {
+    std::println("\n=== #707: per-fiber-stack-pool-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:per-fiber-stack-pool-stats\")").has_value(),
+          "per-fiber-stack-pool-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave51_707
+
+
 int main() {
 
 
@@ -1005,6 +1022,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave50_119 ########");
     if (int rc = aura_fiber_run_wave50_119::run_119_fiber_join_type_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave51_707 ########");
+    if (int rc = aura_fiber_run_wave51_707::run_707_stack_pool_stats_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);
