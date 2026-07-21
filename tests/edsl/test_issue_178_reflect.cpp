@@ -9,7 +9,7 @@
 
 #include "reflect/reflect.hh"
 #include "nodeview_wire.hh"
-#include "issues/test_issue_178_bridge.h"
+#include "edsl/test_issue_178_bridge.h"
 
 namespace {
 

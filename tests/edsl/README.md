@@ -22,3 +22,15 @@ ninja -C build test_edsl_pattern_hygiene_batch test_edsl_macro_hygiene_batch tes
 ```
 
 Schema-only hygiene gates also live in `tests/domain/test_domain_gates_batch.cpp` — do not re-add those here.
+
+## NodeView reflection (#178 / #268)
+
+Full P2996 split-TU suite (relocated from `tests/issues/` wave 59):
+
+| File | Role |
+|------|------|
+| `test_issue_178.cpp` | module TU — real `NodeView` + `aura_issue_178_run()` |
+| `test_issue_178_reflect.cpp` | non-module + `-freflection` wire roundtrip |
+| `test_issue_178_bridge.h` | cross-TU bridge |
+
+Also soft-smoked in `test_edsl_macro_hygiene_batch` (`run_178_reflect_surface_smoke`).

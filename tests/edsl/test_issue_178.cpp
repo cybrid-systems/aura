@@ -6,9 +6,9 @@
 // GCC 16.1 ICEs when one TU imports aura.core.ast and includes
 // reflect.hh (<meta>). This module TU uses the REAL
 // aura::ast::NodeView; reflection runs in
-// test_issue_178_reflect.cpp (implements the bridge).
+// tests/edsl/test_issue_178_reflect.cpp (implements the bridge).
 //
-// Bridge API: tests/issues/test_issue_178_bridge.h
+// Bridge API: tests/edsl/test_issue_178_bridge.h
 // Declared here by hand (must stay in sync with that header). This TU
 // is built with CXX_MODULE_STD; #including the bridge header after
 // `import std` re-introduces conflicting std declarations via
@@ -18,7 +18,7 @@
 import std;
 import aura.core.ast;
 
-// Keep in sync with tests/issues/test_issue_178_bridge.h
+// Keep in sync with tests/edsl/test_issue_178_bridge.h
 void issue178_reset_counters();
 int issue178_failed_count();
 void issue178_run_reflect_member_tests();
