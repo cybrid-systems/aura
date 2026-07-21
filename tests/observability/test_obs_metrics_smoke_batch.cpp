@@ -329,6 +329,68 @@ int run_388_inline_pass_stats_smoke() {
 }
 } // namespace aura_obs_run_wave29_388
 
+// ═══ Wave 30 (#1957): observability metrics smokes ═══
+
+namespace aura_obs_run_wave30_1487 {
+int run_1487_metrics_smoke() {
+    std::println("\n=== #1487: resource-quota-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
+    CHECK(r.has_value(), "query:resource-quota-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_1487
+
+namespace aura_obs_run_wave30_1498 {
+int run_1498_metrics_smoke() {
+    std::println("\n=== #1498: resource-quota-stats (1498) smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
+    CHECK(r.has_value(), "query:resource-quota-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_1498
+
+namespace aura_obs_run_wave30_331 {
+int run_331_metrics_smoke() {
+    std::println("\n=== #331: ast-ops-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:ast-ops-stats\")");
+    CHECK(r.has_value(), "compile:ast-ops-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_331
+
+namespace aura_obs_run_wave30_338 {
+int run_338_metrics_smoke() {
+    std::println("\n=== #338: and-or-precision-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:and-or-precision-stats\")");
+    CHECK(r.has_value(), "compile:and-or-precision-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_338
+
+namespace aura_obs_run_wave30_340 {
+int run_340_metrics_smoke() {
+    std::println("\n=== #340: occ-cache-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:occ-cache-stats\")");
+    CHECK(r.has_value(), "compile:occ-cache-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_340
+
+namespace aura_obs_run_wave30_341 {
+int run_341_metrics_smoke() {
+    std::println("\n=== #341: match-narrowing-stats smoke ===");
+    CompilerService cs;
+    auto r = cs.eval("(engine:metrics \"compile:match-narrowing-stats\")");
+    CHECK(r.has_value(), "compile:match-narrowing-stats reachable");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave30_341
+
 int main() {
 
 
@@ -394,6 +456,30 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_obs_run_wave29_388::run_388_inline_pass_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_1487::run_1487_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_1498::run_1498_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_331::run_331_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_338::run_338_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_340::run_340_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_obs_run_wave30_341::run_341_metrics_smoke(); rc != 0)
         return rc;
     std::println("\ntest_obs_metrics_smoke_batch: OK");
     return 0;
