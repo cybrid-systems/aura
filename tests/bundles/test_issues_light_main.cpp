@@ -5,12 +5,10 @@
 #include "issue_bundle_runner.hh"
 
 extern int aura_issue_117_run();
-extern int aura_issue_119_run();
 extern int aura_issue_120_run();
 extern int aura_issue_131_run();
 extern int aura_issue_error_merr_run();
 extern int aura_issue_pilot_harness_run();
-extern int aura_issue_136_run();
 extern int aura_issue_161_run();
 extern int aura_issue_162_run();
 extern int aura_issue_163_run();
@@ -25,12 +23,10 @@ extern int aura_issue_243_run();
 int main() {
     static const AuraBundleMember members[] = {
         {"test_issue_117", aura_issue_117_run},
-        {"test_issue_119", aura_issue_119_run},
         {"test_issue_120", aura_issue_120_run},
         {"test_issue_131", aura_issue_131_run},
         {"test_error_merr", aura_issue_error_merr_run},
         {"test_pilot_harness", aura_issue_pilot_harness_run},
-        {"test_issue_136", aura_issue_136_run},
         {"test_issue_161", aura_issue_161_run},
         {"test_issue_162", aura_issue_162_run},
         {"test_issue_163", aura_issue_163_run},

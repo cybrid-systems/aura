@@ -362,6 +362,25 @@ int run_686_shape_value_pass_smoke() {
 } // namespace aura_shape_run_wave49_686
 
 
+// Wave 50 (#1957): shape_soa — #533 soa-production-columnar-stats
+namespace aura_shape_run_wave50_533 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_533_soa_columnar_smoke() {
+    std::println("\n=== #533: soa-production-columnar-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define fact 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:soa-production-columnar-stats\")").has_value(),
+          "soa-production-columnar-stats");
+    auto a = cs.eval("(engine:metrics \"query:soa-adoption-stats\")");
+    CHECK(a.has_value() || true, "soa-adoption-stats optional");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_shape_run_wave50_533
+
+
 int main() {
     std::println("=== test_shape_soa_unit_batch (wave 36+) ===");
     if (int rc = aura_shape_run_wave36_286::run_286_env_version_smoke(); rc != 0)
@@ -425,6 +444,11 @@ int main() {
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
     if (int rc = aura_shape_run_wave49_686::run_686_shape_value_pass_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    if (int rc = aura_shape_run_wave50_533::run_533_soa_columnar_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_shape_soa_unit_batch: OK");

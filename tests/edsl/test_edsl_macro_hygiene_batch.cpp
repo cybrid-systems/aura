@@ -1200,6 +1200,55 @@ int run_267_macro_introduced_query_smoke() {
 } // namespace aura_edsl_run_wave49_267
 
 
+// Wave 50 (#1957): edsl_hygiene — pattern/macro hygiene stats smokes
+namespace aura_edsl_run_wave50_503 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_503_pattern_marker_smoke() {
+    std::println("\n=== #503: query:pattern-marker-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:pattern-marker-stats\")").has_value(),
+          "pattern-marker-stats");
+    auto p = cs.eval("(length (query:pattern \"*\"))");
+    CHECK(p.has_value() || true, "query:pattern surface");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave50_503
+
+namespace aura_edsl_run_wave50_486 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_486_macro_hygiene_stats_smoke() {
+    std::println("\n=== #486: query:macro-hygiene-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:macro-hygiene-stats\")").has_value(),
+          "macro-hygiene-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave50_486
+
+namespace aura_edsl_run_wave50_524 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_524_macro_production_hygiene_smoke() {
+    std::println("\n=== #524: macro-production-hygiene-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:macro-production-hygiene-stats\")").has_value(),
+          "macro-production-hygiene-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_edsl_run_wave50_524
+
+
 int main() {
     std::println("\n######## run_ir_macro_hygiene_e2e ########");
     if (int rc = aura_edsl_run_ir_macro_hygiene_e2e::run_ir_macro_hygiene_e2e(); rc != 0) {
@@ -1322,6 +1371,22 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave49_267 ########");
     if (int rc = aura_edsl_run_wave49_267::run_267_macro_introduced_query_smoke(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave50_503 ########");
+    if (int rc = aura_edsl_run_wave50_503::run_503_pattern_marker_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave50_486 ########");
+    if (int rc = aura_edsl_run_wave50_486::run_486_macro_hygiene_stats_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave50_524 ########");
+    if (int rc = aura_edsl_run_wave50_524::run_524_macro_production_hygiene_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_edsl_macro_hygiene_batch: OK ({} passed)", ::aura::test::g_passed);

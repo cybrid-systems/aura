@@ -35,8 +35,6 @@ extern int aura_issue_289_run();
 extern int aura_issue_482_run();
 extern int aura_issue_290_run();
 extern int aura_issue_291_run();
-extern int aura_issue_293_run();
-extern int aura_issue_296_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -55,8 +53,7 @@ int main() {
         {"test_issue_240", aura_issue_240_run}, {"test_issue_244", aura_issue_244_run},
         {"test_issue_228", aura_issue_228_run}, {"test_issue_289", aura_issue_289_run},
         {"test_issue_482", aura_issue_482_run}, {"test_issue_290", aura_issue_290_run},
-        {"test_issue_291", aura_issue_291_run}, {"test_issue_293", aura_issue_293_run},
-        {"test_issue_296", aura_issue_296_run},
+        {"test_issue_291", aura_issue_291_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit", members, n);

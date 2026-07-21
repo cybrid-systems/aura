@@ -28,7 +28,6 @@ extern int aura_issue_671_run();
 extern int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run();
 extern int aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run();
 extern int aura_issue_672_run();
-extern int aura_issue_687_run();
 extern int aura_issue_prompt6_epoch_atomic_visibility_fiber_steal_run();
 extern int aura_issue_prompt6_linear_jit_l2_post_invalidate_arena_gc_run();
 extern int aura_issue_prompt2_6_impact_scope_quote_lambda_bridge_env_run();
@@ -44,10 +43,7 @@ extern int aura_issue_longrunning_infra_primitives_run();
 extern int aura_issue_scheduler_llm_bottleneck_adaptive_steal_gc_run();
 extern int aura_issue_runtime_concurrent_full_cycle_chaos_run();
 extern int aura_issue_485_run();
-extern int aura_issue_486_run();
-extern int aura_issue_488_run();
 extern int aura_issue_489_run();
-extern int aura_issue_490_run();
 
 int main() {
     static const AuraBundleMember members[] = {
@@ -78,7 +74,6 @@ int main() {
         {"test_stable_ref_cow_subworkspace_concurrent_ai",
          aura_issue_stable_ref_cow_subworkspace_concurrent_ai_run},
         {"test_issue_672", aura_issue_672_run},
-        {"test_issue_687", aura_issue_687_run},
         {"test_prompt6_epoch_atomic_visibility_fiber_steal",
          aura_issue_prompt6_epoch_atomic_visibility_fiber_steal_run},
         {"test_prompt6_linear_jit_l2_post_invalidate_arena_gc",
@@ -105,10 +100,7 @@ int main() {
         {"test_runtime_concurrent_full_cycle_chaos",
          aura_issue_runtime_concurrent_full_cycle_chaos_run},
         {"test_issue_485", aura_issue_485_run},
-        {"test_issue_486", aura_issue_486_run},
-        {"test_issue_488", aura_issue_488_run},
         {"test_issue_489", aura_issue_489_run},
-        {"test_issue_490", aura_issue_490_run},
     };
     constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
     return aura_run_issue_bundle("jit_late3", members, n);

@@ -16,16 +16,9 @@ extern int aura_issue_445_openclaw_integration_run();
 extern int aura_issue_452_aot_hot_update_run();
 extern int aura_issue_462_shape_aware_folding_run();
 extern int aura_issue_463_soa_phase2_wiring_run();
-extern int aura_issue_675_run();
-extern int aura_issue_676_run();
 extern int aura_issue_677_run();
-extern int aura_issue_678_run();
 extern int aura_issue_680_run();
-extern int aura_issue_682_run();
-extern int aura_issue_684_run();
 extern int aura_issue_690_run();
-extern int aura_issue_691_run();
-extern int aura_issue_692_run();
 extern int aura_issue_706_run();
 extern int aura_issue_707_run();
 extern int aura_issue_per_fiber_stack_pool_high_concurrency_run();
@@ -57,16 +50,9 @@ int main() {
         {"test_issue_452_aot_hot_update", aura_issue_452_aot_hot_update_run},
         {"test_issue_462_shape_aware_folding", aura_issue_462_shape_aware_folding_run},
         {"test_issue_463_soa_phase2_wiring", aura_issue_463_soa_phase2_wiring_run},
-        {"test_issue_675", aura_issue_675_run},
-        {"test_issue_676", aura_issue_676_run},
         {"test_issue_677", aura_issue_677_run},
-        {"test_issue_678", aura_issue_678_run},
         {"test_issue_680", aura_issue_680_run},
-        {"test_issue_682", aura_issue_682_run},
-        {"test_issue_684", aura_issue_684_run},
         {"test_issue_690", aura_issue_690_run},
-        {"test_issue_691", aura_issue_691_run},
-        {"test_issue_692", aura_issue_692_run},
         {"test_issue_706", aura_issue_706_run},
         {"test_issue_707", aura_issue_707_run},
         {"test_per_fiber_stack_pool_high_concurrency",
