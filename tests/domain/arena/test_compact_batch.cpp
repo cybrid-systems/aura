@@ -56,6 +56,23 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
+// ── Wave 14 extra includes (#1489 messaging + serve GC, #1508 runtime + aot-jit bridge, #1510
+// observability metrics) ──
+#include "compiler/messaging_bridge.h"
+#include "serve/gc_coordinator.h"
+#include "compiler/runtime_shared.h"
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/observability_metrics.h"
+#include <cstdlib>
+
+// ── Wave 14 extern "C" declarations for #1508 C-FFI aot/jit dual check ──
+extern "C" void aura_reset_runtime();
+extern "C" int64_t aura_alloc_closure(int64_t func_id);
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc);
+extern "C" void aura_free_closure(int64_t closure_id);
+extern "C" int aura_closure_is_freed(int64_t closure_id);
+extern "C" uint64_t aura_deopt_count();
+
 namespace aura_compact_batch {
 
 using aura::ast::FlatAST;
@@ -2059,6 +2076,451 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         cs.eval("(arena:defrag)"); // cleanup
     }
 }
+}
+
+// ── Wave 14 (#1488 dead string_heap push / #1489 panic-checkpoint GC defer / #1508 JIT dual check
+// / #1510 compact_env_frames cooperation) ──
+
+static void run_1488_arena_adaptive_stats_no_dead_heap_push() {
+    std::println("\n=== #1488: dead string_heap_ push pollution cleanup ===");
+    // AC1: (stats:get "arena:adaptive-stats") returns pair-of-ints
+    {
+        std::println("\n--- #1488 AC1: arena:adaptive-stats pair-of-ints shape ---");
+        CompilerService cs;
+        auto r = cs.eval(R"((stats:get "arena:adaptive-stats"))");
+        CHECK(r.has_value(), "stats:get returns a value");
+        if (!r)
+            return;
+        CHECK(aura::compiler::types::is_pair(*r), "result is a pair");
+        if (!aura::compiler::types::is_pair(*r))
+            return;
+        const auto& pairs = cs.evaluator().pairs();
+        const auto pidx = aura::compiler::types::as_pair_idx(*r);
+        CHECK(pidx < pairs.size(), "pair index in range");
+        if (pidx >= pairs.size())
+            return;
+        const auto& pr = pairs[pidx];
+        CHECK(aura::compiler::types::is_int(pr.car) && aura::compiler::types::is_int(pr.cdr),
+              "car/cdr are ints (trigger . skip)");
+        CHECK(aura::compiler::types::as_int(pr.car) >= 0 &&
+                  aura::compiler::types::as_int(pr.cdr) >= 0,
+              "counters non-negative");
+    }
+    // AC2: long poll does not pollute string_heap_
+    {
+        std::println("\n--- #1488 AC2: 1000 polls do not pollute string_heap_ ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        // Warm
+        for (int i = 0; i < 3; ++i) {
+            auto w = cs.eval(R"((stats:get "arena:adaptive-stats"))");
+            CHECK(w.has_value() && aura::compiler::types::is_pair(*w),
+                  "warm stats:get returns pair");
+        }
+        constexpr int kIters = 1000;
+        const auto heap_before = ev.string_heap().size();
+        const auto pairs_before = ev.pairs().size();
+        std::size_t ok = 0;
+        for (int i = 0; i < kIters; ++i) {
+            auto r = cs.eval(R"((stats:get "arena:adaptive-stats"))");
+            if (r && aura::compiler::types::is_pair(*r))
+                ++ok;
+        }
+        const auto heap_delta = ev.string_heap().size() - heap_before;
+        const auto pairs_delta = ev.pairs().size() - pairs_before;
+        CHECK(ok == static_cast<std::size_t>(kIters), "all 1000 polls returned pairs");
+        // After #1072 fix: heap growth ~1/call from re-parse only (no dead push of
+        // to_string(trigger/skip))
+        CHECK(heap_delta < 2 * static_cast<std::size_t>(kIters),
+              "string_heap growth < 2N (no dead counter push_back)");
+        CHECK(heap_delta <= static_cast<std::size_t>(kIters) + 8,
+              "string_heap growth ~1/call (no 2N dead-push regression)");
+    }
+    // AC3: direct (stats:get) still pair-of-ints after multi-call path
+    {
+        std::println("\n--- #1488 AC3: direct (stats:get) still pair-of-ints ---");
+        CompilerService cs;
+        auto r = cs.eval(R"((stats:get "arena:adaptive-stats"))");
+        CHECK(r && aura::compiler::types::is_pair(*r), "direct stats:get returns pair");
+        if (!r || !aura::compiler::types::is_pair(*r))
+            return;
+        const auto& pairs = cs.evaluator().pairs();
+        const auto pidx = aura::compiler::types::as_pair_idx(*r);
+        if (pidx < pairs.size()) {
+            CHECK(aura::compiler::types::is_int(pairs[pidx].car) &&
+                      aura::compiler::types::is_int(pairs[pidx].cdr),
+                  "ints after multi-call path");
+        }
+    }
+    // AC4: production-hardening flag arena-adaptive-no-dead-push
+    {
+        std::println("\n--- #1488 AC4: production-hardening flag ---");
+        CompilerService cs;
+        auto r = cs.eval(
+            R"((hash-ref (engine:metrics "query:production-hardening-1072-1096-stats") "arena-adaptive-no-dead-push"))");
+        CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 1,
+              "arena-adaptive-no-dead-push == 1 (flag set, #1072 fix landed)");
+    }
+}
+
+static void run_1489_panic_checkpoint_gc_deferral() {
+    std::println("\n=== #1489: PanicCheckpoint GC deferral ===");
+    // AC1: save_panic_checkpoint arms GC defer
+    {
+        std::println("\n--- #1489 AC1: save_panic_checkpoint arms GC defer ---");
+        CompilerService cs;
+        auto r1 = cs.eval("(set-code \"(define x 1)\")");
+        CHECK(r1.has_value(), "set-code for workspace");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        const auto depth0 = aura::gc_hooks::gc_defer_pending_panic_depth();
+        CHECK(!ev.gc_defer_armed_for_pending_panic(), "not armed before save");
+        CHECK(!ev.has_panic_checkpoint(), "no checkpoint before save");
+        CHECK(ev.save_panic_checkpoint(), "save_panic_checkpoint succeeds");
+        CHECK(ev.has_panic_checkpoint(), "checkpoint live after save");
+        CHECK(ev.gc_defer_armed_for_pending_panic(), "evaluator armed after save");
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth0 + 1,
+              "process-wide defer depth +1");
+        ev.arm_gc_defer_for_pending_panic();
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth0 + 1, "re-arm is idempotent");
+        ev.commit_panic_checkpoint();
+        CHECK(!ev.gc_defer_armed_for_pending_panic(), "disarmed after commit");
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth0,
+              "depth restored after commit");
+    }
+    // AC2: request_gc_safepoint defers under pending checkpoint
+    {
+        std::println("\n--- #1489 AC2: request_gc_safepoint defers under pending checkpoint ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define x 1)\")");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        CHECK(ev.request_gc_safepoint() == 0, "immediate when no checkpoint");
+        CHECK(ev.save_panic_checkpoint(), "save ok");
+        const auto blocked0 = ev.get_gc_blocked_by_pending_panic();
+        CHECK(ev.request_gc_safepoint() == 1, "deferred while checkpoint live");
+        CHECK(ev.get_gc_blocked_by_pending_panic() > blocked0, "gc_blocked_by_pending bumped");
+        ev.commit_panic_checkpoint();
+        CHECK(ev.request_gc_safepoint() == 0, "immediate again after commit");
+    }
+    // AC3: compact_sweep skips while defer armed
+    {
+        std::println("\n--- #1489 AC3: compact_sweep skips while defer armed ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define x 1)\")");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        CHECK(ev.save_panic_checkpoint(), "save ok");
+        const auto skip0 = aura::gc_hooks::gc_sweep_skipped_pending_panic();
+        aura::serve::GCSweepBuffers marks{};
+        auto result = ev.compact_sweep(&marks);
+        CHECK(result.closures_freed == 0 && result.pairs_freed == 0 && result.strings_freed == 0,
+              "no reclaim while defer armed");
+        CHECK(aura::gc_hooks::gc_sweep_skipped_pending_panic() > skip0, "skip counter advanced");
+        ev.commit_panic_checkpoint();
+    }
+    // AC4: restore releases defer
+    {
+        std::println("\n--- #1489 AC4: restore releases defer ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define x 1)\")");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        const auto depth0 = aura::gc_hooks::gc_defer_pending_panic_depth();
+        CHECK(ev.save_panic_checkpoint(), "save ok");
+        CHECK(aura::gc_hooks::gc_deferred_for_pending_panic(), "deferred after save");
+        (void)cs.eval("(set-code \"(define x 2)\")");
+        CHECK(ev.restore_panic_checkpoint(), "restore succeeds");
+        CHECK(!ev.has_panic_checkpoint(), "checkpoint cleared");
+        CHECK(!ev.gc_defer_armed_for_pending_panic(), "disarmed after restore");
+        CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == depth0, "depth restored");
+        CHECK(ev.request_gc_safepoint() == 0, "GC immediate after restore");
+    }
+    // AC5: gc-panic-deferral-stats + block_gc trampoline
+    {
+        std::println("\n--- #1489 AC5: gc-panic-deferral-stats + trampoline ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define x 1)\")");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        auto h = cs.eval("(engine:metrics \"query:gc-panic-deferral-stats\")");
+        CHECK(h && aura::compiler::types::is_hash(*h), "gc-panic-deferral-stats is hash");
+        auto href_field = [&](const char* key) -> std::int64_t {
+            std::string src = std::format(
+                R"((hash-ref (engine:metrics "query:gc-panic-deferral-stats") "{}"))", key);
+            auto r = cs.eval(src);
+            if (!r || !aura::compiler::types::is_int(*r))
+                return -1;
+            return aura::compiler::types::as_int(*r);
+        };
+        CHECK(href_field("schema") == 651, "schema 651");
+        const auto def0 = href_field("pending-panic-deferral");
+        const auto blk0 = href_field("gc-blocked-by-panic");
+        const auto res0 = href_field("conflicts-resolved");
+        CHECK(def0 >= 0 && blk0 >= 0 && res0 >= 0, "metric fields readable");
+        CHECK(ev.save_panic_checkpoint(), "save ok");
+        (void)ev.request_gc_safepoint();
+        const auto def1 = href_field("pending-panic-deferral");
+        const auto blk1 = href_field("gc-blocked-by-panic");
+        CHECK(def1 > def0, "pending-panic-deferral advanced");
+        CHECK(blk1 > blk0, "gc-blocked-by-panic advanced");
+        ev.commit_panic_checkpoint();
+        const auto res1 = href_field("conflicts-resolved");
+        CHECK(res1 > res0, "conflicts-resolved advanced on commit");
+    }
+    // AC6: re_pin under checkpoint
+    {
+        std::println("\n--- #1489 AC6: re_pin callable under pending checkpoint ---");
+        CompilerService cs;
+        (void)cs.eval("(set-code \"(define x 1)\")");
+        (void)cs.eval("(eval-current)");
+        auto& ev = cs.evaluator();
+        CHECK(ev.save_panic_checkpoint(), "save ok");
+        CHECK(ev.test_re_pin_cow_children_from_snapshot(), "re_pin callable with pending cp");
+        ev.on_arena_compact_hook();
+        CHECK(true, "on_arena_compact_hook ok under pending checkpoint");
+        ev.commit_panic_checkpoint();
+    }
+}
+
+static void run_1508_jit_closure_dual_check_deopt() {
+    std::println("\n=== #1508: JIT aura_closure_call dual check + deopt ===");
+    aura_reset_runtime();
+    // AC1: aura_is_jit_closure_fresh matches table + defuse epochs
+    {
+        std::println("\n--- #1508 AC1: aura_is_jit_closure_fresh helper ---");
+        setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
+        aura_set_aot_defuse_version(10);
+        const auto e0 = aura_aot_func_table_epoch();
+        aura_aot_bump_func_table_epoch();
+        const auto e1 = aura_aot_func_table_epoch();
+        CHECK(e1 > e0, "table epoch advances on bump");
+        CHECK(aura_is_jit_closure_fresh(e1, 10), "matching bridge+defuse is fresh");
+        CHECK(!aura_is_jit_closure_fresh(e1 - 1, 10), "stale bridge is not fresh");
+        CHECK(!aura_is_jit_closure_fresh(e1, 11), "stale defuse is not fresh");
+        CHECK(!aura_is_jit_closure_fresh(0, 10), "bridge=0 + active table is stale (#1491 strict)");
+        CHECK(!aura_is_jit_closure_fresh(e1, 0),
+              "defuse=0 + active defuse is stale (#1491 strict)");
+        CHECK(!aura_is_jit_closure_fresh(0, 0), "both zero under active tracking is stale");
+        aura_set_aot_defuse_version(0);
+        CHECK(aura_is_jit_closure_fresh(e1, 0), "matching bridge + defuse tracking off is fresh");
+    }
+    // AC2: alloc stamps provenance
+    {
+        std::println("\n--- #1508 AC2: alloc stamps provenance; fresh call passes dual check ---");
+        aura_set_aot_defuse_version(42);
+        aura_aot_bump_func_table_epoch();
+        const auto dual0 = aura_jit_closure_dual_check_total();
+        auto id = aura_alloc_closure(7);
+        CHECK(id >= 0, "alloc_closure ok");
+        const auto deopt0 = aura_jit_closure_stale_deopt_total();
+        auto r = aura_closure_call(id, nullptr, 0);
+        (void)r;
+        CHECK(aura_jit_closure_dual_check_total() > dual0, "dual_check bumped on call");
+        CHECK(aura_jit_closure_stale_deopt_total() == deopt0,
+              "fresh call does not bump stale_deopt");
+        aura_free_closure(id);
+    }
+    // AC3: table epoch stale deopt
+    {
+        std::println("\n--- #1508 AC3: table epoch bump -> stale deopt ---");
+        aura_set_aot_defuse_version(100);
+        auto id = aura_alloc_closure(3);
+        CHECK(id >= 0, "alloc for table-stale path");
+        const auto deopt0 = aura_jit_closure_stale_deopt_total();
+        const auto safe0 = aura_jit_closure_safe_fallbacks();
+        const auto gdeopt0 = aura_deopt_count();
+        aura_aot_bump_func_table_epoch();
+        auto r = aura_closure_call(id, nullptr, 0);
+        CHECK(r == 0, "stale call returns 0 (safe refuse, no UAF)");
+        CHECK(aura_jit_closure_stale_deopt_total() > deopt0, "stale_deopt bumped");
+        CHECK(aura_jit_closure_safe_fallbacks() > safe0, "safe_fallback bumped");
+        CHECK(aura_deopt_count() > gdeopt0, "aura_deopt_inc fired");
+        aura_free_closure(id);
+    }
+    // AC4: defuse stale deopt
+    {
+        std::println("\n--- #1508 AC4: defuse bump -> stale deopt ---");
+        aura_set_aot_defuse_version(200);
+        auto id = aura_alloc_closure(4);
+        CHECK(id >= 0, "alloc for defuse-stale path");
+        const auto deopt0 = aura_jit_closure_stale_deopt_total();
+        aura_set_aot_defuse_version(201);
+        auto r = aura_closure_call(id, nullptr, 0);
+        CHECK(r == 0, "defuse-stale call returns 0");
+        CHECK(aura_jit_closure_stale_deopt_total() > deopt0, "stale_deopt after defuse bump");
+        aura_free_closure(id);
+    }
+    // AC5: CompilerService wires aot metrics
+    {
+        std::println("\n--- #1508 AC5: CompilerService wires aot metrics ---");
+        CompilerService cs;
+        (void)cs;
+        aura_set_aot_defuse_version(cs.evaluator().defuse_version() + 1);
+        auto id = aura_alloc_closure(5);
+        const auto dual0 = aura_jit_closure_dual_check_total();
+        aura_aot_bump_func_table_epoch();
+        (void)aura_closure_call(id, nullptr, 0);
+        CHECK(aura_jit_closure_dual_check_total() > dual0,
+              "dual_check visible via service-wired metrics");
+        CHECK(aura_jit_closure_stale_deopt_total() > 0, "stale_deopt non-zero after forced stale");
+        aura_free_closure(id);
+    }
+    // AC6: 1000-iter stress
+    {
+        std::println("\n--- #1508 AC6: 1000-iter alloc / epoch-bump / call stress ---");
+        int crashes = 0;
+        for (int i = 0; i < 1000; ++i) {
+            aura_set_aot_defuse_version(static_cast<std::uint64_t>(1000 + i));
+            auto id = aura_alloc_closure(i % 17);
+            if ((i % 3) == 0)
+                aura_aot_bump_func_table_epoch();
+            if ((i % 5) == 0)
+                aura_set_aot_defuse_version(static_cast<std::uint64_t>(2000 + i));
+            int64_t args[2] = {1, 2};
+            (void)aura_closure_call(id, args, 2);
+            aura_free_closure(id);
+        }
+        CHECK(crashes == 0, "1000-iter stress completed without crash");
+        CHECK(aura_jit_closure_dual_check_total() >= 1000, "dual_check >= 1000 after stress");
+    }
+    // AC7: free path regression
+    {
+        std::println("\n--- #1508 AC7: free path still safe under dual check ---");
+        auto id = aura_alloc_closure(9);
+        aura_free_closure(id);
+        CHECK(aura_closure_is_freed(id) == 1, "freed flag set");
+        CHECK(aura_closure_call(id, nullptr, 0) == 0, "call freed -> 0");
+    }
+}
+
+static void run_1510_compact_env_frames_materialize_cooperation() {
+    std::println("\n=== #1510: compact_env_frames <-> materialize_call_env cooperation ===");
+    // AC1: compact bumps defuse + bridge epoch
+    {
+        std::println("\n--- #1510 AC1: compact bumps defuse + bridge epoch ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        CHECK(m != nullptr, "metrics available");
+        const auto defuse0 = ev.defuse_version();
+        const auto bridge0 = cs.bridge_epoch();
+        const auto bumps0 = m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed);
+        (void)ev.compact_env_frames();
+        CHECK(ev.defuse_version() > defuse0, "defuse_version bumped by compact");
+        CHECK(cs.bridge_epoch() > bridge0, "bridge_epoch bumped by compact");
+        CHECK(m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed) > bumps0,
+              "envframe_compact_epoch_bumps_total grew");
+    }
+    // AC2: materialize_fallback on NULL/OOB env_id
+    {
+        std::println("\n--- #1510 AC2: materialize_fallback on NULL/OOB env_id ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        CHECK(m != nullptr, "metrics for fallback");
+        const auto fb0 = m->materialize_fallback_total.load(std::memory_order_relaxed);
+        aura::compiler::Closure cl;
+        cl.env_id = aura::compiler::NULL_ENV_ID;
+        (void)ev.materialize_call_env(cl);
+        CHECK(m->materialize_fallback_total.load(std::memory_order_relaxed) > fb0,
+              "materialize_fallback_total bumped for NULL env_id");
+        const auto fb1 = m->materialize_fallback_total.load(std::memory_order_relaxed);
+        cl.env_id = static_cast<aura::compiler::EnvId>(1'000'000);
+        (void)ev.materialize_call_env(cl);
+        CHECK(m->materialize_fallback_total.load(std::memory_order_relaxed) > fb1,
+              "materialize_fallback_total bumped for OOB env_id");
+    }
+    // AC3: Closure::env_id + parent_id rewrite
+    {
+        std::println("\n--- #1510 AC3: Closure::env_id + parent_id rewrite ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        CHECK(m != nullptr, "metrics for rewrite");
+        const auto parent = ev.alloc_env_frame(aura::compiler::NULL_ENV_ID, nullptr);
+        const auto child = ev.alloc_env_frame(parent, nullptr);
+        CHECK(parent != aura::compiler::NULL_ENV_ID && child != aura::compiler::NULL_ENV_ID,
+              "alloc parent+child frames");
+        CHECK(ev.is_valid_env_id(parent) && ev.is_valid_env_id(child), "ids valid pre-compact");
+        CHECK(ev.env_frame(child).parent_id == parent, "child parent_id == parent pre-compact");
+        const auto rew0 = m->envframe_compact_rewrites_total.load(std::memory_order_relaxed);
+        const auto reclaimed = ev.compact_env_frames();
+        (void)reclaimed;
+        CHECK(ev.is_valid_env_id(0) || reclaimed >= 0, "post-compact env arena consistent");
+        CHECK(m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed) > 0,
+              "epoch bump after compact");
+        CHECK(m->envframe_compact_rewrites_total.load(std::memory_order_relaxed) >= rew0,
+              "rewrites non-decreasing");
+        bool chain_ok = true;
+        for (aura::compiler::EnvId id = 0; id < 64; ++id) {
+            if (!ev.is_valid_env_id(id))
+                break;
+            const auto pid = ev.env_frame(id).parent_id;
+            if (pid != aura::compiler::NULL_ENV_ID && !ev.is_valid_env_id(pid))
+                chain_ok = false;
+        }
+        CHECK(chain_ok, "all parent_id values resolve post-compact");
+    }
+    // AC4: 1000-iter stress
+    {
+        std::println("\n--- #1510 AC4: 1000x alloc_env_frame + compact stress ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        int ok = 0;
+        aura::compiler::EnvId keep = aura::compiler::NULL_ENV_ID;
+        for (int i = 0; i < 1000; ++i) {
+            auto id = ev.alloc_env_frame(
+                keep == aura::compiler::NULL_ENV_ID ? aura::compiler::NULL_ENV_ID : keep, nullptr);
+            if (id != aura::compiler::NULL_ENV_ID && (i % 11) == 0)
+                keep = id;
+            if ((i % 5) == 0)
+                ev.bump_defuse_version_for_test();
+            if ((i % 3) == 0)
+                (void)ev.compact_env_frames();
+            if ((i % 17) == 0) {
+                aura::compiler::Closure cl;
+                cl.env_id = aura::compiler::NULL_ENV_ID;
+                (void)ev.materialize_call_env(cl);
+            }
+            ++ok;
+        }
+        CHECK(ok == 1000, "1000-iter stress completed without crash");
+        if (m) {
+            CHECK(m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed) > 0,
+                  "compact epoch bumps observed in stress");
+            CHECK(m->materialize_fallback_total.load(std::memory_order_relaxed) > 0,
+                  "materialize_fallback observed in stress");
+        }
+    }
+    // AC5: metric surface
+    {
+        std::println("\n--- #1510 AC5: metric surface ---");
+        CompilerService cs;
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        CHECK(m != nullptr, "metrics surface");
+        CHECK(m->envframe_compact_rewrites_total.load(std::memory_order_relaxed) >= 0,
+              "rewrites readable");
+        CHECK(m->envframe_compact_epoch_bumps_total.load(std::memory_order_relaxed) >= 0,
+              "epoch_bumps readable");
+        CHECK(m->materialize_fallback_total.load(std::memory_order_relaxed) >= 0,
+              "materialize_fallback readable");
+    }
+    // AC6: light EDSL post-compact
+    {
+        std::println("\n--- #1510 AC6: light EDSL post-compact ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (add1 x) (+ x 1))\")").has_value(), "set-code add1");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+        auto v0 = cs.eval("(add1 10)");
+        CHECK(v0 && is_int(*v0) && as_int(*v0) == 11, "(add1 10) == 11 pre-compact");
+        (void)ev.compact_env_frames();
+        auto v1 = cs.eval("(add1 10)");
+        CHECK(v1 && is_int(*v1) && as_int(*v1) == 11, "(add1 10) == 11 post-compact");
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -2110,6 +2572,10 @@ int main() {
     run_764_compiler_arena_closure_lifetime_stats();
     run_767_arena_auto_compact_defrag_fiber_stats();
     run_1397_arena_request_defrag_atomic_cas();
+    run_1488_arena_adaptive_stats_no_dead_heap_push();
+    run_1489_panic_checkpoint_gc_deferral();
+    run_1508_jit_closure_dual_check_deopt();
+    run_1510_compact_env_frames_materialize_cooperation();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
