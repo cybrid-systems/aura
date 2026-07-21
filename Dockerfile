@@ -25,7 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /opt/aura
 COPY --from=builder --chown=aura:aura /src/build_repro/aura /opt/aura/bin/aura
 COPY --from=builder --chown=aura:aura /src/lib/runtime.c /opt/aura/lib/runtime.c
-COPY --from=builder --chown=aura:aura /src/demos /opt/aura/share/aura/demos
 ENV PATH=/opt/aura/bin:$PATH
 ENV AURA_RUNTIME_DIR=/opt/aura
 ENV AURA_HTTP_PORT=8080
@@ -35,7 +34,10 @@ EXPOSE 8080
 # would normally need root. aura runs the server; the
 # HEALTHCHECK curls as a separate process under the same
 # aura user.
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
+# /readyz matches docker-compose.yml healthcheck + is the
+# Kubernetes-conventional readiness endpoint. 5s timeout
+# matches compose.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/readyz || exit 1
 USER aura
 CMD ["aura", "--health-server", "8080"]
