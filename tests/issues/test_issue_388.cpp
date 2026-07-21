@@ -12,6 +12,19 @@
 //   AC #4: end-to-end path via CompilerService::eval works
 //          (define-hygienic-macro + eval-current + stats)
 
+// Paired note (transparent hash consolidation batch 2): this test's
+// AC #4 path goes through CompilerService::eval which touches the
+// service.ixx map surfaces migrated in ccf3c34d's follow-up batch
+// (ir_cache_, ir_cache_v2_, value_cells_for_lowering(), ir_cache_index,
+// etc.), and AC #3's engine:metrics lookup goes through
+// evaluator_primitives_obs_jit.cpp's groups map (also migrated in
+// the same batch). All migrated maps now use
+// aura::core::TransparentStringHash + std::equal_to<> (from
+// src/core/transparent_string_hash.hh) so .find()/.count() accept
+// string_view without allocating a temporary std::string per call
+// — particularly relevant to AC #3's hot engine:metrics path and
+// AC #4's eval-side lookup of cache entries by function name.
+
 #include "test_harness.hpp" // #1960 unified harness
 
 #include <cstddef>

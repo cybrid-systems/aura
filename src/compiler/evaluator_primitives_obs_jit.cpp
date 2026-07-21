@@ -1429,8 +1429,11 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
 
         // Collect CompilerMetrics atomics into group maps (Issue #1433).
         auto dump_metric_groups = [&](CompilerMetrics* m)
-            -> std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>> {
-            std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>> groups;
+            -> std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
+                                  aura::core::TransparentStringHash, std::equal_to<>> {
+            std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
+                               aura::core::TransparentStringHash, std::equal_to<>>
+                groups;
             if (!m)
                 return groups;
             if (auto* svc = static_cast<CompilerService*>(ev.compiler_service()))
@@ -1439,12 +1442,14 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     groups[metrics_group_for_field(#name)].emplace_back(                                           \
         #name, make_int(static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed))));
 #include "compiler_metrics_fields.inc"
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
             return groups;
         };
 
         auto groups_to_nested =
-            [&](std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>>&
-                    groups) -> std::vector<std::pair<std::string, EvalValue>> {
+            [&](std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
+                                   aura::core::TransparentStringHash, std::equal_to<>>& groups)
+            -> std::vector<std::pair<std::string, EvalValue>> {
             static const char* kOrder[] = {"compile", "jit", "mutate", "query",
                                            "arena",   "gc",  "eval",   "telemetry"};
             std::vector<std::pair<std::string, EvalValue>> out;
