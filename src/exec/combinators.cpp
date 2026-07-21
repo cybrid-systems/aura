@@ -145,7 +145,7 @@ operation_state with_timeout_sender::connect(fiber_receiver rcvr) && {
 operation_state retry_sender::connect(fiber_receiver rcvr) && {
     struct shared_state {
         int max_attempts;
-        std::function<void()> fn;
+        std::move_only_function<void()> fn;
         fiber_receiver receiver;
     };
 
