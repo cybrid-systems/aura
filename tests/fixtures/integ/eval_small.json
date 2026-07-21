@@ -1,0 +1,257 @@
+[
+  {
+    "name": "char_alpha",
+    "code": "(char-alphabetic? 65)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "char_downcase",
+    "code": "(char-downcase 65)",
+    "pipeline": "eval",
+    "expected": "97"
+  },
+  {
+    "name": "char_eq",
+    "code": "(char=? 65 65)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "char_lt",
+    "code": "(char<? 65 66)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "char_numeric",
+    "code": "(char-numeric? 48)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "char_to_int",
+    "code": "(char->integer 65)",
+    "pipeline": "eval",
+    "expected": "65"
+  },
+  {
+    "name": "char_upcase",
+    "code": "(char-upcase 97)",
+    "pipeline": "eval",
+    "expected": "65"
+  },
+  {
+    "name": "char_whitespace",
+    "code": "(char-whitespace? 32)",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "str_join",
+    "code": "(string-join (list \"a\" \"b\" \"c\") \",\")",
+    "pipeline": "eval",
+    "expected": "a,b,c"
+  },
+  {
+    "name": "str_num_only_space",
+    "code": "(string->number \"  \")",
+    "pipeline": "eval",
+    "expected": "#f"
+  },
+  {
+    "name": "str_num_tab",
+    "code": "(string->number \"\t-7\n\")",
+    "pipeline": "eval",
+    "expected": "-7"
+  },
+  {
+    "name": "str_num_trim",
+    "code": "(string->number \" 42 \")",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "str_to_list",
+    "code": "(car (string->list \"ABC\"))",
+    "pipeline": "eval",
+    "expected": "65"
+  },
+  {
+    "name": "list_append",
+    "code": "(length (append (list 1 2) (list 3 4)))",
+    "pipeline": "eval",
+    "expected": "4"
+  },
+  {
+    "name": "list_basic",
+    "code": "(list 1 2 3)",
+    "pipeline": "eval",
+    "expected": "(1 2 3)"
+  },
+  {
+    "name": "list_length",
+    "code": "(length (list 1 2 3))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "list_member_found",
+    "code": "(member 2 (list 1 2 3))",
+    "pipeline": "eval",
+    "expected": "(2 3)"
+  },
+  {
+    "name": "list_member_not_found",
+    "code": "(member 99 (list 1 2 3))",
+    "pipeline": "eval",
+    "expected": "0"
+  },
+  {
+    "name": "list_ref",
+    "code": "(list-ref (list 10 20 30) 1)",
+    "pipeline": "eval",
+    "expected": "20"
+  },
+  {
+    "name": "list_reverse",
+    "code": "(length (reverse (list 1 2 3)))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "list_to_str",
+    "code": "(list->string (list 65 66 67))",
+    "pipeline": "eval",
+    "expected": "ABC"
+  },
+  {
+    "name": "list_to_vector",
+    "code": "(vector-length (list->vector (list 1 2 3)))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "vector_basic",
+    "code": "(vector 1 2 3)",
+    "pipeline": "eval",
+    "expected": "vector"
+  },
+  {
+    "name": "vector_length",
+    "code": "(vector-length (vector 1 2 3))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "vector_pred",
+    "code": "(vector? (vector 1 2 3))",
+    "pipeline": "eval",
+    "expected": "#t"
+  },
+  {
+    "name": "vector_ref",
+    "code": "(vector-ref (vector 10 20 30) 1)",
+    "pipeline": "eval",
+    "expected": "20"
+  },
+  {
+    "name": "vector_set",
+    "code": "(begin (vector-set! (vector 1 2 3) 0 99) 42)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "vector_to_list",
+    "code": "(length (vector->list (vector 1 2 3)))",
+    "pipeline": "eval",
+    "expected": "3"
+  },
+  {
+    "name": "lambda",
+    "code": "((lambda (x) (* x 2)) 5)",
+    "pipeline": "eval",
+    "expected": "10"
+  },
+  {
+    "name": "lambda_annot_basic",
+    "code": "((lambda ((: x Int)) (+ x 1)) 41)",
+    "pipeline": "eval",
+    "expected": "42"
+  },
+  {
+    "name": "lambda_annot_mixed",
+    "code": "((lambda ((: x Int) y) (+ x y)) 3 4)",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "lambda_annot_multi",
+    "code": "((lambda ((: x Int) (: y Int)) (+ x y)) 3 4)",
+    "pipeline": "eval",
+    "expected": "7"
+  },
+  {
+    "name": "lambda_annot_string",
+    "code": "((lambda ((: x String)) (string-append x \"!\")) \"hi\")",
+    "pipeline": "eval",
+    "expected": "hi!"
+  },
+  {
+    "name": "err_div_zero",
+    "code": "(/ 1 0)",
+    "pipeline": "eval"
+  },
+  {
+    "name": "err_unbound",
+    "code": "x",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_arg",
+    "code": "(display notexist)",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_arg2",
+    "code": "(+ notexist 1)",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "err_unbound_var",
+    "code": "nonexistent",
+    "pipeline": "eval",
+    "expected_err": "unbound variable",
+    "expected_status": 1
+  },
+  {
+    "name": "serve_define",
+    "code": "{\"cmd\":\"define\",\"code\":\"(define add (lambda (x y) (+ x y)))\",\"name\":\"add\"}\n{\"cmd\":\"exec\",\"code\":\"(add 1 2)\"}",
+    "pipeline": "serve",
+    "expected": "\"3\""
+  },
+  {
+    "name": "serve_define_redefine",
+    "code": "{\"cmd\":\"define\",\"code\":\"(define mul (lambda (x y) (* x y)))\",\"name\":\"mul\"}\n{\"cmd\":\"exec\",\"code\":\"(mul 3 4)\"}\n{\"cmd\":\"redefine\",\"code\":\"(define mul (lambda (x y) (+ x y)))\",\"name\":\"mul\"}\n{\"cmd\":\"exec\",\"code\":\"(mul 3 4)\"}",
+    "pipeline": "serve",
+    "expected": "\"7\""
+  },
+  {
+    "name": "serve_plain_sexpr",
+    "code": "(+ 1 2)",
+    "pipeline": "serve",
+    "expected": "\"3\""
+  },
+  {
+    "name": "serve_unknown_cmd",
+    "code": "{\"cmd\":\"noop\",\"code\":\"(+ 1 2)\"}",
+    "pipeline": "serve",
+    "expected": "unknown command"
+  }
+]
