@@ -1,3 +1,9 @@
+// test_issue_1471.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // @category: unit
 // @reason: pure C++ matcher hygiene counters; no CompilerService
 //
@@ -20,27 +26,12 @@
 //        detailed-list field on the matcher; ships in this commit)
 //   AC6: code-presence checks for the 3 hygiene landmarks
 
-#include "test_harness.hpp"
 
-import aura.core.ast;
-
-import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
 namespace test_issue_1471_detail {
 
-#undef CHECK
-#define CHECK(cond, msg)                                                                           \
-    do {                                                                                           \
-        if (!(cond)) {                                                                             \
-            std::println("  FAIL: {} (line {})", msg, __LINE__);                                   \
-            ++g_failed;                                                                            \
-        } else {                                                                                   \
-            std::println("  PASS: {}", msg);                                                       \
-            ++g_passed;                                                                            \
-        }                                                                                          \
-    } while (0)
 
 void ac1_macro_introduced_skip_counter() {
     std::println("\n--- AC1: macro_introduced_skipped_in_query_ starts at 0 ---");

@@ -1,3 +1,9 @@
+// test_issue_1649.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // tests/test_issue_1649.cpp — Issue #1649 (partial-redundant Phase 1)
 //
 // Source-driven test (paired pattern with tests/test_issue_1644_ir_hygiene.cpp
@@ -30,19 +36,6 @@
 //   - 1+ paired wire-up sites in evaluator_fiber_mutation.cpp
 //   - composition points into existing surfaces are valid
 
-#include "test_harness.hpp"
-#include "compiler/observability_metrics.h"
-
-#include <cstdint>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_1649_detail {
 
@@ -52,10 +45,13 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& pth : {path, std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(pth);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 bool contains(const std::string& s, std::string_view needle) noexcept {

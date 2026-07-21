@@ -1,3 +1,9 @@
+// test_issue_1645.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // tests/test_issue_1645.cpp — Issue #1645 (scope-limited progressive)
 //
 // Source-driven test (paired pattern with tests/test_issue_1644_ir_hygiene.cpp
@@ -22,19 +28,6 @@
 //   AC6 — 无 perf regression (deferred to Phase 2+; Phase 1 wire-ups add 1
 //         atomic add each, negligible).
 
-#include "test_harness.hpp"
-#include "compiler/observability_metrics.h"
-
-#include <cstdint>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_1645_detail {
 
@@ -44,10 +37,13 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 std::string read_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& pth : {path, std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(pth);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 bool contains(const std::string& s, std::string_view needle) noexcept {

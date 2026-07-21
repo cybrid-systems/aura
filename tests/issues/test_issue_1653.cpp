@@ -1,3 +1,9 @@
+// test_issue_1653.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // tests/test_issue_1653.cpp — Issue #1653 (scope-limited-progressive Phase 1)
 //
 // Source-driven test verifying AC1/AC2/AC3 predecessors + Phase 1 deliverables
@@ -28,13 +34,6 @@
 //   - Predecessors \u270d (sampling \u2014 all phases confirmed via grep in this test).
 //   - No new primitive registered (\u539f\u8bed\u6700\u5c0f\u5316 directive).
 
-#include "test_harness.hpp"
-
-#include <cstdint>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
 
 namespace aura_1653_detail {
 
@@ -43,10 +42,13 @@ bool contains(const std::string& s, std::string_view needle) noexcept {
 }
 
 std::string read_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& pth : {path, std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(pth);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 bool check_primitives_style_doc_ac1() {

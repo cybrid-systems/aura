@@ -1,3 +1,9 @@
+// test_issue_1908.cpp — orphan restored (AC drift; not in CI batch)
+#include "test_harness.hpp"
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // @category: integration
 // @reason: uses Evaluator + Aura C bridge hook + CompilerMetrics + CI linter
 //
@@ -49,15 +55,10 @@
 //   AC10: counters monotonic across multiple invocations
 //         (accessors via bridge hook + per-CompilerMetrics via bump_*)
 
-#include "test_harness.hpp"
 
-import std;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
-import aura.compiler.evaluator;
-import aura.compiler.value;
-import aura.compiler.service;
 
 // Forward declarations for the C bridge hooks (defined in aura_jit_bridge.cpp).
 // extern "C" must be at file scope, not inside a function body.

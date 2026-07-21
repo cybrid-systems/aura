@@ -1800,6 +1800,24 @@ aura_add_issue_test(test_jit_aot_hot_update_batch)
 aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_batch)
 add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
 
+# tests/issues/ orphan range batches (not in issue bundles / fixtures).
+# Prefer domain/ theme suites for new work; do not re-add per-issue files.
+aura_add_issue_test(test_issues_1382_1395_batch)
+aura_issue_test_link_llvm_jit(test_issues_1382_1395_batch)
+add_dependencies(all_test_issue_targets test_issues_1382_1395_batch)
+
+aura_add_issue_test(test_issues_1466_1478_batch)
+aura_issue_test_link_llvm_jit(test_issues_1466_1478_batch)
+add_dependencies(all_test_issue_targets test_issues_1466_1478_batch)
+
+aura_add_issue_test(test_issues_1644_1655_batch)
+aura_issue_test_link_llvm_jit(test_issues_1644_1655_batch)
+add_dependencies(all_test_issue_targets test_issues_1644_1655_batch)
+
+aura_add_issue_test(test_issues_1903_1908_batch)
+aura_issue_test_link_llvm_jit(test_issues_1903_1908_batch)
+add_dependencies(all_test_issue_targets test_issues_1903_1908_batch)
+
 # tests/mutation/ unit consolidations (unregistered standalones → theme batches).
 # Existing large family batches (mutate/linear/boundary/…) stay separate.
 aura_add_issue_test(test_mutation_guard_unit_batch)
