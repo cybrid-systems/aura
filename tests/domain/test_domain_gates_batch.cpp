@@ -18,6 +18,13 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
+import aura.core.arena;
+import aura.compiler.type_checker;
+import aura.compiler.coercion_map;
+import aura.diag;
+import aura.core.type;
+import aura.parser.parser;
 
 namespace aura_domain_gates_batch {
 
@@ -272,11 +279,190 @@ static void run_all(CompilerService& cs) {
     run_typed_mutate(cs);
 }
 
+// ── Raw TypeChecker unit tests (folded from tests/issues/{116,118,121,122}.cpp via #1957) ──
+// These exercise the type checker directly (not via CompilerService) — they
+// pin the contract that infer_flat doesn't mutate the FlatAST, that AST
+// nodes get tagged with the right diagnostic kind on error, and that
+// gensym / quasiquote / reflect-type primitives parse + typecheck.
+
+struct TypecheckEnv {
+    std::unique_ptr<aura::ast::ASTArena> arena;
+    aura::ast::FlatAST* flat = nullptr;
+    aura::ast::StringPool* pool = nullptr;
+    std::unique_ptr<aura::core::TypeRegistry> treg;
+    std::unique_ptr<aura::compiler::TypeChecker> tc;
+    aura::ast::NodeId root = 0;
+
+    static TypecheckEnv make() {
+        TypecheckEnv e;
+        e.arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = e.arena->allocator();
+        e.flat = e.arena->create<aura::ast::FlatAST>(alloc);
+        e.pool = e.arena->create<aura::ast::StringPool>(alloc);
+        e.treg = std::make_unique<aura::core::TypeRegistry>();
+        e.tc = std::make_unique<aura::compiler::TypeChecker>(*e.treg);
+        return e;
+    }
+    void parse_src(const std::string& src) {
+        auto pr = aura::parser::parse_to_flat(src, *flat, *pool);
+        flat->root = pr.root;
+        root = pr.root;
+    }
+};
+
+static void run_116_deferred_coercion_node() {
+    std::println("\n=== #116: defer CoercionNode (no in-place FlatAST mutation) ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(+ 1 2)");
+    int n_before = env.flat->size();
+    aura::diag::DiagnosticCollector diag;
+    env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(env.flat->size() == n_before, "well-typed: no new AST nodes after infer_flat");
+    int coercions = 0;
+    for (aura::ast::NodeId i = 0; i < env.flat->size(); ++i)
+        if (env.flat->get(i).tag == aura::ast::NodeTag::Coercion)
+            ++coercions;
+    CHECK(coercions == 0, "no CoercionNodes in AST for well-typed input");
+
+    // apply_coercion_map round-trip + idempotency
+    auto arena2 = std::make_unique<aura::ast::ASTArena>();
+    auto alloc = arena2->allocator();
+    auto* flat = arena2->create<aura::ast::FlatAST>(alloc);
+    auto* pool = arena2->create<aura::ast::StringPool>(alloc);
+    auto callee_sym = pool->intern("+");
+    auto callee_var = flat->add_variable(callee_sym);
+    auto arg0 = flat->add_literal(42);
+    auto arg1 = flat->add_literal(2);
+    auto call_id = flat->add_call(callee_var, {arg0, arg1});
+    flat->root = call_id;
+    int n0 = flat->size();
+    aura::compiler::CoercionMap cm;
+    cm.add(call_id, 1, arg0, 2, 1, 0, 0);
+    auto applied1 = aura::compiler::apply_coercion_map(*flat, cm);
+    CHECK(applied1 == 1, "first apply: 1 entry applied");
+    auto applied2 = aura::compiler::apply_coercion_map(*flat, cm);
+    CHECK(applied2 == 0, "second apply: idempotent (0 entries)");
+    CHECK(flat->size() == n0 + 1, "exactly 1 CoercionNode after 2 applies");
+}
+
+static void run_118_unbound_var_tags_node() {
+    std::println("\n=== #118: unbound variable tags the AST node ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("undefined_var");
+    aura::diag::DiagnosticCollector diag;
+    env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    int unbound = 0;
+    for (auto& d : diag.diagnostics())
+        if (d.kind == aura::diag::ErrorKind::UnboundVariable)
+            ++unbound;
+    CHECK(unbound >= 1, "UnboundVariable diagnostic emitted");
+    CHECK(env.flat->node_error(env.root) ==
+              static_cast<int>(aura::diag::ErrorKind::UnboundVariable),
+          "AST node tagged with UnboundVariable");
+}
+
+static void run_118_module_member_not_found_tags_node() {
+    std::println("\n=== #118: missing module member tags the AST node ===");
+    auto env = TypecheckEnv::make();
+    env.tc->set_strict(true);
+    env.parse_src("no_such_module:foo");
+    aura::diag::DiagnosticCollector diag;
+    env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    int unbound = 0;
+    for (auto& d : diag.diagnostics())
+        if (d.kind == aura::diag::ErrorKind::UnboundVariable)
+            ++unbound;
+    CHECK(unbound >= 1, "missing module: UnboundVariable diagnostic emitted");
+}
+
+static void run_118_well_typed_no_tag() {
+    std::println("\n=== #118: well-typed input has no diagnostic, no node tag ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(+ 1 2)");
+    aura::diag::DiagnosticCollector diag;
+    env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(diag.diagnostics().empty(), "well-typed: no diagnostics");
+    CHECK(env.flat->node_error(env.root) == 0, "well-typed: AST node NOT tagged");
+}
+
+static void run_121_gensym_unique_and_prefix() {
+    std::println("\n=== #121: gensym uniqueness and prefix ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(define a (gensym)) (define b (gensym)) (define c (gensym \"tmp\")) "
+                  "(define d (symbol-append 'make- 'point))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "(gensym) + (gensym \"prefix\") + symbol-append parse + typecheck");
+}
+
+static void run_121_nested_hygienic_macros_recursive() {
+    std::println(
+        "\n=== #121: nested hygienic macros call each other recursively (Issue #121 AC) ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(define-hygienic-macro (m1 x) (list '+ x 1)) "
+                  "(define-hygienic-macro (m2 x) (list 'm1 (list '* x 2))) "
+                  "(define-hygienic-macro (m3 x) (list 'm2 x))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "nested hygienic macros parse + typecheck");
+}
+
+static void run_121_legacy_defmacro_compat() {
+    std::println("\n=== #121: legacy `defmacro` backward compat + bounded macro_expand_all ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(defmacro (my-double x) `(+ ,x ,x)) (my-double 5)");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "legacy defmacro + quasiquote parses + typechecks");
+}
+
+static void run_122_reflect_type_scalar() {
+    std::println("\n=== #122: reflect-type for scalar returns structured description ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(display (reflect-type \"Int\"))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "reflect-type scalar parses + typechecks");
+}
+
+static void run_122_reflect_unknown_returns_void() {
+    std::println("\n=== #122: reflect-type / reflect-module-exports unknown name returns void ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(display (reflect-type \"NonexistentType\")) "
+                  "(display (reflect-module-exports \"FakeModule\"))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "unknown-name reflect calls parse + typecheck");
+}
+
+static void run_122_reflect_members_in_query() {
+    std::println("\n=== #122: reflect-members usable inside query ===");
+    auto env = TypecheckEnv::make();
+    env.parse_src("(query (reflect-members \"Int\"))");
+    aura::diag::DiagnosticCollector diag;
+    auto tid = env.tc->infer_flat(*env.flat, *env.pool, env.root, diag);
+    CHECK(tid.valid(), "reflect-members in query parses + typechecks");
+}
+
+static void run_typechecker_unit_tests() {
+    run_116_deferred_coercion_node();
+    run_118_unbound_var_tags_node();
+    run_118_module_member_not_found_tags_node();
+    run_118_well_typed_no_tag();
+    run_121_gensym_unique_and_prefix();
+    run_121_nested_hygienic_macros_recursive();
+    run_121_legacy_defmacro_compat();
+    run_122_reflect_type_scalar();
+    run_122_reflect_unknown_returns_void();
+    run_122_reflect_members_in_query();
+}
+
 } // namespace aura_domain_gates_batch
 
 int aura_issue_domain_gates_batch_run() {
     aura::compiler::CompilerService cs;
     aura_domain_gates_batch::run_all(cs);
+    aura_domain_gates_batch::run_typechecker_unit_tests();
     return RUN_ALL_TESTS();
 }
 
