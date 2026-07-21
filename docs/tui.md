@@ -67,7 +67,10 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
    `src/renderer/camera.hh` — `Vec3` / `Ray` / `Camera` / `camera_ray` / `generate_primary_rays`  
    Right-handed Y-up; yaw=0,pitch=0 → forward −Z; pitch clamped ≈±89°.  
    Tests: `tests/arena/test_camera_rays.cpp`
-3. Voxel volume / chunks
+3. **#1982** voxel volume / chunks — landed (header-only)  
+   `src/renderer/voxel_volume.hh` — `BlockId` / `VoxelVolume` / `ChunkGrid` / `voxel_fill_box`  
+   Y-up; X-major layout `x + sx*(y + sy*z)` for DDA X-step locality; OOB → `oob_block`.  
+   Tests: `tests/arena/test_voxel_volume.cpp`
 4. DDA raycaster
 5. Shading / fog / sky
 6. Frame loop + Aura surface
@@ -76,6 +79,6 @@ Software voxel raycasting base on the terminal path (no GPU). Child order:
 
 - SlimSurface: #1448 / #1449
 - TUI original series: #1331–#1343 / #1353
-- 3D rendering epic: #1979 / children #1980 #1981
+- 3D rendering epic: #1979 / children #1980–#1982
 - Sibling deferred domains: #1968–#1976
 - Orch multi-agent remove (contrast): #1966
