@@ -1794,6 +1794,12 @@ aura_add_issue_test(test_fiber_concurrent_unit_batch)
 aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
 add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)
 
+# tests/jit/ AOT hot-update consolidation (#1640/#544/#1370/#1480/#1641).
+# Keep test_jit_metrics (+ stub) as custom non-module LLVM target above.
+aura_add_issue_test(test_jit_aot_hot_update_batch)
+aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_batch)
+add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
+
 # ── tests/domain/ suites (restored after AuraDomainTests.cmake removal) ──
 # Default-build: schema matrix + behavioral gates + concurrent defrag.
 # On-demand (EXCLUDE_FROM_ALL): arena family batches.
