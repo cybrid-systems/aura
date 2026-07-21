@@ -5276,8 +5276,8 @@ aura_issue_test_link_llvm_jit(test_predicate_memo_partial_evict_1872)
 aura_add_issue_test(test_blame_chain_completeness_1873)
 aura_issue_test_link_llvm_jit(test_blame_chain_completeness_1873)
 # Issue #1874: TypePropagation expand + DCE cast elision after prop.
-aura_add_issue_test(test_type_propagation_dead_coercion_1874)
-aura_issue_test_link_llvm_jit(test_type_propagation_dead_coercion_1874)
+aura_add_issue_test(test_type_propagation_dead_coercion)
+aura_issue_test_link_llvm_jit(test_type_propagation_dead_coercion)
 # Issue #1875: dirty-aware EscapeAnalysis + post-mutation linear validation.
 # Issue #1876: runtime sandbox + capability grant enforcement metrics.
 aura_add_issue_test(test_sandbox_capability_enforce_1876)

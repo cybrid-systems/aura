@@ -1,3 +1,9 @@
+// test_type_propagation_dead_coercion.cpp — Issue #1874 (#1978 renamed):
+// expand TypePropagationPass type_id / narrow_evidence stamping so
+// DeadCoercionEliminationPass eliminates more CastOps (fixpoint rounds
+// + cast_eliminated_after_propagation). Issue# moved from filename to
+// header per #1978.
+//
 // @category: unit
 // @reason: Issue #1874 — expand TypePropagationPass type_id /
 // narrow_evidence stamping so DeadCoercionEliminationPass eliminates
