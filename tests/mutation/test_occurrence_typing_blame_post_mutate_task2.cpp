@@ -1,3 +1,13 @@
+// test_occurrence_typing_blame_post_mutate_task2.cpp — restored standalone (AC drift under batch
+// co-link)
+#include "test_harness.hpp"
+#include <cstdint>
+#include <print>
+#include <string>
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // test_occurrence_typing_blame_post_mutate_task2.cpp
 // Issue #576: Task2 Occurrence Typing dirty recovery +
 // blame/provenance chain completeness post-mutate.
@@ -18,15 +28,6 @@
 //
 // Uses one CompilerService for the integration matrix.
 
-#include "test_harness.hpp"
-
-#include <cstdint>
-#include <string>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_576_detail {
 

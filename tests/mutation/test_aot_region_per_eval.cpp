@@ -1,19 +1,15 @@
+// test_aot_region_per_eval.cpp — Issue #1367 (standalone; ACs drift under current aot: API)
+#include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
+#include <cstdint>
+#include <print>
+#include <string>
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // test_aot_region_per_eval.cpp — Issue #1367: per-evaluator AOT region isolation
 
-#include "test_harness.hpp"
-#include "compiler/aura_jit_bridge.h"
-#include "compiler/observability_metrics.h"
-#include "compiler/runtime_shared.h"
-
-#include <cstdint>
-#include <cstdlib>
-#include <fstream>
-#include <string>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;

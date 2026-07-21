@@ -1,3 +1,12 @@
+// test_occurrence_dirty_blame_post_mutate.cpp — restored standalone (AC drift under batch co-link)
+#include "test_harness.hpp"
+#include <cstdint>
+#include <print>
+#include <string>
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
 // Issue #339/#434/#467/#518/#576/#609 (#1978 renamed): issue# moved from filename to header.
 // test_occurrence_dirty_blame_post_mutate_467.cpp
 // Issue #467: per-node occurrence-dirty + blame chain
@@ -18,15 +27,6 @@
 //
 // Uses one CompilerService for the integration matrix.
 
-#include "test_harness.hpp"
-
-#include <cstdint>
-#include <string>
-
-import std;
-import aura.compiler.evaluator;
-import aura.compiler.service;
-import aura.compiler.value;
 
 namespace aura_467_detail {
 
