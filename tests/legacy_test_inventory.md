@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 542 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 538 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **549** | |
+| **Total scanned** | **545** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 36 | 0 | 5 | 41 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 32 | 0 | 5 | 37 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
@@ -47,34 +47,34 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 494 | Integration path via `CompilerService` / eval |
-| `test_harness` | 315 | `#include "test_harness.hpp"` + CHECK/TEST macros |
+| `CompilerService` | 490 | Integration path via `CompilerService` / eval |
+| `test_harness` | 312 | `#include "test_harness.hpp"` + CHECK/TEST macros |
 | `bundle_run_fn` | 135 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 62 | Harness runner main |
-| `own_main` | 44 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 43 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 354
-- `unknown`: 113
+- `integration`: 351
+- `unknown`: 112
 - `unit`: 67
 - `issue_specific`: 6
 - `regression`: 2
 
 ### Top includes (first 50 lines, issues/)
 
-- `test_harness.hpp` — 296
+- `test_harness.hpp` — 293
 - `compiler/observability_metrics.h` — 57
 - `compiler/aura_jit_bridge.h` — 19
-- `serve/scheduler.h` — 16
+- `serve/scheduler.h` — 15
 - `compiler/aura_jit.h` — 12
-- `serve/fiber.h` — 11
+- `serve/fiber.h` — 10
 - `serve/worker.h` — 6
 - `compiler/shape_profiler.h` — 4
-- `core/gc_hooks.h` — 4
 - `reflect/reflect.hh` — 4
 - `compiler/aot_mangle.h` — 3
+- `core/gc_hooks.h` — 3
 - `compiler/messaging_bridge.h` — 3
 - `compiler/runtime_shared.h` — 3
 - `serve/gc_coordinator.h` — 2
@@ -82,18 +82,18 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 345
-- `aura.compiler.service` — 331
-- `std` — 308
-- `aura.compiler.evaluator` — 303
-- `aura.core.ast` — 196
-- `aura.core.arena` — 107
-- `aura.core.type` — 102
-- `aura.compiler.ir` — 48
+- `aura.compiler.value` — 342
+- `aura.compiler.service` — 328
+- `std` — 305
+- `aura.compiler.evaluator` — 300
+- `aura.core.ast` — 193
+- `aura.core.arena` — 104
+- `aura.core.type` — 101
+- `aura.compiler.ir` — 47
 - `aura.core` — 35
 - `aura.compiler.type_checker` — 32
 - `aura.diag` — 30
-- `aura.parser.parser` — 21
+- `aura.parser.parser` — 20
 - `aura.compiler.pass_manager` — 17
 - `aura.core.mutation` — 17
 - `aura.compiler.ir_executor` — 9
@@ -147,8 +147,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `test_issue_285.cpp` (4862 B) → `mutation_dirty` — installation is verified indirectly through the build
 - `test_issue_274.cpp` (4868 B) → `mutation_dirty` — test_issue_274.cpp — Issue #274: MutationVisitor concept +
 - `test_issue_677.cpp` (4879 B) → `observability` — 
-- `test_issue_322.cpp` (4916 B) → `arena_compaction` — test_issue_322.cpp — Issue #322: Dual-Path SoA/EnvId
 - `test_issue_1408_followup_edsl.cpp` (4927 B) → `mutation_dirty` — AC1: happy path — 3 mutations all applied
+- `test_issue_287.cpp` (4952 B) → `jit_incremental` — ── AC1: set/get module_version roundtrip ──
 
 ### Batch drivers already present
 
@@ -201,7 +201,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (41)
+### `arena_compaction` — Arena / compaction / GC (37)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
@@ -215,7 +215,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 - `tests/domain/arena/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
 
-#### issues/ (36)
+#### issues/ (32)
 
 - `tests/issues/test_issue_1397.cpp` (#1397) — test_issue_1397.cpp - Issue #1397: ASTArena::request_defrag
 - `tests/issues/test_issue_1401.cpp` (#1401) — test_issue_1401.cpp — Issue #1401: load_module_file ↔
@@ -232,10 +232,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_1534.cpp` (#1534) — AC1: compile() captures fn epoch via capture_fn_epoch (fresh at capture epoch)
 - `tests/issues/test_issue_1543.cpp` (#1543) — AC1: registration monotonicity across audits + resync path
 - `tests/issues/test_issue_1655.cpp` (#1655) — test_issue_1655.cpp — orphan restored (AC drift; not in CI batch)
-- `tests/issues/test_issue_226.cpp` (#226) — test_issue_226.cpp — Verify Issue #226 acceptance criteria
-- `tests/issues/test_issue_272.cpp` (#272) — test_issue_272.cpp — Issue #272: IR-native env binding for defines.
-- `tests/issues/test_issue_300.cpp` (#300) — ctor initializer list (marker_ / dirty_ / ppa_dirty_ / verify_dirty_
-- `tests/issues/test_issue_322.cpp` (#322) — test_issue_322.cpp — Issue #322: Dual-Path SoA/EnvId
 - `tests/issues/test_issue_330.cpp` (#330) — test_issue_330.cpp — Issue #330: Dedicated unit tests for
 - `tests/issues/test_issue_335.cpp` (#335) — test_issue_335.cpp — Verify Issue #335 acceptance
 - `tests/issues/test_issue_356.cpp` (#356) — test_issue_356.cpp — Verify Issue #356 acceptance criteria
