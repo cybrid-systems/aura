@@ -3,12 +3,12 @@
     "compile": 23,
     "engine": 8,
     "mutate": 6,
-    "other": 400,
+    "other": 397,
     "query": 51,
     "stats-like": 1,
     "workspace": 24
   },
-  "count": 513,
+  "count": 510,
   "frozen_count": 447,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -459,7 +459,7 @@
     "vector-ref",
     "vector-set!"
   ],
-  "interim_hard_ceiling": 523,
+  "interim_hard_ceiling": 524,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",
@@ -595,9 +595,6 @@
     "dirty:reasons",
     "display",
     "drop",
-    "eda:demo-sv-self-evolution",
-    "eda:run-commercial-simulator-stub",
-    "eda:run-verification-feedback",
     "edsl:define-struct",
     "engine:metrics",
     "engine:surface",
