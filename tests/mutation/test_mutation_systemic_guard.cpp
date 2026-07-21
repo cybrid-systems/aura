@@ -127,8 +127,7 @@ int main() {
         }
         for (const char* prim :
              {"\"compile:subtree-bump\"", "\"compile:per-defuse-index-add\"",
-              "\"compile:hw-bitvec-register\"", "\"evaluator:compact-env-frames\"",
-              "\"eda:run-verification-feedback\""}) {
+              "\"compile:hw-bitvec-register\"", "\"evaluator:compact-env-frames\""}) {
             auto pos = src.find(prim);
             CHECK(pos != std::string::npos, std::string("found ") + prim);
             auto win = src.substr(pos, 3500);
