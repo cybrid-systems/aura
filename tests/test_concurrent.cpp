@@ -1320,7 +1320,7 @@ bool test_exec_when_all() {
     std::atomic<int> counter{0};
     constexpr int N = 10;
 
-    std::vector<std::move_only_function<void()>> fns;
+    std::vector<std::function<void()>> fns;
     for (int i = 0; i < N; ++i) {
         fns.push_back([&counter]() {
             busy_work(50000);
@@ -1352,7 +1352,7 @@ bool test_exec_let_value() {
     aura::exec::fiber_scheduler fs(sched);
     std::atomic<int> stage{0};
 
-    std::vector<std::move_only_function<void()>> pipeline;
+    std::vector<std::function<void()>> pipeline;
     pipeline.push_back([&stage]() { stage.store(1, std::memory_order_release); });
     pipeline.push_back([&stage]() {
         int s = stage.load(std::memory_order_acquire);
@@ -1428,7 +1428,7 @@ bool test_exec_when_all_error() {
     bool got_error = false;
     std::atomic<int> ok_count{0};
 
-    std::vector<std::move_only_function<void()>> fns;
+    std::vector<std::function<void()>> fns;
     // 3 tasks that succeed
     for (int i = 0; i < 3; ++i)
         fns.push_back([&ok_count]() { ok_count.fetch_add(1); });
@@ -1470,7 +1470,7 @@ bool test_exec_let_value_error() {
     std::atomic<int> steps_run{0};
     bool got_error = false;
 
-    std::vector<std::move_only_function<void()>> pipeline;
+    std::vector<std::function<void()>> pipeline;
     pipeline.push_back([&steps_run]() {
         steps_run.fetch_add(1); // step 1
     });
@@ -1540,7 +1540,7 @@ bool test_exec_multi_when_all() {
     std::atomic<int> total{0};
 
     auto make_when_all = [&]() {
-        std::vector<std::move_only_function<void()>> fns;
+        std::vector<std::function<void()>> fns;
         for (int i = 0; i < 5; ++i)
             fns.push_back([&total]() {
                 busy_work(20000);
@@ -1592,7 +1592,7 @@ bool test_exec_mixed_schedule() {
     o2.start();
 
     // Group via when_all
-    std::vector<std::move_only_function<void()>> fns;
+    std::vector<std::function<void()>> fns;
     for (int i = 0; i < 5; ++i)
         fns.push_back([&group]() { group.fetch_add(1); });
     auto ws = aura::exec::when_all(fs, std::move(fns));
