@@ -1997,10 +1997,11 @@ int main(int argc, char* argv[]) {
             };
 
             // Resolve "std/name" or sym-like-name to a file path.
+            // name is string_view — materialize before operator+ with literals.
             auto resolve_path = [&](std::string_view name) -> std::string {
                 if (name.starts_with("std/"))
-                    return std_root + name.substr(4) + ".aura";
-                return name + ".aura";
+                    return std_root + std::string(name.substr(4)) + ".aura";
+                return std::string(name) + ".aura";
             };
 
             // Recursively inline a module file. Replaces nested
