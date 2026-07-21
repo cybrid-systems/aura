@@ -30,7 +30,9 @@ export class TypeEnv {
         bool is_poly = false;
         std::vector<aura::core::TypeId> type_args;
     };
-    std::vector<std::unordered_map<std::string, Binding>> scopes_;
+    std::vector<std::unordered_map<std::string, Binding, aura::core::TransparentStringHash,
+                                   std::equal_to<>>>
+        scopes_;
 
 public:
     explicit TypeEnv(aura::core::TypeRegistry& reg);
@@ -392,7 +394,9 @@ export struct OwnershipNote {
 };
 
 export class OwnershipEnv {
-    std::vector<std::unordered_map<std::string, OwnershipState>> scopes_;
+    std::vector<std::unordered_map<std::string, OwnershipState, aura::core::TransparentStringHash,
+                                   std::equal_to<>>>
+        scopes_;
     // Tracks which variable bindings have had structural mutations applied
     // and need ownership re-validation on the next validate pass.
     std::unordered_set<std::string> ownership_dirty_;
@@ -758,7 +762,8 @@ public:
 
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
-    std::unordered_map<std::string, std::string> declared_modules_;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        declared_modules_;
 
     // declared_sigs: name → TypeId, for binding declared type
     // signatures (from inject_type_sigs) to the env. We pass this
@@ -768,7 +773,9 @@ public:
     // (See #77 regression follow-up: the 312-5 test in
     // test_regression.py / test_aura_type_multi_func failed because
     // add/mul dedup'd to one entry, mul's name overwrote add's.)
-    std::unordered_map<std::string, aura::core::TypeId> declared_sigs_;
+    std::unordered_map<std::string, aura::core::TypeId, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        declared_sigs_;
 
     // Issue #72: per-engine incremental typecheck stats.
     // Accumulated on TypeChecker (via stats()) for visibility.
@@ -1237,14 +1244,16 @@ export struct TypeCheckResult {
 // produced by `TypeChecker::inject_type_sigs`. The string→string
 // form stays in `inject_type_sigs` (the stateful setup step);
 // this pure function assumes resolution has already happened.
-export TypeCheckResult
-type_check_flat_pure(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId root,
-                     aura::core::TypeRegistry& types, aura::diag::DiagnosticCollector& diag,
-                     const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
-                     const std::unordered_map<std::string, std::string>& module_src = {},
-                     bool strict = false, std::uint64_t cache_epoch = 0,
-                     void* metrics = nullptr,        // Issue #258: optional metrics pointer
-                     bool bidirectional_mode = true) // Issue #283 follow-up #5
+export TypeCheckResult type_check_flat_pure(
+    aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId root,
+    aura::core::TypeRegistry& types, aura::diag::DiagnosticCollector& diag,
+    const std::unordered_map<std::string, aura::core::TypeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>& sigs = {},
+    const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                             std::equal_to<>>& module_src = {},
+    bool strict = false, std::uint64_t cache_epoch = 0,
+    void* metrics = nullptr,        // Issue #258: optional metrics pointer
+    bool bidirectional_mode = true) // Issue #283 follow-up #5
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -1263,8 +1272,11 @@ export struct TypeChecker {
     // 在 infer_flat 前调用。name_to_sig: (name → "param1 param2|rettype")。
     // 格式示例: "Int Int|Int" 表示 (Int, Int) -> Int
     // module_src: name → 来源模块文件（用于跨模块错误定位）
-    void inject_type_sigs(const std::unordered_map<std::string, std::string>& sigs,
-                          const std::unordered_map<std::string, std::string>& module_src = {});
+    void inject_type_sigs(
+        const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                 std::equal_to<>>& sigs,
+        const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                 std::equal_to<>>& module_src = {});
 
     // 查询已注入类型的来源模块名
     std::string declared_type_module(const std::string& name) const;
@@ -1524,13 +1536,16 @@ private:
     ConstraintSystem solve_delta_cs_;
 
     // name → 模块源文件路径（来自 inject_type_sigs 的 module_src）
-    std::unordered_map<std::string, std::string> type_module_src_;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        type_module_src_;
 
     // name → declared TypeId, set by inject_type_sigs and passed
     // to InferenceEngine so each declared name can be bound to
     // the env even if its TypeId is shared with another name
     // (post-#70 interning).
-    std::unordered_map<std::string, aura::core::TypeId> type_sigs_;
+    std::unordered_map<std::string, aura::core::TypeId, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        type_sigs_;
 
     // Issue #72: incremental typecheck stats (accumulated across
     // infer_flat calls for test visibility).
@@ -1912,6 +1927,7 @@ export std::vector<aura::ast::NodeId> affected_subtree_for_symbol(const aura::as
 // apply_status_updates() writes invariant_status back to the log
 // (visit_mutation takes const MutationRecord& per the concept).
 export class PostMutationInvariantVisitor {
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 public:
     PostMutationInvariantVisitor(const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
                                  void* metrics = nullptr)

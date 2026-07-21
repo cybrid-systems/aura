@@ -16,6 +16,7 @@ import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.compiler.value;
 import aura.diag;
+#include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 namespace aura::compiler {
 
@@ -80,8 +81,12 @@ std::string Evaluator::run_typecheck_no_lock() {
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
         aura::compiler::TypeChecker tc(treg);
         if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string> sig_map;
-            std::unordered_map<std::string, std::string> mod_src_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                sig_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                mod_src_map;
             for (auto& [name, decl] : declared_type_sigs_) {
                 sig_map[name] = decl.type_str;
                 if (!decl.module_file.empty())
@@ -129,8 +134,12 @@ bool Evaluator::run_typecheck_no_lock_bool() {
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
         aura::compiler::TypeChecker tc(treg);
         if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string> sig_map;
-            std::unordered_map<std::string, std::string> mod_src_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                sig_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                mod_src_map;
             for (auto& [name, decl] : declared_type_sigs_) {
                 sig_map[name] = decl.type_str;
                 if (!decl.module_file.empty())
@@ -189,8 +198,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         auto& treg = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
         aura::compiler::TypeChecker tc(treg);
         if (!declared_type_sigs_.empty()) {
-            std::unordered_map<std::string, std::string> sig_map;
-            std::unordered_map<std::string, std::string> mod_src_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                sig_map;
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>
+                mod_src_map;
             for (auto& [name, decl] : declared_type_sigs_) {
                 sig_map[name] = decl.type_str;
                 if (!decl.module_file.empty())
