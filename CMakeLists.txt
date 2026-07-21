@@ -1777,6 +1777,11 @@ aura_add_issue_test(test_mutation_aot_unit_batch)
 aura_issue_test_link_llvm_jit(test_mutation_aot_unit_batch)
 add_dependencies(all_test_issue_targets test_mutation_aot_unit_batch)
 
+# Wave 36 (#1957): shape_soa unit batch (Env version / SoA walk smokes)
+aura_add_issue_test(test_shape_soa_unit_batch)
+aura_issue_test_link_llvm_jit(test_shape_soa_unit_batch)
+add_dependencies(all_test_issue_targets test_shape_soa_unit_batch)
+
 aura_add_issue_test(test_mutation_typed_audit_batch)
 
 # Wave 20 (#1957): linear ownership family batch (tests/observability/)
