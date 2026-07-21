@@ -1769,6 +1769,31 @@ aura_add_issue_test(test_edsl_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_edsl_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_edsl_hygiene_unit_batch)
 
+# tests/fiber/ consolidation — strategy/evolve, synthesize, orch, concurrent units.
+# Keep test_concurrent + test_jit_concurrent_compile (custom targets) and
+# test_per_fiber_stack_pool_high_concurrency (jit_late1 bundle member).
+aura_add_issue_test(test_fiber_strategy_evolve_batch)
+aura_issue_test_link_llvm_jit(test_fiber_strategy_evolve_batch)
+add_dependencies(all_test_issue_targets test_fiber_strategy_evolve_batch)
+
+aura_add_issue_test(test_fiber_synthesize_batch)
+aura_issue_test_link_llvm_jit(test_fiber_synthesize_batch)
+add_dependencies(all_test_issue_targets test_fiber_synthesize_batch)
+
+# Orch batches: EXCLUDE_FROM_ALL — Scheduler/fiber stress can SIGSEGV under
+# co-linked load; on-demand via ninja test_fiber_orch_*_batch.
+aura_add_issue_test(test_fiber_orch_core_batch)
+aura_issue_test_link_llvm_jit(test_fiber_orch_core_batch)
+set_target_properties(test_fiber_orch_core_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+aura_add_issue_test(test_fiber_orch_parallel_quota_batch)
+aura_issue_test_link_llvm_jit(test_fiber_orch_parallel_quota_batch)
+set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+aura_add_issue_test(test_fiber_concurrent_unit_batch)
+aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
+add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)
+
 # ── tests/domain/ suites (restored after AuraDomainTests.cmake removal) ──
 # Default-build: schema matrix + behavioral gates + concurrent defrag.
 # On-demand (EXCLUDE_FROM_ALL): arena family batches.

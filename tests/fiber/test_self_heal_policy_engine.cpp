@@ -1,3 +1,16 @@
+// test_self_heal_policy_engine.cpp — standalone (flaky/failing ACs under batch link)
+
+#include "test_harness.hpp"
+
+#include <cstdint>
+#include <print>
+#include <string>
+
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+import aura.compiler.value;
+
 // @category: integration
 // @reason: Issue #1582 — policy-driven SelfHealing engine + graceful drain
 // + quota/panic linkage + self_heal_success_total metrics.
@@ -9,19 +22,6 @@
 //   AC5: custom policy + hooks compose
 //   AC6: panic-restore production path exercises engine (CompilerService)
 
-#include "test_harness.hpp"
-
-#include "core/self_healing_hooks.h"
-
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <print>
-
-import std;
-import aura.compiler.service;
-import aura.compiler.evaluator;
-import aura.compiler.value;
 
 namespace {
 

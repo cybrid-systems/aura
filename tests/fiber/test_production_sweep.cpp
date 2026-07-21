@@ -1,5 +1,4 @@
-// Issue #1202/#1203/#1215/#1228 (#1978 renamed): issue# moved from filename to header.
-// test_production_sweep_1202_1228.cpp — Issues #1202–#1228 Phase 1
+// test_production_sweep.cpp — fiber production sweep (standalone; SIGSEGV in batch)
 
 #include "test_harness.hpp"
 
@@ -10,6 +9,10 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+
+// Issue #1202/#1203/#1215/#1228 (#1978 renamed): issue# moved from filename to header.
+// test_production_sweep_1202_1228.cpp — Issues #1202–#1228 Phase 1
+
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
