@@ -10,6 +10,7 @@
 // Schema-only surfaces: test_obs_schema_matrix + cases/*.hpp.
 
 #include "test_harness.hpp"
+#include "core/transparent_string_hash.hh"
 
 #include <cstdint>
 #include <string>
@@ -25,6 +26,7 @@ import aura.compiler.coercion_map;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
 import aura.compiler.ast_walkers;
+import aura.compiler.macro_expansion;
 import aura.diag;
 import aura.core.type;
 import aura.parser.parser;
@@ -885,12 +887,304 @@ static void run_typechecker_unit_tests() {
     run_169_incremental_strictness_flag();
 }
 
+// ── Wave 7 (#242 EnvFrame SoA + #260 ADT exhaustiveness + #265 clone_macro_body hygiene) ──
+
+static void run_242_envframe_soa_version_stamping() {
+    std::println("\n=== #242: EnvFrame SoA version stamping + arena rollback hardening ===");
+    // L1: alloc_env_frame stamps version_ + is_env_frame_stale semantics
+    {
+        std::println("\n--- #242 L1: alloc_env_frame + is_env_frame_stale ---");
+        aura::compiler::Evaluator ev;
+        auto v0 = ev.defuse_version_for_test();
+        aura::compiler::EnvId id = ev.alloc_env_frame();
+        CHECK(id != aura::compiler::NULL_ENV_ID, "alloc returns valid id");
+        CHECK(ev.env_frame(id).version_ == v0, "frame.version_ == defuse_version_ at alloc");
+        CHECK(!ev.is_env_frame_stale(id), "fresh frame not stale");
+        CHECK(ev.is_env_frame_invalid_id(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID is invalid_id");
+        CHECK(ev.is_env_frame_invalid_id(999999), "out-of-range is invalid_id");
+        CHECK(!ev.is_env_frame_stale(aura::compiler::NULL_ENV_ID), "NULL_ENV_ID not version-stale");
+        CHECK(!ev.is_env_frame_stale(999999), "out-of-range not version-stale");
+        ev.bump_defuse_version_for_test();
+        CHECK(ev.is_env_frame_stale(id), "stale after defuse_version_ bump");
+    }
+    // L2: closure capture + mutate + materialize_call_env stale + bump version
+    {
+        std::println("\n--- #242 L2: capture + mutate + materialize_call_env ---");
+        aura::compiler::Evaluator ev;
+        aura::compiler::EnvId id = ev.alloc_env_frame();
+        CHECK(!ev.is_env_frame_stale(id), "L2 fresh frame");
+        aura::compiler::Closure cl;
+        cl.env_id = id;
+        ev.bump_defuse_version_for_test();
+        CHECK(ev.is_env_frame_stale(id), "L2 stale after bump");
+        auto ne = ev.materialize_call_env(cl);
+        (void)ne;
+        auto v_after = ev.defuse_version_for_test();
+        CHECK(ev.env_frame(id).version_ == v_after,
+              "frame.version_ bumped to defuse_version_ by materialize_call_env");
+    }
+    {
+        std::println("\n--- #242 L2: capture + mutate + lookup consistency (no UAF) ---");
+        aura::compiler::CompilerService cs;
+        auto r1 = cs.eval("(begin (define x 10) (define f (lambda () x)) (f))");
+        CHECK(r1.has_value(), "r1: capture f + call returns a value");
+        auto r2 = cs.eval("(begin (define x 20) (f))");
+        CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
+              "r2: post-mutation lookup returns int (no crash / no UAF)");
+    }
+    // L3: panic-checkpoint arena snapshot + commit_clears
+    {
+        std::println("\n--- #242 L3: panic-checkpoint snapshot + commit clears ---");
+        aura::compiler::Evaluator ev;
+        CHECK(ev.panic_safe_cells_size() == 0, "panic_safe_cells_size_ defaults to 0");
+        CHECK(ev.panic_safe_pairs_size() == 0, "panic_safe_pairs_size_ defaults to 0");
+        CHECK(ev.panic_safe_string_heap_size() == 0, "panic_safe_string_heap_size_ defaults to 0");
+        CHECK(ev.panic_safe_env_frames_size() == 0, "panic_safe_env_frames_size_ defaults to 0");
+        ev.set_panic_safe_cells_size_for_test(10);
+        ev.set_panic_safe_pairs_size_for_test(5);
+        ev.set_panic_safe_string_heap_size_for_test(100);
+        ev.set_panic_safe_env_frames_size_for_test(7);
+        ev.commit_panic_checkpoint();
+        CHECK(ev.panic_safe_cells_size() == 0, "commit clears panic_safe_cells_size_");
+        CHECK(ev.panic_safe_pairs_size() == 0, "commit clears panic_safe_pairs_size_");
+        CHECK(ev.panic_safe_string_heap_size() == 0, "commit clears panic_safe_string_heap_size_");
+        CHECK(ev.panic_safe_env_frames_size() == 0, "commit clears panic_safe_env_frames_size_");
+    }
+}
+
+static void run_260_adt_match_exhaustiveness_mutation() {
+    std::println("\n=== #260: nested ADT exhaustiveness + mutation-aware occurrence typing ===");
+    using Ctx = TypecheckEnv;
+    // T1: analyze_match_exhaustiveness detects missing ctor
+    {
+        std::println("\n--- #260 T1: analyze_match_exhaustiveness detects missing ctor ---");
+        auto env = Ctx::make();
+        env.parse_src("(begin (define-type (Color) (Red) (Green) (Blue)) "
+                      "  (let ((x Red)) (match x ((Red) 1) ((Green) 2))))");
+        aura::ast::NodeId found = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId i = 0; i < env.flat->size(); ++i) {
+            if (!env.flat->has_match_info(i))
+                continue;
+            auto missing =
+                aura::compiler::analyze_match_exhaustiveness(*env.flat, *env.pool, *env.reg, i);
+            if (!missing.empty()) {
+                found = i;
+                break;
+            }
+        }
+        CHECK(found != aura::ast::NULL_NODE, "found incomplete match let");
+        if (found != aura::ast::NULL_NODE) {
+            auto missing =
+                aura::compiler::analyze_match_exhaustiveness(*env.flat, *env.pool, *env.reg, found);
+            CHECK(!missing.empty(), "match reports missing ctors");
+            bool has_blue = false;
+            for (auto& m : missing)
+                if (m == "Blue")
+                    has_blue = true;
+            CHECK(has_blue, "missing ctor is Blue");
+            if (auto* mi = env.flat->get_match_info(found)) {
+                CHECK(mi->exhaustiveness_checked, "exhaustiveness_checked flag set");
+                CHECK(mi->subject_type_id > 0, "subject_type_id cached");
+            }
+        }
+    }
+    // T2: post_mutation_invariant_check emits MissingConstructorInNestedMatch
+    {
+        std::println("\n--- #260 T2: post_mutation MissingConstructorInNestedMatch note ---");
+        auto env = Ctx::make();
+        env.parse_src("(begin (define-type (Color) (Red) (Green) (Blue)) "
+                      "  (let ((x Red)) (match x ((Red) 1) ((Green) 2))))");
+        aura::ast::NodeId found = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId i = 0; i < env.flat->size(); ++i) {
+            if (!env.flat->has_match_info(i))
+                continue;
+            auto missing =
+                aura::compiler::analyze_match_exhaustiveness(*env.flat, *env.pool, *env.reg, i);
+            if (!missing.empty()) {
+                found = i;
+                break;
+            }
+        }
+        CHECK(found != aura::ast::NULL_NODE, "found incomplete match");
+        if (found != aura::ast::NULL_NODE) {
+            env.flat->mark_dirty(found);
+            aura::ast::MutationRecord rec;
+            rec.mutation_id = 42;
+            rec.target_node = found;
+            rec.parent_id = env.flat->parent_of(found);
+            rec.operator_name = "mutate:replace-children";
+            std::vector<aura::compiler::OwnershipNote> notes;
+            auto st = aura::compiler::post_mutation_invariant_check(*env.flat, *env.pool, *env.reg,
+                                                                    rec, notes);
+            bool note_found = false;
+            for (auto& n : notes) {
+                if (n.kind == "MissingConstructorInNestedMatch") {
+                    note_found = true;
+                    CHECK(n.source_mutation_id.has_value() && *n.source_mutation_id == 42,
+                          "note links mutation_id");
+                    CHECK(n.blame.has_value() &&
+                              n.blame->annotation_src == "mutate:replace-children",
+                          "note blame operator");
+                }
+            }
+            CHECK(note_found, "MissingConstructorInNestedMatch emitted");
+            CHECK(st == aura::ast::InvariantStatus::Warnings, "status is Warnings");
+        }
+    }
+    // T3: complete match has no missing ctor note
+    {
+        std::println("\n--- #260 T3: complete match has no missing ctor ---");
+        auto env = Ctx::make();
+        env.parse_src("(begin (define-type (Color) (Red) (Green) (Blue)) "
+                      "  (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3))))");
+        aura::ast::NodeId found = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId i = 0; i < env.flat->size(); ++i) {
+            if (!env.flat->has_match_info(i))
+                continue;
+            auto missing =
+                aura::compiler::analyze_match_exhaustiveness(*env.flat, *env.pool, *env.reg, i);
+            if (!missing.empty()) {
+                found = i;
+                break;
+            }
+        }
+        CHECK(found == aura::ast::NULL_NODE, "complete match has no incomplete lets");
+    }
+}
+
+static void run_265_clone_macro_body_hygiene() {
+    std::println("\n=== #265: clone_macro_body hygiene (per-call gensym + pre-scan + builtins "
+                 "whitelist) ===");
+    using HygNameMap = aura::core::TransparentStringMap<std::string>;
+    auto make_src_env = [](const std::string& src) {
+        auto arena = std::make_unique<aura::ast::ASTArena>();
+        auto alloc = arena->allocator();
+        auto* flat = arena->create<aura::ast::FlatAST>(alloc);
+        auto* pool = arena->create<aura::ast::StringPool>(alloc);
+        auto pr = aura::parser::parse_to_flat(src, *flat, *pool);
+        flat->root = pr.root;
+        struct R {
+            std::unique_ptr<aura::ast::ASTArena> arena;
+            aura::ast::FlatAST* flat;
+            aura::ast::StringPool* pool;
+            aura::ast::NodeId body;
+        };
+        R r;
+        r.arena = std::move(arena);
+        r.flat = flat;
+        r.pool = pool;
+        r.body = pr.root;
+        return r;
+    };
+    // T1: hyg_ctr is per-call reset
+    {
+        std::println("\n--- #265 T1: hyg_ctr is per clone_macro_body call ---");
+        auto src = make_src_env("(let ((tmp 1)) tmp)");
+        auto t1 = make_src_env(""); // dummy to consume pool types
+        (void)t1;
+        auto t1a = std::make_unique<aura::ast::ASTArena>();
+        auto t1a_alloc = t1a->allocator();
+        auto* t1_flat = t1a->create<aura::ast::FlatAST>(t1a_alloc);
+        auto* t1_pool = t1a->create<aura::ast::StringPool>(t1a_alloc);
+        auto t2a = std::make_unique<aura::ast::ASTArena>();
+        auto t2a_alloc = t2a->allocator();
+        auto* t2_flat = t2a->create<aura::ast::FlatAST>(t2a_alloc);
+        auto* t2_pool = t2a->create<aura::ast::StringPool>(t2a_alloc);
+        HygNameMap map1, map2;
+        (void)aura::compiler::macro_exp::clone_macro_body(*t1_flat, *t1_pool, *src.flat, *src.pool,
+                                                          src.body, nullptr, &map1,
+                                                          aura::ast::SyntaxMarker::MacroIntroduced);
+        (void)aura::compiler::macro_exp::clone_macro_body(*t2_flat, *t2_pool, *src.flat, *src.pool,
+                                                          src.body, nullptr, &map2,
+                                                          aura::ast::SyntaxMarker::MacroIntroduced);
+        CHECK(map1.count("tmp") == 1, "first expansion gensyms tmp");
+        CHECK(map2.count("tmp") == 1, "second expansion gensyms tmp");
+        CHECK(map1.at("tmp") == "__tmp_0", "first expansion uses __tmp_0");
+        CHECK(map2.at("tmp") == "__tmp_0",
+              "second expansion also starts at __tmp_0 (not global static)");
+    }
+    // T2: pre-scan rewrites inner references to gensym name
+    {
+        std::println("\n--- #265 T2: pre-scan rewrites inner references ---");
+        auto src = make_src_env("(let ((tmp x)) tmp)");
+        auto t1a = std::make_unique<aura::ast::ASTArena>();
+        auto t1a_alloc = t1a->allocator();
+        auto* t_flat = t1a->create<aura::ast::FlatAST>(t1a_alloc);
+        auto* t_pool = t1a->create<aura::ast::StringPool>(t1a_alloc);
+        HygNameMap rename_map;
+        auto cloned = aura::compiler::macro_exp::clone_macro_body(
+            *t_flat, *t_pool, *src.flat, *src.pool, src.body, nullptr, &rename_map,
+            aura::ast::SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != aura::ast::NULL_NODE, "clone succeeded");
+        std::vector<std::string> vars;
+        std::function<void(aura::ast::NodeId)> collect = [&](aura::ast::NodeId id) {
+            if (id == aura::ast::NULL_NODE || id >= t_flat->size())
+                return;
+            auto v = t_flat->get(id);
+            if (v.tag == aura::ast::NodeTag::Variable && v.sym_id != aura::ast::INVALID_SYM) {
+                vars.push_back(std::string(t_pool->resolve(v.sym_id)));
+            }
+            for (std::uint32_t i = 0; i < v.children.size(); ++i)
+                collect(v.child(i));
+        };
+        collect(cloned);
+        CHECK(vars.size() >= 2, "let + reference produce >= 2 variable nodes");
+        const auto gensym = rename_map.at("tmp");
+        int hits = 0;
+        for (const auto& n : vars)
+            if (n == gensym)
+                ++hits;
+        CHECK(hits >= 1, "inner reference uses gensym name from rename_map");
+        auto let_v = t_flat->get(cloned);
+        CHECK(let_v.tag == aura::ast::NodeTag::Let, "cloned root is let");
+        CHECK(std::string(t_pool->resolve(let_v.sym_id)) == gensym,
+              "let binding sym_id uses gensym from rename_map");
+    }
+    // T3: builtins whitelist not gensym'd
+    {
+        std::println("\n--- #265 T3: builtins whitelist not gensym'd ---");
+        auto src = make_src_env("(lambda (if) if)");
+        auto t1a = std::make_unique<aura::ast::ASTArena>();
+        auto t1a_alloc = t1a->allocator();
+        auto* t_flat = t1a->create<aura::ast::FlatAST>(t1a_alloc);
+        auto* t_pool = t1a->create<aura::ast::StringPool>(t1a_alloc);
+        HygNameMap rename_map;
+        auto cloned = aura::compiler::macro_exp::clone_macro_body(
+            *t_flat, *t_pool, *src.flat, *src.pool, src.body, nullptr, &rename_map,
+            aura::ast::SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != aura::ast::NULL_NODE, "clone with builtin lambda param succeeded");
+        CHECK(rename_map.find("if") == rename_map.end(), "builtin param `if` not gensym'd");
+        auto lam = t_flat->get(cloned);
+        CHECK(lam.tag == aura::ast::NodeTag::Lambda && !lam.params.empty(), "lambda cloned");
+        CHECK(std::string(t_pool->resolve(lam.params[0])) == "if",
+              "lambda param remains plain `if`");
+    }
+    // T4: nested bindings get distinct gensyms in one call
+    {
+        std::println("\n--- #265 T4: nested bindings get distinct gensyms ---");
+        auto src = make_src_env("(let ((a 1)) (let ((b 2)) (+ a b)))");
+        auto t1a = std::make_unique<aura::ast::ASTArena>();
+        auto t1a_alloc = t1a->allocator();
+        auto* t_flat = t1a->create<aura::ast::FlatAST>(t1a_alloc);
+        auto* t_pool = t1a->create<aura::ast::StringPool>(t1a_alloc);
+        HygNameMap rename_map;
+        (void)aura::compiler::macro_exp::clone_macro_body(*t_flat, *t_pool, *src.flat, *src.pool,
+                                                          src.body, nullptr, &rename_map,
+                                                          aura::ast::SyntaxMarker::MacroIntroduced);
+        CHECK(rename_map.at("a") == "__a_0", "first binding is __a_0");
+        CHECK(rename_map.at("b") == "__b_1", "second binding is __b_1");
+    }
+}
+
 } // namespace aura_domain_gates_batch
 
 int aura_issue_domain_gates_batch_run() {
     aura::compiler::CompilerService cs;
     aura_domain_gates_batch::run_all(cs);
     aura_domain_gates_batch::run_typechecker_unit_tests();
+    aura_domain_gates_batch::run_242_envframe_soa_version_stamping();
+    aura_domain_gates_batch::run_260_adt_match_exhaustiveness_mutation();
+    aura_domain_gates_batch::run_265_clone_macro_body_hygiene();
     return RUN_ALL_TESTS();
 }
 
