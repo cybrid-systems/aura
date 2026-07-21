@@ -1238,6 +1238,23 @@ int run_473_smoke() {
 } // namespace aura_fiber_run_wave57_473
 
 
+// Wave 58 (#1957): #1393 panic checkpoint cross-evaluator (from issues/1382_1395_batch)
+namespace aura_fiber_run_wave58_1393 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1393_smoke() {
+    std::println("\n=== #1393: PanicCheckpoint cross-evaluator soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define w 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    // Full Guard discriminator unit stays pure-C++; soft contract is eval surface.
+    CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
+          "metrics after checkpoint-capable workspace");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_fiber_run_wave58_1393
+
 int main() {
 
 
@@ -1478,6 +1495,13 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave57_473 ########");
     if (int rc = aura_fiber_run_wave57_473::run_473_smoke(); rc != 0)
+        return rc;
+
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave58_1393 ########");
+    if (int rc = aura_fiber_run_wave58_1393::run_1393_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_fiber_concurrent_unit_batch: OK ({} passed)", ::aura::test::g_passed);

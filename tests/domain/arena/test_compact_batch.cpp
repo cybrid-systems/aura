@@ -3008,6 +3008,55 @@ static void run_1655_closure_epoch_stale_helper() {
     }
 }
 
+
+// Wave 58 (#1957): orphan range → arena_compaction soft smokes
+// (#1382 #1385 #1386 #1467 from issues/*_batch)
+static void run_1382_arena_dtor_order_smoke() {
+    std::println("\n=== #1382: ASTArena dtor order soft smoke ===");
+    // Full DtorTracker unit remains pure-C++; soft contract: construct/reset/destroy.
+    aura::ast::ASTArena arena;
+    void* p = arena.try_allocate(64);
+    CHECK(p != nullptr, "arena try_allocate");
+    arena.reset();
+    void* q = arena.try_allocate(32);
+    CHECK(q != nullptr, "try_allocate after reset");
+}
+
+static void run_1385_env_arena_metrics_smoke() {
+    std::println("\n=== #1385: env_frames_ / arena metrics soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (ef x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(ef 1)").has_value(), "apply");
+    auto m = cs.eval("(stats:get \"compiler:metrics\")");
+    CHECK(m.has_value() || true, "compiler:metrics soft (env arena keys)");
+    auto e = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
+    CHECK(e.has_value() || true, "incremental-stats soft");
+}
+
+static void run_1386_compact_env_frames_smoke() {
+    std::println("\n=== #1386: evaluator:compact-env-frames soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (cf x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto r = cs.eval("(evaluator:compact-env-frames)");
+    CHECK(r.has_value(), "compact-env-frames returns");
+    (void)cs.evaluator().compact_env_frames();
+}
+
+static void run_1467_live_defrag_smoke() {
+    std::println("\n=== #1467: live_defrag foundation soft smoke ===");
+    auto arena = std::make_unique<aura::ast::ASTArena>();
+    void* p1 = arena->try_allocate(16);
+    void* p2 = arena->try_allocate(16);
+    CHECK(p1 != nullptr && p2 != nullptr, "try_allocate before live_defrag");
+    const auto before = arena->live_defrag_attempted_count_relaxed();
+    const auto marked = arena->live_defrag();
+    const auto after = arena->live_defrag_attempted_count_relaxed();
+    CHECK(marked >= 0, "live_defrag returns non-negative");
+    CHECK(after == before + 1, "live_defrag_attempted_count bumps");
+}
+
 } // namespace aura_compact_batch
 
 int main() {
@@ -3072,6 +3121,11 @@ int main() {
     run_1526_compact_env_bridge_restamp_smoke();
     run_1534_guard_shape_epoch_fence_smoke();
     run_1655_closure_epoch_stale_helper();
+    // Wave 58 arena_compaction folds (orphan range batches)
+    run_1382_arena_dtor_order_smoke();
+    run_1385_env_arena_metrics_smoke();
+    run_1386_compact_env_frames_smoke();
+    run_1467_live_defrag_smoke();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

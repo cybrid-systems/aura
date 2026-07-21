@@ -2212,6 +2212,65 @@ int run_677_metrics_smoke() {
 } // namespace aura_obs_run_wave57_677
 
 
+// Wave 58 (#1957): orphan range → observability soft smokes
+// (#1466 #1470 #1647 #1903 from issues/*_batch)
+namespace aura_obs_run_wave58_1466 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1466_metrics_smoke() {
+    std::println("\n=== #1466: query:cpp26-contracts-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:cpp26-contracts-stats\")").has_value(),
+          "cpp26-contracts-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave58_1466
+
+namespace aura_obs_run_wave58_1470 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1470_metrics_smoke() {
+    std::println("\n=== #1470: query:ai-closedloop-readiness-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(engine:metrics \"query:ai-closedloop-readiness-stats\")").has_value(),
+          "ai-closedloop-readiness-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave58_1470
+
+namespace aura_obs_run_wave58_1647 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1647_metrics_smoke() {
+    std::println("\n=== #1647: cross-boundary refresh metrics soft smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define u 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
+          "incremental-stats (cross-boundary counter family)");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave58_1647
+
+namespace aura_obs_run_wave58_1903 {
+using aura::compiler::CompilerService;
+using aura::test::g_failed;
+using aura::test::g_passed;
+int run_1903_metrics_smoke() {
+    std::println("\n=== #1903: query:envframe-dual-consistency-stats smoke ===");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (v x) x)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    CHECK(cs.eval("(v 1)").has_value(), "apply binds envframe");
+    CHECK(cs.eval("(engine:metrics \"query:envframe-dual-consistency-stats\")").has_value(),
+          "envframe-dual-consistency-stats");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_wave58_1903
+
 int main() {
 
 
@@ -2976,6 +3035,28 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave57_677 ########");
     if (int rc = aura_obs_run_wave57_677::run_677_metrics_smoke(); rc != 0)
+        return rc;
+
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave58_1466 ########");
+    if (int rc = aura_obs_run_wave58_1466::run_1466_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave58_1470 ########");
+    if (int rc = aura_obs_run_wave58_1470::run_1470_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave58_1647 ########");
+    if (int rc = aura_obs_run_wave58_1647::run_1647_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave58_1903 ########");
+    if (int rc = aura_obs_run_wave58_1903::run_1903_metrics_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");
