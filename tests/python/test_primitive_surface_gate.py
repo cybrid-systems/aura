@@ -102,8 +102,7 @@ class TestBlockedPatterns(unittest.TestCase):
 
     def test_eda_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("eda:"), "deferred")
-        self.assertEqual(self.m.domain_status("eda:load-sv"), "deferred")
-        self.assertEqual(self.m.domain_status("eda:parse-netlist"), "deferred")
+        # eda:* primitives fully retired (sub-layer 4.1) — nothing to assert
         self.assertIn("eda:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["eda:"], 13)
 
@@ -168,10 +167,7 @@ class TestBlockedPatterns(unittest.TestCase):
             "tui:init",
             "tui:present",
             "query:root",
-            "eda:load-sv",
-            "eda:parse-netlist",
             "tui:cell",
-            "eda:invoke-simulator",
             "auto-evolve-once",
             "auto-evolve-tick",
             "git-status",
@@ -191,7 +187,7 @@ class TestBlockedPatterns(unittest.TestCase):
         ]
         counts = self.m.commercial_domain_counts(names)
         self.assertEqual(counts.get("tui:"), 3)
-        self.assertEqual(counts.get("eda:"), 3)
+        self.assertEqual(counts.get("eda:"), 0)
         self.assertEqual(counts.get("auto-evolve-"), 2)
         self.assertEqual(counts.get("git-"), 2)
         self.assertEqual(counts.get("terminal:"), 2)

@@ -14,10 +14,10 @@ Do **not** add new `tests/issues/test_issue_*.cpp` files.
 
 | Location | Count | Notes |
 |----------|------:|-------|
-| `tests/issues/test_issue_*.cpp` | 581 | Legacy per-issue mains / bundle members |
+| `tests/issues/test_issue_*.cpp` | 577 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
 | `tests/domain/test_*.cpp` | 7 | Preferred destination suites |
-| **Total scanned** | **588** | |
+| **Total scanned** | **584** | |
 
 ### Related artifacts
 
@@ -36,10 +36,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 159 | 0 | 1 | 160 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 46 | 0 | 0 | 46 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 11 | 0 | 0 | 11 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 57 | 0 | 0 | 57 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 56 | 0 | 0 | 56 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 34 | 0 | 0 | 34 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 31 | 0 | 0 | 31 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 180 | 0 | 1 | 181 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 177 | 0 | 1 | 178 | P2 — often thin schema probes; collapse into obs matrix |
 
 ## Patterns, harness usage, coupling
 
@@ -47,16 +47,16 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Pattern | Count | Meaning |
 |---------|------:|---------|
-| `CompilerService` | 530 | Integration path via `CompilerService` / eval |
+| `CompilerService` | 526 | Integration path via `CompilerService` / eval |
 | `test_harness` | 341 | `#include "test_harness.hpp"` + CHECK/TEST macros |
-| `bundle_run_fn` | 151 | `aura_issue_*_run()` entry for issue bundles |
+| `bundle_run_fn` | 149 | `aura_issue_*_run()` entry for issue bundles |
 | `RUN_ALL_TESTS` | 83 | Harness runner main |
-| `own_main` | 50 | File defines `int main()` (standalone or bundle source) |
+| `own_main` | 48 | File defines `int main()` (standalone or bundle source) |
 | `issue_test_harness` | 2 | Older issue-specific harness helper |
 
 ### `@category` distribution (issues/)
 
-- `integration`: 373
+- `integration`: 369
 - `unknown`: 115
 - `unit`: 84
 - `issue_specific`: 7
@@ -82,11 +82,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Top module imports (first 50 lines, issues/)
 
-- `aura.compiler.value` — 374
-- `aura.compiler.service` — 350
+- `aura.compiler.value` — 370
+- `aura.compiler.service` — 346
 - `std` — 332
-- `aura.compiler.evaluator` — 322
-- `aura.core.ast` — 224
+- `aura.compiler.evaluator` — 318
+- `aura.core.ast` — 221
 - `aura.core.arena` — 127
 - `aura.core.type` — 118
 - `aura.compiler.ir` — 53
@@ -529,13 +529,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_763.cpp` (#763) — test_issue_763.cpp — Issue #763: Runtime linear_ownership_state
 - `tests/issues/test_issue_765.cpp` (#765) — test_issue_765.cpp — Issue #765: Full DepEntry quote/lambda tracking +
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (57)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (56)
 
 **Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### issues/ (57)
+#### issues/ (56)
 
 - `tests/issues/test_issue_120.cpp` (#120) [early_issue] — test_issue_120.cpp — Verify the hygienic macro fix (Issue #120).
 - `tests/issues/test_issue_131.cpp` (#131) [early_issue] — test_issue_131.cpp — Verify the FFI primitives
@@ -584,7 +584,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_486.cpp` (#486) — Issue #486 — query:pattern MacroIntroduced filter + macro-hygiene-stats
 - `tests/issues/test_issue_501_hygiene.cpp` (#501) — Issue #501 — IR MacroIntroduced hygiene (InlinePass + lowering)
 - `tests/issues/test_issue_503.cpp` (#503) — Issue #503 — query:pattern hygiene flags + pattern-marker-stats
-- `tests/issues/test_issue_617.cpp` (#617) — query:primitives-by-category / query:schema-of-primitive /
 - `tests/issues/test_issue_714.cpp` (#714) — 1. Standalone (query:self-evolution-closedloop-stats, schema 714)
 - `tests/issues/test_issue_733.cpp` (#733) — test_issue_733.cpp — Issue #733: Macro SyntaxMarker propagation + IR/JIT
 - `tests/issues/test_issue_757.cpp` (#757) — test_issue_757.cpp — Issue #757: Fine-grained MacroIntroduced
@@ -678,7 +677,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_795.cpp` (#795) — test_issue_795.cpp — Issue #795: P0 deep hot-path
 - `tests/issues/test_issue_796.cpp` (#796) — test_issue_796.cpp — Issue #796: P0 end-to-end
 
-### `observability` — Observability / metrics / query:*-stats (181)
+### `observability` — Observability / metrics / query:*-stats (178)
 
 **Target:** tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp
 
@@ -688,7 +687,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 - `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 
-#### issues/ (180)
+#### issues/ (177)
 
 - `tests/issues/test_issue_1449_demotion_batch.cpp` (#1449) [batch_driver] — Verifies SlimSurface progress after expanding facade-only intercept
 - `tests/issues/test_issue_1450.cpp` (#1450) — test_issue_1450.cpp — Epic #1449 Phase 1 / Issue #1450:
@@ -804,14 +803,11 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/issues/test_issue_533_observability.cpp` (#533) [obs_named] — Issue #533 — soa-production-columnar-stats hash slice
 - `tests/issues/test_issue_534_observability.cpp` (#534) [obs_named] — Issue #534 — arena-production-compaction-stats hash slice
 - `tests/issues/test_issue_535_observability.cpp` (#535) [obs_named] — Issue #535 — contracts-production-hotpath-stats hash slice
-- `tests/issues/test_issue_541_observability.cpp` (#541) [obs_named] — Issue #541 — pattern-sv-verification-stats hash slice
 - `tests/issues/test_issue_557_observability.cpp` (#557) [obs_named] — Issue #557 — top5-commercial-coverage-stats hash slice
 - `tests/issues/test_issue_567_observability.cpp` (#567) [obs_named] — Issue #567 — primitives-governance-stats hash slice
 - `tests/issues/test_issue_568_observability.cpp` (#568) [obs_named] — Issue #568 — soa-children-columnar-migration-stats hash slice
 - `tests/issues/test_issue_569_observability.cpp` (#569) [obs_named] — DEPRECATED location for new work (#1959): prefer tests/domain/arena/
 - `tests/issues/test_issue_572_observability.cpp` (#572) [obs_named] — Issue #572 — pass-pipeline-dirtyaware-stats hash slice
-- `tests/issues/test_issue_578_observability.cpp` (#578) [obs_named] — Issue #578 — sv-structured-edsl-stats hash slice
-- `tests/issues/test_issue_580_observability.cpp` (#580) [obs_named] — Issue #580 — hardware-backend-stats hash slice
 - `tests/issues/test_issue_583_observability.cpp` (#583) [obs_named] — Issue #583 — primitives-registry-core-stats hash slice
 - `tests/issues/test_issue_584_observability.cpp` (#584) [obs_named] — Issue #584 — primitives-hotpath-stats AI-agent stress slice
 - `tests/issues/test_issue_585_observability.cpp` (#585) [obs_named] — Issue #585 — primitives-error-stats unified recovery slice

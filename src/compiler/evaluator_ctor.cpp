@@ -185,45 +185,10 @@ void Evaluator::backfill_eda_sv_primitive_meta() {
                  .doc = "Run commercial simulator stub: re-emit + validate SV for node.",
                  .category = "eda",
                  .schema = "(string int) -> bool"});
-    primitives_.set_meta_for_name(
-        "eda:parse-netlist",
-        PrimMeta{.arity = 1,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Parse minimal netlist/RTL text into native SV FlatAST nodes.",
-                 .category = "eda",
-                 .schema = "(string) -> int"});
-    primitives_.set_meta_for_name(
-        "eda:query-nodes", PrimMeta{.arity = 1,
-                                    .pure = true,
-                                    .safety_flags = 0,
-                                    .doc = "Count workspace nodes matching an SV NodeTag name.",
-                                    .category = "eda",
-                                    .schema = "(string) -> int"});
-    primitives_.set_meta_for_name(
-        "eda:mutate-add-instance",
-        PrimMeta{.arity = 3,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Add a modport instance to an Interface with StableRef safety.",
-                 .category = "eda",
-                 .schema = "(int string string) -> bool"});
-    primitives_.set_meta_for_name(
-        "eda:waveform-snapshot",
-        PrimMeta{.arity = 1,
-                 .pure = true,
-                 .safety_flags = 0,
-                 .doc = "Export re-emit text length as waveform snapshot observability.",
-                 .category = "eda",
-                 .schema = "(int) -> int"});
-    primitives_.set_meta_for_name(
-        "eda:run-hardware-feedback",
-        PrimMeta{.arity = 1,
-                 .pure = false,
-                 .safety_flags = kPrimSafetyMutates,
-                 .doc = "Trigger hardware_backend closed-loop hook + SV re-emit for node.",
-                 .category = "eda",
-                 .schema = "(int) -> bool"});
+    ;
+    ;
+    ;
+    ;
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->primitive_eda_meta_backfill_total.fetch_add(10, std::memory_order_relaxed);
 }
