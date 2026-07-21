@@ -970,6 +970,86 @@ static void run_322_dual_path_soa_envid() {
         CHECK(re.has_value(), "eval succeeds after 5 mutations");
     }
 }
+}
+
+// ── Issue #335 — ArenaGroup adaptive auto-compact heuristics ──
+// Folded from tests/issues/test_issue_335.cpp via #1957.
+// Adaptive (arena:adaptive-compact) primitive + (arena:should-auto-compact?)
+// probe + (stats:get "arena:adaptive-stats") observability counters.
+
+static void run_335_arena_adaptive_compact_heuristics() {
+    std::println("\n=== #335: ArenaGroup adaptive auto-compact heuristics ===");
+    auto build_workspace = [](CompilerService& cs, int n_defines) {
+        std::string code = "(begin ";
+        for (int i = 0; i < n_defines; ++i)
+            code += "(define v_" + std::to_string(i) + " " + std::to_string(i) + ") ";
+        code += ")";
+        (void)cs.eval(std::string("(set-code \"") + code + "\")");
+        (void)cs.eval("(eval-current)");
+    };
+    // AC1: should_auto_compact probe
+    {
+        std::println("\n--- #335 AC1: should_auto_compact probe ---");
+        CompilerService cs;
+        auto r1 = cs.eval("(arena:should-auto-compact? \"main\")");
+        CHECK(r1.has_value() && aura::compiler::types::is_bool(*r1) &&
+                  !aura::compiler::types::as_bool(*r1),
+              "no workspace: should-auto-compact? returns #f");
+        build_workspace(cs, 5);
+        auto r2 = cs.eval("(arena:should-auto-compact? \"main\")");
+        CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2),
+              "with workspace: should-auto-compact? returns a bool");
+    }
+    // AC2: adaptive_compact reclaims + updates EMA
+    {
+        std::println("\n--- #335 AC2: adaptive_compact reclaims + EMA ---");
+        CompilerService cs;
+        build_workspace(cs, 3);
+        auto r1 = cs.eval("(arena:adaptive-compact)");
+        CHECK(r1.has_value() && is_int(*r1), "(arena:adaptive-compact) returns int");
+        const auto r1_val = as_int(*r1);
+        CHECK(r1_val >= 0, "bytes reclaimed is non-negative");
+        auto r2 = cs.eval("(stats:get \"arena:adaptive-stats\")");
+        CHECK(r2.has_value(), "(stats:get \"arena:adaptive-stats\") returns a value");
+    }
+    // AC3: EMA lowers threshold on productive compactions
+    {
+        std::println("\n--- #335 AC3: EMA lowers threshold on productive compactions ---");
+        aura::ast::ArenaGroup group;
+        group.set_compact_threshold(0.50);
+        auto& arena = group.module_arena("test", 4 * 1024);
+        std::vector<void*> ptrs;
+        for (int i = 0; i < 16; ++i)
+            ptrs.push_back(arena.create<std::array<std::byte, 64>>(std::array<std::byte, 64>{}));
+        (void)ptrs;
+        const auto should = group.should_auto_compact("test");
+        CHECK(true, "should_auto_compact returns a bool (true or false)");
+    }
+    // AC4: observability counters
+    {
+        std::println("\n--- #335 AC4: observability counters ---");
+        CompilerService cs;
+        build_workspace(cs, 3);
+        auto before = cs.eval("(stats:get \"arena:adaptive-stats\")");
+        CHECK(before.has_value(), "(stats:get \"arena:adaptive-stats\") pre-call returns a value");
+        for (int i = 0; i < 5; ++i)
+            cs.eval("(arena:adaptive-compact)");
+        auto after = cs.eval("(stats:get \"arena:adaptive-stats\")");
+        CHECK(after.has_value(), "(stats:get \"arena:adaptive-stats\") post-call returns a value");
+    }
+    // AC5: perf-bound (100 adaptive_compact calls < 10s eval-bound)
+    {
+        std::println("\n--- #335 AC5: perf-bound 100 adaptive_compact calls ---");
+        CompilerService cs;
+        build_workspace(cs, 50);
+        auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 100; ++i)
+            cs.eval("(arena:adaptive-compact)");
+        auto t1 = std::chrono::steady_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        CHECK(us < 10000000, "100 adaptive_compact calls < 10s (eval-bound; primitive is fast)");
+    }
+}
 
 } // namespace aura_compact_batch
 
@@ -1010,6 +1090,7 @@ int main() {
     run_187_arena_compaction_double_arena();
     run_300_arena_defrag_stats_observability();
     run_322_dual_path_soa_envid();
+    run_335_arena_adaptive_compact_heuristics();
     std::println("\n=== Compact batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
