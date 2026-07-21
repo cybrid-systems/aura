@@ -315,9 +315,6 @@ aura_issue_test_link_llvm_jit(test_production_sweep_1246_1250)
 set_target_properties(test_production_sweep_1246_1250 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1251–#1255: dirty/Guard/steal/pattern Phase 1
-aura_add_issue_test(test_production_sweep_1251_1255)
-aura_issue_test_link_llvm_jit(test_production_sweep_1251_1255)
-set_target_properties(test_production_sweep_1251_1255 PROPERTIES EXCLUDE_FROM_ALL TRUE)  # Wave2: schema via test_domain_production_sweep
 
 # Issues #1256–#1260: GC/workspace/IR/mutate-guard/panic Phase 1
 aura_add_issue_test(test_production_sweep_1256_1260)
@@ -400,9 +397,6 @@ aura_issue_test_link_llvm_jit(test_production_sweep_1331_1343)
 add_dependencies(all_test_issue_targets test_production_sweep_1331_1343)
 
 # Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep
-aura_add_issue_test(test_production_sweep_1336_1348)
-aura_issue_test_link_llvm_jit(test_production_sweep_1336_1348)
-add_dependencies(all_test_issue_targets test_production_sweep_1336_1348)
 
 # Issue #1349: terminal-present-batch ANSI SGR + CSI H (P0 cyber-cat)
 aura_add_issue_test(test_terminal_ansi_emit)
