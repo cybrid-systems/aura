@@ -2451,9 +2451,32 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         }
     }
 
-    // Original fallback: run aura --ir on the source to get the evaluated output
+    // Fallback: re-eval source via this aura process and bake the
+    // printed result into a tiny C main. Prefer /proc/self/exe so
+    // asan-verify (AURA=build_asan/aura, no ./build/aura) works.
+    // Never invent "()" on empty eval — that silently green-washed
+    // emit:move-int / emit:linear under ASAN when the LLVM link
+    // failed on missing linear-epoch symbols.
     std::string src(source);
-    std::string cmd = "echo '" + src + "' | ./build/aura --ir 2>/dev/null | head -1";
+    char exe_buf[4096];
+    std::string aura_exe = "./build/aura";
+    {
+        ssize_t n = ::readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+        if (n > 0) {
+            exe_buf[n] = '\0';
+            aura_exe.assign(exe_buf, static_cast<std::size_t>(n));
+        }
+    }
+    // Single-quote escape for the shell: ' -> '\''
+    std::string sh_src;
+    sh_src.reserve(src.size() + 8);
+    for (char c : src) {
+        if (c == '\'')
+            sh_src += "'\\''";
+        else
+            sh_src += c;
+    }
+    std::string cmd = "echo '" + sh_src + "' | " + aura_exe + " 2>/dev/null | head -1";
     std::string result;
     FILE* pipe = ::popen(cmd.c_str(), "r");
     if (pipe) {
@@ -2469,8 +2492,13 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||
                                result.back() == ' ' || result.back() == '\t'))
         result.pop_back();
-    if (result.empty())
-        result = "()";
+    if (result.empty()) {
+        fprintf(stderr,
+                "AOT: fallback eval produced empty output (aura_exe=%s). "
+                "Not emitting a silent () binary.\n",
+                aura_exe.c_str());
+        return false;
+    }
     // Escape for C string literal
     std::string escaped;
     for (char c : result) {

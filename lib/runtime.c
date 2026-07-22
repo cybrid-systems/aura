@@ -72,6 +72,33 @@ unsigned long long aura_get_aot_defuse_version(void) {
     return g_aot_defuse_version;
 }
 
+// ── Standalone-AOT stubs for Linear* dual-epoch fence (#1535) ──
+// LLVM AOT lowering of MoveOp / LinearWrap / BorrowOp / DropOp emits
+// calls to these host/JIT symbols. Standalone --emit-binary only
+// links lib/runtime.c + the generated .o files, so without weak stubs
+// here the link fails (undefined reference), and the C-printf
+// fallback hardcodes ./build/aura (missing under asan-verify) →
+// empty eval → binary that prints "()".
+//
+// Standalone AOT is single-threaded with no host mutation epoch, so:
+//   - epoch acquire is a no-op
+//   - safety check always reports safe (return 0)
+//   - deopt_inc is a no-op (no JIT deopt counter)
+// Host/JIT builds provide strong defs in aura_jit_bridge.cpp /
+// aura_jit_runtime.cpp that override these weak symbols.
+__attribute__((weak)) void aura_jit_epoch_acquire_fence(void) {}
+
+__attribute__((weak)) int
+aura_jit_linear_epoch_safety_check(const char* fn_name, unsigned char linear_state,
+                                   unsigned int opcode) {
+    (void)fn_name;
+    (void)linear_state;
+    (void)opcode;
+    return 0; // not stale
+}
+
+__attribute__((weak)) void aura_deopt_inc(void) {}
+
 #define IS_PAIR(v) (((v) & 3) == 1)
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)
