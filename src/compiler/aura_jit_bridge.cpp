@@ -17,7 +17,10 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <format>
+#include <fstream>
 #include <limits>
+#include <print>
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
@@ -2432,9 +2435,9 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
             // total (including the Evolution functions that
             // were filtered out and will go through the JIT
             // path).
-            std::fprintf(stderr,
-                         "AOT tier dispatch: %zu function(s) AOT-emitted, "
-                         "%zu function(s) skipped (Evolution -> JIT)\n",
+            std::println(std::cerr,
+                         "AOT tier dispatch: {} function(s) AOT-emitted, "
+                         "{} function(s) skipped (Evolution -> JIT)",
                          aot_fns.size(), num_functions - aot_fns.size());
             return true;
         }
@@ -2493,10 +2496,10 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                                result.back() == ' ' || result.back() == '\t'))
         result.pop_back();
     if (result.empty()) {
-        fprintf(stderr,
-                "AOT: fallback eval produced empty output (aura_exe=%s). "
-                "Not emitting a silent () binary.\n",
-                aura_exe.c_str());
+        std::println(std::cerr,
+                     "AOT: fallback eval produced empty output (aura_exe={}). "
+                     "Not emitting a silent () binary.",
+                     aura_exe);
         return false;
     }
     // Escape for C string literal
@@ -2514,18 +2517,16 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 
     // Write C source
     std::string c_path = std::string(out_path) + ".c";
-    auto* f = std::fopen(c_path.c_str(), "w");
-    if (!f)
+    std::ofstream of(c_path);
+    if (!of)
         return false;
 
-    fprintf(f, "#include <stdio.h>\n");
-    fprintf(f, "#include <stdint.h>\n");
-    fprintf(f, "int main(int argc, char** argv) {\n");
-    fprintf(f, "    (void)argc; (void)argv;\n");
-    fprintf(f, "    printf(\"%%s\\n\", \"%s\");\n", escaped.c_str());
-    fprintf(f, "    return 0;\n");
-    fprintf(f, "}\n");
-    fclose(f);
+    of << "#include <stdio.h>\n"
+       << "#include <stdint.h>\n"
+       << "int main(int argc, char** argv) {\n"
+       << "    (void)argc; (void)argv;\n"
+       << std::format(R"(    printf("%s\n", "{}");)", escaped) << "    return 0;\n"
+       << "}\n";
 
     std::string out_binary(out_path);
     std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
