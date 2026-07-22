@@ -91,7 +91,7 @@
   },
   {
     "name": "file-prim-copy",
-    "code": "(begin (file-copy \"/tmp/aura-fp1.txt\" \"/tmp/aura-fp1-copy.txt\") (read-file \"/tmp/aura-fp1-copy.txt\"))",
+    "code": "(begin (write-file \"/tmp/aura-fp1.txt\" \"hi\") (file-copy \"/tmp/aura-fp1.txt\" \"/tmp/aura-fp1-copy.txt\") (read-file \"/tmp/aura-fp1-copy.txt\"))",
     "expect_out": "hi",
     "expect_err": ""
   },
