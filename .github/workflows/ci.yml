@@ -364,20 +364,27 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Only aura + test_issue_677. Full issue-test matrix is build-test's job.
-    - name: Build aura + health test
+    # Issue #677 C++ test folded into test_obs_metrics_smoke_batch (wave 57 / #1957).
+    # This job only smokes the HTTP health surface on main.
+    - name: Build aura
       run: |
         set -euo pipefail
         python3 -c 'import build, subprocess, sys; build.BUILD.mkdir(parents=True, exist_ok=True); sys.exit(subprocess.run(build._cmake_configure_args(), cwd=build.ROOT).returncode)'
-        ninja -C build -j"$(nproc)" aura test_issue_677
+        ninja -C build -j"$(nproc)" aura
 
     - name: Health endpoint smoke
       run: |
+        set -euo pipefail
         AURA_RUNTIME_DIR=$PWD ./build/aura --health-server 18087 &
         pid=$!
-        sleep 1
+        trap 'kill $pid 2>/dev/null || true' EXIT
+        # Wait until the server answers (cold configure/build can delay bind).
+        for i in $(seq 1 30); do
+          if curl -fsS http://127.0.0.1:18087/healthz >/dev/null 2>&1; then
+            break
+          fi
+          sleep 0.2
+        done
         curl -fsS http://127.0.0.1:18087/healthz
         curl -fsS http://127.0.0.1:18087/readyz
         curl -fsS http://127.0.0.1:18087/metrics | grep -q 'aura_up 1'
-        kill $pid
-        ./build/test_issue_677
