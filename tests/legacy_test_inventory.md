@@ -8,7 +8,7 @@
 
 Categorize legacy per-issue regression tests so we can migrate them in batches into the preferred `tests/domain/` structure (and existing family batch drivers under `tests/test_*_batch.cpp`).
 
-Do **not** add new `tests/issues/test_issue_*.cpp` files.
+`tests/issues/` **removed** (#1957). Prefer theme/domain batches; do not reintroduce per-issue mains.
 
 ## Scope snapshot
 
