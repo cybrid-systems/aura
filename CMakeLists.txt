@@ -573,7 +573,7 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # Legacy inventory / migration waves (#1957): tests/legacy_test_inventory.md
 #
 # Preferred new ACs live under tests/domain/ (and cases/*.hpp tables).
-# Do not grow tests/issues/test_issue_*.cpp for routine work.
+# tests/issues/ removed (#1957); do not reintroduce per-issue test_issue_N.cpp.
 #
 # Layers still present:
 #   1. Domain suites — tests/domain/test_obs_schema_matrix,
@@ -1740,9 +1740,8 @@ aura_add_issue_test(test_jit_aot_hot_update_batch)
 aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_batch)
 add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
 
-# tests/issues/ orphan range batches folded into theme batches (wave 58 / #1957).
-# Soft smokes live under domain/arena, mutation, obs, edsl, fiber, shape, linear.
-# tests/issues/ empty of sources — #178 relocated to tests/edsl/ (wave 59).
+# tests/issues/ removed (wave 58–60 / #1957): range batches + #178 folded into
+# theme suites (domain/arena, mutation, obs, edsl, fiber, shape, linear).
 
 # tests/mutation/ unit consolidations (unregistered standalones → theme batches).
 # Existing large family batches (mutate/linear/boundary/…) stay separate.

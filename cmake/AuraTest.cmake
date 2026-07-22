@@ -6,16 +6,14 @@
 # Wired into aura_add_issue_test() and the main test binaries
 # (test_ir, test_concurrent, aura_test_objects, aura).
 
-# Resolve test source (policy: tests/README.md · #1958 / #1959 / #1977):
-#   1. tests/issues/<NAME>.cpp           — legacy per-issue (do not grow)
-#   2. tests/domain/<NAME>.cpp           — domain suite at domain root
-#   3. tests/domain/<theme>/<NAME>.cpp   — domain theme pilot dirs
-#   4. tests/<theme>/<NAME>.cpp          — theme-organized root tests (#1977)
-#   5. tests/<NAME>.cpp                  — root batches / fallback
+# Resolve test source (policy: tests/README.md · #1958 / #1959 / #1977 / #1957):
+#   tests/issues/ removed (wave 59+): no new per-issue sources.
+#   1. tests/domain/<NAME>.cpp           — domain suite at domain root
+#   2. tests/domain/<theme>/<NAME>.cpp   — domain theme pilot dirs
+#   3. tests/<theme>/<NAME>.cpp          — theme-organized root tests (#1977)
+#   4. tests/<NAME>.cpp                  — root batches / fallback
 function(aura_resolve_test_cpp NAME OUT_VAR)
-    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/issues/${NAME}.cpp")
-        set(${OUT_VAR} "tests/issues/${NAME}.cpp" PARENT_SCOPE)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
         set(${OUT_VAR} "tests/domain/${NAME}.cpp" PARENT_SCOPE)
     else()
         file(GLOB _aura_theme_hits
@@ -30,7 +28,7 @@ function(aura_resolve_test_cpp NAME OUT_VAR)
             set(${OUT_VAR} "tests/${NAME}.cpp" PARENT_SCOPE)
         else()
             message(FATAL_ERROR
-                "aura_resolve_test_cpp(${NAME}): not found under tests/issues/, "
+                "aura_resolve_test_cpp(${NAME}): not found under "
                 "tests/domain/, tests/domain/*/, tests/*/, or tests/")
         endif()
     endif()

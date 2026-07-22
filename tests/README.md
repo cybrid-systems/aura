@@ -11,7 +11,7 @@ Theme-based domain suites beat per-issue files.
 
 | Prefer | Avoid |
 |--------|-------|
-| Extend `tests/domain/` (+ `cases/*.hpp` tables) | New `tests/issues/test_issue_N.cpp` |
+| Extend `tests/domain/` / theme batches | Reintroducing `tests/issues/` (removed) |
 | Issue id as **label** in banners / CHECKs | Issue id as **filename** |
 | Subsystem invariants (arena, mutate, fiber…) | Copy-paste closed-loop per PR |
 
@@ -67,7 +67,7 @@ Brand-new theme?
      Justify in commit message: why not an extension.
 ```
 
-**Never** `tests/issues/test_issue_<N>.cpp` for new work.
+**Never** reintroduce `tests/issues/` or `test_issue_<N>.cpp` for routine work.
 
 ## Harness
 
@@ -111,8 +111,8 @@ JSON trailer for CI: `python3 tests/run.py --json <cmd>`.
 3. True regression fixture (cheaper as `regression/*.aura` than a domain AC).
 4. Commit message justifies **why not** `domain/test_<theme>_…`.
 
-Even then, prefer `tests/test_<theme>_<aspect>.cpp`, **not**
-`tests/issues/test_issue_N.cpp`.
+Even then, prefer `tests/test_<theme>_<aspect>.cpp` or `tests/<theme>/…`,
+**not** a revived `tests/issues/` tree.
 
 ## Related
 

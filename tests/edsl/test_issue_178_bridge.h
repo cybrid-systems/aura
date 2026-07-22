@@ -8,7 +8,7 @@
 //   - test_issue_178.cpp          (module side, drives NodeView)
 //   - test_issue_178_reflect.cpp  (reflect side, implements these entry points)
 //
-// Lives next to the two TUs under tests/issues/ (not tests/ root).
+// Lives next to the two TUs under tests/edsl/ (relocated from tests/issues/).
 //
 // Include from the reflect TU only (after <cstdint>/<cstddef>).
 // The module TU (test_issue_178.cpp) re-declares these by hand —

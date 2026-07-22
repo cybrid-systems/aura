@@ -27,11 +27,8 @@ ISSUE_RE = re.compile(r"test_issue_(\d+)")
 
 def scan() -> dict:
     entries: list[dict] = []
-    # Phase 1 of the tests/ consolidation (Anqi 05:43 directive):
-    # scan both tests/ root and tests/issues/ subdirectory so per-issue
-    # tests moved into tests/issues/ are still picked up.
-    # #1957: also scan theme dirs (mutation/fiber/observability/…) where
-    # issue tests are folded into *_batch.cpp drivers.
+    # Scan tests/ root, domain/, and theme dirs (mutation/fiber/…).
+    # tests/issues/ removed after #1957 waves 58–60.
     tests_dir = ROOT / "tests"
     issue_subdir = tests_dir / "issues"
     domain_dir = tests_dir / "domain"
@@ -61,7 +58,7 @@ def scan() -> dict:
         cat_m = CAT_RE.search(head)
         reason_m = REASON_RE.search(head)
         issue_m = ISSUE_RE.search(path.name)
-        # emit path relative to repo root (tests/... or tests/issues/...)
+        # emit path relative to repo root (tests/...)
         rel = path.relative_to(ROOT).as_posix()
         entries.append(
             {

@@ -131,13 +131,11 @@ def _test_binary_has_source(name: str) -> bool:
     tests/domain/test_issue_1956.cpp removed in #1978) must not be
     rediscovered as NEW CI failures.
     """
-    # 1. tests/issues/<NAME>.cpp
-    if (ROOT / "tests" / "issues" / f"{name}.cpp").is_file():
-        return True
-    # 2. tests/domain/<NAME>.cpp
+    # tests/issues/ removed (#1957 wave 59+); resolve theme/domain only.
+    # 1. tests/domain/<NAME>.cpp
     if (ROOT / "tests" / "domain" / f"{name}.cpp").is_file():
         return True
-    # 3. tests/domain/<theme>/<NAME>.cpp  ·  4. tests/<theme>/<NAME>.cpp
+    # 2. tests/domain/<theme>/<NAME>.cpp  ·  3. tests/<theme>/<NAME>.cpp
     domain = ROOT / "tests" / "domain"
     if domain.is_dir():
         for theme in domain.iterdir():

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Issue #1957: inventory legacy test_issue_*.cpp (+ root issue-oriented tests).
 
-Scans tests/issues/test_issue_*.cpp and root-level tests/test_*.cpp that look
+Scans legacy issue-oriented tests (historically tests/issues/; now domain/theme
 issue-oriented, extracts theme signals from the filename + first 50 lines, and
 writes a living inventory for domain/ migration planning.
 
@@ -484,7 +484,7 @@ def render_markdown(entries: list[TestEntry]) -> str:
         "family batch drivers under `tests/test_*_batch.cpp`)."
     )
     a("")
-    a("Do **not** add new `tests/issues/test_issue_*.cpp` files.")
+    a("`tests/issues/` **removed** (#1957). Prefer theme/domain batches; do not reintroduce per-issue mains.")
     a("")
     a("## Scope snapshot")
     a("")
