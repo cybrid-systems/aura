@@ -26,11 +26,22 @@ def run(code, timeout=10):
 # Cleanup temp files, then seed fixtures that directory-list / file-* cases
 # expect (file-write-read also recreates aura-regr.txt later, but several
 # cases run earlier in fixture load order and need the seed present).
-for f in ["/tmp/aura-regr.txt", "/tmp/aura-copy.txt", "/tmp/aura-regr-test.txt"]:
+for f in [
+    "/tmp/aura-regr.txt",
+    "/tmp/aura-copy.txt",
+    "/tmp/aura-regr-test.txt",
+    "/tmp/aura-fp1.txt",
+    "/tmp/aura-fp1-copy.txt",
+    "/tmp/aura-fp2.txt",
+    "/tmp/aura-fp3.txt",
+]:
     if os.path.exists(f):
         os.remove(f)
 with open("/tmp/aura-regr.txt", "w", encoding="utf-8") as _seed:
     _seed.write("hello 42")
+# Seed for file-prim-size / ordering-independent file-prim-* cases (CI clean /tmp).
+with open("/tmp/aura-fp1.txt", "w", encoding="utf-8") as _seed:
+    _seed.write("hi")
 
 
 # ── Subprocess-based tests (freeze/load/emit-binary) ──────────
