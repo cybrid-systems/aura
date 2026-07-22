@@ -22,9 +22,11 @@ run_test() {
     local name="$1"
     local input="$2"
     local expected="$3"
+    # Optional 4th arg: timeout seconds (default 5). Heavy ASAN paths need more.
+    local to="${4:-5}"
     local result
 
-    result=$(printf '%s' "$input" | timeout 5 "$AURA" 2>&1 | tr -d '\n')
+    result=$(printf '%s' "$input" | timeout "$to" "$AURA" 2>&1 | tr -d '\n')
     if [ "$result" = "$expected" ]; then
         green "$name"
         PASS=$((PASS + 1))
@@ -756,9 +758,11 @@ run_test "edsl-ir-cache:v2-populated-by-default" \
 run_test "edsl-ir-cache:v2-cache-hit" \
     "$(printf '(set-code \"(define (f x) (* x x))\") (eval-current) (set-code \"(define (f x) (* x x))\") (eval-current) (display (f 7))')" \
     '49'
-# Issue #238: incremental mutation stress test. 100 cycles,
+# Issue #238: incremental mutation stress test. 100+ rebinds,
 # 0 mismatches, dirty-count stays at 0 (cascade scope correct).
-run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/suite/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 109mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete"
+# Timeout 120s: default 5s kills mid-output under ASAN (asan-verify
+# cut off after final-dirty-count, missing dep-edges / test-complete).
+run_test "edsl-ir-cache:incremental-mutation-stress" "$(cat tests/suite/incremental_mutation_test.aura)" "baseline-cache-size: 9baseline-dirty-count: 0warmup-no-mut-preserves-dirty: #tstarting-cycles...mutations-completed: 109mismatches: 0final-cache-size: 9final-dirty-count: 0dep-edges: 16no-mut-preserves-dirty: #ttest-complete" 120
 
 # Same input via :jit should give the same numeric result.
 # (Note: no env sync back, so :jit's return value is the JIT's last
