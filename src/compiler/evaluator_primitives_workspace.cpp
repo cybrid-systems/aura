@@ -120,13 +120,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   rollback only marks the record as rolled back and bumps
     //   generation (it doesn't have access to the parser).
     add("workspace:rollback-latest", [&ev](const auto&) -> EvalValue {
-        // Issue #1994 (F-004): take unique_lock on workspace_mtx_ —
-        // this primitive both reads (log walk) AND writes (set_child,
-        // mark_dirty_upward, mutation status update), so shared_lock
-        // is not enough. The unique_lock also gates against concurrent
-        // set_workspace_flat (#1729) mid-construction rollback that
-        // could free the old FlatAST while we're walking it.
-        std::unique_lock<std::shared_mutex> lock(ev.workspace_mtx_);
+        // Issue #1994 (F-004) / Wave1 B-09: unique workspace lock, but
+        // adopt outer MutationBoundaryGuard exclusive hold (no re-lock).
+        Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_int(0);
         // Walk the log in reverse; the latest Committed record wins.
@@ -167,17 +163,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // (workspace:mutation-count) → total mutations recorded
     ObservabilityPrims::register_stats_impl(
         "workspace:mutation-count", [&ev](const auto&) -> EvalValue {
-            // Issue #1994 (F-004): shared_lock on workspace_mtx_ for
-            // the read of workspace_flat_->mutation_count(). Without
-            // the lock, a concurrent set_workspace_flat (#1729) could
-            // swap workspace_flat_ to a new FlatAST* between the NULL
-            // check and the dereference — the dereference would then
-            // read from a freed pointer. Pure read — shared_lock is
-            // correct (concurrent readers don't block each other).
-            std::shared_lock<std::shared_mutex> lock(ev.workspace_mtx_);
-            if (!ev.workspace_flat_)
+            // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
+            auto pin = ev.pin_workspace_flat();
+            if (!pin)
                 return make_int(0);
-            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
+            return make_int(static_cast<std::int64_t>(pin->mutation_count()));
         });
     // ═══════════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════════
@@ -186,12 +176,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (workspace:create name) → workspace ID (COW, no clone until mutate)
     add("workspace:create", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        // Issue #1994 (F-004): take unique_lock on workspace_mtx_ —
-        // this primitive both reads workspace_flat_ / workspace_pool_
-        // (passed to create_child) AND writes workspace_tree_ +
-        // updates the root node's flat/pool. unique_lock also gates
-        // against concurrent set_workspace_flat mid-rollback.
-        std::unique_lock<std::shared_mutex> lock(ev.workspace_mtx_);
+        // Issue #1994 / Wave1 B-09: unique workspace lock, adopt outer Guard.
+        Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         // Issue #1566: tenant isolation on workspace structural ops.
         if (!ev.check_workspace_isolation(0, 0, 0, "workspace:create"))
             return make_int(-1);
@@ -233,12 +219,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // the per-layer NodeIdRemapTable and treats unchanged nodes as live
     // even when generation advanced after a child-layer mutate.
     add("workspace:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        // Issue #1994 (F-004): shared_lock on workspace_mtx_ for the
-        // reads of workspace_tree_ + workspace_flat_ + the resolve
-        // call. Pure read — shared_lock is correct.
-        std::shared_lock<std::shared_mutex> lock(ev.workspace_mtx_);
+        // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
+        auto pin = ev.pin_workspace_flat();
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
-            !ev.workspace_tree_ || !ev.workspace_flat_)
+            !ev.workspace_tree_ || !pin)
             return make_void();
         // Issue #1566: cross-layer resolve is a tenant boundary; optional
         // 5th arg = ref tenant_id for provenance check.

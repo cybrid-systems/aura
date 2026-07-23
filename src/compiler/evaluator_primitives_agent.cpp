@@ -1746,23 +1746,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // first line is a summary header "WORKSPACE: <n> defines" so
     // the LLM has a one-token extractable count.
     add("workspace-state", [&ev](const auto&) -> EvalValue {
-        // Issue #1994 (F-004): acquire shared_lock on workspace_mtx_
-        // before reading workspace_flat_ + workspace_pool_. Without
-        // the lock, a concurrent set_workspace_flat (#1729, holds
-        // unique_lock(workspace_mtx_)) can roll back workspace_flat_
-        // between the NULL check below and the dereference — the
-        // dereference then sees a partially-modified FlatAST* (or a
-        // freed pointer if the old FlatAST was deallocated on swap).
-        // The shared_lock also covers the pool read; both pointers
-        // are mutated together under workspace_mtx_.
-        std::shared_lock<std::shared_mutex> lock(ev.workspace_mtx_);
-        if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+        // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
+        auto pin = ev.pin_workspace_flat();
+        if (!pin || !pin.pool()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
             return types::make_string(sidx);
         }
-        auto& flat = *ev.workspace_flat_;
-        auto& pool = *ev.workspace_pool_;
+        auto& flat = *pin;
+        auto& pool = *pin.pool();
         std::string out;
         // Top-level defines: walk the flat for Define nodes and
         // collect their bound name.

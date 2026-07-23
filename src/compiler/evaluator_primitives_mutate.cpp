@@ -1163,12 +1163,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Useful for agents that want to do an early validity check
     // before invoking a more expensive mutation.
     add_mutate("mutate:check-stable-ref", [&ev, mev, safe_str](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
+        auto pin = ev.pin_workspace_flat();
         if (!is_pair(a[0]))
             return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
-        if (!ev.workspace_flat_)
+        if (!pin)
             return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *ev.workspace_flat_;
+        auto& flat = *pin;
         // Unpack the (id . gen) pair
         auto outer = as_pair_idx(a[0]);
         if (!is_int(ev.pairs_[outer].car))
