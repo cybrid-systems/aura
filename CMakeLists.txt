@@ -1366,6 +1366,9 @@ aura_issue_test_link_llvm_jit(test_issue_1993)
 # pattern (F-004, sibling of B-010 / D-001).
 aura_add_issue_test(test_issue_1994)
 aura_issue_test_link_llvm_jit(test_issue_1994)
+# Wave1 B-03/B-09: eval-current short pin + WorkspaceFlatPin adopt under Guard
+aura_add_issue_test(test_wave1_workspace_lock_reentrancy)
+aura_issue_test_link_llvm_jit(test_wave1_workspace_lock_reentrancy)
 # Issue #1996: g_batch_deopt_jit file-scope pointer nulled in
 # ~CompilerService via aura_clear_jit_batch_deopt_target(&jit_) —
 # prevents UAF on late batch_deopt_for / deopt_pending_count after
