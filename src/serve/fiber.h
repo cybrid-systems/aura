@@ -170,7 +170,8 @@ public:
         // Issue #588 + #1254: only outermost (depth == 0) is steal-safe.
         // Inner MutationBoundaryGuard nesting must force defer — steals
         // inside nested atomic sections risk partial rollback races.
-        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_);
+        const auto depth = aura_evaluator_mutation_stack_depth_from_ptr(
+            mutation_stack_storage_.load(std::memory_order_acquire));
         return depth == 0;
     }
 
@@ -180,7 +181,8 @@ public:
         auto r = last_yield_reason_.load(std::memory_order_acquire);
         if (r != YieldReason::MutationBoundary)
             return false;
-        return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) > 0;
+        return aura_evaluator_mutation_stack_depth_from_ptr(
+                   mutation_stack_storage_.load(std::memory_order_acquire)) > 0;
     }
 
     // Issue #451: yield_classification() — returns a
@@ -195,7 +197,8 @@ public:
             case YieldReason::BlockingIO:
                 return "BlockingIO";
             case YieldReason::MutationBoundary:
-                return aura_evaluator_mutation_stack_depth_from_ptr(mutation_stack_storage_) == 0
+                return aura_evaluator_mutation_stack_depth_from_ptr(
+                           mutation_stack_storage_.load(std::memory_order_acquire)) == 0
                            ? "MutationBoundary/outermost"
                            : "MutationBoundary/inner";
             case YieldReason::Explicit:
@@ -390,11 +393,43 @@ public:
     // fiber.h and evaluator.ixx. The Evaluator casts it to
     // `std::vector<MutationCheckpoint>*` and operates on
     // it via the pointer.
-    void* mutation_stack_ptr() { return mutation_stack_storage_; }
-    void set_mutation_stack_ptr(void* p) { mutation_stack_storage_ = p; }
+    // Issue #1992: getters/setters use atomic load/store
+    // (acquire/release). The underlying storage is
+    // std::atomic<void*> — see private fields below.
+    // Plain read/write would be a data race on
+    // concurrent ensure_mutation_stack_ptr init during
+    // work-stealing handoff (last-writer wins, one
+    // pointer leaks, plus use-after-free risk if the
+    // fiber resumes on a stack another fiber still
+    // holds a reference to).
+    void* mutation_stack_ptr() const noexcept {
+        return mutation_stack_storage_.load(std::memory_order_acquire);
+    }
+    void set_mutation_stack_ptr(void* p) noexcept {
+        mutation_stack_storage_.store(p, std::memory_order_release);
+    }
+    // Issue #1992: CAS for concurrent init. Returns
+    // true if the exchange succeeded (expected was
+    // nullptr, storage now holds desired). On false,
+    // `expected` is updated to the current value so the
+    // caller can release its allocation back to the pool
+    // and use the winner's pointer.
+    bool compare_exchange_mutation_stack_ptr(void*& expected, void* desired) noexcept {
+        return mutation_stack_storage_.compare_exchange_weak(
+            expected, desired, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
     // Issue #264: per-fiber yield-boundary checkpoint stack.
-    void* yield_checkpoint_ptr() { return yield_checkpoint_storage_; }
-    void set_yield_checkpoint_ptr(void* p) { yield_checkpoint_storage_ = p; }
+    void* yield_checkpoint_ptr() const noexcept {
+        return yield_checkpoint_storage_.load(std::memory_order_acquire);
+    }
+    void set_yield_checkpoint_ptr(void* p) noexcept {
+        yield_checkpoint_storage_.store(p, std::memory_order_release);
+    }
+    // Issue #1992: CAS for yield checkpoint stack init.
+    bool compare_exchange_yield_checkpoint_ptr(void*& expected, void* desired) noexcept {
+        return yield_checkpoint_storage_.compare_exchange_weak(
+            expected, desired, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
 
     // Issue #1580: steal/resume provenance hints captured at yield so
     // post-resume refresh_stale_frames_after_steal can target the
@@ -487,8 +522,17 @@ private:
 
     // Per-fiber state: the mutation stack (Issue #213 Cycle 3).
     // Opaque void* — see mutation_stack_ptr() / set_mutation_stack_ptr().
-    void* mutation_stack_storage_ = nullptr;
-    void* yield_checkpoint_storage_ = nullptr;
+    //
+    // Issue #1992: storage is std::atomic<void*> so that
+    // concurrent ensure_mutation_stack_ptr (during work-steal
+    // handoff, see evaluator_fiber_mutation.cpp) can use
+    // compare_exchange_weak to avoid last-writer-wins / leaks /
+    // cross-fiber use-after-free. Plain void* was UB under
+    // concurrent read+write. Atomic load/store on getters +
+    // compare_exchange on ensure_*_ptr are the only access
+    // patterns allowed.
+    std::atomic<void*> mutation_stack_storage_{nullptr};
+    std::atomic<void*> yield_checkpoint_storage_{nullptr};
     // Issue #1580: captured at MutationBoundary yield for post-resume refresh.
     std::uint64_t resume_env_hint_ = 0;
     std::uint64_t resume_bridge_epoch_hint_ = 0;

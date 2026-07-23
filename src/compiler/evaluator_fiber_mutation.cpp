@@ -135,11 +135,31 @@ namespace fiber_stack_pool_detail {
         return *static_cast<YieldStackVec*>(p);
     }
 
+    // Issue #1992: CAS-init pattern for concurrent
+    // ensure_mutation_stack_ptr. Plain read-then-write
+    // (the previous behavior) was a data race: under
+    // work-stealing handoff two workers could both see
+    // `p == nullptr`, both allocate, both write — last-
+    // writer wins, one pointer leaks, and the fiber
+    // could resume on a stack another fiber still
+    // references (use-after-free across fibers). The
+    // compare_exchange_weak pairs allocate-then-publish:
+    // if the CAS fails we release our allocation back
+    // to the pool and use the winner's pointer.
     MutationStackVec* ensure_mutation_stack_ptr(aura::serve::Fiber* fiber) {
         void* p = fiber->mutation_stack_ptr();
         if (p == nullptr) {
-            p = acquire_mutation_stack();
-            fiber->set_mutation_stack_ptr(p);
+            MutationStackVec* fresh = acquire_mutation_stack();
+            void* expected = nullptr;
+            if (fiber->compare_exchange_mutation_stack_ptr(expected, fresh)) {
+                p = fresh;
+            } else {
+                // Lost the race — another thread won the
+                // CAS. Release our allocation back to the
+                // pool (no leak) and use the winner's ptr.
+                release_mutation_stack(fresh);
+                p = fiber->mutation_stack_ptr();
+            }
         }
         return static_cast<MutationStackVec*>(p);
     }
@@ -147,8 +167,14 @@ namespace fiber_stack_pool_detail {
     YieldStackVec* ensure_yield_stack_ptr(aura::serve::Fiber* fiber) {
         void* p = fiber->yield_checkpoint_ptr();
         if (p == nullptr) {
-            p = acquire_yield_stack();
-            fiber->set_yield_checkpoint_ptr(p);
+            YieldStackVec* fresh = acquire_yield_stack();
+            void* expected = nullptr;
+            if (fiber->compare_exchange_yield_checkpoint_ptr(expected, fresh)) {
+                p = fresh;
+            } else {
+                release_yield_stack(fresh);
+                p = fiber->yield_checkpoint_ptr();
+            }
         }
         return static_cast<YieldStackVec*>(p);
     }
@@ -1328,6 +1354,25 @@ extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutati
         return 0;
     using C = Evaluator::MutationCheckpoint;
     return static_cast<std::vector<C>*>(mutation_stack_storage)->size();
+}
+
+// Issue #1992: C-linkage shims for the CAS-protected
+// ensure_mutation_stack_ptr / ensure_yield_stack_ptr.
+// Tests (tests/mutation/test_issue_1992.cpp) call these
+// from concurrent threads on the same Fiber pointer to
+// verify the fix for the plain-void* race on concurrent
+// work-steal handoff: under contention exactly ONE
+// allocation is published (others release their
+// allocation back to the pool), not N. Without the
+// CAS the previous plain read-then-write would last-
+// writer-wins, leaking N-1 allocations and risking
+// use-after-free across fibers.
+extern "C" void* aura_fiber_ensure_mutation_stack(aura::serve::Fiber* fiber) {
+    return fiber_stack_pool_detail::ensure_mutation_stack_ptr(fiber);
+}
+
+extern "C" void* aura_fiber_ensure_yield_stack(aura::serve::Fiber* fiber) {
+    return fiber_stack_pool_detail::ensure_yield_stack_ptr(fiber);
 }
 
 void Evaluator::sync_per_fiber_mutation_stack(void* per_fiber_stack) noexcept {

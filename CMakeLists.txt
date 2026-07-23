@@ -1353,6 +1353,12 @@ aura_issue_test_link_llvm_jit(test_issue_1990)
 # Issue #1991: (gc) primitive clear path protected by module_mtx_ (B-010).
 aura_add_issue_test(test_issue_1991)
 aura_issue_test_link_llvm_jit(test_issue_1991)
+# Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
+# ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
+# (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
+# exactly ONE allocation; losers release to pool.
+aura_add_issue_test(test_issue_1992)
+aura_issue_test_link_llvm_jit(test_issue_1992)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
 aura_add_issue_test(test_dirty_reason_verification_propagation)

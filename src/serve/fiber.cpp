@@ -294,7 +294,7 @@ Fiber::~Fiber() {
     // casts it back. The destructor just frees the void*
     // — the Evaluator accessor is the one that knows the
     // actual vector type.
-    if (mutation_stack_storage_) {
+    if (void* p = mutation_stack_storage_.load(std::memory_order_acquire)) {
         // The Evaluator accessor lazy-allocates; it owns the
         // pointer. But for cleanup, we cast to the right type
         // and delete. This requires the Evaluator's type to
@@ -302,15 +302,15 @@ Fiber::~Fiber() {
         // Evaluator registers at startup to do the cleanup
         // (avoids a circular include).
         if (g_fiber_storage_deleter_) {
-            g_fiber_storage_deleter_(mutation_stack_storage_);
+            g_fiber_storage_deleter_(p);
         }
-        mutation_stack_storage_ = nullptr;
+        mutation_stack_storage_.store(nullptr, std::memory_order_release);
     }
-    if (yield_checkpoint_storage_) {
+    if (void* p = yield_checkpoint_storage_.load(std::memory_order_acquire)) {
         if (g_fiber_yield_checkpoint_deleter_) {
-            g_fiber_yield_checkpoint_deleter_(yield_checkpoint_storage_);
+            g_fiber_yield_checkpoint_deleter_(p);
         }
-        yield_checkpoint_storage_ = nullptr;
+        yield_checkpoint_storage_.store(nullptr, std::memory_order_release);
     }
 }
 
@@ -338,8 +338,12 @@ void Fiber::resume() {
     // include between fiber.h and evaluator.ixx).
     auto prev_fiber_void = g_fiber_setter_ ? g_fiber_setter_(this) : nullptr;
     // Issue #588: bind per-fiber mutation stack on worker resume.
+    // Issue #1992: storage is std::atomic<void*>; load
+    // the pointer before passing to the sync callback
+    // (plain field read would be UB on a non-atomic
+    // read of an atomic field).
     if (g_fiber_sync_mutation_stack_)
-        g_fiber_sync_mutation_stack_(mutation_stack_storage_);
+        g_fiber_sync_mutation_stack_(mutation_stack_storage_.load(std::memory_order_acquire));
     // Issue #485: transfer mutation stack + bump migration stats.
     aura_evaluator_resume_fiber_migration();
     state_.store(FiberState::Running, std::memory_order_release);
