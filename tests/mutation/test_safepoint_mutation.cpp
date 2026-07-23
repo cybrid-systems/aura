@@ -169,6 +169,42 @@ int main() {
               "collision key");
     }
 
+    // ── Issue #1987: wait_for_safepoint actually blocks until signaled ──
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+
+        // Ensure clean state.
+        ev.end_gc_safepoint();
+
+        // Spawn a waiter thread that will block on wait_for_safepoint.
+        std::atomic<bool> waiter_done{false};
+        std::thread waiter([&] {
+            ev.wait_for_safepoint(5000);
+            waiter_done.store(true, std::memory_order_release);
+        });
+
+        // Give the waiter time to enter cv.wait_for.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(!waiter_done.load(),
+              "Issue #1987: wait_for_safepoint must block when no safepoint active");
+
+        // Request the safepoint — should signal and unblock the waiter.
+        const auto t_signal = std::chrono::steady_clock::now();
+        const int rc = ev.request_gc_safepoint();
+        CHECK(rc == 0, "request_gc_safepoint returns 0 (immediate)");
+
+        waiter.join();
+        const auto wakeup_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now() - t_signal)
+                                   .count();
+        CHECK(waiter_done.load(), "waiter unblocked by request_gc_safepoint");
+        CHECK(wakeup_ms < 500, "waiter unblocks quickly (not after timeout)");
+
+        // Cleanup.
+        ev.end_gc_safepoint();
+    }
+
     // ── Documentation present ──
     CHECK(true, "docs/development/safepoint-mutation.md [REMOVED per Anqi 2026-07-19 directive]");
 
