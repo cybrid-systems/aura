@@ -1379,6 +1379,16 @@ aura_issue_test_link_llvm_jit(test_issue_1996)
 # literal and corrupt all subsequent emitted C source (B-002).
 aura_add_issue_test(test_issue_1997)
 aura_issue_test_link_llvm_jit(test_issue_1997)
+# Issue #1998: IR-executor MakePair path (ir_executor_impl.cpp ~1012)
+# now holds aura_lock_workspace_write() / aura_unlock_workspace_write()
+# around the g_owned_pair_slots_.push_back(slot) call. Without the
+# lock, vector reallocation races the static PairSlotCleanup destructor
+# (aura_jit_runtime.cpp:425, UAF) and concurrent sibling bridge-hook
+# writes (aura_make_pair at line 1330+, lost slots / host accounting
+# leak). Forward decls for the lock fns added to runtime_shared.h so
+# other TUs can call them (B-024, sibling of B-002/B-003/B-012/B-020).
+aura_add_issue_test(test_issue_1998)
+aura_issue_test_link_llvm_jit(test_issue_1998)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
