@@ -1746,6 +1746,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // first line is a summary header "WORKSPACE: <n> defines" so
     // the LLM has a one-token extractable count.
     add("workspace-state", [&ev](const auto&) -> EvalValue {
+        // Issue #1994 (F-004): acquire shared_lock on workspace_mtx_
+        // before reading workspace_flat_ + workspace_pool_. Without
+        // the lock, a concurrent set_workspace_flat (#1729, holds
+        // unique_lock(workspace_mtx_)) can roll back workspace_flat_
+        // between the NULL check below and the dereference — the
+        // dereference then sees a partially-modified FlatAST* (or a
+        // freed pointer if the old FlatAST was deallocated on swap).
+        // The shared_lock also covers the pool read; both pointers
+        // are mutated together under workspace_mtx_.
+        std::shared_lock<std::shared_mutex> lock(ev.workspace_mtx_);
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
