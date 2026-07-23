@@ -214,12 +214,19 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
 
         // Erase closures in temp arena
         // Issue #1888: tombstone lifetime before erase (ClosureView guard).
-        for (auto it = ev.closures_.begin(); it != ev.closures_.end();) {
-            if (it->second.owner_arena == ev.temp_arena_) {
-                invalidate_closure_lifetime(it->second);
-                it = ev.closures_.erase(it);
-            } else
-                ++it;
+        // Issue #1990 (B-009): take unique_lock(closures_mtx_) before iterating.
+        // Concurrent insert (e.g. apply_closure materializing a closure from
+        // another fiber) would invalidate the iterators without the lock.
+        // unique_lock because we erase.
+        {
+            std::unique_lock<std::shared_mutex> lock(ev.closures_mtx_);
+            for (auto it = ev.closures_.begin(); it != ev.closures_.end();) {
+                if (it->second.owner_arena == ev.temp_arena_) {
+                    invalidate_closure_lifetime(it->second);
+                    it = ev.closures_.erase(it);
+                } else
+                    ++it;
+            }
         }
 
         // Reset temp arena (O(1) — frees all cl_flat/cl_pool/copy_env)
@@ -251,16 +258,26 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (gc-stats) — Return formatted string of all heap sizes for telemetry.
     ObservabilityPrims::register_stats_impl(
         "gc-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            // Issue #1990 (B-009): take shared_lock(closures_mtx_) for the
+            // read walk. shared_lock allows concurrent readers (other
+            // primitives that only read closures_) to proceed without
+            // blocking. Capture size + root_count inside the lock so the
+            // format below does not race with a concurrent insert/erase.
             std::uint64_t root_count = 0;
-            for (auto& [id, _] : ev.closures_) {
-                if (id < ev.gc_safe_closure_id_)
-                    ++root_count;
+            std::size_t closure_count = 0;
+            {
+                std::shared_lock<std::shared_mutex> lock(ev.closures_mtx_);
+                closure_count = ev.closures_.size();
+                for (auto& [id, _] : ev.closures_) {
+                    if (id < ev.gc_safe_closure_id_)
+                        ++root_count;
+                }
             }
             auto result = std::format(
                 "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
                 ev.string_heap_.size(), ev.pairs_.size(), ev.cells_.size(), ev.error_values_.size(),
-                g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(),
-                ev.closures_.size(), root_count);
+                g_hash_tables.size(), ev.vector_heap_.size(), ev.opaque_heap_.size(), closure_count,
+                root_count);
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(result);
             return types::make_string(sidx);
