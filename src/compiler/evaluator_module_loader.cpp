@@ -274,10 +274,18 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
 
     // 10. Store module (pointer to arena-allocated env — persists for the
     // module's lifetime, freed by gc_module(resolved)).
+    // Issue #1991 (B-010): take unique_lock(module_mtx_) around the
+    // module_* writes — (gc) primitive clears modules_, module_cache_,
+    // module_arena_ptrs_ in one shot. Without the lock, a concurrent
+    // (gc) could half-clear the cache between the push_back and the
+    // module_cache_[resolved] = mod_idx assignment.
     auto mod_idx = modules_.size();
-    modules_.push_back(mod_env);
-    module_cache_[resolved] = mod_idx;
-    module_arena_ptrs_[resolved] = &mod_arena;
+    {
+        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+        modules_.push_back(mod_env);
+        module_cache_[resolved] = mod_idx;
+        module_arena_ptrs_[resolved] = &mod_arena;
+    }
     // Issue #1668: do not string_heap_.push_back(resolved) — display name
     // lives in module_names_; the bare heap push never captured an index
     // (dead pollution on every load_module, same #1488 heuristic class).
