@@ -834,6 +834,18 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.
     Env ne;
+    // Wire owner + top-frame parent so free vars on top_ (e.g. suite
+    // total-pass counters) and primitive dispatch (owner()->invoke_*)
+    // work after empty-Env fallbacks or parent_id-less captures.
+    // Env::lookup has a special case: parent_id_==0 && owner_ → walk
+    // live top_env(). Without owner, free vars after mutate:rebind
+    // become "unbound" even though top_ still holds them.
+    auto wire_global_access = [this](Env& e) {
+        if (e.owner() == nullptr)
+            e.set_owner(this);
+        if (e.parent_id() == NULL_ENV_ID)
+            e.set_parent_id(0);
+    };
     auto bump_dangling_env = [&](const char* /*site*/) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
@@ -860,6 +872,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             else if (cl.env_id == NULL_ENV_ID)
                 m->linear_post_mutate_null_env_id_total.fetch_add(1, std::memory_order_relaxed);
         }
+        wire_global_access(ne);
         return ne;
     }
     // Defensive: a closure with env_id == NULL_ENV_ID would
@@ -902,12 +915,14 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             if (cl.bridge_epoch == 0)
                 m->linear_null_env_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
+        wire_global_access(ne);
         return ne;
     }
     if (cl.env_id >= env_frames_.size()) {
         // Issue #1510 / #1916: post-compact cleared env_id or OOB → empty Env
         // fallback (globals still reachable; no dangling frame walk).
         bump_dangling_env("materialize-oob");
+        wire_global_access(ne);
         return ne;
     }
     // Issue #1542 / #1916: linear post-mutate enforce at materialize entry
@@ -928,6 +943,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         bump_dangling_env("materialize-linear");
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->linear_ownership_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        wire_global_access(ne);
         return ne;
     }
     // Issue #1916: env-only stale without bridge drift still materializes
@@ -1023,6 +1039,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
             m->dangling_env_prevented.fetch_add(1, std::memory_order_relaxed);
             m->dangling_env_prevented_materialize.fetch_add(1, std::memory_order_relaxed);
         }
+        wire_global_access(ne);
         return ne;
     }
     if (fr.version_ < defuse_version_.load(std::memory_order_acquire)) {
@@ -1078,6 +1095,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         ne.set_owner(this);
         ne.set_parent_id(fr.parent_id);
     }
+    // Always ensure owner + top free-var access (even if parent_id was NULL).
+    wire_global_access(ne);
     // Issue #1903: post-copy dual-path consistency observability.
     // Source frame was checked before the copy (ensure_envframe_dual_path_consistency
     // above) - the materialized Env now has its own SoA arrays; the copy is
@@ -2326,12 +2345,40 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
             }
             return true;
         });
+        if (result)
+            return result;
+        // Live top_ free vars when parent is frame 0 (see lookup_cell_index).
+        if (parent_id_ == 0 && owner_) {
+            for (auto& b : owner_->top_env().bindings()) {
+                if (b.first == n) {
+                    if (is_cell(b.second)) {
+                        auto ci = as_cell_id(b.second);
+                        if (ci < cells->size())
+                            return &(*cells)[ci];
+                    }
+                    return nullptr;
+                }
+            }
+        }
         return result;
     }
     // 3. Legacy pointer walk (preserved for unregistered Envs).
     //    Same shadowing semantics: closest frame wins.
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
+            if (b.first == n) {
+                if (is_cell(b.second)) {
+                    auto ci = as_cell_id(b.second);
+                    if (ci < cells->size())
+                        return &(*cells)[ci];
+                }
+                return nullptr;
+            }
+        }
+    }
+    // 4. Live top_ free-var cells when owner set (empty materialize).
+    if (owner_) {
+        for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
                 if (is_cell(b.second)) {
                     auto ci = as_cell_id(b.second);
@@ -2409,11 +2456,48 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             }
             return true;
         });
+        if (result)
+            return result;
+        // Live top_ free vars (parent_id_==0): same fallback as Env::lookup.
+        // Captured frames snapshot top_ at define time; after mutate:rebind
+        // the live cell for suite counters (total-pass) lives on top_, not
+        // on frame 0. Without this, set! free vars unbound after mutation.
+        if (parent_id_ == 0 && owner_) {
+            for (auto& b : owner_->top_env().bindings()) {
+                if (b.first == n) {
+                    if (is_cell(b.second))
+                        return as_cell_id(b.second);
+                    return std::nullopt;
+                }
+            }
+            // SymId path on live top_
+            if (pool_) {
+                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+                for (auto it = owner_->top_env().bindings_symid().rbegin();
+                     it != owner_->top_env().bindings_symid().rend(); ++it) {
+                    if (it->first == s) {
+                        if (is_cell(it->second))
+                            return as_cell_id(it->second);
+                        return std::nullopt;
+                    }
+                }
+            }
+        }
         return result;
     }
     // 3. Legacy pointer walk
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
+            if (b.first == n) {
+                if (is_cell(b.second))
+                    return as_cell_id(b.second);
+                return std::nullopt;
+            }
+        }
+    }
+    // 4. Live top_ when owner set but no SoA parent (empty materialize)
+    if (owner_) {
+        for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
                 if (is_cell(b.second))
                     return as_cell_id(b.second);

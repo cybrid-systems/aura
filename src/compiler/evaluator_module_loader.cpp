@@ -232,6 +232,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // module eval stay valid for the module's lifetime.
     auto* mod_env = mod_arena.create<Env>(&top_);
     mod_env->set_primitives(&primitives_);
+    // Explicit owner: Env(&top_) copies top_.owner_, but some call sites
+    // later re-parent or default-construct Envs that lose it. Primitive
+    // dispatch uses owner()->invoke_prim_with_telemetry; null owner is a
+    // SIGSEGV (bump_primitive_call_count si_addr≈0x730) after require.
+    mod_env->set_owner(this);
     // Issue #232 follow-up: register the module env in env_frames_ so
     // closures captured during module eval (e.g., the lambda in
     // `(define (f x) ...)`) can walk the parent chain via SoA when
