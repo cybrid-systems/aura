@@ -1359,6 +1359,13 @@ aura_issue_test_link_llvm_jit(test_issue_1991)
 # B-010 / F-004).
 aura_add_issue_test(test_issue_1993)
 aura_issue_test_link_llvm_jit(test_issue_1993)
+# Issue #1994: (workspace-state) and (workspace-tree-*) primitives take
+# workspace_mtx_ lock (shared_lock for read-only, unique_lock for
+# read+write) to gate against concurrent set_workspace_flat (#1729)
+# mid-construction rollback — racy NULL-check-then-dereference
+# pattern (F-004, sibling of B-010 / D-001).
+aura_add_issue_test(test_issue_1994)
+aura_issue_test_link_llvm_jit(test_issue_1994)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
