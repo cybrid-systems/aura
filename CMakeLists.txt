@@ -1372,6 +1372,13 @@ aura_issue_test_link_llvm_jit(test_issue_1994)
 # CompilerService destruction (B-003, sibling of B-012/B-020).
 aura_add_issue_test(test_issue_1996)
 aura_issue_test_link_llvm_jit(test_issue_1996)
+# Issue #1997: shell-wrapper C-source escape loop (aura_jit_bridge.cpp
+# ~2535) now handles all C0 control chars (\t \r \0 \a \b \f \v) +
+# backslash + double-quote via switch-statement. Without \0 escaping,
+# the literal '\0' would prematurely terminate the generated "..."
+# literal and corrupt all subsequent emitted C source (B-002).
+aura_add_issue_test(test_issue_1997)
+aura_issue_test_link_llvm_jit(test_issue_1997)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes

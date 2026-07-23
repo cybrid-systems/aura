@@ -2532,17 +2532,47 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                      aura_exe);
         return false;
     }
-    // Escape for C string literal
+    // Escape for C string literal (issue #1997 / B-002).
+    // All C0 control chars must be escaped -- '\0' in particular would
+    // prematurely terminate the generated "..." literal and corrupt the
+    // rest of the emitted C source.
     std::string escaped;
     for (char c : result) {
-        if (c == '\\')
-            escaped += "\\\\";
-        else if (c == '"')
-            escaped += "\\\"";
-        else if (c == '\n')
-            escaped += "\\n";
-        else
-            escaped += c;
+        switch (c) {
+            case '\\':
+                escaped += "\\\\";
+                break;
+            case '"':
+                escaped += "\\\"";
+                break;
+            case '\n':
+                escaped += "\\n";
+                break;
+            case '\t':
+                escaped += "\\t";
+                break;
+            case '\r':
+                escaped += "\\r";
+                break;
+            case '\0':
+                escaped += "\\0";
+                break;
+            case '\a':
+                escaped += "\\a";
+                break;
+            case '\b':
+                escaped += "\\b";
+                break;
+            case '\f':
+                escaped += "\\f";
+                break;
+            case '\v':
+                escaped += "\\v";
+                break;
+            default:
+                escaped.push_back(c);
+                break;
+        }
     }
 
     // Write C source
