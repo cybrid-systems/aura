@@ -574,6 +574,18 @@ def test_unit():
             fail(line.strip())
     if r.returncode != 0:
         all_ok = False
+        # Surface UBSAN/ASAN diagnostics + aborts (stderr was previously
+        # swallowed, which made CI failures look like silent unit fails).
+        fail(f"test_ir exited {r.returncode}")
+        err = (r.stderr or "").strip()
+        if err:
+            # Cap output so a sanitizer flood still leaves a usable log tail.
+            lines = err.splitlines()
+            if len(lines) > 80:
+                lines = lines[:40] + ["  ... (stderr truncated) ..."] + lines[-40:]
+            print(f"{R}── test_ir stderr ──{N}")
+            for line in lines:
+                print(f"  {line}")
     print(f"  Unit tests: {elapsed:.2f}s")
 
     # test_concurrent
@@ -583,8 +595,10 @@ def test_unit():
         r2 = subprocess.run([str(concurrent_bin)], timeout=300)
         elapsed2 = time.time() - start2
         # binary prints directly to terminal; just check rc
-        ok(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
-        if r2.returncode != 0:
+        if r2.returncode == 0:
+            ok(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
+        else:
+            fail(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
             all_ok = False
 
     if all_ok:
