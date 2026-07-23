@@ -5808,6 +5808,15 @@ public:
         pairs_.push_back({car, cdr});
         return idx;
     }
+    // Issue #1987: GC safepoint coordination state. The request path
+    // signals "we are now at a safepoint" by setting safepoint_active_=true
+    // under safepoint_mtx_ and notify_all'ing safepoint_cv_. wait_for_safepoint
+    // blocks on the cv until active is true (or timeout). end_gc_safepoint()
+    // clears the flag for the next GC cycle. The previous no-op wait silently
+    // miscoordinated with any caller that relied on it blocking.
+    mutable std::mutex safepoint_mtx_;
+    std::condition_variable safepoint_cv_;
+    std::atomic<bool> safepoint_active_{false};
     // Issue #439: request_gc_safepoint() — the
     // pre-requisite helper for safe GC coordination.
     // P0 scope-limited ship: this method bumps the
@@ -5875,6 +5884,13 @@ public:
         sync_linear_roots_and_bridge_epoch();
         // Issue #1543: GC safepoint path audit after root re-register.
         (void)run_linear_gc_root_audit(kLinearGcRootAuditGcSafepoint);
+        // Issue #1987: signal "we are at a safepoint" so concurrent
+        // wait_for_safepoint() callers can return.
+        {
+            std::lock_guard<std::mutex> lk(safepoint_mtx_);
+            safepoint_active_.store(true, std::memory_order_release);
+        }
+        safepoint_cv_.notify_all();
         return 0;
     }
     // Issue #439: wait_for_safepoint(timeout_ms) — the
@@ -5887,6 +5903,27 @@ public:
     void wait_for_safepoint(std::uint64_t timeout_ms) noexcept {
         bump_gc_safepoint_wait();
         bump_gc_safepoint_wait_ns(timeout_ms * 1'000'000);
+        // Issue #1987: actually block on the cv until request_gc_safepoint
+        // signals "at safepoint" (i.e. the immediate path's return 0 sets
+        // safepoint_active_=true and notifies). Without this the wait is
+        // a no-op and any caller relying on it returns immediately,
+        // silently miscoordinating with the GC collector.
+        std::unique_lock<std::mutex> lk(safepoint_mtx_);
+        if (safepoint_active_.load(std::memory_order_acquire))
+            return; // already at safepoint, no need to wait
+        safepoint_cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), [this] {
+            return safepoint_active_.load(std::memory_order_acquire);
+        });
+    }
+    // Issue #1987: clear the safepoint flag for the next GC cycle. Callers
+    // (typically the GC collector after resume_from_gc) invoke this once the
+    // GC work is done and mutators have been released.
+    void end_gc_safepoint() noexcept {
+        {
+            std::lock_guard<std::mutex> lk(safepoint_mtx_);
+            safepoint_active_.store(false, std::memory_order_release);
+        }
+        safepoint_cv_.notify_all(); // wake timed-out waiters so they see the cleared flag
     }
     // Issue #438: transfer_mutation_stack_to_current_fiber
     // — the pre-requisite helper for safe fiber migration

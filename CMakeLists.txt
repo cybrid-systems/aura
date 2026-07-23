@@ -1338,6 +1338,9 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage)
 aura_issue_test_link_llvm_jit(test_mutation_rollback_coverage)
+# Issue #1987: wait_for_safepoint actually blocks until signaled (B-001).
+aura_add_issue_test(test_safepoint_mutation)
+aura_issue_test_link_llvm_jit(test_safepoint_mutation)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
 aura_add_issue_test(test_dirty_reason_verification_propagation)
