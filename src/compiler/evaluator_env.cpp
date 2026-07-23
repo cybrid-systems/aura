@@ -985,13 +985,22 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     }
     // Issue #418: dual-path consistency probe on materialize.
     ensure_envframe_dual_path_consistency(fr);
-    // Issue #1269 / #1754: enforce dual-path + version stamp on every
+    // Issue #1269 / #1754 / #1999: enforce dual-path + version stamp on every
     // materialize path — refresh only when the frame exists and is
     // version-stale (not NULL/OOB — those have no bindings to refresh).
-    if (!is_env_frame_invalid_id(cl.env_id) && is_env_frame_stale(cl.env_id)) {
-        refresh_stale_frame_in_walk(cl.env_id, "materialize_call_env");
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-            m->envframe_dualpath_materialize_refresh.fetch_add(1, std::memory_order_relaxed);
+    //
+    // CRITICAL: do NOT call is_env_frame_stale() here — it takes its own
+    // shared_lock(env_frames_mtx_), and std::shared_mutex is non-recursive.
+    // We already hold env_rlock; nested acquire is UB / EDEADLK
+    // ("Resource deadlock avoided") on pthread. Compare version_ under the
+    // lock we already hold (same predicate as is_env_frame_stale).
+    {
+        const auto cur_defuse = defuse_version_.load(std::memory_order_acquire);
+        if (fr.version_ != INVALID_VERSION && fr.version_ < cur_defuse) {
+            refresh_stale_frame_in_walk(cl.env_id, "materialize_call_env");
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->envframe_dualpath_materialize_refresh.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // Issue #242: detect a stale frame (captured before the
     // current mutation epoch). The frame's bindings might be

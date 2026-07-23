@@ -4901,10 +4901,23 @@ public:
         // to compile because IRInterpreter doesn't expose flat/pool.
         // Minimal surgical change: only ir_define_closure_owner_.clear().
         ir_define_closure_owner_.clear();
-        for (auto& [_, entry] : ir_cache_v2_) {
+        // Issue #1999 / #600 AC5: set-code soft-dirty is the invalidate path
+        // for a full workspace replace. Drop matching AuraJIT modules and
+        // bump incremental_closure_jit_sync so (query:incremental-closure-stats)
+        // jit-sync-count observes the redefine (parity with hard
+        // invalidate_function which already pairs jit_.invalidate + bump).
+        bool any_dirty = false;
+        for (auto& [name, entry] : ir_cache_v2_) {
             entry.dirty = true;
             entry.mark_all_blocks_dirty();
+            jit_.invalidate(name.c_str());
+            jit_.invalidate_prefix(name.c_str());
+            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            any_dirty = true;
+            (void)name;
         }
+        if (any_dirty)
+            evaluator_.bump_incremental_closure_jit_sync();
     }
 
     // Issue #196: fine-grained per-block dirty marking API.
