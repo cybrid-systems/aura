@@ -1344,6 +1344,9 @@ aura_issue_test_link_llvm_jit(test_safepoint_mutation)
 # Issue #1988: ArenaGroup::arenas_ protected by shared_mutex (A-001).
 aura_add_issue_test(test_arena_concurrent_mutex)
 aura_issue_test_link_llvm_jit(test_arena_concurrent_mutex)
+# Issue #1989: ASTArena::on_compact_hook_ protected by mutex (A-003).
+aura_add_issue_test(test_arena_compact_hook_concurrent)
+aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
 aura_add_issue_test(test_dirty_reason_verification_propagation)

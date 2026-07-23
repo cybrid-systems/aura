@@ -504,9 +504,13 @@ public:
     // take_on_compact_hook() + reinstall a chain. Silent overwrite
     // previously dropped Evaluator re_pin when CompilerService
     // installed ShapeProfiler after set_arena.
-    void set_on_compact_hook(std::function<void()> hook) { on_compact_hook_ = std::move(hook); }
+    void set_on_compact_hook(std::function<void()> hook) {
+        std::lock_guard<std::mutex> lock(hook_mtx_);
+        on_compact_hook_ = std::move(hook);
+    }
     // Move out the current hook (leaves arena with no hook).
     [[nodiscard]] std::function<void()> take_on_compact_hook() {
+        std::lock_guard<std::mutex> lock(hook_mtx_);
         return std::move(on_compact_hook_);
     }
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
@@ -1215,9 +1219,18 @@ private:
     }
 
     void invoke_compact_hook_() {
-        if (!on_compact_hook_)
-            return;
-        on_compact_hook_();
+        std::function<void()> hook_copy;
+        {
+            // Issue #1989: copy under hook_mtx_, invoke outside the lock so
+            // a hook that re-enters ASTArena (or any code that takes the
+            // same lock in the future) doesn't deadlock. set_on_compact_hook /
+            // take_on_compact_hook are serialized against this copy.
+            std::lock_guard<std::mutex> lock(hook_mtx_);
+            if (!on_compact_hook_)
+                return;
+            hook_copy = on_compact_hook_;
+        }
+        hook_copy();
         stats_.shape_inval_on_compact++;
         aura::core::arena_policy::record_shape_inval_on_compact();
     }
@@ -1247,6 +1260,9 @@ private:
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
+    // Issue #1989: protect on_compact_hook_ from concurrent assign+invoke (A-003).
+    // std::function move-assign + invoke is UB; std::mutex serializes both.
+    mutable std::mutex hook_mtx_;
     std::function<void()> on_compact_hook_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
