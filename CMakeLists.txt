@@ -1350,6 +1350,9 @@ aura_issue_test_link_llvm_jit(test_arena_compact_hook_concurrent)
 # Issue #1990: (gc-temp)/(gc-stats) closures_ iteration protected by closures_mtx_ (B-009).
 aura_add_issue_test(test_issue_1990)
 aura_issue_test_link_llvm_jit(test_issue_1990)
+# Issue #1991: (gc) primitive clear path protected by module_mtx_ (B-010).
+aura_add_issue_test(test_issue_1991)
+aura_issue_test_link_llvm_jit(test_issue_1991)
 # Issue #415: DirtyReason verification categories +
 # mark_dirty_upward propagation metrics synthesis.
 aura_add_issue_test(test_dirty_reason_verification_propagation)

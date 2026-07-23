@@ -3857,6 +3857,16 @@ private:
     std::unordered_map<std::string, ast::ASTArena*, aura::core::TransparentStringHash,
                        std::equal_to<>>
         module_arena_ptrs_; // path → owning arena (for gc_module)
+    // Issue #1991 (B-010): serialize (gc) primitive against
+    // load_module_file / gc_module. The (gc) primitive clears
+    // modules_, module_cache_, workspace_flat_, workspace_pool_,
+    // current_flat_, current_pool_ in one shot — concurrent
+    // load_module_file writes to modules_, module_cache_,
+    // module_arena_ptrs_, module_names_ would race the clear.
+    // unique_lock for the writers (load_module_file, gc);
+    // no readers take module_mtx_ (use workspace_mtx_ for that,
+    // see F-004 / #1994).
+    mutable std::shared_mutex module_mtx_;
     // Issue #145 Phase 2.4 — runtime arena for high-churn
     // heap vectors. monotonic_buffer_resource bump-allocates
     // chunks; deallocate() is a no-op (monotonic semantics).

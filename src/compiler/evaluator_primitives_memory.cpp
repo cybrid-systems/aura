@@ -131,6 +131,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
 
         // Reset arena (invalidates all arena-allocated state)
         // (ASAN fix #107 leak) delete the old index.
+        // Issue #1991 (B-010): take unique_lock(module_mtx_) before
+        // clearing module state. Concurrent load_module_file writes to
+        // modules_, module_cache_, module_arena_ptrs_, module_names_
+        // (evaluator_module_loader.cpp:277-280) — without the lock the
+        // clear races with the writer and may leave the cache half-cleared
+        // or invalidate a pointer mid-write.
+        std::unique_lock<std::shared_mutex> lock(ev.module_mtx_);
         destroy_defuse_index();
         ev.modules_.clear();
         ev.module_cache_.clear();
