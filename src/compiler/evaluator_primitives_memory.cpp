@@ -137,14 +137,27 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // (evaluator_module_loader.cpp:277-280) — without the lock the
         // clear races with the writer and may leave the cache half-cleared
         // or invalidate a pointer mid-write.
-        std::unique_lock<std::shared_mutex> lock(ev.module_mtx_);
-        destroy_defuse_index();
-        ev.modules_.clear();
-        ev.module_cache_.clear();
-        ev.current_flat_ = nullptr;
-        ev.current_pool_ = nullptr;
-        ev.workspace_flat_ = nullptr;
-        ev.workspace_pool_ = nullptr;
+        // Issue #1993 (D-001): also take unique_lock(workspace_mtx_)
+        // for the workspace_flat_ / workspace_pool_ pointer nulls —
+        // workspace_flat_ is mutated by set_workspace_flat (#1729 holds
+        // exclusive workspace_mtx_) and read via WorkspaceFlatPin
+        // (#1898 shared_lock); without the lock, an in-flight reader
+        // sees the old pointer after the field is nulled, then
+        // dereferences it → use-after-free across primitive boundaries.
+        // Acquire both atomically via std::lock to avoid deadlock if a
+        // future caller reverses the order.
+        {
+            std::unique_lock<std::shared_mutex> module_lock(ev.module_mtx_, std::defer_lock);
+            std::unique_lock<std::shared_mutex> workspace_lock(ev.workspace_mtx_, std::defer_lock);
+            std::lock(module_lock, workspace_lock);
+            destroy_defuse_index();
+            ev.modules_.clear();
+            ev.module_cache_.clear();
+            ev.current_flat_ = nullptr;
+            ev.current_pool_ = nullptr;
+            ev.workspace_flat_ = nullptr;
+            ev.workspace_pool_ = nullptr;
+        }
         if (aura::messaging::g_reset_arena && ev.compiler_service_) {
             aura::messaging::g_reset_arena(ev.compiler_service_);
         }
@@ -173,8 +186,27 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return types::make_bool(aura::messaging::g_gc_collect());
         }
         // Fallback: direct clear (stdin mode)
+        // Issue #1993 (D-001): hold heap_mutex_ + module_mtx_ +
+        // workspace_mtx_ atomically (std::lock with defer_lock) for
+        // the entire direct-clear body. The previous code only held
+        // heap_mutex_ inside an inner scope, leaving the module +
+        // workspace state reachable to concurrent readers:
+        //   - load_module_file writes modules_ / module_cache_ under
+        //     module_mtx_ — without holding module_mtx_ here the clear
+        //     races the writer (sibling of B-010 / #1991)
+        //   - set_workspace_flat writes workspace_flat_ under
+        //     workspace_mtx_ — without holding workspace_mtx_ here, an
+        //     in-flight WorkspaceFlatPin reader (shared_lock on
+        //     workspace_mtx_, #1898) sees the old pointer after the
+        //     field is nulled → use-after-free across primitive
+        //     boundaries (sibling of F-004 / #1994)
+        // std::lock() with defer_lock avoids deadlock if future
+        // multi-lock sites reverse the order.
         {
-            std::lock_guard<std::mutex> lock(ev.heap_mutex());
+            std::unique_lock<std::mutex> heap_lock(ev.heap_mutex(), std::defer_lock);
+            std::unique_lock<std::shared_mutex> module_lock(ev.module_mtx_, std::defer_lock);
+            std::unique_lock<std::shared_mutex> workspace_lock(ev.workspace_mtx_, std::defer_lock);
+            std::lock(heap_lock, module_lock, workspace_lock);
             // Clear ev.short_str_cache_ BEFORE ev.string_heap_ so cached EvalValues
             // referencing old indices aren't returned after the heap shrinks.
             // Without this, the next LiteralString eval returns a stale
@@ -195,8 +227,20 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             ev.vector_heap_.shrink_to_fit();
             ev.opaque_heap_.clear();
             ev.opaque_heap_.shrink_to_fit();
-            // gc-heap is a stronger reset than gc-temp; also record
-            // the eval-depth snapshot so memory-pressure won't keep
+            // gc-heap is a stronger reset than gc-temp; also clear
+            // module + workspace state under the matching locks so
+            // (gc-heap) is actually a "stronger reset than gc-temp"
+            // (per the original comment). Without these clears the
+            // doc claim was a lie — a fiber running after (gc-heap)
+            // could still see stale modules_ / workspace_flat_.
+            destroy_defuse_index();
+            ev.modules_.clear();
+            ev.module_cache_.clear();
+            ev.current_flat_ = nullptr;
+            ev.current_pool_ = nullptr;
+            ev.workspace_flat_ = nullptr;
+            ev.workspace_pool_ = nullptr;
+            // Record the eval-depth snapshot so memory-pressure won't keep
             // suggesting "gc-temp" right after a gc-heap.
             ev.last_gc_temp_eval_depth_ = ev.eval_depth_;
         }

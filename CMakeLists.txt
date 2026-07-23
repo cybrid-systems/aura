@@ -1353,6 +1353,12 @@ aura_issue_test_link_llvm_jit(test_issue_1990)
 # Issue #1991: (gc) primitive clear path protected by module_mtx_ (B-010).
 aura_add_issue_test(test_issue_1991)
 aura_issue_test_link_llvm_jit(test_issue_1991)
+# Issue #1993: (gc-heap) direct-clear holds heap_mutex_ + module_mtx_ +
+# workspace_mtx_ atomically (std::lock); (gc) also adds workspace_mtx_
+# for the workspace_flat_ / workspace_pool_ nulls (D-001, sibling of
+# B-010 / F-004).
+aura_add_issue_test(test_issue_1993)
+aura_issue_test_link_llvm_jit(test_issue_1993)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
