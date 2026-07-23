@@ -954,6 +954,36 @@ extern "C" void aura_set_jit_batch_deopt_target(void* aura_jit_ptr) {
     g_batch_deopt_jit = static_cast<aura::jit::AuraJIT*>(aura_jit_ptr);
 }
 
+// Issue #1996 (B-003): symmetric clear for g_batch_deopt_jit. The set
+// is called from service.ixx:668 during CompilerService boot; without
+// this clear, the file-scope `g_batch_deopt_jit` continues to point
+// into the freed AuraJIT after ~CompilerService runs (test teardown,
+// process shutdown, repeated (query:jit-reset) lifecycles). A late
+// batch_deopt_for / deopt_pending_count / is_deopt_pending call then
+// dereferences a dangling pointer (UAF).
+//
+// Contract:
+//   - if aura_jit_ptr is non-null and matches g_batch_deopt_jit,
+//     reset g_batch_deopt_jit to nullptr.
+//   - if aura_jit_ptr is non-null and does NOT match, leave the
+//     pointer alone (another CompilerService has set it; we'd
+//     incorrectly null out a live pointer otherwise — a regression
+//     of the multi-service scenario).
+//   - if aura_jit_ptr is null, treat as a force-clear: reset
+//     g_batch_deopt_jit to nullptr unconditionally. This is used
+//     during host bridge shutdown where we know the bridge must
+//     stop dereferencing the file-scope pointer regardless of which
+//     CompilerService currently owns it.
+extern "C" void aura_clear_jit_batch_deopt_target(void* aura_jit_ptr) {
+    if (aura_jit_ptr == nullptr) {
+        g_batch_deopt_jit = nullptr;
+        return;
+    }
+    if (g_batch_deopt_jit == static_cast<aura::jit::AuraJIT*>(aura_jit_ptr)) {
+        g_batch_deopt_jit = nullptr;
+    }
+}
+
 extern "C" std::size_t aura_jit_batch_deopt_for(const char* name, std::uint64_t current_epoch) {
     g_batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
     if (!g_batch_deopt_jit || !name)
