@@ -3713,7 +3713,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 args.push_back(*ar);
                             }
                             // Issue #441 / #1357: call count + render latency telemetry.
-                            return eval_env.owner()->invoke_prim_with_telemetry(
+                            // Fall back to `this` when Env::owner_ is null (e.g. stack
+                            // Envs / module-inject paths that never set_owner). Calling
+                            // through a null owner SIGSEGVs in bump_primitive_call_count
+                            // (si_addr=0x730) — suite/poly_mutation_soundness + suite/gc
+                            // after (require ... all:). Mirrors materialize_call_env /
+                            // IR bridge set_owner pattern.
+                            Evaluator* prim_owner =
+                                eval_env.owner() != nullptr ? eval_env.owner() : this;
+                            return prim_owner->invoke_prim_with_telemetry(
                                 cname, [&]() { return (*prim)(args); });
                         }
                     }
@@ -4117,7 +4125,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     args.push_back(*ar);
                                 }
                                 // Issue #441 / #1357: call count + render latency.
-                                return eval_env.owner()->invoke_prim_with_telemetry(
+                                // Null-owner fallback — see Variable primitive path above.
+                                Evaluator* prim_owner =
+                                    eval_env.owner() != nullptr ? eval_env.owner() : this;
+                                return prim_owner->invoke_prim_with_telemetry(
                                     primitives_.name_for_slot(slot),
                                     [&]() { return (*prim)(args); });
                             }

@@ -696,12 +696,12 @@ for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"
 
 passed = 0
 failed = 0
-# Same SIGSEGV class as SUITE_SKIP (poly_mutation_soundness / gc): null
-# Evaluator* this in bump_primitive_call_count after mutate:rebind /
-# colony search paths. Tracked separately; do not block p0 on these.
+# Regression cases temporarily skipped. SIGSEGV null-owner is fixed;
+# remaining: module free-var freezes for std/ant helpers after require
+# (output-contains-any?) and std/ast-viz helpers after mutate (node-label).
 KNOWN_SKIP = {
-    "ast-viz-dot-mutation": "SIGSEGV bump_primitive_call_count after mutate:rebind (null this)",
-    "colony-search": "SIGSEGV bump_primitive_call_count under colony mutate path (null this)",
+    "ast-viz-dot-mutation": "unbound free-var node-label after mutate:rebind (module capture)",
+    "colony-search": "unbound free-var output-contains-any? in colony:search (module capture)",
 }
 for case in load_regression_cases():
     name, code, expect_out, expect_err = case.name, case.code, case.expect_out, case.expect_err

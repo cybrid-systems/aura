@@ -1169,16 +1169,11 @@ def test_p0_regression():
 # The skip is reported as a warning (so it's visible in CI logs) but does
 # not fail the suite. These are tracked as follow-up work — see
 # commit messages on the relevant fixes for context.
-SUITE_SKIP = {
+SUITE_SKIP: dict[str, str] = {
     # Add entries here as {filename: reason} for tests that should be
     # temporarily skipped. Empty = all suite tests run.
-    #
-    # SIGSEGV in Evaluator::bump_primitive_call_count (null `this`,
-    # si_addr=0x730) under `aura --load` after mutate:rebind / gc paths.
-    # Same stack as poly_mutation_soundness. Tracked separately from
-    # the IR dirty cascade fix; do not block suite on these two.
-    "poly_mutation_soundness.aura": "SIGSEGV bump_primitive_call_count under --load (null this)",
-    "gc.aura": "SIGSEGV bump_primitive_call_count under --load (null this)",
+    # Cleared after null-owner primitive dispatch + set! free-var top_
+    # fallback (poly_mutation_soundness / gc under --load).
 }
 
 # P4: curated S0 surface smoke (AURA_PRIMITIVES=s0). Full suite stays full-mode.
