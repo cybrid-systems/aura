@@ -4901,23 +4901,25 @@ public:
         // to compile because IRInterpreter doesn't expose flat/pool.
         // Minimal surgical change: only ir_define_closure_owner_.clear().
         ir_define_closure_owner_.clear();
-        // Issue #1999 / #600 AC5: set-code soft-dirty is the invalidate path
-        // for a full workspace replace. Drop matching AuraJIT modules and
-        // bump incremental_closure_jit_sync so (query:incremental-closure-stats)
-        // jit-sync-count observes the redefine (parity with hard
-        // invalidate_function which already pairs jit_.invalidate + bump).
-        bool any_dirty = false;
+        // Issue #1999 / #600 AC5 + Wave2: set-code soft-dirty is the
+        // invalidate path for a full workspace replace. Mark every
+        // ir_cache_v2 entry dirty, then ONE bulk jit_.invalidate_all()
+        // (not per-name invalidate+prefix — that was O(N·T) map walks
+        // and N× linear-live scans). Still bumps jit-sync once so
+        // query:incremental-closure-stats jit-sync-count observes redefine.
+        std::size_t dirty_n = 0;
         for (auto& [name, entry] : ir_cache_v2_) {
+            (void)name;
             entry.dirty = true;
             entry.mark_all_blocks_dirty();
-            jit_.invalidate(name.c_str());
-            jit_.invalidate_prefix(name.c_str());
-            metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-            any_dirty = true;
-            (void)name;
+            ++dirty_n;
         }
-        if (any_dirty)
+        if (dirty_n > 0) {
+            const auto evicted = jit_.invalidate_all();
+            metrics_.jit_hotswap_invalidate_total.fetch_add(evicted > 0 ? evicted : dirty_n,
+                                                            std::memory_order_relaxed);
             evaluator_.bump_incremental_closure_jit_sync();
+        }
     }
 
     // Issue #196: fine-grained per-block dirty marking API.

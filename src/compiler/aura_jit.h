@@ -336,6 +336,11 @@ public:
     // the redefine's old compiled function pointer remains
     // in compile_fns_ and the next exec returns the old body.
     void invalidate_prefix(const char* prefix);
+    // Wave2: bulk invalidate for set-code / mark_all_defines_dirty.
+    // One linear-live scan + one compile_mtx_ hold clears every
+    // tracker / compile_fns_ entry (O(T) not O(N·T) per define).
+    // Returns number of tracker entries removed.
+    std::size_t invalidate_all() noexcept;
 
     // Issue #1514: partial recompile request — evicts native code for
     // `name` (and name#* keys) so the next exec recompiles only the

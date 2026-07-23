@@ -3646,6 +3646,34 @@ void AuraJIT::invalidate_prefix(const char* prefix) {
     }
 }
 
+// Wave2: set-code / mark_all_defines_dirty bulk path.
+// One linear-live scan + one compile_mtx_ session tears down every
+// tracker / unhandled / AOT snapshot / compile_fns_ entry. Avoids
+// O(N) × (linear_scan + full-map walk) from per-name invalidate+prefix.
+std::size_t AuraJIT::invalidate_all() noexcept {
+    if (!impl_)
+        return 0;
+    std::lock_guard<std::mutex> compile_lock(impl_->compile_mtx_);
+    (void)aura_jit_linear_live_closure_scan();
+    std::size_t n = 0;
+    for (auto& [name, tr] : impl_->fn_trackers_) {
+        (void)name;
+        if (tr.tracker) {
+            if (auto err = tr.tracker->remove())
+                llvm::consumeError(std::move(err));
+        }
+        ++n;
+    }
+    impl_->fn_trackers_.clear();
+    impl_->fn_unhandled_counts_.clear();
+    impl_->fn_aot_modules_.clear();
+    {
+        std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
+        impl_->compile_fns_.clear();
+    }
+    return n;
+}
+
 // Issue #1477: JIT-side dual-epoch fence.
 // Issue #1522: soft batch deopt — mark fn_trackers_ deopt_pending + drop
 // compile_fns_ so next invoke / compile refuses stale native code.
@@ -3869,6 +3897,9 @@ void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*) {}
 void AuraJIT::invalidate(const char*) {}
 void AuraJIT::invalidate_prefix(const char*) {}
+std::size_t AuraJIT::invalidate_all() noexcept {
+    return 0;
+}
 bool AuraJIT::partial_recompile(const char* name, const std::uint32_t* dirty_block_ids,
                                 std::size_t n_dirty_blocks) noexcept {
     metrics_.partial_recompile_requests.fetch_add(1, std::memory_order_relaxed);
