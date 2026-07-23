@@ -1363,14 +1363,10 @@ public:
 
     // Issue #187 (P0): compact every arena whose fragmentation ratio
     // exceeds the configured threshold. Returns total bytes reclaimed.
+    // Issue #1988: lock arenas_mtx_ for the map walk (was unprotected).
     [[nodiscard]] std::size_t auto_compact() {
-        std::size_t total = 0;
-        for (auto& [_, arena] : arenas_) {
-            if (arena->stats().fragmentation_ratio() >= compact_threshold_) {
-                total += arena->compact();
-            }
-        }
-        return total;
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
+        return auto_compact_unlocked_();
     }
 
     // Issue #335: lightweight probe — should_auto_compact(name)?
@@ -1401,30 +1397,15 @@ public:
     // Issue #335: adaptive_compact(name) — compact a single
     // module's arena, update the savings EMA, and bump
     // the trigger counter. Returns bytes reclaimed.
+    // Public entry: take unique_lock, then call the unlocked
+    // body. Nested callers (adaptive_compact_all /
+    // compact_with_policy Auto / auto_compact_with_safety)
+    // must use adaptive_compact_unlocked_ to avoid
+    // std::system_error "Resource deadlock avoided" on the
+    // non-recursive shared_mutex (#1988 regression).
     [[nodiscard]] std::size_t adaptive_compact(const std::string& name) {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
-        auto it = arenas_.find(name);
-        if (it == arenas_.end())
-            return 0;
-        // Pre-snapshot so we can compute savings without
-        // recomputing stats from scratch.
-        const auto before = it->second->stats();
-        if (before.fragmentation_ratio() < threshold_for(name)) {
-            auto_compact_skip_count_.fetch_add(1, std::memory_order_relaxed);
-            return 0;
-        }
-        const std::size_t saved = it->second->compact();
-        // Update the per-module savings EMA. Newer savings
-        // weight more (alpha = 0.3) so a single large
-        // compaction shifts the next trigger sooner but
-        // the effect decays over time.
-        const double& ema_ref = savings_ema_[name];
-        const double new_ema =
-            (ema_ref == 0.0) ? static_cast<double>(saved)
-                             : kEmaAlpha * static_cast<double>(saved) + (1.0 - kEmaAlpha) * ema_ref;
-        savings_ema_[name] = new_ema;
-        auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
-        return saved;
+        return adaptive_compact_unlocked_(name);
     }
 
     // Issue #335: adaptive_compact_all() — adaptive variant
@@ -1433,11 +1414,7 @@ public:
     // managed arenas.
     [[nodiscard]] std::size_t adaptive_compact_all() {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
-        std::size_t total = 0;
-        for (auto& [name, _] : arenas_) {
-            total += adaptive_compact(name);
-        }
-        return total;
+        return adaptive_compact_all_unlocked_();
     }
 
     // Issue #464: auto_compact_with_safety() — the
@@ -1457,6 +1434,10 @@ public:
     //      AI Agent can see the call rate from
     //      MutationBoundaryGuard dtor.
     // Returns bytes reclaimed (0 if no arena triggered).
+    //
+    // Must call adaptive_compact_all_unlocked_ (not the
+    // public adaptive_compact_all) — we already hold
+    // arenas_mtx_ here.
     [[nodiscard]] std::size_t auto_compact_with_safety() {
         std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto_compact_guard_call_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1468,7 +1449,7 @@ public:
         } else {
             compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
         }
-        return adaptive_compact_all();
+        return adaptive_compact_all_unlocked_();
     }
 
     // Issue #464: bump_auto_compact_guard_call() — called
@@ -1535,7 +1516,8 @@ public:
                 return 0;
             }
             case CompactPolicy::Auto:
-                return adaptive_compact(name);
+                // Already hold arenas_mtx_ — use unlocked body.
+                return adaptive_compact_unlocked_(name);
             case CompactPolicy::Force: {
                 // No threshold check; just compact and
                 // update the EMA + trigger counter.
@@ -1728,6 +1710,62 @@ private:
     [[nodiscard]] double threshold_for(const std::string& name) const {
         const double ema = savings_ema_for(name);
         return std::clamp(compact_threshold_ - ema * kEmaGain, kMinThreshold, kMaxThreshold);
+    }
+
+    // ── unlocked bodies (caller must hold unique_lock on arenas_mtx_) ──
+    // std::shared_mutex is non-recursive. Public entry points take the
+    // lock once; nested compact paths must call these helpers so they
+    // do not re-lock and throw std::system_error "Resource deadlock
+    // avoided" (CI regression after #1988).
+
+    [[nodiscard]] std::size_t auto_compact_unlocked_() {
+        std::size_t total = 0;
+        for (auto& [_, arena] : arenas_) {
+            if (arena->stats().fragmentation_ratio() >= compact_threshold_) {
+                total += arena->compact();
+            }
+        }
+        return total;
+    }
+
+    [[nodiscard]] std::size_t adaptive_compact_unlocked_(const std::string& name) {
+        auto it = arenas_.find(name);
+        if (it == arenas_.end())
+            return 0;
+        // Pre-snapshot so we can compute savings without
+        // recomputing stats from scratch.
+        const auto before = it->second->stats();
+        if (before.fragmentation_ratio() < threshold_for(name)) {
+            auto_compact_skip_count_.fetch_add(1, std::memory_order_relaxed);
+            return 0;
+        }
+        const std::size_t saved = it->second->compact();
+        // Update the per-module savings EMA. Newer savings
+        // weight more (alpha = 0.3) so a single large
+        // compaction shifts the next trigger sooner but
+        // the effect decays over time.
+        const double& ema_ref = savings_ema_[name];
+        const double new_ema =
+            (ema_ref == 0.0) ? static_cast<double>(saved)
+                             : kEmaAlpha * static_cast<double>(saved) + (1.0 - kEmaAlpha) * ema_ref;
+        savings_ema_[name] = new_ema;
+        auto_compact_trigger_count_.fetch_add(1, std::memory_order_relaxed);
+        return saved;
+    }
+
+    [[nodiscard]] std::size_t adaptive_compact_all_unlocked_() {
+        std::size_t total = 0;
+        // Snapshot keys first: compact() may re-enter ArenaGroup via
+        // on_compact_hook_ (e.g. Evaluator re_pin). Iterating the live
+        // map while compact can also invalidate iteration if a nested
+        // path emplaces a new module arena.
+        std::vector<std::string> names;
+        names.reserve(arenas_.size());
+        for (const auto& [name, _] : arenas_)
+            names.push_back(name);
+        for (const auto& name : names)
+            total += adaptive_compact_unlocked_(name);
+        return total;
     }
 };
 
