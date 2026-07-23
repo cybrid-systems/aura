@@ -58,7 +58,12 @@ def main() -> int:
     errors: list[str] = []
 
     if not DOC.is_file():
-        errors.append(f"missing {DOC.relative_to(ROOT)}")
+        # 2026-07-23: aura is agent-developed; per Anqi's "no docs" philosophy,
+        # docs/* was deleted (kept only docs/generated/). The naming-convention
+        # doc itself is gone, but the structural check on example-file template
+        # keys below is still enforced -- the doc presence check becomes soft.
+        # Future re-introduction of the doc would resume full heading checks.
+        print(f"note: {DOC.relative_to(ROOT)} not present (soft-skipping doc heading check)", file=sys.stderr)
     else:
         text = DOC.read_text(encoding="utf-8", errors="replace")
         for h in REQUIRED_HEADINGS:

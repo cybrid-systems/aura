@@ -42,6 +42,21 @@ extern std::vector<PairSlot*> g_owned_pair_slots_;
 // ── Flags ──
 extern bool g_use_arena;
 
+// ── Bridge-hook workspace write lock (Issue #1998 / B-024) ──
+// Acquiring before push to file-scope g_owned_pair_slots_ (and other
+// shared runtime state) prevents races with the static
+// PairSlotCleanup destructor at aura_jit_runtime.cpp:425 and with
+// concurrent sibling bridge-hook writes (aura_make_pair at line 1330+).
+// Without this lock, a vector push_back can reallocate the backing
+// storage mid-iteration by the destructor (UAF on iterator) or by a
+// sibling writer that copied the iteration state (lost slot / host
+// accounting leak). The functions are trampolines into host-registered
+// hook fns via g_lock_hooks (aura_jit_runtime.cpp:389/394) -- if the
+// host hasn't registered hooks, the calls are no-ops (host has its own
+// locking discipline) and the assertion is on the IR-executor path only.
+extern "C" void aura_lock_workspace_write();
+extern "C" void aura_unlock_workspace_write();
+
 // ── FlatHashTable: contiguous hash table storage (Phase 4c) ──
 // Single malloc block, layout (all offsets in bytes):
 //   [0..8)       capacity   (uint64_t)

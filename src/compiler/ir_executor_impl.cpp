@@ -1009,7 +1009,20 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 // at process exit since the static
                                 // g_pair_slots vector only stores raw
                                 // pointers, not ownership.
+                                // Issue #1998 / B-024: gate push under
+                                // workspace write lock. The static
+                                // PairSlotCleanup destructor at
+                                // aura_jit_runtime.cpp:425 iterates this
+                                // vector; concurrent push_back can
+                                // reallocate the backing storage and
+                                // invalidate the iterator (UAF), or the
+                                // push can land AFTER the destructor
+                                // copied its iteration state (lost slot
+                                // -> host accounting leak). Same lock
+                                // pattern as aura_make_pair at line 1330+.
+                                aura_lock_workspace_write();
                                 g_owned_pair_slots_.push_back(slot);
+                                aura_unlock_workspace_write();
                             }
                         }
                     } else {

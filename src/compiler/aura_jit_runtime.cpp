@@ -419,6 +419,19 @@ std::vector<PairSlot*> g_pair_slots;
 // at process exit and frees every entry, satisfying ASAN.
 std::vector<PairSlot*> g_owned_pair_slots_;
 
+// Issue #1998 / B-024: extern "C" accessor for the storage size. The
+// test (tests/test_issue_1998.cpp) uses `import std;` which makes
+// std::vector<PairSlot*> available, but a forward-declared
+// `extern std::vector<PairSlot*> g_owned_pair_slots_;` in the test
+// shadows the std::vector template with an incomplete-type binding --
+// the compiler then refuses to instantiate the .size() member, and
+// the chain reaction makes size_t / snapshot / now undeclared. The
+// accessor avoids the issue: the test calls a free function (extern "C"
+// for stable symbol name) and never names std::vector directly.
+extern "C" size_t aura_g_owned_pair_slots_size() {
+    return g_owned_pair_slots_.size();
+}
+
 namespace {
 struct PairSlotCleanup {
     ~PairSlotCleanup() {
