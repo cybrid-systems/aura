@@ -422,57 +422,45 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     }
 
     // Try tree-walker closures first
-    // Issue #145 P0 follow-up: shared lock on closures_mtx_
-    // while we look up AND copy the closure. The fiber
-    // thread holds this lock for the duration of the copy
-    // (microseconds), so the main thread's mutations don't
-    // race with the lookup. Without this lock, the fiber
-    // thread can see a half-modified Closure (the hash
-    // table node's key/value pair can be in an inconsistent
-    // state during insert/erase on the main thread).
+    // Issue #145 P0 follow-up + Wave2: shared lock on closures_mtx_
+    // for lookup + lifetime gate + copy in ONE critical section.
+    // Pre-Wave2 did copy, unlock, then revalidate_closure_snapshot
+    // (second lock + hash find). Folding lifetime into the first
+    // hold removes one shared_mutex acquire per apply on the happy
+    // path; post-materialize revalidate still covers GC/erase races.
     Closure cl_copy;
     bool cl_found = false;
+    bool tombstoned = false;
     {
         std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
         auto it = closures_.find(cid);
         if (it != closures_.end()) {
-            cl_copy = it->second;
-            cl_found = true;
+            // Issue #1926 / #1929: refuse tombstoned entries under lock
+            // before copying (avoids half-state snapshots).
+            if (!it->second.lifetime_valid_for_views()) {
+                tombstoned = true;
+            } else {
+                cl_copy = it->second;
+                cl_found = true;
+            }
         }
     }
+    CompilerMetrics* metrics =
+        compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
+    if (tombstoned) {
+        g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics) {
+            metrics->closure_view_dangling_prevented_total.store(
+                g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+            metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+        }
+        bump_compiler_root_dangling_prevented();
+        return std::nullopt;
+    }
     if (cl_found) {
-        CompilerMetrics* metrics =
-            compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
         if (metrics)
             metrics->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
-        // Issue #1926 / #1929: refuse tombstoned snapshots (move/free/GC raced
-        // after map copy). Lifetime_version==0 ⇒ pointees may dangle.
-        if (!cl_copy.lifetime_valid_for_views()) {
-            g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
-            if (metrics) {
-                metrics->closure_view_dangling_prevented_total.store(
-                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-            }
-            bump_compiler_root_dangling_prevented();
-            return std::nullopt;
-        }
-        // Issue #1926 / #1929: revalidate under lock before materialize — map
-        // entry may have been erased/tombstoned after the snapshot copy.
-        if (!revalidate_closure_snapshot(cid, cl_copy)) {
-            if (metrics) {
-                metrics->closure_view_dangling_prevented_total.store(
-                    g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                metrics->closure_view_invalid_access_total.store(
-                    g_closure_view_invalid_access_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
-            }
-            bump_compiler_root_dangling_prevented();
-            return std::nullopt;
-        }
         // Issue #681: epoch + EnvFrame version pre-check before
         // materialize_call_env (live closure across post-mutate inval).
         if (closure_needs_safe_fallback(*this, cl_copy, metrics)) {

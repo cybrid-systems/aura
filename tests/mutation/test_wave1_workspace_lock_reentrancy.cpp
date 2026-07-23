@@ -108,6 +108,19 @@ int main() {
               "AC4: eval-current Wave1 B-03 comment");
     }
 
-    std::println("\n=== Wave1 workspace lock reentrancy: {} failed ===", g_failed);
+    // ── AC5: Wave2 performance markers (lock/JIT/lookup) ─────────────
+    {
+        std::println("\n--- AC5: Wave2 hot-path markers ---");
+        CHECK(file_contains("src/compiler/aura_jit.h", "invalidate_all"),
+              "AC5: AuraJIT::invalidate_all declared");
+        CHECK(file_contains("src/compiler/service.ixx", "invalidate_all()"),
+              "AC5: mark_all_defines_dirty uses bulk invalidate_all");
+        CHECK(file_contains("src/compiler/evaluator_eval_flat.cpp", "Wave2"),
+              "AC5: apply_closure Wave2 single-lock copy");
+        CHECK(file_contains("src/compiler/evaluator_env.cpp", "intern once"),
+              "AC5: Env::lookup SoA intern once");
+    }
+
+    std::println("\n=== Wave1/Wave2 lock + hot-path: {} failed ===", g_failed);
     return g_failed ? 1 : 0;
 }

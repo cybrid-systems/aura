@@ -110,16 +110,45 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // letrec recursive names captured via bind_symid therefore live only here.
     // When pool_ is set (apply_closure sets it from the closure pool), resolve
     // the name via intern and hit the SymId path before walking parents.
+    // Wave2: intern once; reuse for parent_ chain + SoA parent_id_ walk.
+    std::optional<aura::ast::SymId> interned_sym;
+    auto ensure_interned = [&]() -> aura::ast::SymId {
+        if (!interned_sym && pool_)
+            interned_sym = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        return interned_sym.value_or(aura::ast::INVALID_SYM);
+    };
     if (pool_ && !bindings_symid_.empty()) {
-        auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+        const auto s = ensure_interned();
         for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
             if (it->first == s)
                 return it->second;
         }
     }
-    // 2. Check parent
+    // 2. parent_ pointer chain — Wave2: iterative (no recursive C++ stack
+    //    per hop). Same hop budget as SoA walk / env_lookup_enter.
     if (parent_) {
-        return parent_->lookup(n);
+        std::size_t hops = 0;
+        for (const Env* p = parent_; p && hops < MAX_ENV_DEPTH; p = p->parent_, ++hops) {
+            if (auto it = p->binding_index_.find(n); it != p->binding_index_.end()) {
+                const auto idx = it->second;
+                if (idx < p->bindings_.size() && p->bindings_[idx].first == n)
+                    return p->bindings_[idx].second;
+            }
+            for (auto it = p->bindings_.rbegin(); it != p->bindings_.rend(); ++it) {
+                if (it->first == n)
+                    return it->second;
+            }
+            if (p->pool_ && !p->bindings_symid_.empty()) {
+                // Prefer this env's pool for intern when present.
+                auto* pp = p->pool_ ? p->pool_ : pool_;
+                auto s = const_cast<aura::ast::StringPool*>(pp)->intern(n);
+                for (auto it = p->bindings_symid_.rbegin(); it != p->bindings_symid_.rend(); ++it) {
+                    if (it->first == s)
+                        return it->second;
+                }
+            }
+        }
+        return std::nullopt;
     }
     // 2b. Issue #232 fallback: SoA walk via parent_id_ when parent_
     // is null but parent_id_ is set. This happens for env frames
@@ -146,6 +175,8 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
         std::shared_lock<std::shared_mutex> env_rlock(owner_->env_frames_lock());
         EnvId cur = parent_id_;
         std::size_t hops = 0;
+        // Wave2: intern once for the whole SoA walk (not once per hop).
+        const aura::ast::SymId hop_sym = pool_ ? ensure_interned() : aura::ast::INVALID_SYM;
         while (cur != NULL_ENV_ID && hops < MAX_ENV_DEPTH) {
             ++hops;
             const EnvFrame& pfr = owner_->env_frame(cur);
@@ -162,11 +193,10 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
             }
             // Issue #1482: EnvFrame primary storage is bindings_symid_
             // (string bindings_ often empty post-capture).
-            if (pool_ && !pfr.bindings_symid_.empty()) {
-                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+            if (pool_ && hop_sym != aura::ast::INVALID_SYM && !pfr.bindings_symid_.empty()) {
                 for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
                      ++it) {
-                    if (it->first == s) {
+                    if (it->first == hop_sym) {
                         if (is_cell(it->second)) {
                             auto ci = as_cell_id(it->second);
                             if (ci < owner_->cells().size())
