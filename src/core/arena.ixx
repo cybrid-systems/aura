@@ -1276,6 +1276,7 @@ public:
     // auto_compact() will trigger a compact() on that arena. Default
     // 0.50 = compact when half the buffer is unused.
     void set_compact_threshold(double ratio) noexcept {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         compact_threshold_ = std::clamp(ratio, 0.0, 0.95);
     }
     [[nodiscard]] double compact_threshold() const noexcept { return compact_threshold_; }
@@ -1284,6 +1285,7 @@ public:
     // (existing + future module_arena creates). Same C-style callback
     // pattern as ASTArena::set_arena_owner — no Evaluator import.
     void set_default_arena_owner(void* owner, ASTArena::ArenaQuotaAllowFn allow_fn) noexcept {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         default_owner_ = owner;
         default_allow_fn_ = allow_fn;
         for (auto& [_, arena] : arenas_) {
@@ -1294,6 +1296,7 @@ public:
         }
     }
     void clear_default_arena_owner() noexcept {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         default_owner_ = nullptr;
         default_allow_fn_ = nullptr;
         for (auto& [_, arena] : arenas_)
@@ -1306,6 +1309,7 @@ public:
     // Get or create an arena for a module
     ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024)
         pre(!name.empty()) pre(initial_size >= 1024) {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it != arenas_.end())
             return *it->second;
@@ -1318,6 +1322,7 @@ public:
 
     // Reset a specific module's arena
     void reset_module(const std::string& name) {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it != arenas_.end())
             it->second->reset();
@@ -1325,6 +1330,7 @@ public:
 
     // Reset all arenas
     void reset_all() {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         for (auto& [_, arena] : arenas_)
             arena->reset();
     }
@@ -1332,6 +1338,7 @@ public:
     // Issue #187 (P0): compact a specific module's arena. Returns
     // bytes reclaimed, or 0 if the module isn't found.
     [[nodiscard]] std::size_t compact_module(const std::string& name) {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return 0;
@@ -1358,6 +1365,7 @@ public:
     // decide whether to call compact() before the
     // critical threshold.
     [[nodiscard]] bool should_auto_compact(const std::string& name) const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return false;
@@ -1378,6 +1386,7 @@ public:
     // module's arena, update the savings EMA, and bump
     // the trigger counter. Returns bytes reclaimed.
     [[nodiscard]] std::size_t adaptive_compact(const std::string& name) {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return 0;
@@ -1407,6 +1416,7 @@ public:
     // module. Returns total bytes reclaimed across all
     // managed arenas.
     [[nodiscard]] std::size_t adaptive_compact_all() {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         std::size_t total = 0;
         for (auto& [name, _] : arenas_) {
             total += adaptive_compact(name);
@@ -1432,6 +1442,7 @@ public:
     //      MutationBoundaryGuard dtor.
     // Returns bytes reclaimed (0 if no arena triggered).
     [[nodiscard]] std::size_t auto_compact_with_safety() {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto_compact_guard_call_count_.fetch_add(1, std::memory_order_relaxed);
         if (aura::gc_hooks::fiber_active()) {
             compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
@@ -1498,6 +1509,7 @@ public:
         Skip,  // never compact
     };
     [[nodiscard]] std::size_t compact_with_policy(const std::string& name, CompactPolicy policy) {
+        std::unique_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return 0;
@@ -1542,6 +1554,7 @@ public:
     // history in chronological order (oldest first).
     [[nodiscard]] std::vector<double> module_frag_history(const std::string& name,
                                                           std::size_t max_samples = 8) const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         auto it = arenas_.find(name);
         if (it == arenas_.end())
             return {};
@@ -1560,6 +1573,7 @@ public:
 
     // Aggregate stats across all managed arenas
     [[nodiscard]] ArenaStats total_stats() const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         ArenaStats total;
         for (auto& [_, arena] : arenas_) {
             total.merge(arena->stats());
@@ -1569,6 +1583,7 @@ public:
 
     // Per-module stats breakdown
     [[nodiscard]] std::vector<std::pair<std::string, ArenaStats>> module_stats() const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         std::vector<std::pair<std::string, ArenaStats>> result;
         for (auto& [name, arena] : arenas_) {
             result.emplace_back(name, arena->stats());
@@ -1577,10 +1592,14 @@ public:
     }
 
     // Number of managed arenas
-    [[nodiscard]] std::size_t count() const { return arenas_.size(); }
+    [[nodiscard]] std::size_t count() const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        return arenas_.size();
+    }
 
     // Issue #685: sum alloc-path + group-level auto-compact policy stats.
     [[nodiscard]] ArenaAutoCompactPolicyStats auto_compact_policy_stats() const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         ArenaAutoCompactPolicyStats out;
         for (auto& [_, arena] : arenas_) {
             const auto s = arena->stats();
@@ -1599,6 +1618,7 @@ public:
     // observability (the `observability_json` primitive surfaces
     // this to Aura code via the (arena:stats) primitive).
     [[nodiscard]] std::string stats_json() const {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
         std::string out = "{\"arenas\":[";
         bool first = true;
         for (auto& [name, arena] : arenas_) {
@@ -1629,6 +1649,10 @@ public:
     }
 
 private:
+    // Issue #1988: protect arenas_ map from concurrent read+mutate (UB iterator invalidation).
+    // Writers take unique_lock; readers take shared_lock. Existing compact_env_frames_lock_
+    // and friends only serialize arena→frame sequences, not the map itself.
+    mutable std::shared_mutex arenas_mtx_;
     std::unordered_map<std::string, std::unique_ptr<ASTArena>, aura::core::TransparentStringHash,
                        std::equal_to<>>
         arenas_;
