@@ -1218,6 +1218,125 @@ int64_t __top__(int64_t* args, uint32_t argc) {
 int64_t __top__(int64_t* args, uint32_t argc);
 #endif
 
+// ═══════════════════════════════════════════════════════════════════════
+// Issue #1995 (B-012 / B-020): weak stubs for 17 aura_* runtime symbols
+// referenced by the LLVM-emitted .o from aura_jit.cpp (ExternalLinkage
+// Function* + lower() CreateCall per matched opcode). Standalone AOT
+// links only runtime.o + the LLVM-emitted .o + registration .c; the
+// host-side bridge (aura_jit_bridge.cpp) is NOT linked, so every aura_*
+// reference in the emitted IR must be resolvable from runtime.c.
+//
+// All stubs are marked __attribute__((weak)) so the host-build bridge
+// (aura_jit_bridge.cpp) wins when both are linked (no double-def).
+// Standalone-AOT falls through to these no-op / safe-default impls —
+// standalone AOT is single-threaded so all concurrency / bridge-epoch
+// probes return safe defaults (0 / NULL).
+// ═══════════════════════════════════════════════════════════════════════
+
+// OpMakePair L2 pair alloc — standalone AOT: pair alloc unsupported
+// (bump allocator doesn't model pair cells in standalone AOT path).
+__attribute__((weak)) void* aura_alloc_pair_arena(void* arena, unsigned long sz) {
+    (void)arena;
+    (void)sz;
+    return (void*)0;
+}
+
+// OpMakeClosure arena path — standalone AOT: closure arena unsupported.
+__attribute__((weak)) void* aura_alloc_closure_arena(void* arena, unsigned long sz) {
+    (void)arena;
+    (void)sz;
+    return (void*)0;
+}
+
+// OpArenaPush / OpArenaPop — bump allocator already exists in runtime.c
+// (aura_bump_*); standalone AOT emits these for explicit arena opcodes
+// but the standalone runtime doesn't model arena depth — no-op.
+__attribute__((weak)) void aura_arena_push(void* arena, uint32_t v) {
+    (void)arena;
+    (void)v;
+}
+__attribute__((weak)) void aura_arena_pop(void* arena) {
+    (void)arena;
+}
+
+// OpTopCellLoad — standalone AOT has no TopCell model; return 0.
+__attribute__((weak)) int64_t aura_top_cell_get(uint32_t cell_id) {
+    (void)cell_id;
+    return 0;
+}
+
+// OpHashRef / OpHashSet / OpHashRemove — standalone AOT has no
+// hash table model; return NULL / 0. The hash refs are inlined
+// into the emitted IR via aura_hash_ref (JIT inlines); the
+// bridge-internal helpers aura_hash_get_flat_table / aura_hash_key_eq
+// are referenced from OpHashRef inline-scan code paths.
+__attribute__((weak)) void* aura_hash_get_flat_table(void* env_ptr, uint32_t env_id) {
+    (void)env_ptr;
+    (void)env_id;
+    return (void*)0;
+}
+__attribute__((weak)) int aura_hash_key_eq(uint64_t a, uint64_t b) {
+    return a == b;
+}
+__attribute__((weak)) void* aura_hash_ref(void* tbl, uint64_t key) {
+    (void)tbl;
+    (void)key;
+    return (void*)0;
+}
+__attribute__((weak)) int aura_hash_set(void* tbl, uint64_t key, void* val) {
+    (void)tbl;
+    (void)key;
+    (void)val;
+    return 0;
+}
+__attribute__((weak)) int aura_hash_remove(void* tbl, uint64_t key) {
+    (void)tbl;
+    (void)key;
+    return 0;
+}
+
+// OpGuardShape — return 0 (no guard invalidation in standalone AOT).
+__attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* fn_name) {
+    (void)fn_name;
+    return 0;
+}
+
+// OpApply prologue / deopt path — return 0 (no stale-epoch detection
+// in standalone AOT; single-threaded, no host bridge to deopt to).
+__attribute__((weak)) int aura_jit_is_fn_epoch_stale(const char* fn_name,
+                                                    unsigned long long current_bridge_epoch) {
+    (void)fn_name;
+    (void)current_bridge_epoch;
+    return 0;
+}
+__attribute__((weak)) long long aura_jit_deopt_to_interpreter(const char* fn_name) {
+    (void)fn_name;
+    return 0;
+}
+
+// OpApply — return current bridge epoch from the standalone AOT store
+// (mirrors aura_get_current_bridge_epoch; some call sites use the
+// aura_jit_-prefixed variant).
+extern unsigned long long aura_get_current_bridge_epoch(void);
+__attribute__((weak)) unsigned long long aura_jit_get_current_bridge_epoch(void) {
+    return aura_get_current_bridge_epoch();
+}
+
+// L2 SHAPE_PAIR defuse check — return standalone AOT defuse version.
+extern unsigned long long aura_get_aot_defuse_version(void);
+__attribute__((weak)) unsigned long long aura_get_defuse_version(void) {
+    return aura_get_aot_defuse_version();
+}
+
+// OpHashRef inline scan body / tail — lock / unlock hooks for the
+// hash-table probe loop. Standalone AOT is single-threaded; no-op.
+__attribute__((weak)) void aura_lock_workspace_read(void* ws) {
+    (void)ws;
+}
+__attribute__((weak)) void aura_unlock_workspace_read(void* ws) {
+    (void)ws;
+}
+
 #ifndef TEST_BUILD
 int main(int argc, char** argv) {
     (void)argc;
