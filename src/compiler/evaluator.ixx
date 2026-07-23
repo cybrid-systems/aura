@@ -1549,31 +1549,74 @@ public:
         return workspace_flat_gen_.load(std::memory_order_acquire);
     }
 
-    // Issue #1898: RAII shared pin for workspace_flat_ — holds
-    // shared_lock(workspace_mtx_) so set_workspace_flat (#1729 unique)
+    // Issue #1898 / Wave1 B-09: RAII shared pin for workspace_flat_ —
+    // holds shared_lock(workspace_mtx_) so set_workspace_flat (#1729 unique)
     // cannot free/swap the pointer while the pin is live. Prefer this
     // over raw workspace_flat() for multi-step readers.
+    //
+    // When an outermost MutationBoundaryGuard already holds exclusive
+    // workspace_mtx_ on this thread, re-locking shared would throw
+    // EDEADLK ("Resource deadlock avoided") — std::shared_mutex is
+    // non-recursive. Adopt the outer exclusive hold (no re-lock).
     class WorkspaceFlatPin {
         std::shared_lock<std::shared_mutex> lock_;
         ast::FlatAST* ptr_ = nullptr;
+        ast::StringPool* pool_ = nullptr;
         std::uint64_t gen_ = 0;
+        bool owns_shared_ = false;
 
     public:
-        explicit WorkspaceFlatPin(Evaluator& ev)
-            : lock_(ev.workspace_mtx_)
-            , ptr_(ev.workspace_flat_)
-            , gen_(ev.workspace_flat_gen_.load(std::memory_order_acquire)) {}
+        explicit WorkspaceFlatPin(Evaluator& ev) {
+            const bool outer_exclusive =
+                ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0;
+            if (!outer_exclusive) {
+                lock_ = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
+                owns_shared_ = true;
+            }
+            // Under outer unique (Guard) or after shared acquire: snapshot.
+            ptr_ = ev.workspace_flat_;
+            pool_ = ev.workspace_pool_;
+            gen_ = ev.workspace_flat_gen_.load(std::memory_order_acquire);
+        }
         WorkspaceFlatPin(const WorkspaceFlatPin&) = delete;
         WorkspaceFlatPin& operator=(const WorkspaceFlatPin&) = delete;
         WorkspaceFlatPin(WorkspaceFlatPin&&) noexcept = default;
         WorkspaceFlatPin& operator=(WorkspaceFlatPin&&) noexcept = default;
         [[nodiscard]] ast::FlatAST* get() const noexcept { return ptr_; }
+        [[nodiscard]] ast::StringPool* pool() const noexcept { return pool_; }
         [[nodiscard]] ast::FlatAST* operator->() const noexcept { return ptr_; }
         [[nodiscard]] ast::FlatAST& operator*() const noexcept { return *ptr_; }
         [[nodiscard]] explicit operator bool() const noexcept { return ptr_ != nullptr; }
         [[nodiscard]] std::uint64_t generation() const noexcept { return gen_; }
+        [[nodiscard]] bool owns_shared_lock() const noexcept { return owns_shared_; }
     };
     [[nodiscard]] WorkspaceFlatPin pin_workspace_flat() { return WorkspaceFlatPin(*this); }
+
+    // Wave1 B-09: unique workspace lock that adopts an outer Guard's exclusive
+    // hold (no re-lock). Use for write primitives that may run under
+    // MutationBoundaryGuard (nested unique would EDEADLK).
+    class WorkspaceUniqueIfNeeded {
+        std::unique_lock<std::shared_mutex> lock_;
+        bool owns_unique_ = false;
+
+    public:
+        explicit WorkspaceUniqueIfNeeded(Evaluator& ev) {
+            const bool outer_exclusive =
+                ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0;
+            if (!outer_exclusive) {
+                lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
+                owns_unique_ = true;
+            }
+        }
+        WorkspaceUniqueIfNeeded(const WorkspaceUniqueIfNeeded&) = delete;
+        WorkspaceUniqueIfNeeded& operator=(const WorkspaceUniqueIfNeeded&) = delete;
+        WorkspaceUniqueIfNeeded(WorkspaceUniqueIfNeeded&&) noexcept = default;
+        WorkspaceUniqueIfNeeded& operator=(WorkspaceUniqueIfNeeded&&) noexcept = default;
+        [[nodiscard]] bool owns_unique_lock() const noexcept { return owns_unique_; }
+    };
+    [[nodiscard]] bool workspace_exclusive_held() const noexcept {
+        return mutation_boundary_held() || mutation_boundary_depth() > 0;
+    }
     // Issue #223: returns the current bridge_epoch from the
     // service (or 0 if no service is bound). Closure-construction
     // sites capture this at construction time; apply_closure

@@ -145,8 +145,10 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
 
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
+    // Wave1 B-09: do not shared_lock(workspace_mtx_) — last_mutate_error_ is
+    // evaluator-local (not a FlatAST field). Nested shared under Guard unique
+    // was EDEADLK on non-recursive shared_mutex.
     ObservabilityPrims::register_stats_impl("typecheck-status", [&ev](const auto&) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (ev.last_mutate_error_.empty()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back("ok");

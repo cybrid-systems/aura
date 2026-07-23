@@ -572,137 +572,125 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     });
 
     // (eval-current) — Evaluate the current workspace AST
+    //
+    // Wave1 B-03: NEVER hold shared_lock(workspace_mtx_) across eval_flat /
+    // nested mutate:*. std::shared_mutex is non-recursive — unique under
+    // shared on the same thread throws EDEADLK ("Resource deadlock avoided").
+    // Snapshot flat/pool under a short pin (WorkspaceFlatPin), release, then
+    // evaluate. set-code keeps old FlatAST alive in the arena; concurrent
+    // unique writers only swap the pointer (readers keep a stable pin).
     add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-        // Phase 4: (eval-current :jit) — compile-and-run via the IR/JIT
-        // pipeline. Falls back to tree-walker if the hook isn't installed
-        // (e.g. unit tests without a CompilerService) or if the JIT
-        // compile fails.
+        // Phase 4: (eval-current :jit) — no workspace lock needed for the
+        // service JIT path (it re-parses source via get_workspace_source_fn_).
         if (a.size() == 1 && types::is_keyword(a[0])) {
             auto kidx = types::as_keyword_idx(a[0]);
             if (kidx < ev.keyword_table_.size() && ev.keyword_table_[kidx] == ":jit") {
                 if (ev.try_jit_fn_ && ev.get_workspace_source_fn_) {
-                    // Re-eval the workspace via the IR/JIT pipeline.
-                    // The result is the workspace's last-expression value
-                    // (no env sync back to the original workspace yet).
                     std::string src = ev.get_workspace_source_fn_();
                     if (!src.empty()) {
                         auto jit_result = ev.try_jit_fn_(src);
                         if (jit_result)
                             return *jit_result;
-                        // JIT failed — fall through to tree-walker
                     }
                 }
-                // No service wired, or workspace empty, or JIT failed —
-                // fall through to tree-walker
             }
         }
         ev.coverage_counters_[2]++;
-        // If set-code failed on the last call, propagate the diagnostic immediately
+        // set-code errors are evaluator-local (not under workspace_mtx_).
         if (!ev.last_set_code_error_kind_.empty()) {
             auto kind = std::move(ev.last_set_code_error_kind_);
             auto msg = std::move(ev.last_set_code_error_msg_);
             return mev(kind, msg);
         }
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
-            return make_void();
-        // Issue #1495: before tree-walker eval, prefer partial re-lower
-        // for any dirty ir_cache_v2_ defines (body-only dirty from
-        // mark_define_dirty after mutate:set-body / rebind). Full
-        // cache_define is only the fallback inside relower_define_blocks.
+
+        // Short pin: snapshot pointers + gen, then drop the lock.
+        aura::ast::FlatAST* flat = nullptr;
+        aura::ast::StringPool* pool = nullptr;
+        std::uint64_t pin_gen = 0;
+        aura::ast::NodeId root = aura::ast::NULL_NODE;
+        {
+            auto pin = ev.pin_workspace_flat();
+            if (!pin || !pin.pool())
+                return make_void();
+            flat = pin.get();
+            pool = pin.pool();
+            pin_gen = pin.generation();
+            root = flat->root;
+        } // workspace shared lock released (or never taken under Guard)
+
+        // Issue #1495: partial re-lower dirty ir_cache_v2_ defines.
         if (ev.relower_dirty_defines_fn_)
             ev.relower_dirty_defines_fn_();
-        auto expanded = aura::compiler::macro_expand_all(*ev.workspace_flat_, *ev.workspace_pool_,
-                                                         ev.workspace_flat_->root);
+        auto expanded = aura::compiler::macro_expand_all(*flat, *pool, root);
         ev.coverage_counters_[4]++;
 
-        // Incremental eval: if the workspace root is clean and we have a cached
-        // result, skip full re-evaluation entirely (Issue #32b).
-        // The root is marked dirty by mark_dirty_upward() on any mutation.
-        // clear_cached_value is called in mark_dirty(), so we know the cache
-        // is stale when dirty flags are set.
-        //
-        // Issue #159 Phase 2: instead of checking the root, check
-        // the LAST form's subtree. The last form is what produces
-        // the eval_current result; if its subtree is clean, the
-        // cached result is still valid even if other parts of the
-        // tree (e.g., earlier defines) are dirty. Win: mutating
-        // `(define a 1)` doesn't invalidate the cache when the
-        // result comes from a later form.
+        // Incremental eval cache (Issue #32b / #159 / #1441).
         {
             using aura::ast::NodeId;
-            // Find the last top-level form. For a flat workspace
-            // (root has children), it's the last child. For a
-            // single-form workspace, it's the root itself.
             NodeId last_form = expanded;
-            auto root_v = ev.workspace_flat_->get(expanded);
-            if (!root_v.children.empty()) {
+            auto root_v = flat->get(expanded);
+            if (!root_v.children.empty())
                 last_form = root_v.child(root_v.children.size() - 1);
-            }
-            // Issue #1441: also require FlatAST generation match — rollback
-            // paths bump generation while restoring children; without this,
-            // a clean last_form + stale last_eval_current_result_ would skip
-            // re-eval and leave Env bindings (e.g. x after rebind) stale.
-            const auto gen = ev.workspace_flat_->generation();
-            if (last_form != aura::ast::NULL_NODE &&
-                !ev.workspace_flat_->has_dirty_subtree(last_form) && ev.last_eval_current_result_ &&
-                gen == ev.last_eval_current_generation_) {
+            const auto gen = flat->generation();
+            if (last_form != aura::ast::NULL_NODE && !flat->has_dirty_subtree(last_form) &&
+                ev.last_eval_current_result_ && gen == ev.last_eval_current_generation_) {
                 return *ev.last_eval_current_result_;
             }
         }
 
-        auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
+        auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
 
-        // Cache successful results for incremental reuse
-        if (result) {
-            ev.last_eval_current_result_ = *result;
-            if (ev.workspace_flat_)
-                ev.last_eval_current_generation_ = ev.workspace_flat_->generation();
+        // Cache + clear dirty only if workspace pin still points at the
+        // same generation (no intervening set_workspace_flat).
+        {
+            auto pin = ev.pin_workspace_flat();
+            if (pin && pin.get() == flat && pin.generation() == pin_gen) {
+                if (result) {
+                    ev.last_eval_current_result_ = *result;
+                    ev.last_eval_current_generation_ = flat->generation();
+                }
+                ev.ensure_macro_hygiene_contract();
+                flat->clear_all_dirty();
+            } else if (result) {
+                // Workspace swapped mid-eval: still return the value, skip
+                // dirty clear / cache stamp against a foreign flat.
+                ev.last_eval_current_result_ = *result;
+            }
         }
 
-        // Issue #420: post-expand hygiene contract probe.
-        ev.ensure_macro_hygiene_contract();
-
-        // Clear dirty flags after successful eval
-        ev.workspace_flat_->clear_all_dirty();
         if (!result) {
-            // Return structured diagnostic: (kind-string message-string)
             auto& diag = result.error();
             auto kind = std::string(kind_name(diag.kind));
             auto msg = diag.format();
             return mev(kind, msg);
         }
-        // ── Auto-fix closure: if result is an uncalled function, try (display ...) ──
+        // ── Auto-fix closure: if result is an uncalled function, try call ──
+        // Uses the snapshot flat/pool (arena-stable after set-code design).
         using aura::ast::NodeId;
         using aura::ast::NodeTag;
-        if (is_closure(*result) && ev.workspace_flat_ && ev.workspace_pool_) {
-            // Scan for Define nodes to extract function name + arity
+        if (is_closure(*result) && flat && pool) {
             std::string fn_name;
             int arity = 0;
-            for (NodeId nid = 0; nid < static_cast<NodeId>(ev.workspace_flat_->size()); ++nid) {
-                auto nv = ev.workspace_flat_->get(nid);
+            // Use the snapshot flat from the initial pin (arena-stable).
+            for (NodeId nid = 0; nid < static_cast<NodeId>(flat->size()); ++nid) {
+                auto nv = flat->get(nid);
                 if (nv.tag == NodeTag::Define && nv.sym_id != aura::ast::INVALID_SYM) {
-                    fn_name = std::string(ev.workspace_pool_->resolve(nv.sym_id));
+                    fn_name = std::string(pool->resolve(nv.sym_id));
                     arity = 0;
                     if (!nv.children.empty()) {
-                        auto lambda_nv = ev.workspace_flat_->get(nv.child(0));
+                        auto lambda_nv = flat->get(nv.child(0));
                         if (lambda_nv.tag == NodeTag::Lambda)
                             arity = static_cast<int>(lambda_nv.params.size());
                     }
                 }
             }
             if (!fn_name.empty()) {
-                // Build arg patterns based on arity
                 std::vector<std::string> arg_pats;
                 if (arity == 0) {
                     arg_pats = {""};
                 } else if (arity == 1) {
-                    // Simple scalars first, then list-based
-                    // Use small ints to avoid exponential recursion (e.g., fib(42))
                     arg_pats = {"5", "0", "1", "\"test\"", "(list 3 1 4 1 5)"};
                 } else if (arity == 2) {
-                    // List+scalar for search, then plain scalars
-                    // Try both (scalar list) and (list scalar) orderings
                     arg_pats = {"42 7",
                                 "0 0",
                                 "(list 1 3 5 7 9) 5",
@@ -712,14 +700,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 } else {
                     arg_pats = {"1 2 3", "0 0 0"};
                 }
-                // Suppress stdout during auto-fix attempts to avoid polluting output
                 std::fflush(stdout);
                 int saved_stdout = ::dup(STDOUT_FILENO);
                 int null_fd = ::open("/dev/null", O_WRONLY);
                 if (null_fd >= 0)
                     ::dup2(null_fd, STDOUT_FILENO);
                 bool auto_fixed = false;
-                std::string winning_call; // the call that worked
+                std::string winning_call;
                 for (auto& args : arg_pats) {
                     std::string call_code = "(" + fn_name;
                     if (!args.empty())
@@ -740,17 +727,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     winning_call = call_code;
                     break;
                 }
-                // Restore stdout
                 std::fflush(stdout);
                 ::dup2(saved_stdout, STDOUT_FILENO);
                 ::close(saved_stdout);
                 if (null_fd >= 0)
                     ::close(null_fd);
-                // Return the auto-fix result silently (no display output)
                 if (auto_fixed && !winning_call.empty()) {
-                    // Winners are evaluated with original stdout restored, but we
-                    // re-evaluate silently and return the raw value. Use (eval-current-output)
-                    // if you need the display output for LLM consumption.
                     aura::ast::StringPool call_pool;
                     aura::ast::FlatAST call_flat;
                     auto call_pr = aura::parser::parse_to_flat(winning_call, call_flat, call_pool);
@@ -773,24 +755,37 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
+    // Wave1 B-03: same short-pin then unlock pattern as eval-current.
     add(aura::compiler::prim::kEvalCurrentOutput, [&ev, mev](const auto&) {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
-        // If set-code failed on the last call, propagate the diagnostic immediately
         if (!ev.last_set_code_error_kind_.empty()) {
             auto kind = std::move(ev.last_set_code_error_kind_);
             auto msg = std::move(ev.last_set_code_error_msg_);
             return mev(kind, msg);
         }
-        if (!ev.workspace_flat_ || !ev.workspace_pool_)
-            return make_void();
-        auto expanded = aura::compiler::macro_expand_all(*ev.workspace_flat_, *ev.workspace_pool_,
-                                                         ev.workspace_flat_->root);
+        aura::ast::FlatAST* flat = nullptr;
+        aura::ast::StringPool* pool = nullptr;
+        std::uint64_t pin_gen = 0;
+        aura::ast::NodeId root = aura::ast::NULL_NODE;
+        {
+            auto pin = ev.pin_workspace_flat();
+            if (!pin || !pin.pool())
+                return make_void();
+            flat = pin.get();
+            pool = pin.pool();
+            pin_gen = pin.generation();
+            root = flat->root;
+        }
+        auto expanded = aura::compiler::macro_expand_all(*flat, *pool, root);
         // Redirect stdout to a temp file (fd-level, catches fprintf too)
         std::fflush(stdout);
         auto* tmp = std::tmpfile();
         if (!tmp) {
-            auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
-            ev.workspace_flat_->clear_all_dirty();
+            auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
+            {
+                auto pin = ev.pin_workspace_flat();
+                if (pin && pin.get() == flat && pin.generation() == pin_gen)
+                    flat->clear_all_dirty();
+            }
             if (!result) {
                 auto msg = result.error().format();
                 auto sidx = ev.string_heap_.size();
@@ -802,14 +797,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         int new_fd = ::fileno(tmp);
         int old_fd = ::dup(STDOUT_FILENO);
         ::dup2(new_fd, STDOUT_FILENO);
-        // Run the eval
-        auto result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, expanded, ev.top_);
-        ev.workspace_flat_->clear_all_dirty();
-        // Restore stdout
+        auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
+        {
+            auto pin = ev.pin_workspace_flat();
+            if (pin && pin.get() == flat && pin.generation() == pin_gen)
+                flat->clear_all_dirty();
+        }
         std::fflush(stdout);
         ::dup2(old_fd, STDOUT_FILENO);
         ::close(old_fd);
-        // Read captured output from temp file
         std::rewind(tmp);
         std::string captured;
         char buf[4096];
@@ -817,7 +813,6 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
             captured.append(buf, n);
         std::fclose(tmp);
-        // If eval failed, prepend structured diagnostic to captured output
         if (!result) {
             auto& diag = result.error();
             auto kind = std::string(kind_name(diag.kind));
@@ -827,7 +822,6 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 combined = combined + "\n" + captured;
             captured = combined;
         }
-        // Store captured output in string heap
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(captured);
         return make_string(sidx);
