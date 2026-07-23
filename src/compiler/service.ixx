@@ -9751,6 +9751,16 @@ public:
             wf->release_children_for_teardown();
         if (current_ast_ && current_ast_ != evaluator_.workspace_flat())
             current_ast_->release_children_for_teardown();
+        // Issue #1996 (B-003): clear g_batch_deopt_jit before jit_ is
+        // destroyed. The file-scope pointer in aura_jit_bridge.cpp
+        // was wired at service.ixx:668 to &jit_; a late batch_deopt
+        // that fires after this destructor runs (residual worker
+        // fiber, test teardown, repeated (query:jit-reset) lifecycle)
+        // would dereference a freed AuraJIT. Pass &jit_ so the clear
+        // only matches our own wire — a sibling CompilerService that
+        // happens to own the live pointer (multi-service scenario)
+        // is preserved.
+        aura_clear_jit_batch_deopt_target(&jit_);
         // Issue #765 (ASan-verify fix): reset the global
         // g_current_compiler_service hook so the arena
         // auto-compact-trigger + fiber-safe-compact lambdas

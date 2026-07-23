@@ -211,8 +211,16 @@ void aura_aot_bump_func_table_epoch(void);
 
 // Issue #1522: register AuraJIT* so bridge can notify fn_trackers_ batch_deopt
 // without a C++ module import. Host (CompilerService ctor) calls set;
-// nullptr clears. batch_deopt_for matches name + name#* keys.
+// ~CompilerService calls clear so the file-scope g_batch_deopt_jit
+// pointer is nulled before the AuraJIT object is destroyed
+// (Issue #1996 / B-003 UAF fix — late batch_deopt_for /
+// deopt_pending_count would otherwise dereference freed memory).
+// clear matches the pointer before nulling (no clobber of a sibling
+// CompilerService's live wire in the multi-service scenario); a
+// null aura_jit_ptr argument is treated as a force-clear (host-
+// bridge shutdown path).
 void aura_set_jit_batch_deopt_target(void* aura_jit_ptr);
+void aura_clear_jit_batch_deopt_target(void* aura_jit_ptr);
 // Returns number of fn_trackers_ entries newly marked deopt_pending.
 std::size_t aura_jit_batch_deopt_for(const char* name, std::uint64_t current_epoch);
 std::uint64_t aura_jit_batch_deopt_for_total(void);

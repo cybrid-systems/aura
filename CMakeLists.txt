@@ -1366,6 +1366,12 @@ aura_issue_test_link_llvm_jit(test_issue_1993)
 # pattern (F-004, sibling of B-010 / D-001).
 aura_add_issue_test(test_issue_1994)
 aura_issue_test_link_llvm_jit(test_issue_1994)
+# Issue #1996: g_batch_deopt_jit file-scope pointer nulled in
+# ~CompilerService via aura_clear_jit_batch_deopt_target(&jit_) —
+# prevents UAF on late batch_deopt_for / deopt_pending_count after
+# CompilerService destruction (B-003, sibling of B-012/B-020).
+aura_add_issue_test(test_issue_1996)
+aura_issue_test_link_llvm_jit(test_issue_1996)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
