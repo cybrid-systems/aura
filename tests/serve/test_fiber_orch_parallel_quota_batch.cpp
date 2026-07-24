@@ -1049,6 +1049,7 @@ namespace aura_fiber_run_orch_quota_integration {
 //   AC5: spawn until memory exhaust → graceful reject, join releases
 //   AC6: try_acquire reject path under mutation budget (no panic)
 //   AC7: #2006 reject path skips provenance; success path still bumps
+//   AC8: #2009 RAII release on scope-exit / reject; no double-free
 
 
 namespace {
@@ -1349,6 +1350,139 @@ int run_orch_quota_integration() {
         CHECK(s3 > s2, "success path still bumps steal provenance (body exit)");
         (void)r3;
         (void)l3;
+
+        reset_process_resource_quota_for_test();
+    }
+
+    // ── AC8: #2009 automatic reservation release (RAII + reject paths) ──
+    {
+        std::println("\n--- AC8: #2009 RAII release + leak-under-reject stress ---");
+        reset_process_resource_quota_for_test();
+        auto& pq = process_resource_quota();
+        constexpr std::uint64_t kPer = 4096 + 256 * 64; // default agent estimate
+        pq.set_limit(Dimension::Memory, kPer * 4 + 50);
+
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+
+        // (a) Scope-exit without join releases reservation.
+        {
+            const auto usage0 = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+            const auto rel0 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            {
+                auto h = aura::orch::spawn_agent_with_mailbox(
+                    sched, {.name = "raii-scope", .body = [] {
+                                for (int i = 0; i < 20; ++i)
+                                    Fiber::yield(YieldReason::Explicit);
+                            }});
+                CHECK(h.ok, "scope-exit spawn ok");
+                CHECK(h.reserved_memory_bytes == kPer, "reservation held while live");
+                CHECK(pq.agent_arena_usage_bytes.load() >= usage0 + kPer, "usage bumped");
+                // Intentionally no join — ~AgentHandle must release.
+            }
+            // Brief yield so any in-flight body finishes under scheduler.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            CHECK(pq.agent_arena_usage_bytes.load() == usage0, "usage back after scope exit");
+            CHECK(pq.agent_arena_release_total.load() > rel0, "release counter advanced");
+        }
+
+        // (b) Explicit release is idempotent with destructor.
+        {
+            const auto rel0 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "idempotent", .body = [] { Fiber::yield(YieldReason::Explicit); }});
+            CHECK(h.ok, "idempotent spawn");
+            aura::orch::release_agent_memory_reservation(h);
+            CHECK(h.reserved_memory_bytes == 0, "explicit release zeros field");
+            const auto rel1 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            CHECK(rel1 == rel0 + 1, "exactly one release on explicit call");
+            aura::orch::release_agent_memory_reservation(h);
+            CHECK(pq.agent_arena_release_total.load() == rel1, "second explicit release is no-op");
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{3000});
+            // join also calls release (no-op); dtor no-op.
+            CHECK(pq.agent_arena_release_total.load() == rel1,
+                  "join+dtor do not double-release after explicit");
+        }
+
+        // (c) Leak-under-reject stress: hold live handles to force quota
+        // rejects, then drop them without join — usage must return to baseline.
+        {
+            const auto usage0 = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+            const auto rel0 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            std::vector<aura::orch::AgentHandle> live;
+            int ok_n = 0, rej_n = 0;
+            // Fill quota with held handles.
+            for (int i = 0; i < 8; ++i) {
+                auto h = aura::orch::spawn_agent_with_mailbox(
+                    sched, {.name = std::format("hold-{}", i), .body = [] {
+                                for (int k = 0; k < 40; ++k)
+                                    Fiber::yield(YieldReason::Explicit);
+                            }});
+                if (h.ok) {
+                    ++ok_n;
+                    live.push_back(std::move(h));
+                } else {
+                    ++rej_n;
+                    CHECK(h.reserved_memory_bytes == 0,
+                          "reject while filling leaves no reservation");
+                }
+            }
+            // More spawns while full → more rejects.
+            for (int i = 0; i < 20; ++i) {
+                auto h = aura::orch::spawn_agent_with_mailbox(
+                    sched, {.name = std::format("rej-{}", i),
+                            .body = [] { Fiber::yield(YieldReason::Explicit); }});
+                if (h.ok) {
+                    ++ok_n;
+                    live.push_back(std::move(h));
+                } else {
+                    ++rej_n;
+                    CHECK(h.reserved_memory_bytes == 0, "reject path leaves no reservation");
+                }
+            }
+            CHECK(ok_n >= 1, "at least one successful spawn under stress");
+            CHECK(rej_n >= 1, "at least one quota reject under stress");
+            CHECK(live.size() >= 1, "held live agents");
+            const auto held = static_cast<std::uint64_t>(live.size());
+            // Drop all without join — RAII must reclaim every reservation.
+            live.clear();
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            CHECK(pq.agent_arena_usage_bytes.load() == usage0,
+                  "stress: usage returned to baseline (no leak)");
+            CHECK(pq.agent_arena_release_total.load() >= rel0 + held,
+                  "stress: each held success released once on clear");
+        }
+
+        // (d) Join then dtor: single release.
+        {
+            const auto rel0 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            {
+                auto h = aura::orch::spawn_agent_with_mailbox(
+                    sched, {.name = "join-then-dtor",
+                            .body = [] { Fiber::yield(YieldReason::Explicit); }});
+                CHECK(h.ok, "join-then-dtor spawn");
+                (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{3000});
+                CHECK(h.reserved_memory_bytes == 0, "join zeros reservation");
+                CHECK(pq.agent_arena_release_total.load() == rel0 + 1, "join released once");
+            }
+            CHECK(pq.agent_arena_release_total.load() == rel0 + 1, "dtor after join is no-op");
+        }
+
+        // (e) Move transfers ownership; source does not release.
+        {
+            const auto rel0 = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+            auto h1 = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "move-src", .body = [] { Fiber::yield(YieldReason::Explicit); }});
+            CHECK(h1.ok && h1.reserved_memory_bytes == kPer, "move-src reserved");
+            auto h2 = std::move(h1);
+            CHECK(h1.reserved_memory_bytes == 0, "moved-from has no reservation");
+            CHECK(h2.reserved_memory_bytes == kPer, "moved-to owns reservation");
+            // Destroying h1 must not release (already zero).
+            CHECK(pq.agent_arena_release_total.load() == rel0, "moved-from dtor no release yet");
+            h2.release_reservation_if_any();
+            CHECK(pq.agent_arena_release_total.load() == rel0 + 1, "moved-to explicit release");
+            (void)aura::orch::join_agent(h2, std::optional<std::uint64_t>{3000});
+        }
 
         reset_process_resource_quota_for_test();
     }

@@ -18,9 +18,9 @@
 //   - spawn_agent_with_mailbox  (orch/agent_spawn.h)
 //   - join_agent / join_agents
 //   - agent_send / agent_recv
-//   - AgentHandle / AgentSpec structs
+//   - AgentHandle / AgentSpec structs (AgentHandle is move-only RAII, #2009)
 //   - OrchModuleStats (single-agent observability counters)
-//   - release_agent_memory_reservation
+//   - release_agent_memory_reservation (idempotent; also run by ~AgentHandle)
 //   - parallel_intend / parallel_run (re-exports of serve::parallel_orch)
 //
 // Removed from public orch/ (#1966 — was // DEFERRED under #1965 cycle 1):

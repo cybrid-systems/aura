@@ -15,6 +15,8 @@
 // Issue #1880: ResourceQuota preflight (arena/mailbox/fibers) + try_acquire
 // body wrapper (typed ResourceQuotaExceeded, no panic).
 // Issue #2008: opt-in agent keepalive / heartbeat (mailbox-native; default off).
+// Issue #2009: AgentHandle is move-only RAII for arena reservations
+// (destructor + explicit release_agent_memory_reservation are idempotent).
 
 #ifndef AURA_ORCH_AGENT_SPAWN_H
 #define AURA_ORCH_AGENT_SPAWN_H
@@ -185,6 +187,11 @@ inline void orch_post_join_provenance(serve::Fiber* fiber) noexcept {
 }
 
 // ── Agent handle ───────────────────────────────────────
+// Issue #2009: move-only RAII. Destructor releases any outstanding
+// arena/mailbox reservation (reserved_memory_bytes). Long-lived agents must
+// be stored in a container that keeps the handle alive (or join first).
+// join_agent / join_agents / release_agent_memory_reservation are idempotent
+// with the destructor (first call zeros reserved_memory_bytes).
 struct AgentHandle {
     std::uint64_t id = 0; // Fiber::id()
     std::string name;
@@ -194,13 +201,84 @@ struct AgentHandle {
     // Issue #1600 / #1880: typed quota failure surface for Agent frameworks.
     bool quota_exceeded = false;
     std::string error; // e.g. "ResourceQuotaExceeded: fibers quota exceeded"
-    // Issue #1880: memory reserved at spawn (released on join / spawn fail).
+    // Issue #1880: memory reserved at spawn (released on join / scope exit).
     std::uint64_t reserved_memory_bytes = 0;
     // Issue #2008: keepalive / liveness (null / 0 when disabled — zero cost).
     std::uint32_t keepalive_interval_ms = 0;
     std::shared_ptr<AgentLiveness> liveness; // shared body ↔ helper ↔ supervisor
     // True when a detached host keepalive thread was started for this agent.
     bool keepalive_active = false;
+
+    AgentHandle() = default;
+    AgentHandle(const AgentHandle&) = delete;
+    AgentHandle& operator=(const AgentHandle&) = delete;
+
+    AgentHandle(AgentHandle&& o) noexcept
+        : id(o.id)
+        , name(std::move(o.name))
+        , fiber(o.fiber)
+        , mailbox(std::move(o.mailbox))
+        , ok(o.ok)
+        , quota_exceeded(o.quota_exceeded)
+        , error(std::move(o.error))
+        , reserved_memory_bytes(o.reserved_memory_bytes)
+        , keepalive_interval_ms(o.keepalive_interval_ms)
+        , liveness(std::move(o.liveness))
+        , keepalive_active(o.keepalive_active) {
+        o.id = 0;
+        o.fiber = nullptr;
+        o.ok = false;
+        o.quota_exceeded = false;
+        o.reserved_memory_bytes = 0; // prevent double-release
+        o.keepalive_interval_ms = 0;
+        o.keepalive_active = false;
+    }
+
+    AgentHandle& operator=(AgentHandle&& o) noexcept {
+        if (this != &o) {
+            // Release our outstanding reservation before adopting o's.
+            release_reservation_if_any();
+            if (liveness)
+                liveness->helper_stop.store(true, std::memory_order_release);
+            id = o.id;
+            name = std::move(o.name);
+            fiber = o.fiber;
+            mailbox = std::move(o.mailbox);
+            ok = o.ok;
+            quota_exceeded = o.quota_exceeded;
+            error = std::move(o.error);
+            reserved_memory_bytes = o.reserved_memory_bytes;
+            keepalive_interval_ms = o.keepalive_interval_ms;
+            liveness = std::move(o.liveness);
+            keepalive_active = o.keepalive_active;
+            o.id = 0;
+            o.fiber = nullptr;
+            o.ok = false;
+            o.quota_exceeded = false;
+            o.reserved_memory_bytes = 0;
+            o.keepalive_interval_ms = 0;
+            o.keepalive_active = false;
+        }
+        return *this;
+    }
+
+    ~AgentHandle() {
+        // Best-effort stop of keepalive helper; body_done not set here so a
+        // still-running body is not misreported as Done by watch_agent_liveness.
+        if (liveness)
+            liveness->helper_stop.store(true, std::memory_order_release);
+        keepalive_active = false;
+        release_reservation_if_any();
+    }
+
+    // Issue #2009 / #1880: idempotent reservation release (also used by join).
+    void release_reservation_if_any() noexcept {
+        if (reserved_memory_bytes == 0)
+            return;
+        aura::core::resource_quota::process_resource_quota().release_agent_arena(
+            reserved_memory_bytes);
+        reserved_memory_bytes = 0;
+    }
 };
 
 struct AgentSpec {
@@ -398,13 +476,11 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
     return h;
 }
 
-// Issue #1880: release spawn-time memory reservation (idempotent).
+// Issue #1880 / #2009: release spawn-time memory reservation (idempotent,
+// zero-cost after first call). Safe under concurrent join + scope exit:
+// first caller zeros reserved_memory_bytes; second is a no-op.
 inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
-    if (h.reserved_memory_bytes == 0)
-        return;
-    aura::core::resource_quota::process_resource_quota().release_agent_arena(
-        h.reserved_memory_bytes);
-    h.reserved_memory_bytes = 0;
+    h.release_reservation_if_any();
 }
 
 // Stop keepalive helper (if any). Detached host thread observes this and exits;
