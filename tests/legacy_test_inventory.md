@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 335 | Preferred destination suites |
-| **Total scanned** | **335** | |
+| `tests/core/test_*.cpp` | 334 | Preferred destination suites |
+| **Total scanned** | **334** | |
 
 ### Related artifacts
 
@@ -34,12 +34,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 35 | 35 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 78 | 78 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 37 | 37 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 16 | 16 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 28 | 28 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 29 | 29 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 89 | 89 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 88 | 88 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **58**
+- Existing `*_batch` drivers (migration milestones): **59**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -138,6 +138,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_cow_batch.cpp` → theme `mutation_dirty`
 - `tests/repl/test_terminal_domain_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_typechecker_incremental_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_walk_batch.cpp` → theme `mutation_dirty`
 
 ### Domain suites (do not regress; extend these)
@@ -457,8 +458,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_type_prop_invariant_correlation.cpp`
 - `tests/compiler/test_type_propagation_dead_coercion.cpp`
 - `tests/core/test_type_registry_ownership.cpp`
-- `tests/compiler/test_typechecker_incremental_guard_steal_fidelity.cpp`
-- `tests/compiler/test_typechecker_incremental_locality.cpp`
+- `tests/compiler/test_typechecker_incremental_batch.cpp`
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp`
 - `tests/compiler/test_typesystem_type_propagation_jit_l2_typed_mutate.cpp`
 - `tests/compiler/test_typesystem_typed_mutate_incremental_gaps.cpp`
@@ -641,13 +641,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_workspace_lock_reentrancy.cpp` (—) [domain_suite, theme_core] — test_wave1_workspace_lock_reentrancy.cpp — Wave1 B-03 / B-09
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (38)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (37)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (38)
+#### domain/ (37)
 
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/compiler/test_closure_view_uaf_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1870/#1888/#1926/#1947 (#1978 renamed): issue# moved from filename to header.
@@ -685,7 +685,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/core/test_stress_alloc_storage_lock.cpp` (—) [domain_suite, theme_core] — test_stress_alloc_storage_lock.cpp — Issue #1397
-- `tests/compiler/test_typechecker_incremental_guard_steal_fidelity.cpp` (—) [domain_suite, theme_compiler] — test_typechecker_incremental_guard_steal_fidelity.cpp — Issue #798:
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 
 ### `linear_ownership` — Linear ownership / borrow / consume (6)
@@ -728,13 +727,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (28)
+### `jit_incremental` — JIT / AOT / incremental relower (29)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (28)
+#### domain/ (29)
 
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_mangle_top.cpp` (—) [domain_suite, theme_compiler] — test_aot_mangle_top.cpp — Issue #1369:
@@ -764,6 +763,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
+- `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 
 ### `shape_soa` — Shape / SoA / column layout (17)
 
@@ -791,13 +791,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (89)
+### `observability` — Observability / metrics / query:*-stats (88)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (89)
+#### domain/ (88)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
@@ -885,7 +885,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_type_cache_stats_snapshot.cpp` (—) [domain_suite, theme_core] — Issue #1797 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_prop_invariant_correlation.cpp` (—) [domain_suite, theme_compiler] — Issue #1884 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_propagation_dead_coercion.cpp` (—) [domain_suite, theme_compiler] — test_type_propagation_dead_coercion.cpp — Issue #1874 (#1978 renamed):
-- `tests/compiler/test_typechecker_incremental_locality.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1923 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 
