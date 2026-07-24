@@ -3087,6 +3087,20 @@ public:
     // linear_heap_ live flag, GC safepoint probe, and JIT Apply dual-check.
     scan_live_closures_for_linear_captures(bool mark_invalid = true, bool only_if_moved = false,
                                            EnvId filter_env_id = NULL_ENV_ID) noexcept;
+    // Issue #2003: EnvFrame explicit lifetime protocol — RAII guard ctor
+    // sites (MutationBoundary outermost dtor / fiber steal probe /
+    // compact_sweep) call this to fulfill the guard's host.scan_skip_freed
+    // callback. Runs scan_live_closures_for_linear_captures() (which
+    // skips already-tombstoned / erased slots per #1665) + bumps the
+    // envframe_lifetime_guard_runs_total counter for the originating site.
+    // Site tag lets diagnostics tell which path triggered the scan.
+    void
+    run_envframe_lifetime_guard(aura::core::envframe_lifetime::EnvFrameLifetimeSite site) noexcept;
+    // Static trampoline that fills the guard's EnvFrameLifetimeHost
+    // struct (function pointer form, same pattern as PanicCheckpointHost).
+    static void
+    envframe_lifetime_trampoline(void* ctx,
+                                 aura::core::envframe_lifetime::EnvFrameLifetimeSite site) noexcept;
     // Test/helper: register a Closure in closures_ (stamps bridge_epoch).
     ClosureId register_active_closure(Closure cl);
     // Issue #1665: erase tree-walker Closure from closures_ (TW free).
@@ -4643,6 +4657,12 @@ private:
     // Issue #1360: truncate_env_frames_to_checkpoint observability.
     mutable std::atomic<std::uint64_t> envframe_truncate_count_{0};
     mutable std::atomic<std::uint64_t> envframe_truncated_frames_{0};
+    // Issue #2003: EnvFrame lifetime guard run counter (process-wide
+    // aggregate bumped per call to run_envframe_lifetime_guard across
+    // all sites). Separate from g_envframe_lifetime_stats.scans_run
+    // (which counts only successful scans with a non-null host).
+    std::atomic<std::uint64_t> envframe_lifetime_guard_runs_total{0};
+    std::atomic<std::uint64_t> envframe_lifetime_guard_invalidations_total{0};
     // Issue #1386: compact_env_frames observability. Distinct
     // from truncate (operator-driven vs rollback-driven).
     // envframe_compact_count_: number of compact_env_frames()

@@ -2,7 +2,7 @@
 
 # C++ Modules (generated)
 
-**63** `export module` declarations in `src/**/*.ixx`.
+**64** `export module` declarations in `src/**/*.ixx`.
 
 | Module | File |
 |--------|------|
@@ -45,6 +45,7 @@
 | `aura.core.concept_constraints` | `src/core/concept_constraints.ixx` |
 | `aura.core.concepts` | `src/core/concepts.ixx` |
 | `aura.core.cxx26_invariants` | `src/core/cxx26_invariants.ixx` |
+| `aura.core.envframe_lifetime` | `src/core/envframe_lifetime.ixx` |
 | `aura.core.error` | `src/core/error.ixx` |
 | `aura.core.lifetime_pin` | `src/core/lifetime_pin.ixx` |
 | `aura.core.module_boundary` | `src/core/module_boundary.ixx` |

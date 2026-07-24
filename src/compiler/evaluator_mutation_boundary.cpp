@@ -34,6 +34,7 @@ module;
 module aura.compiler.evaluator;
 
 import std;
+import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 
 namespace aura::compiler {
@@ -766,6 +767,19 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (n_pins > 0)
                 m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),
                                                          std::memory_order_relaxed);
+        }
+        // Issue #2003: EnvFrame explicit lifetime protocol — guard runs
+        // scan_skip_freed_closures + bumps site-tagged counter on dtor
+        // (boundary exit). Instantiated here (only when outermost since
+        // nested guards don't own their own boundary) so the scan runs
+        // after restamp completes + before we drop the write lock below.
+        if (outermost) {
+            aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
+                aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
+                    const_cast<void*>(static_cast<const void*>(ev_)),
+                    &::aura::compiler::Evaluator::envframe_lifetime_trampoline),
+                aura::core::envframe_lifetime::EnvFrameLifetimeSite::BoundaryExit};
+            (void)envframe_guard.site();
         }
     }
     // Issue #285: explicit flush at the boundary exit so any

@@ -10,6 +10,8 @@
 //   AC4: JIT aura_free_closure does not affect TW scan examined
 //   AC5: already bridge_epoch=0 with linear still counted as capture once
 //   AC6: stress double-scan after force_drop; marked_invalid stable
+//   AC7: g_envframe_lifetime_stats.scans_run grows under repeated scans
+//   AC8 (deferred): primitive schema=2003 — covered by query:envframe-lifetime-stats in obs_eval
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -163,6 +165,34 @@ static void ac6_stress() {
           "metric stable across re-scans");
 }
 
+// AC7: Issue #2003 — EnvFrame lifetime guard scope-marks scans.
+// Each scan_live_closures_for_linear_captures() invocation bumps a
+// per-site counter; lifetime protocol RAII guards re-entrant on the
+// scan path so guard construction/destruction is observable.
+static void ac7_lifetime_guard_observable() {
+    std::println("\n--- AC7: EnvFrame lifetime guard scans_run observable ---");
+    aura::core::envframe_lifetime::reset_envframe_lifetime_stats();
+    using aura::core::envframe_lifetime::envframe_lifetime_guards_constructed;
+    using aura::core::envframe_lifetime::envframe_lifetime_guards_destructed;
+    using aura::core::envframe_lifetime::envframe_lifetime_scans_run;
+    const auto c0 = envframe_lifetime_guards_constructed();
+    const auto d0 = envframe_lifetime_guards_destructed();
+    const auto s0 = envframe_lifetime_scans_run();
+
+    {
+        aura::core::envframe_lifetime::EnvFrameLifetimeHost h{};
+        h.scan_skip_freed = [](void*, aura::core::envframe_lifetime::EnvFrameLifetimeSite) {};
+        aura::core::envframe_lifetime::EnvFrameLifetimeGuard guard{
+            h, aura::core::envframe_lifetime::EnvFrameLifetimeSite::FiberSteal};
+        (void)guard.site();
+    }
+
+    CHECK(envframe_lifetime_guards_constructed() == c0 + 1, "guard ctor +1");
+    CHECK(envframe_lifetime_guards_destructed() == d0 + 1, "guard dtor +1");
+    CHECK(envframe_lifetime_scans_run() == s0 + 1,
+          "host.scan_skip_freed invoked exactly once on dtor");
+}
+
 } // namespace
 
 int main() {
@@ -173,6 +203,7 @@ int main() {
     ac4_jit_free_separate();
     ac5_force_drop_then_scan();
     ac6_stress();
+    ac7_lifetime_guard_observable();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
