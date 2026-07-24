@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 337 | Preferred destination suites |
-| **Total scanned** | **337** | |
+| `tests/core/test_*.cpp` | 335 | Preferred destination suites |
+| **Total scanned** | **335** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 16 | 16 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 28 | 28 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 19 | 19 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 89 | 89 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 28 | 28 | P3 — review case-by-case |
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **57**
+- Existing `*_batch` drivers (migration milestones): **58**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -107,6 +107,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_hotpath_matrix_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_incremental_relower_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_incremental_type_batch.cpp` → theme `jit_incremental`
+- `tests/compiler/test_ir_soa_dual_emit_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_issues_809_817_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` → theme `jit_incremental`
@@ -267,10 +268,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_ir.cpp`
 - `tests/reflect/test_ir_cache_v2.cpp`
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp`
-- `tests/compiler/test_ir_soa_dual_emit.cpp`
-- `tests/compiler/test_ir_soa_dual_emit_flag.cpp`
+- `tests/compiler/test_ir_soa_dual_emit_batch.cpp`
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp`
-- `tests/compiler/test_ir_soa_phase2_adoption.cpp`
 - `tests/reflect/test_issue_178.cpp`
 - `tests/reflect/test_issue_178_reflect.cpp`
 - `tests/serve/test_issue_1990.cpp`
@@ -766,21 +765,19 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
 
-### `shape_soa` — Shape / SoA / column layout (19)
+### `shape_soa` — Shape / SoA / column layout (17)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (19)
+#### domain/ (17)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp — Issue #658:
-- `tests/compiler/test_ir_soa_dual_emit.cpp` (—) [domain_suite, theme_compiler] — test_ir_soa_dual_emit.cpp — Issue #1377:
-- `tests/compiler/test_ir_soa_dual_emit_flag.cpp` (—) [domain_suite, theme_compiler] — Issue #1377/#1629 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_ir_soa_dual_emit_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_ir_soa_dual_emit_batch.cpp — IR SoA dual-emit family dup-merge (R19 phase
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #254/#403/#404/#506 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_ir_soa_phase2_adoption.cpp` (—) [phase_slice, domain_suite, theme_compiler] — Issue #1629/#1920 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
