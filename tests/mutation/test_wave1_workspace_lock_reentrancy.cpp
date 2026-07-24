@@ -113,7 +113,9 @@ int main() {
         std::println("\n--- AC5: Wave2 hot-path markers ---");
         CHECK(file_contains("src/compiler/aura_jit.h", "invalidate_all"),
               "AC5: AuraJIT::invalidate_all declared");
-        CHECK(file_contains("src/compiler/service.ixx", "invalidate_all()"),
+        // Wave5: mark_all_defines_dirty body lives in service_dirty.cpp.
+        CHECK(file_contains("src/compiler/service_dirty.cpp", "invalidate_all()") ||
+                  file_contains("src/compiler/service.ixx", "invalidate_all()"),
               "AC5: mark_all_defines_dirty uses bulk invalidate_all");
         CHECK(file_contains("src/compiler/evaluator_eval_flat.cpp", "Wave2"),
               "AC5: apply_closure Wave2 single-lock copy");

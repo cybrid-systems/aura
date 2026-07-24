@@ -68,6 +68,10 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_char.cpp
     src/compiler/evaluator_primitives_mutation.cpp
 )
+# Wave 5: service implementation partitions (same module: aura.compiler.service).
+set(AURA_SERVICE_SOURCE_FILES
+    src/compiler/service_dirty.cpp
+)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -130,6 +134,7 @@ target_sources(aura PRIVATE
     # Issue #1980 / Epic #1979: half-block pixel framebuffer for 3D TUI base.
     src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
+    ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
@@ -455,6 +460,7 @@ target_sources(test_ir PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
+    ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
@@ -650,6 +656,7 @@ add_library(aura_test_objects STATIC
     # Issue #1980 / Epic #1979: half-block pixel framebuffer.
     src/renderer/pixel_framebuffer.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
+    ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
@@ -830,6 +837,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/value_impl.cpp
     ${AURA_EVALUATOR_SOURCE_FILES}
+    ${AURA_SERVICE_SOURCE_FILES}
     src/compiler/ffi_primitives_impl.cpp
     src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
