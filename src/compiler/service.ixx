@@ -4285,6 +4285,49 @@ public:
             return dirty;
         }
 
+        // Issue #2035: map AoS block_dirty_per_func_ / SoA block_dirty_
+        // columns into an AOT emit region mask for selective reemit.
+        // Partial dirty → Performance bit (1<<1); full dirty adds (1<<3).
+        // Evolution bit (1<<2) is never set (permanently excluded by #2016).
+        [[nodiscard]] std::uint64_t compute_region_mask_from_dirty() const noexcept {
+            bool any = false;
+            bool full = true;
+            bool saw = false;
+            for (const auto& fb : block_dirty_per_func_) {
+                if (fb.empty()) {
+                    full = false;
+                    continue;
+                }
+                for (auto b : fb) {
+                    saw = true;
+                    if (b)
+                        any = true;
+                    else
+                        full = false;
+                }
+            }
+            if (!any) {
+                for (const auto& fn : soa_mod.functions) {
+                    for (auto b : fn.block_dirty_) {
+                        saw = true;
+                        if (b)
+                            any = true;
+                        else
+                            full = false;
+                    }
+                }
+            }
+            if (!any) {
+                if (dirty)
+                    return (1ULL << 1); // body-only dirty flag, no bit layout
+                return 0;
+            }
+            std::uint64_t mask = (1ULL << 1); // Performance / body region
+            if (full && saw)
+                mask |= (1ULL << 3); // broader reemit for full-function dirty
+            return mask;
+        }
+
         // Issue #1915: body-only dirty stamp (prefer partial re-lower).
         // Dual-shape: irs[0]=__top__ (kept clean), irs[1]=body (all blocks dirty).
         // Single-fn: body at irs[0]. Returns # of blocks marked.
@@ -4859,6 +4902,14 @@ public:
         }
         return marked;
     }
+
+    // Issue #2035: after mark_define_dirty / invalidate_function cascade,
+    // fan-out HotUpdateRegistry dirty listeners, derive emit region mask
+    // from block_dirty_ / SoA columns, and (when reemit provider is wired)
+    // trigger aura_reemit_aot_for_dirty for selective AOT re-emit.
+    // Body in service_dirty.cpp (HotUpdateRegistry link discipline).
+    void notify_hot_update_after_cascade_(const std::string& name,
+                                          const std::vector<std::string>& dependents = {});
 
     // Wave 5: bodies in service_dirty.cpp (first service module partition).
     void mark_define_dirty(const std::string& name);

@@ -508,6 +508,11 @@ extern "C" __attribute__((weak)) void aura_hot_update_on_reemit_throttled(void) 
 extern "C" __attribute__((weak)) void
 aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
+// Issue #2035: weak no-ops when hot_update_registry.cpp is not linked.
+extern "C" __attribute__((weak)) void aura_hot_update_notify_dirty_define(const char* /*name*/) {}
+extern "C" __attribute__((weak)) int aura_hot_update_reemit_provider_wired(void) {
+    return 0;
+}
 
 extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void) {}
 extern "C" __attribute__((weak)) void aura_1637_note_compact_restore_fallback(void) {}

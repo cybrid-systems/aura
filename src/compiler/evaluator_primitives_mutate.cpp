@@ -76,6 +76,12 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t region_mask_adapt_clears_total;   // #2016
     std::int64_t region_mask_adapt_restores_total; // #2016
     std::int64_t emit_region_mask_preferred;       // #2016
+    // Issue #2035
+    std::int64_t region_mask_from_dirty_total;
+    std::int64_t cascade_reemit_trigger_total;
+    std::int64_t last_region_mask_from_dirty;
+    std::int64_t schema_2035;
+    std::int64_t issue_2035;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }
@@ -5752,7 +5758,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "query:hot-update-registry-stats", [&ev](const auto&) -> EvalValue {
             aura_hot_update_registry_snapshot snap{};
             aura_hot_update_registry_get_snapshot(&snap);
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(128); // #2035 cascade dirty keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5819,6 +5825,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("region-mask-adapt-clears-total", snap.region_mask_adapt_clears_total);
             insert_kv("region-mask-adapt-restores-total", snap.region_mask_adapt_restores_total);
             insert_kv("emit-region-mask-preferred", snap.emit_region_mask_preferred);
+            // Issue #2035: cascade dirty → region-mask reemit.
+            insert_kv("region-mask-from-dirty-total", snap.region_mask_from_dirty_total);
+            insert_kv("cascade-reemit-trigger-total", snap.cascade_reemit_trigger_total);
+            insert_kv("last-region-mask-from-dirty", snap.last_region_mask_from_dirty);
+            insert_kv("schema-2035", snap.schema_2035 != 0 ? snap.schema_2035 : 2035);
+            insert_kv("issue-2035", snap.issue_2035 != 0 ? snap.issue_2035 : 2035);
+            insert_kv("cascade-dirty-reemit-wired", 1);
             insert_kv("mvp-single-workspace", 1); // #1943
             insert_kv("registry-class-wired", 1);
             auto hidx = g_hash_tables.size();

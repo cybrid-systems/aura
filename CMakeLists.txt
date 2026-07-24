@@ -1845,6 +1845,11 @@ aura_add_issue_test(test_soa_cascade_instr_dirty_sync)
 aura_issue_test_link_llvm_jit(test_soa_cascade_instr_dirty_sync)
 add_dependencies(all_test_issue_targets test_soa_cascade_instr_dirty_sync)
 
+# Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit from cascade.
+aura_add_issue_test(test_hot_update_cascade_dirty_reemit)
+aura_issue_test_link_llvm_jit(test_hot_update_cascade_dirty_reemit)
+add_dependencies(all_test_issue_targets test_hot_update_cascade_dirty_reemit)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

@@ -1,4 +1,4 @@
-// hot_update_registry.hh — Issue #1956 / #2014
+// hot_update_registry.hh — Issue #1956 / #2014 / #2035
 // Unified coordination center for hot-update / incremental re-emit
 // callbacks, region mask, epoch listeners, and aggregated metrics.
 //
@@ -11,6 +11,7 @@
 //   3. provides notify_dirty_define / notify_epoch_bump fan-out
 //   4. exposes hot_update_registry_* counters for dashboards
 //   5. Issue #2014: sliding-window deopt storm detection + reemit throttle
+//   6. Issue #2035: cascade dirty → region-mask reemit bookkeeping
 //
 // MVP scope (#1943): single-workspace; no cross-COW migration.
 
@@ -74,6 +75,18 @@ public:
     void set_emit_region_mask(std::uint64_t mask) noexcept;
     [[nodiscard]] std::uint64_t emit_region_mask() const noexcept;
 
+    // Issue #2035: host reemit / AOT emit wiring probes (for cascade path).
+    [[nodiscard]] bool reemit_provider_wired() const noexcept {
+        return reemit_wired_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool aot_emit_provider_wired() const noexcept {
+        return aot_emit_wired_.load(std::memory_order_relaxed);
+    }
+    // Issue #2035: bookkeeping when cascade derives a region mask from
+    // block_dirty_ / SoA columns and optionally triggers reemit.
+    void on_region_mask_from_dirty(std::uint64_t mask) noexcept;
+    void on_cascade_reemit_trigger(std::uint64_t candidates_hint = 0) noexcept;
+
     // Dynamic listeners (not process-ABI; for tests / agents / plugins).
     // Returns listener id (stable until clear).
     std::uint64_t register_epoch_listener(EpochListener fn);
@@ -122,6 +135,12 @@ public:
         std::int64_t region_mask_adapt_clears_total = 0;
         std::int64_t region_mask_adapt_restores_total = 0;
         std::int64_t emit_region_mask_preferred = 0;
+        // Issue #2035: cascade dirty → region-mask reemit.
+        std::int64_t region_mask_from_dirty_total = 0;
+        std::int64_t cascade_reemit_trigger_total = 0;
+        std::int64_t last_region_mask_from_dirty = 0;
+        std::int64_t schema_2035 = 2035;
+        std::int64_t issue_2035 = 2035;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -179,6 +198,10 @@ private:
     std::atomic<std::uint64_t> reemit_throttle_skips_{0};
     std::atomic<std::uint64_t> region_mask_adapt_clears_{0};   // #2016
     std::atomic<std::uint64_t> region_mask_adapt_restores_{0}; // #2016
+    // Issue #2035
+    std::atomic<std::uint64_t> region_mask_from_dirty_total_{0};
+    std::atomic<std::uint64_t> cascade_reemit_trigger_total_{0};
+    std::atomic<std::uint64_t> last_region_mask_from_dirty_{0};
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -225,6 +248,12 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t region_mask_adapt_clears_total;   // #2016
     std::int64_t region_mask_adapt_restores_total; // #2016
     std::int64_t emit_region_mask_preferred;       // #2016
+    // Issue #2035
+    std::int64_t region_mask_from_dirty_total;
+    std::int64_t cascade_reemit_trigger_total;
+    std::int64_t last_region_mask_from_dirty;
+    std::int64_t schema_2035;
+    std::int64_t issue_2035;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.
@@ -237,6 +266,9 @@ void aura_hot_update_reset_deopt_storm_state_for_test(void);
 // Issue #2017: module-safe C entry for epoch notify (compact-env-frames etc.).
 // Module partitions cannot attach HotUpdateRegistry (link discipline #1956).
 void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);
+// Issue #2035: module-safe dirty notify + reemit-provider probe.
+void aura_hot_update_notify_dirty_define(const char* name);
+int aura_hot_update_reemit_provider_wired(void);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH
