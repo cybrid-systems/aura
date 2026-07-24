@@ -65,7 +65,10 @@ static std::string read_first(std::initializer_list<const char*> paths) {
 }
 
 static std::string dtor_window(const std::string& src) {
-    auto pos = src.find("~MutationBoundaryGuard()");
+    // Wave3a: prefer out-of-line dtor body (~Evaluator::MutationBoundaryGuard::...)
+    auto pos = src.find("::~MutationBoundaryGuard()");
+    if (pos == std::string::npos)
+        pos = src.find("~MutationBoundaryGuard()");
     if (pos == std::string::npos)
         return {};
     auto end = src.find("Optional / rare path", pos);
@@ -76,16 +79,20 @@ static std::string dtor_window(const std::string& src) {
 
 static void ac1_source() {
     std::println("\n--- AC1: #1931 source surface ---");
+    // Wave3a: dtor batch metrics live in evaluator_mutation_boundary.cpp.
     auto ixx = read_first({"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"});
+    auto guard = read_first({"src/compiler/evaluator_mutation_boundary.cpp",
+                             "../src/compiler/evaluator_mutation_boundary.cpp"});
     auto hh = read_first(
         {"src/compiler/mutation_guard_helpers.hh", "../src/compiler/mutation_guard_helpers.hh"});
     auto comp = read_first({"src/compiler/evaluator_primitives_compile.cpp",
                             "../src/compiler/evaluator_primitives_compile.cpp"});
     auto lint = read_first({"scripts/check_mutation_guard_coverage.py",
                             "../scripts/check_mutation_guard_coverage.py"});
-    CHECK(!ixx.empty() && ixx.find("#1931") != std::string::npos, "ixx cites #1931");
-    CHECK(ixx.find("BatchMutationMetrics") != std::string::npos, "batch metrics");
-    CHECK(ixx.find("publish common path") != std::string::npos, "common path publish");
+    const std::string guard_src = ixx + "\n" + guard;
+    CHECK(!guard_src.empty() && guard_src.find("#1931") != std::string::npos, "cites #1931");
+    CHECK(guard_src.find("BatchMutationMetrics") != std::string::npos, "batch metrics");
+    CHECK(guard_src.find("publish common path") != std::string::npos, "common path publish");
     CHECK(!hh.empty() && hh.find("#1931") != std::string::npos, "helpers cite #1931");
     CHECK(hh.find("run_under_mutation_guard") != std::string::npos, "helper template");
     CHECK(!comp.empty() && comp.find("schema-1931") != std::string::npos, "query schema-1931");
@@ -117,7 +124,10 @@ static void ac2_schema() {
 
 static void ac3_dtor_atomics() {
     std::println("\n--- AC3: dtor common path ≤6 atomics ---");
-    auto ixx = read_first({"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"});
+    // Wave3a: ~MutationBoundaryGuard body is in evaluator_mutation_boundary.cpp.
+    auto ixx = read_first({"src/compiler/evaluator_mutation_boundary.cpp",
+                           "../src/compiler/evaluator_mutation_boundary.cpp",
+                           "src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"});
     auto win = dtor_window(ixx);
     CHECK(!win.empty(), "dtor window");
     // Count fetch_add in the common publish block only (before rare path).

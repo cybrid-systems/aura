@@ -69,10 +69,16 @@ int main() {
     // ── AC1: Guard dtor uncaught_exceptions wiring ──
     {
         std::println("\n--- AC1: uncaught_exceptions auto-rollback + helper ---");
-        std::string src_ev, src_comp;
+        std::string src_ev, src_comp, src_guard;
         for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
             src_ev = read_file(p);
             if (!src_ev.empty())
+                break;
+        }
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp"}) {
+            src_guard = read_file(p);
+            if (!src_guard.empty())
                 break;
         }
         for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
@@ -82,11 +88,15 @@ int main() {
                 break;
         }
         CHECK(!src_ev.empty() && !src_comp.empty(), "read sources");
-        CHECK(src_ev.find("#1897") != std::string::npos, "evaluator cites #1897");
+        // Wave3a: field on interface; uncaught_exceptions + metric in Guard partition.
+        const std::string src_g =
+            src_ev + "
+                     " + src_guard;
+            CHECK(src_g.find("#1897") != std::string::npos, "evaluator cites #1897");
         CHECK(src_ev.find("uncaught_at_enter_") != std::string::npos, "uncaught_at_enter_ field");
-        CHECK(src_ev.find("std::uncaught_exceptions()") != std::string::npos,
+        CHECK(src_g.find("std::uncaught_exceptions()") != std::string::npos,
               "uncaught_exceptions in Guard");
-        CHECK(src_ev.find("mutation_guard_uncaught_auto_rollback_total") != std::string::npos,
+        CHECK(src_g.find("mutation_guard_uncaught_auto_rollback_total") != std::string::npos,
               "auto-rollback metric");
         CHECK(src_comp.find("run_under_mutation_guard") != std::string::npos, "shared helper");
         CHECK(src_comp.find("query:mutation-systemic-guard-stats") != std::string::npos,
