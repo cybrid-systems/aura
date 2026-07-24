@@ -188,6 +188,8 @@ std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
 // Issue #2018: rest-param gensyms applied in clone_macro_body pre-scan /
 // rename path (`__rest_<name>_<n>`). Folded into macro-hygiene-stats.
 std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total{0};
+// Issue #2019: post-expand MacroIntroduced generation restamp calls.
+std::atomic<std::uint64_t> g_macro_restamp_after_flat_total{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -209,7 +211,18 @@ inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexc
 std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept {
     return g_macro_rest_param_hygiene_total.load(std::memory_order_relaxed);
 }
+std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
+    return g_macro_restamp_after_flat_total.load(std::memory_order_relaxed);
+}
 } // extern "C"
+
+// Issue #2019: restamp MacroIntroduced gens after a successful expand
+// pass so FlatAST consumers (mutate / query / JIT) never see stale gen.
+static void restamp_after_expand(aura::ast::FlatAST& flat) {
+    const auto n = flat.restamp_macro_introduced_generations();
+    if (n > 0)
+        g_macro_restamp_after_flat_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
@@ -784,10 +797,16 @@ aura::ast::NodeId expand_inner_macros(
                         for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
                             if (parent_children[ci] == root) {
                                 flat->set_child(parent_id, ci, cloned);
-                                flat->restamp_all_node_generations();
+                                // Issue #2019: set_child bumps generation_;
+                                // restamp MacroIntroduced so cloned body
+                                // matches surrounding AST gen.
+                                restamp_after_expand(*flat);
                                 break;
                             }
                         }
+                    } else {
+                        // Root-level expand: still restamp MacroIntroduced.
+                        restamp_after_expand(*flat);
                     }
                     return cloned;
                 }
@@ -809,6 +828,9 @@ aura::ast::NodeId expand_inner_macros(
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                    aura::ast::NodeId root, int max_passes) {
     using namespace aura::ast;
+    // Issue #2019: track whether any pass expanded so we restamp
+    // MacroIntroduced gens once before return (FlatAST consistency).
+    bool any_expand = false;
     for (int pass = 0; pass < max_passes; ++pass) {
         // Phase 1: collect macro definitions
         struct MD {
@@ -843,8 +865,12 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             }
         }
 
-        if (!has_macro_def)
-            return root; // no more macros to expand
+        if (!has_macro_def) {
+            // No more macro defs — final restamp if we expanded earlier.
+            if (any_expand)
+                restamp_after_expand(flat);
+            return root;
+        }
 
         // Phase 2: find and expand macro calls
         bool expanded_any = false;
@@ -895,8 +921,12 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             }
         }
 
-        if (!expanded_any)
+        if (!expanded_any) {
+            if (any_expand)
+                restamp_after_expand(flat);
             return root;
+        }
+        any_expand = true;
         root = new_root;
     }
     // Issue #121: hit the pass limit with macros still in the
@@ -909,6 +939,9 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                      "the result may have unexpanded macro calls",
                      max_passes);
     }
+    // Issue #2019: restamp after multi-pass expand (pass-limit exit).
+    if (any_expand)
+        restamp_after_expand(flat);
     return root;
 }
 } // namespace aura::compiler::macro_exp

@@ -1757,6 +1757,9 @@ public:
     // Exposed via the (compile:macro-dirty-stats) primitive.
     mutable std::atomic<std::uint64_t> macro_expansion_dirty_total_{0};
     mutable std::atomic<std::uint64_t> macro_self_modify_dirty_total_{0};
+    // Issue #2019: times restamp_macro_introduced_generations ran
+    // after expand → FlatAST (Agent / self-evo generation consistency).
+    mutable std::atomic<std::uint64_t> macro_restamp_after_flat_total_{0};
 
 public:
     // Issue #437 / #1840: per-reason verify-dirty stat accessors.
@@ -2546,6 +2549,7 @@ public:
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
         , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
+        , macro_restamp_after_flat_total_(other.macro_restamp_after_flat_total_.load())
         , match_info_(std::move(other.match_info_))
         , region_by_sym_(std::move(other.region_by_sym_))
         , region_by_lambda_id_(std::move(other.region_by_lambda_id_))
@@ -2607,6 +2611,7 @@ public:
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
             macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
+            macro_restamp_after_flat_total_.store(other.macro_restamp_after_flat_total_.load());
             generation_wrap_count_.store(other.generation_wrap_count_.load());
             node_gen_stale_access_count_.store(other.node_gen_stale_access_count_.load());
             children_call_count_.store(other.children_call_count_.load());
@@ -2730,6 +2735,7 @@ public:
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
         , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
+        , macro_restamp_after_flat_total_(other.macro_restamp_after_flat_total_.load())
         , match_info_(other.match_info_)
         , region_by_sym_(other.region_by_sym_)
         , region_by_lambda_id_(other.region_by_lambda_id_)
@@ -2794,6 +2800,7 @@ public:
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
             macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
+            macro_restamp_after_flat_total_.store(other.macro_restamp_after_flat_total_.load());
             children_call_count_.store(other.children_call_count_.load());
             parent_of_call_count_.store(other.parent_of_call_count_.load());
             mark_dirty_upward_call_count_.store(other.mark_dirty_upward_call_count_.load());
@@ -6921,6 +6928,55 @@ public:
         if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
             auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #2019: restamp only MacroIntroduced live nodes so expand →
+    // FlatAST materialization leaves them with node_gen_ == generation_
+    // (no "ghost" MacroIntroduced with stale gen after set_child bumps).
+    // Also repairs parent_[child] for MacroIntroduced parents and ensures
+    // kMacroExpansion dirty bit is set (idempotent OR). Returns restamped
+    // node count. No-op when no MacroIntroduced nodes present.
+    std::size_t restamp_macro_introduced_generations() {
+        std::vector<std::uint8_t> on_free(size(), 0);
+        for (NodeId fid : free_list_) {
+            if (fid < on_free.size())
+                on_free[fid] = 1;
+        }
+        constexpr auto kExpansion = static_cast<std::uint8_t>(MacroDirtyReason::kMacroExpansion);
+        std::size_t restamped = 0;
+        const auto n = size();
+        if (parent_.size() < n)
+            parent_.resize(n, NULL_NODE);
+        for (NodeId id = 0; id < n; ++id) {
+            if (on_free[id] || !is_macro_introduced(id))
+                continue;
+            if (id < node_gen_.size())
+                node_gen_[id] = generation_;
+            // Parent/child consistency: MacroIntroduced node owns its children.
+            if (id < children_.size()) {
+                for (NodeId cid : children_[id]) {
+                    if (cid != NULL_NODE && cid < parent_.size())
+                        parent_[cid] = id;
+                }
+            }
+            // macro_dirty: ensure kMacroExpansion without double-counting
+            // when already set (bitwise OR; counters only on first apply).
+            if (id < macro_dirty_.size()) {
+                if ((macro_dirty_[id] & kExpansion) == 0)
+                    apply_macro_dirty_bits(id, kExpansion);
+            }
+            ++restamped;
+        }
+        if (restamped > 0) {
+            macro_restamp_after_flat_total_.fetch_add(1, std::memory_order_relaxed);
+            if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed))
+                auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        return restamped;
+    }
+
+    [[nodiscard]] std::uint64_t macro_restamp_after_flat_total() const noexcept {
+        return macro_restamp_after_flat_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #1282: if a generation wrap marked auto_restamp_pending_,

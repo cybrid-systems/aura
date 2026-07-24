@@ -47,6 +47,9 @@ export extern std::atomic<std::uint64_t> g_hygiene_tracer_depth_max;
 // clone_macro_body pre-scan / rename path.
 export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
 
+// Issue #2019: post-expand MacroIntroduced generation restamp calls.
+export extern std::atomic<std::uint64_t> g_macro_restamp_after_flat_total;
+
 export struct MacroExpansionDef {
     std::vector<std::string> params;
     bool dotted = false;

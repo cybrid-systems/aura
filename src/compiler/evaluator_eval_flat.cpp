@@ -3293,7 +3293,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
                                                                /*max_depth=*/10,
                                                                as_expansion_registry(macros_));
+                                // Issue #2019: full restamp for all live nodes after
+                                // structural splice + MacroIntroduced-only parent/dirty fix.
                                 f->restamp_all_node_generations();
+                                (void)f->restamp_macro_introduced_generations();
                                 // Evaluate the cloned + inner-expanded
                                 // body. eval_flat returns a runtime
                                 // value (a list for cons-chain qq
@@ -5192,6 +5195,11 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
 
         ++re_expanded;
     }
+
+    // Issue #2019: after post-mutate re-expand, restamp MacroIntroduced
+    // gens so subsequent mutate/query/JIT see stable markers.
+    if (re_expanded > 0)
+        (void)flat.restamp_macro_introduced_generations();
 
     return re_expanded;
 }
