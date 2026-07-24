@@ -2214,6 +2214,16 @@ struct CompilerMetrics {
     // is the live LifetimePin count for FFI buffers; ffi_defer_because_pin_total
     // is the cumulative # of compact_sweep deferrals while ffi_pin_defer_active.
     std::atomic<std::uint64_t> ffi_pin_active_count{0};
+    // Issue #2064: blame / provenance stamping on Dynamic degrade + CoercionMap
+    // fallback paths. coercion_blame_missing_total is bumped by
+    // apply_coercion_map when both predicate_cond_node + source_mutation_id
+    // remain 0 after best-effort back-fill (lossy when original context
+    // was rolled back). dynamic_degrade_with_blame_total is bumped by
+    // consistent_unify / solve_delta degrade paths when active_mutation_id_
+    // is non-zero (a non-zero provenance was preserved).
+    std::atomic<std::uint64_t> coercion_blame_missing_total{0};
+    std::atomic<std::uint64_t> dynamic_degrade_with_blame_total{0};
+
     // Issue #2067: IR-executor linear runtime enforcement. linear_runtime_violation_total
     // is bumped on each MoveOp/MutBorrowOp/DropOp/BorrowOp use-after-move /
     // double-borrow / double-drop detection at execute time.

@@ -1900,6 +1900,10 @@ aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
 aura_add_issue_test(test_solve_delta_epoch_filter)
 aura_issue_test_link_llvm_jit(test_solve_delta_epoch_filter)
 
+# Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback paths.
+aura_add_issue_test(test_blame_stamp_on_degrade)
+aura_issue_test_link_llvm_jit(test_blame_stamp_on_degrade)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

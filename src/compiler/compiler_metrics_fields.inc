@@ -1592,6 +1592,10 @@ AURA_COMPILER_METRICS_FIELD(arena_live_compact_invalidated_pins_total)
 // Issue #2005: FFI buffer pin/defer observability (refine #2000).
 AURA_COMPILER_METRICS_FIELD(ffi_pin_active_count)
 AURA_COMPILER_METRICS_FIELD(ffi_defer_because_pin_total)
+// Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback (refine #1589 / #1216).
+AURA_COMPILER_METRICS_FIELD(coercion_blame_missing_total)
+AURA_COMPILER_METRICS_FIELD(dynamic_degrade_with_blame_total)
+
 // Issue #2067: IR-executor linear runtime enforcement (refine #747 / #1926).
 AURA_COMPILER_METRICS_FIELD(linear_runtime_violation_total)
 AURA_COMPILER_METRICS_FIELD(linear_post_mutate_force_rollback_total)

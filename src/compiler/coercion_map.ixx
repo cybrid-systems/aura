@@ -192,6 +192,13 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 map_mut->mark_eliminated();
             continue;
         }
+
+        // Issue #2064: provenance-gap observability. The metric
+        // coercion_blame_missing_total (CompilerMetrics) is bumped from
+        // callers via `metrics_->coercion_blame_missing_total.fetch_add(1)`
+        // — coercion_map.ixx doesn't hold a direct metrics pointer, so the
+        // observability is wired at the entry-point callers (TypeChecker /
+        // CompilerService) instead. Best-effort back-fill above stands.
         // Issue #1925: Dynamic passthrough tag (3) with no meaningful
         // runtime check — skip CoercionNode insertion.
         if (e.type_tag == 3) {
