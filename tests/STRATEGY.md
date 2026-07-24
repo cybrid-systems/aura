@@ -8,7 +8,7 @@
 This document formalizes the **high-level** coverage strategy for production
 readiness. It complements (does not replace):
 
-- Theme domain suites — [`tests/README.md`](README.md), [`domain/`](domain/)
+- Theme domain suites — [`README.md`](README.md), [`tests/core/` + `tests/compiler/` etc. (src/-aligned)](README.md)
 - Bundle / issue-tier subtraction — #881 / #883
 - Unified harness — [`test_harness.hpp`](test_harness.hpp) (#1960)
 - Fixture shards — #1962
@@ -20,7 +20,7 @@ readiness. It complements (does not replace):
 | Hot-path matrix visibility | Every critical scenario named + issue-linked |
 | AI self-mod confidence | Closed-loop stamps + `self_mod` SLO (≥1000 loops in stress) |
 | Agent discoverability | Metrics via `query:test-strategy-stats` |
-| Low binary sprawl | Prefer **domain/** extensions over new `test_issue_*` |
+| Low binary sprawl | Prefer **`tests/<src_module>/`** extensions over new `test_issue_*` |
 
 ## Hot-path coverage matrix
 
@@ -28,13 +28,13 @@ Defined as `kHotPathMatrix` / `HotPathScenario` in `test_strategy.h`:
 
 | Scenario id | Title | Primary issues | Recommended suite |
 |-------------|-------|----------------|-------------------|
-| `mutate-steal-gc-old-closure` | Mutate + steal + GC + old closure | **#1624**, **#1627** | `domain/test_domain_gates_batch` |
+| `mutate-steal-gc-old-closure` | Mutate + steal + GC + old closure | **#1624**, **#1627** | `core/test_hotpath_matrix_batch` |
 | `invalidate-jit-deopt` | Invalidate + JIT deopt | #1623, #740 | `test_eval_relower_hotpath_1623` |
-| `fiber-guard-shape-epoch` | GuardShape / epoch + fiber | #836, #1627 | `domain/test_domain_gates_batch` |
-| `typed-mutation-invariant` | TypedMutationAudit invariants | #1614, #1544 | `domain/test_domain_gates_batch` |
+| `fiber-guard-shape-epoch` | GuardShape / epoch + fiber | #836, #1627 | `core/test_hotpath_matrix_batch` |
+| `typed-mutation-invariant` | TypedMutationAudit invariants | #1614, #1544 | `core/test_hotpath_matrix_batch` |
 | `type-prop-invariant-corr` | TypeProp ↔ invariant | #1884, #1872 | `test_type_prop_invariant_correlation_1884` |
 | `aot-hotupdate-audit` | AOT hot-update audit | #1882, #590 | `test_aot_hotupdate_typed_audit_1882` |
-| `self-evolution-loop` | Self-evolution loop stats | #1883, #595 | `domain/test_obs_schema_matrix` |
+| `self-evolution-loop` | Self-evolution loop stats | #1883, #595 | `compiler/test_obs_schema_matrix` |
 | `render-hotpath-mutation` | Render hot-path under mutate | #1563, #1674 | `test_render_hotpath_stability_under_mutation` |
 
 **P0 linkage (AC):** matrix rows explicitly reference production-readiness /

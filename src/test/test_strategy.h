@@ -33,7 +33,7 @@ inline constexpr std::uint64_t kHotPathMinCoverageBp = 5000;
 // ── Hot-path scenarios (coverage matrix) ───────────────────
 //
 // Each row links ≥1 P0/P1 production-readiness issue. Prefer domain suites
-// (tests/domain/) over new test_issue_*.cpp when extending coverage.
+// (tests/<src_module>/) over new test_issue_*.cpp when extending coverage.
 enum class HotPathScenario : std::uint8_t {
     MutateStealGcOldClosure = 0, // mutate + fiber steal + GC + old closure
     InvalidateJitDeopt = 1,      // invalidate + JIT deopt path
@@ -61,16 +61,16 @@ struct HotPathMatrixEntry {
 inline constexpr HotPathMatrixEntry kHotPathMatrix[kHotPathScenarioCount] = {
     {HotPathScenario::MutateStealGcOldClosure, "mutate-steal-gc-old-closure",
      "Mutate + fiber steal + GC + old-closure eval",
-     /*#*/ 1624, 1627, "domain/test_domain_fiber_orchestration"},
+     /*#*/ 1624, 1627, "test_domain_fiber_orchestration"},
     {HotPathScenario::InvalidateJitDeopt, "invalidate-jit-deopt",
      "Invalidate function + JIT deopt / re-lower",
      /*#*/ 1623, 740, "test_eval_relower_hotpath_1623"},
     {HotPathScenario::FiberGuardShapeEpoch, "fiber-guard-shape-epoch",
      "GuardShape + epoch under multi-fiber",
-     /*#*/ 836, 1627, "domain/test_domain_fiber_orchestration"},
+     /*#*/ 836, 1627, "test_domain_fiber_orchestration"},
     {HotPathScenario::TypedMutationInvariant, "typed-mutation-invariant",
      "TypedMutationAudit type/linear/provenance invariants",
-     /*#*/ 1614, 1544, "domain/test_domain_typed_mutate"},
+     /*#*/ 1614, 1544, "test_domain_typed_mutate"},
     {HotPathScenario::TypePropInvariantCorr, "type-prop-invariant-corr",
      "TypePropagation / DCE / memo ↔ invariant correlation",
      /*#*/ 1884, 1872, "test_type_prop_invariant_correlation_1884"},
@@ -79,7 +79,7 @@ inline constexpr HotPathMatrixEntry kHotPathMatrix[kHotPathScenarioCount] = {
      /*#*/ 1882, 590, "test_aot_hotupdate_typed_audit_1882"},
     {HotPathScenario::SelfEvolutionLoop, "self-evolution-loop",
      "Self-evolution loop aggregate observability",
-     /*#*/ 1883, 595, "domain/test_obs_schema_matrix"},
+     /*#*/ 1883, 595, "test_obs_schema_matrix"},
     {HotPathScenario::RenderHotpathMutation, "render-hotpath-mutation",
      "Render hot-path stability under high-frequency mutation",
      /*#*/ 1563, 1674, "test_render_hotpath_stability_under_mutation"},

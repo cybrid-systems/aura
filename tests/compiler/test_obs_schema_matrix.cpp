@@ -17,8 +17,8 @@
 // See tests/domain/README.md for the testing policy.
 
 #include "test_harness.hpp"
-#include "domain/cases/obs_schema_cases.hpp"
-#include "domain/cases/production_sweep_cases.hpp"
+#include "obs_schema_cases.hpp"
+#include "production_sweep_cases.hpp"
 
 #include <cstdint>
 #include <cstring>

@@ -1374,15 +1374,15 @@ aura_issue_test_link_llvm_jit(test_wave1_workspace_lock_reentrancy)
 # ~CompilerService via aura_clear_jit_batch_deopt_target(&jit_) —
 # prevents UAF on late batch_deopt_for / deopt_pending_count after
 # CompilerService destruction (B-003, sibling of B-012/B-020).
-aura_add_issue_test(test_issue_1996)
-aura_issue_test_link_llvm_jit(test_issue_1996)
+aura_add_issue_test(test_jit_batch_deopt_clear)
+aura_issue_test_link_llvm_jit(test_jit_batch_deopt_clear)
 # Issue #1997: shell-wrapper C-source escape loop (aura_jit_bridge.cpp
 # ~2535) now handles all C0 control chars (\t \r \0 \a \b \f \v) +
 # backslash + double-quote via switch-statement. Without \0 escaping,
 # the literal '\0' would prematurely terminate the generated "..."
 # literal and corrupt all subsequent emitted C source (B-002).
-aura_add_issue_test(test_issue_1997)
-aura_issue_test_link_llvm_jit(test_issue_1997)
+aura_add_issue_test(test_aot_shell_c0_escape)
+aura_issue_test_link_llvm_jit(test_aot_shell_c0_escape)
 # Issue #1998: IR-executor MakePair path (ir_executor_impl.cpp ~1012)
 # now holds aura_lock_workspace_write() / aura_unlock_workspace_write()
 # around the g_owned_pair_slots_.push_back(slot) call. Without the
@@ -1391,8 +1391,8 @@ aura_issue_test_link_llvm_jit(test_issue_1997)
 # writes (aura_make_pair at line 1330+, lost slots / host accounting
 # leak). Forward decls for the lock fns added to runtime_shared.h so
 # other TUs can call them (B-024, sibling of B-002/B-003/B-012/B-020).
-aura_add_issue_test(test_issue_1998)
-aura_issue_test_link_llvm_jit(test_issue_1998)
+aura_add_issue_test(test_pair_slot_lock)
+aura_issue_test_link_llvm_jit(test_pair_slot_lock)
 # Issue #1992: Fiber::mutation_stack_storage_ plain void* race on concurrent
 # ensure_mutation_stack_ptr — std::atomic<void*> + compare_exchange_weak
 # (C-001). Concurrent ensure_*_ptr under work-steal handoff publishes
@@ -1878,25 +1878,25 @@ aura_add_issue_test(test_obs_schema_matrix)
 aura_issue_test_link_llvm_jit(test_obs_schema_matrix)
 add_dependencies(all_test_issue_targets test_obs_schema_matrix)
 
-aura_add_issue_test(test_domain_gates_batch)
-aura_issue_test_link_llvm_jit(test_domain_gates_batch)
-add_dependencies(all_test_issue_targets test_domain_gates_batch)
+aura_add_issue_test(test_hotpath_matrix_batch)
+aura_issue_test_link_llvm_jit(test_hotpath_matrix_batch)
+add_dependencies(all_test_issue_targets test_hotpath_matrix_batch)
 
-aura_add_issue_test(test_arena_defrag_concurrent)
-aura_issue_test_link_llvm_jit_minimal(test_arena_defrag_concurrent)
-add_dependencies(all_test_issue_targets test_arena_defrag_concurrent)
+aura_add_issue_test(test_arena_defrag)
+aura_issue_test_link_llvm_jit_minimal(test_arena_defrag)
+add_dependencies(all_test_issue_targets test_arena_defrag)
 
 aura_add_issue_test(test_arena_batch)
 aura_issue_test_link_llvm_jit(test_arena_batch)
 set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-aura_add_issue_test(test_compact_batch)
-aura_issue_test_link_llvm_jit(test_compact_batch)
-set_target_properties(test_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+aura_add_issue_test(test_gc_compact_batch)
+aura_issue_test_link_llvm_jit(test_gc_compact_batch)
+set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
-aura_add_issue_test(test_compact_sweep_batch)
-aura_issue_test_link_llvm_jit(test_compact_sweep_batch)
-set_target_properties(test_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
+aura_add_issue_test(test_gc_compact_sweep_batch)
+aura_issue_test_link_llvm_jit(test_gc_compact_sweep_batch)
+set_target_properties(test_gc_compact_sweep_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 aura_add_issue_test(test_gc_batch)
 aura_issue_test_link_llvm_jit(test_gc_batch)

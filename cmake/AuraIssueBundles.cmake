@@ -90,7 +90,7 @@ function(_aura_issue_bundle_apply_extras TARGET PROFILE)
     endif()
 endfunction()
 
-set(AURA_ISSUE_BUNDLE_LIGHT_MEMBERS test_error_merr;test_pilot_harness)
+set(AURA_ISSUE_BUNDLE_LIGHT_MEMBERS test_error_merr)
 set(AURA_ISSUE_BUNDLE_JIT_MEMBERS "")
 set(AURA_ISSUE_BUNDLE_JIT_MINIMAL_MEMBERS "")
 set(AURA_ISSUE_BUNDLE_JIT_CONTRACT_MEMBERS "")
