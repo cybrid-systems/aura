@@ -5137,11 +5137,20 @@ public:
     // Issue #1489: arm/release process-wide GC defer while a PanicCheckpoint
     // is live (save → commit/restore). Idempotent per-evaluator (one arm per
     // armed window). Scheduler + compact_sweep consult gc_hooks depth.
+    //
+    // Issue #2002: pass `this` as the per-evaluator discriminator so the
+    // arm/release is tied to this specific Evaluator. The process-wide
+    // depth counter (g_gc_defer_pending_panic_depth) is still bumped
+    // inside arm_gc_defer_pending_panic_for(), so existing
+    // should_defer_compact_for_pending_checkpoint() checks continue to
+    // work unchanged. The per-evaluator table lets fiber-steal detect
+    // orphans and PanicCheckpointGuard cross-evaluator discriminator
+    // checks stay consistent.
     void arm_gc_defer_for_pending_panic() noexcept {
         if (gc_defer_armed_for_panic_cp_)
             return;
         gc_defer_armed_for_panic_cp_ = true;
-        aura::gc_hooks::arm_gc_defer_pending_panic();
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(static_cast<void*>(this));
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_panic_pending_deferral_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -5149,7 +5158,7 @@ public:
         if (!gc_defer_armed_for_panic_cp_)
             return;
         gc_defer_armed_for_panic_cp_ = false;
-        aura::gc_hooks::release_gc_defer_pending_panic();
+        aura::gc_hooks::release_gc_defer_pending_panic_for(static_cast<void*>(this));
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_panic_conflict_resolved_total.fetch_add(1, std::memory_order_relaxed);
     }
