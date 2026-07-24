@@ -134,6 +134,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_edge_miss_count{0};
     std::atomic<std::uint64_t> soa_dirty_sync_total{0};
     std::atomic<std::uint64_t> soa_consistency_partial_dirty_total{0};
+    // Issue #2031: instruction-level impact scope observability.
+    //   - instr_level_impact_hits_total: precise instr refs recorded
+    //     by compute_impact_scope (source_ast_node_id mapped)
+    //   - instr_level_impact_misses_total: AST nodes walked without
+    //     a source_to_ir mapping (under-mapping risk signal)
+    //   - instr_level_dirty_marks_total: mark_instruction_dirty calls
+    //     driven by impact scope wiring
+    std::atomic<std::uint64_t> instr_level_impact_hits_total{0};
+    std::atomic<std::uint64_t> instr_level_impact_misses_total{0};
+    std::atomic<std::uint64_t> instr_level_dirty_marks_total{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.

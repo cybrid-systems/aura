@@ -523,11 +523,19 @@ void CompilerService::invalidate_function(const std::string& name) {
             return;
         }
         flat.root = pr.root;
-        std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>> source_to_ir;
+        // Issue #2031: reverse-index from cached IR for instruction-level impact.
+        SourceToIrMap source_to_ir;
         std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                            std::equal_to<>>
             ir_cache_index;
+        if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end()) {
+            populate_source_to_ir_from_irs(cit->second.irs, source_to_ir);
+            for (std::size_t fi = 0; fi < cit->second.irs.size(); ++fi)
+                ir_cache_index[cit->second.irs[fi].name] = fi;
+        }
         auto scope = compute_impact_scope(flat, pr.root, source_to_ir, ir_cache_index);
+        if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end())
+            (void)apply_impact_scope_dirty(cit->second, scope);
         selective_invalidate_bridge_for_impact(affected_name, scope);
         metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
             1, std::memory_order_relaxed);

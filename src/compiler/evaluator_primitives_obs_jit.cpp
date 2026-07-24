@@ -716,7 +716,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
         "query:soa-dirty-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(64); // #2031 instr-level impact keys
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -758,6 +758,12 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
             if (ev.get_soa_dirty_stats_fn_) {
                 s = ev.get_soa_dirty_stats_fn_();
             }
+            CompilerMetrics* m = ev.compiler_metrics_
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                     : nullptr;
+            const auto L = [&](std::atomic<std::uint64_t> CompilerMetrics::* f) -> std::int64_t {
+                return m ? static_cast<std::int64_t>((m->*f).load(std::memory_order_relaxed)) : 0;
+            };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"cached-fns", make_int(static_cast<std::int64_t>(s.cached_fns))},
                 {"dirty-fns", make_int(static_cast<std::int64_t>(s.dirty_fns))},
@@ -768,6 +774,22 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"dirty-block-pct", make_int(static_cast<std::int64_t>(s.dirty_block_pct))},
                 {"dirty-instruction-pct",
                  make_int(static_cast<std::int64_t>(s.dirty_instruction_pct))},
+                // Issue #2031: instruction-level impact scope metrics
+                {"instr_level_impact_hits_total",
+                 make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
+                {"instr-level-impact-hits",
+                 make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
+                {"instr_level_impact_misses_total",
+                 make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
+                {"instr-level-impact-misses",
+                 make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
+                {"instr_level_dirty_marks_total",
+                 make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
+                {"instr-level-dirty-marks",
+                 make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
+                {"instr-level-impact-wired", make_int(1)},
+                {"schema-2031", make_int(2031)},
+                {"issue-2031", make_int(2031)},
             };
             return build_hash(kv);
         });
