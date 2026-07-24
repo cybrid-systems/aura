@@ -203,22 +203,25 @@ struct AgentSpec {
             mb->attach(serve::g_current_fiber);
         // Issue #1880: try_acquire mutation boundary when Evaluator is bound.
         // On reject: skip body (typed quota path already recorded); no panic.
+        // Issue #2006: provenance closed-loop only after a successful body
+        // that actually entered the acquire path — reject must not call
+        // aura_evaluator_post_resume_refresh or bump provenance counters.
         const int acq = aura_orch_agent_body_try_acquire();
         if (acq == 0) {
             g_orch_module_stats.agent_body_try_acquire_ok_total.fetch_add(
                 1, std::memory_order_relaxed);
             body();
             aura_orch_agent_body_release_guard();
+            // Issue #1879: after successful agent body, force StableNodeRef
+            // provenance validation + auto pin/refresh + linear ownership
+            // probe so COW / steal / GC cannot leave dangling refs for join.
+            orch_agent_body_exit_provenance();
         } else {
             g_orch_module_stats.agent_body_try_acquire_rejects_total.fetch_add(
                 1, std::memory_order_relaxed);
             g_orch_module_stats.resource_quota_rejects_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
         }
-        // Issue #1879: after agent body, force StableNodeRef provenance
-        // validation + auto pin/refresh + linear ownership probe so COW /
-        // steal / GC cannot leave dangling refs for the join path.
-        orch_agent_body_exit_provenance();
         if (attach && mb && serve::g_current_fiber)
             mb->detach(serve::g_current_fiber);
     });
