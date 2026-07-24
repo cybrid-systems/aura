@@ -257,8 +257,8 @@ def cmd_lint():
 def cmd_fixtures():
     """Validate tests/fixtures/*.json schema and baseline sync (#1961 → run.py)."""
     print(f"{B}═══ Fixtures (check) ═══{N}")
-    script = ROOT / "tests" / "run.py"
-    legacy = ROOT / "tests" / "fixture_check.py"
+    script = ROOT / "tests" / "python" / "run.py"
+    legacy = ROOT / "tests" / "python" / "fixture_check.py"
     if script.exists():
         r = run([sys.executable, str(script), "fixtures"], cwd=ROOT)
     elif legacy.exists():
@@ -907,7 +907,7 @@ def test_repl():
     except ImportError:
         print(f"  {'⚠️':4s} pexpect not installed (pip install -r requirements-dev.txt)")
         return 0
-    r = subprocess.run([sys.executable, "tests/repl_test.py"], cwd=ROOT)
+    r = subprocess.run([sys.executable, "tests/python/repl_test.py"], cwd=ROOT)
     if r.returncode:
         fail("repl tests failed")
         return 1
