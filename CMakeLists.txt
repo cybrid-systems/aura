@@ -2003,6 +2003,10 @@ aura_issue_test_link_llvm_jit(test_blame_stamp_on_degrade)
 aura_add_issue_test(test_dirty_cascade_optimize)
 aura_issue_test_link_llvm_jit(test_dirty_cascade_optimize)
 
+# Issue #2062: StringPool thread-safe intern + ASTArena integration (concurrent fibers).
+aura_add_issue_test(test_stringpool_concurrent_intern)
+aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
