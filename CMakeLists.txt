@@ -1785,6 +1785,11 @@ aura_add_issue_test(test_jit_macro_introduced_preserve)
 aura_issue_test_link_llvm_jit(test_jit_macro_introduced_preserve)
 add_dependencies(all_test_issue_targets test_jit_macro_introduced_preserve)
 
+# Issue #2023: MacroSelfEvo capability boundary for agent macro expansion.
+aura_add_issue_test(test_macro_self_evo_capability)
+aura_issue_test_link_llvm_jit(test_macro_self_evo_capability)
+add_dependencies(all_test_issue_targets test_macro_self_evo_capability)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

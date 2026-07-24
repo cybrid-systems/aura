@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -28,6 +29,28 @@ enum class Effect : std::uint16_t {
     Network = 1 << 4,
     Ffi = 1 << 5,
     Render = 1 << 6,
+    // Issue #2023: Agent / multi-tenant macro self-evolution policy gate.
+    // Distinct from Mutate — expand can run without mutate, but still needs
+    // MacroSelfEvo when sandbox is Strict / Restricted+active.
+    MacroSelfEvo = 1 << 7,
+};
+
+// Issue #2023: policy limits for macro expansion (capability layer).
+// Internal hard depth (MAX_HYGIENE_DEPTH=1024) remains last-resort safety;
+// these bounds are the supervisor-tunable policy. Zero max_depth or
+// max_expansion_passes means "deny" when the capability check is active.
+struct MacroSelfEvoPolicy {
+    std::uint32_t max_expansion_passes = 32;
+    std::uint32_t max_depth = 256; // tighter than internal hard limit 1024
+    bool allow_rest_hygiene = true;
+    bool allow_concurrent_fiber = true;
+};
+
+// Result of check_macro_self_evo (expand entry gate).
+struct MacroSelfEvoCheck {
+    bool allowed = true;
+    MacroSelfEvoPolicy effective{};
+    const char* deny_reason = nullptr; // stable string literal when !allowed
 };
 
 [[nodiscard]] constexpr Effect operator|(Effect a, Effect b) noexcept {
@@ -91,6 +114,12 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_revoke_total{0};
     std::atomic<std::uint64_t> capability_check_total{0};
     std::atomic<std::uint64_t> capability_audit_total{0};
+    // Issue #2023: MacroSelfEvo expand gate
+    std::atomic<std::uint64_t> macro_self_evo_check_total{0};
+    std::atomic<std::uint64_t> macro_self_evo_allowed_total{0};
+    std::atomic<std::uint64_t> macro_self_evo_denied_total{0};
+    std::atomic<std::uint64_t> macro_self_evo_depth_clamp_total{0};
+    std::atomic<std::uint64_t> macro_self_evo_pass_clamp_total{0};
 };
 
 inline CapabilityEffectMetrics& g_capability_effect_metrics() noexcept {
@@ -103,6 +132,9 @@ struct CapabilityRegistry {
     std::mutex mtx;
     // tenant_id → grants (multiple named grants OR'd for checks)
     std::unordered_map<TenantId, std::vector<CapabilityGrant>> by_tenant;
+    // Issue #2023: per-tenant MacroSelfEvo policy limits (paired with
+    // Effect::MacroSelfEvo grant bit). Absent entry → no grant.
+    std::unordered_map<TenantId, MacroSelfEvoPolicy> macro_self_evo_by_tenant;
     EffectSandboxMode sandbox_mode = EffectSandboxMode::Off;
     TenantId default_tenant = 0;
     static constexpr std::size_t kAuditRing = 128;
@@ -201,9 +233,61 @@ struct CapabilityRegistry {
                                                                        std::memory_order_relaxed);
     }
 
+    // Issue #2023: grant MacroSelfEvo effect + store policy limits.
+    // Single lock scope (grant/revoke also lock — do not nest).
+    void grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {}) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto& vec = by_tenant[tenant];
+        bool found = false;
+        for (auto& g : vec) {
+            if (g.name == "macro-self-evo") {
+                g.effects = g.effects | Effect::MacroSelfEvo;
+                g.revoked = false;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            CapabilityGrant g;
+            g.name = "macro-self-evo";
+            g.effects = Effect::MacroSelfEvo;
+            g.tenant_id = tenant;
+            vec.push_back(std::move(g));
+        }
+        macro_self_evo_by_tenant[tenant] = policy;
+        g_capability_effect_metrics().capability_grant_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+
+    void revoke_macro_self_evo(TenantId tenant) {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = by_tenant.find(tenant);
+        if (it != by_tenant.end()) {
+            for (auto& g : it->second) {
+                if (g.name == "macro-self-evo") {
+                    g.revoked = true;
+                    g.effects = Effect::None;
+                    g_capability_effect_metrics().capability_revoke_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+        }
+        macro_self_evo_by_tenant.erase(tenant);
+    }
+
+    [[nodiscard]] std::optional<MacroSelfEvoPolicy> macro_self_evo_policy(TenantId tenant) const {
+        // Caller should hold mtx for a strict snapshot; unlocked read is
+        // best-effort for observability (map may race with grant/revoke).
+        auto it = macro_self_evo_by_tenant.find(tenant);
+        if (it == macro_self_evo_by_tenant.end())
+            return std::nullopt;
+        return it->second;
+    }
+
     void clear_for_test() {
         std::lock_guard<std::mutex> lock(mtx);
         by_tenant.clear();
+        macro_self_evo_by_tenant.clear();
         sandbox_mode = EffectSandboxMode::Off;
         audit_seq.store(0, std::memory_order_relaxed);
     }
@@ -273,6 +357,11 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_revoke_total.store(0, std::memory_order_relaxed);
     m.capability_check_total.store(0, std::memory_order_relaxed);
     m.capability_audit_total.store(0, std::memory_order_relaxed);
+    m.macro_self_evo_check_total.store(0, std::memory_order_relaxed);
+    m.macro_self_evo_allowed_total.store(0, std::memory_order_relaxed);
+    m.macro_self_evo_denied_total.store(0, std::memory_order_relaxed);
+    m.macro_self_evo_depth_clamp_total.store(0, std::memory_order_relaxed);
+    m.macro_self_evo_pass_clamp_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -286,6 +375,12 @@ struct CapabilityEffectStatsSnapshot {
     int phase = kCapabilityModelPhase;
     int issue = kCapabilityModelIssue;
     int sandbox_mode = 0;
+    // Issue #2023
+    std::uint64_t macro_self_evo_checks = 0;
+    std::uint64_t macro_self_evo_allowed = 0;
+    std::uint64_t macro_self_evo_denied = 0;
+    std::uint64_t macro_self_evo_depth_clamps = 0;
+    std::uint64_t macro_self_evo_pass_clamps = 0;
 };
 
 [[nodiscard]] inline CapabilityEffectStatsSnapshot snapshot_capability_effect_stats() noexcept {
@@ -301,7 +396,91 @@ struct CapabilityEffectStatsSnapshot {
         kCapabilityModelPhase,
         kCapabilityModelIssue,
         static_cast<int>(g_capability_registry().sandbox_mode),
+        m.macro_self_evo_check_total.load(std::memory_order_relaxed),
+        m.macro_self_evo_allowed_total.load(std::memory_order_relaxed),
+        m.macro_self_evo_denied_total.load(std::memory_order_relaxed),
+        m.macro_self_evo_depth_clamp_total.load(std::memory_order_relaxed),
+        m.macro_self_evo_pass_clamp_total.load(std::memory_order_relaxed),
     };
+}
+
+// Issue #2023: consult MacroSelfEvo capability at macro expand entry.
+//
+// Policy:
+//   Sandbox Off: always allow; effective.max_* = 0 means "no clamp"
+//                (caller max_passes + internal MAX_HYGIENE_DEPTH).
+//   Strict / Restricted+active without MacroSelfEvo grant: deny.
+//   Granted with max_depth==0 or max_expansion_passes==0: deny (zero limits).
+//   Granted with positive limits: allow + return policy for clamping.
+//
+// wildcard_ok: kCapWildcard holders inherit default permissive MacroSelfEvo
+// with default policy (32 passes / 256 depth) when no explicit grant.
+[[nodiscard]] inline MacroSelfEvoCheck check_macro_self_evo(TenantId tenant,
+                                                            bool sandbox_active = false,
+                                                            bool wildcard_ok = false) noexcept {
+    auto& reg = g_capability_registry();
+    auto& met = g_capability_effect_metrics();
+    met.macro_self_evo_check_total.fetch_add(1, std::memory_order_relaxed);
+
+    MacroSelfEvoCheck out;
+    const auto mode = reg.sandbox_mode;
+    const bool need_grant = (mode == EffectSandboxMode::Strict) ||
+                            (mode == EffectSandboxMode::Restricted && sandbox_active);
+
+    if (!need_grant) {
+        // Off / Restricted-inactive: preserve historical unconstrained behaviour.
+        out.allowed = true;
+        out.effective.max_expansion_passes = 0; // 0 = no pass clamp
+        out.effective.max_depth = 0;            // 0 = use MAX_HYGIENE_DEPTH
+        out.effective.allow_rest_hygiene = true;
+        out.effective.allow_concurrent_fiber = true;
+        met.macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
+        return out;
+    }
+
+    std::lock_guard<std::mutex> lock(reg.mtx);
+    const Effect held = reg.effects_for(tenant);
+    const bool has_bit = has_effect(held, Effect::MacroSelfEvo);
+    auto pol_it = reg.macro_self_evo_by_tenant.find(tenant);
+    const bool has_policy = pol_it != reg.macro_self_evo_by_tenant.end();
+
+    if (!has_bit && !wildcard_ok) {
+        out.allowed = false;
+        out.deny_reason = "MacroSelfEvo capability not granted";
+        met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        return out;
+    }
+
+    MacroSelfEvoPolicy pol{};
+    if (has_policy)
+        pol = pol_it->second;
+    else if (wildcard_ok) {
+        // Wildcard → default policy (still bounded vs unconstrained Off mode).
+        pol = MacroSelfEvoPolicy{};
+    } else {
+        out.allowed = false;
+        out.deny_reason = "MacroSelfEvo policy missing";
+        met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        return out;
+    }
+
+    // Zero limits = explicit deny (AC: not granted or limits are zero).
+    if (pol.max_depth == 0 || pol.max_expansion_passes == 0) {
+        out.allowed = false;
+        out.deny_reason = "MacroSelfEvo limits are zero";
+        met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        reg.record_audit(Effect::MacroSelfEvo, held, tenant, {}, true, "macro-self-evo");
+        return out;
+    }
+
+    out.allowed = true;
+    out.effective = pol;
+    met.macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
+    reg.record_audit(Effect::MacroSelfEvo, held | Effect::MacroSelfEvo, tenant, {}, false,
+                     "macro-self-evo");
+    return out;
 }
 
 // Map security cap name → Effect bit.
@@ -320,9 +499,11 @@ struct CapabilityEffectStatsSnapshot {
         return Effect::Network;
     if (name == "render")
         return Effect::Render;
+    if (name == "macro-self-evo" || name == "macro_self_evo" || name == "MacroSelfEvo")
+        return Effect::MacroSelfEvo;
     if (name == "*")
         return Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate | Effect::Network |
-               Effect::Ffi | Effect::Render;
+               Effect::Ffi | Effect::Render | Effect::MacroSelfEvo;
     return Effect::None;
 }
 

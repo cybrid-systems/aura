@@ -29,6 +29,8 @@ inline constexpr const char* kCapTenantAdmin = "tenant-admin";
 inline constexpr const char* kCapSelfEvo = "self-evo";
 inline constexpr const char* kCapSynthesize = "synthesize";
 inline constexpr const char* kCapStrategy = "strategy";
+// Issue #2023: macro expansion self-evolution policy gate (depth/passes).
+inline constexpr const char* kCapMacroSelfEvo = "macro-self-evo";
 
 // Issues #1293/#1294/#1295 Phase 1: compile / fiber / workspace / exception
 // control capability gates (retrofit scaffold for systematic coverage).
@@ -61,6 +63,7 @@ inline constexpr std::uint16_t kEffectMutate = 1 << 3;
 inline constexpr std::uint16_t kEffectNetwork = 1 << 4;
 inline constexpr std::uint16_t kEffectFfi = 1 << 5;
 inline constexpr std::uint16_t kEffectRender = 1 << 6;
+inline constexpr std::uint16_t kEffectMacroSelfEvo = 1 << 7; // Issue #2023
 
 } // namespace aura::compiler::security
 
