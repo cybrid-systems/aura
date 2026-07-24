@@ -43,31 +43,72 @@ import aura.core.ast;
 
 export namespace aura::compiler {
 
+// ── CacheEntryVersionStamp (#2033) ────────────────────────
+// Monotonic stamp binding mutation / bridge / defuse domains
+// so should_relower cannot silently serve IR after epoch bumps
+// when dirty/source_hash look clean (high-freq AI self-mod).
+struct CacheEntryVersionStamp {
+    std::uint64_t mutation_count = 0; // mutation_epoch at lower/store
+    std::uint64_t bridge_epoch = 0;
+    std::uint64_t defuse_version = 0;
+    [[nodiscard]] bool is_stamped() const noexcept {
+        return mutation_count != 0 || bridge_epoch != 0 || defuse_version != 0;
+    }
+};
+
+// Reason bitflags for should_relower observability (optional out-param).
+inline constexpr std::uint32_t kRelowerDirty = 1u << 0;
+inline constexpr std::uint32_t kRelowerSourceHash = 1u << 1;
+inline constexpr std::uint32_t kRelowerMutationDrift = 1u << 2;
+inline constexpr std::uint32_t kRelowerBridgeEpoch = 1u << 3;
+inline constexpr std::uint32_t kRelowerDefuseVersion = 1u << 4;
+
 // ── should_relower ────────────────────────────────────────
-// Issue #126: pure decision function extracted from
-// CompilerService::lookup_define_v2 (which combined this
-// decision with cache lookups).
+// Issue #126 / #2033: pure decision function extracted from
+// CompilerService::lookup_define_v2.
 //
-// Returns true iff the cached IR entry needs to be
-// re-lowered. The decision combines:
-//   - dirty flag (set by mutate:* / set-code on the entry)
-//   - source-hash mismatch (the define body was re-defined)
-//   - mutation-count drift (the global mutation counter
-//     advanced beyond the snapshot at lower time)
+// Returns true iff the cached IR entry needs to be re-lowered:
+//   - dirty flag
+//   - source-hash mismatch
+//   - mutation-count / mutation_epoch drift
+//   - bridge_epoch mismatch (when stamp was written)
+//   - defuse_version drift (when both non-zero)
 //
-// All inputs are values (no reference to the cache entry or
-// the global mutation counter), so the function is fully
-// pure: same inputs → same output, always.
-bool should_relower(std::size_t source_hash, std::size_t cached_source_hash, bool dirty,
-                    std::uint64_t cached_mutation_count,
-                    std::uint64_t current_mutation_count) noexcept {
+// Pure: same inputs → same output. reasons_out optional bitmask.
+[[nodiscard]] inline bool should_relower(std::size_t source_hash, std::size_t cached_source_hash,
+                                         bool dirty, const CacheEntryVersionStamp& stamp,
+                                         std::uint64_t current_mutation_count,
+                                         std::uint64_t current_bridge_epoch,
+                                         std::uint64_t current_defuse_version = 0,
+                                         std::uint32_t* reasons_out = nullptr) noexcept {
+    std::uint32_t reasons = 0;
     if (dirty)
-        return true;
+        reasons |= kRelowerDirty;
     if (source_hash != cached_source_hash)
-        return true;
-    if (cached_mutation_count < current_mutation_count)
-        return true;
-    return false;
+        reasons |= kRelowerSourceHash;
+    if (stamp.mutation_count < current_mutation_count)
+        reasons |= kRelowerMutationDrift;
+    // Issue #2033: bridge_epoch check closes silent-stale when dirty cleared
+    // inconsistently but bridge views already expired.
+    if (stamp.bridge_epoch != 0 && stamp.bridge_epoch != current_bridge_epoch)
+        reasons |= kRelowerBridgeEpoch;
+    if (stamp.defuse_version != 0 && current_defuse_version != 0 &&
+        stamp.defuse_version != current_defuse_version)
+        reasons |= kRelowerDefuseVersion;
+    if (reasons_out)
+        *reasons_out = reasons;
+    return reasons != 0;
+}
+
+// Backward-compatible overload (pre-#2033 call sites).
+// Does not apply bridge/defuse checks (zeros).
+[[nodiscard]] inline bool should_relower(std::size_t source_hash, std::size_t cached_source_hash,
+                                         bool dirty, std::uint64_t cached_mutation_count,
+                                         std::uint64_t current_mutation_count) noexcept {
+    CacheEntryVersionStamp stamp;
+    stamp.mutation_count = cached_mutation_count;
+    return should_relower(source_hash, cached_source_hash, dirty, stamp, current_mutation_count,
+                          /*current_bridge_epoch=*/0, /*current_defuse_version=*/0, nullptr);
 }
 
 // ── compute_impact_scope ──────────────────────────────────
