@@ -23,6 +23,7 @@
 
 module;
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <bit>
@@ -288,25 +289,58 @@ count_dirty_blocks(const std::vector<std::uint8_t>& block_dirty) noexcept {
     return n;
 }
 
-// Issue #426: estimate the re-lower cost of a dirty
+// Issue #426 / #2032: configurable partial-vs-full re-lower threshold.
+// Default 8 (historical): 0 → skip, 1..(T-1) → partial, ≥T → full.
+// Agents / tests may raise (bulk set-code) or lower (tiny AI edits).
+inline constexpr std::size_t kDefaultPartialRelowerThreshold = 8;
+
+inline std::atomic<std::size_t>& partial_relower_threshold_atomic() noexcept {
+    static std::atomic<std::size_t> thr{kDefaultPartialRelowerThreshold};
+    return thr;
+}
+
+[[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
+    return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
+}
+
+// Clamp: 0 → 1 (never all-skip); very large values still mean "prefer partial".
+inline void set_partial_relower_threshold(std::size_t t) noexcept {
+    if (t == 0)
+        t = 1;
+    partial_relower_threshold_atomic().store(t, std::memory_order_relaxed);
+}
+
+inline void reset_partial_relower_threshold_for_test() noexcept {
+    set_partial_relower_threshold(kDefaultPartialRelowerThreshold);
+}
+
+// Issue #426 / #2032: estimate the re-lower cost of a dirty
 // function. Returns the number of blocks that need
 // re-lowering. If the function is fully clean (no dirty
-// bits), returns 0. If the function is "fully dirty"
-// (all blocks are dirty), returns std::size_t(-1) as a
-// sentinel meaning "re-lower the whole function".
+// bits), returns 0. If dirty_count >= threshold, returns
+// std::size_t(-1) as a sentinel meaning "re-lower the whole
+// function".
 //
-// Heuristic:
+// Heuristic (threshold T, default 8):
 //   - 0 dirty blocks → 0 (skip)
-//   - 1..7 dirty blocks → exact count (incremental)
-//   - 8+ dirty blocks → std::size_t(-1) (full re-lower)
-//
-// P0: this is a decision function, not an actual
-// re-lower. The follow-up wires the call to the lowering
-// pipeline + JIT incremental update.
-[[nodiscard]] constexpr std::size_t estimate_relower_blocks(std::size_t dirty_count) noexcept {
+//   - 1..(T-1) dirty blocks → exact count (incremental)
+//   - T+ dirty blocks → std::size_t(-1) (full re-lower)
+[[nodiscard]] inline std::size_t estimate_relower_blocks(std::size_t dirty_count) noexcept {
     if (dirty_count == 0)
         return 0;
-    if (dirty_count >= 8)
+    if (dirty_count >= get_partial_relower_threshold())
+        return static_cast<std::size_t>(-1);
+    return dirty_count;
+}
+
+// Pure decision with explicit threshold (unit tests / offline A/B).
+[[nodiscard]] constexpr std::size_t estimate_relower_blocks(std::size_t dirty_count,
+                                                            std::size_t threshold) noexcept {
+    if (dirty_count == 0)
+        return 0;
+    if (threshold == 0)
+        threshold = 1;
+    if (dirty_count >= threshold)
         return static_cast<std::size_t>(-1);
     return dirty_count;
 }
@@ -348,30 +382,34 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     return s;
 }
 
-// Issue #718: partial-relower decision helper. Returns true
+// Issue #718 / #2032: partial-relower decision helper. Returns true
 // when the dirty block mask should trigger a partial re-lower
-// (1..7 dirty blocks, per the estimate_relower_blocks
-// heuristic) instead of a full re-lower (8+ dirty blocks) or
-// no-op (0 dirty blocks). Pure read on a per-function block
-// dirty mask; takes the count directly to avoid coupling to
-// a specific vector layout.
+// (1..(T-1) dirty blocks) instead of a full re-lower (≥T) or
+// no-op (0). Threshold T is process-wide (default 8), overridable
+// via set_partial_relower_threshold / HotUpdateRegistry.
 //
 // Used by:
-//   - service.ixx::invalidate_function: decide between partial
-//     re-lower + JIT hot-swap vs full re-lower
-//   - lowering_impl.cpp::lower_to_ir_with_cache: short-circuit
-//     re-emit on clean blocks
-//   - pass_manager.ixx::run_incremental_pipeline: skip
-//     optimization passes on blocks that did not change
+//   - service.ixx::invalidate_function / cache_define paths
+//   - lowering_impl.cpp::lower_to_ir_with_cache
+//   - pass_manager.ixx::run_incremental_pipeline
 //
-// The decision is consistent with estimate_relower_blocks:
-// same 0 / 1..7 / 8+ bucketing. Centralizing the threshold
-// here makes it easy to tune (e.g. raise to 16 if perf
-// profiles show 8..15 are still cheaper than full re-lower).
-[[nodiscard]] constexpr bool should_partial_relower(std::size_t dirty_count) noexcept {
+// Consistent with estimate_relower_blocks bucketing.
+[[nodiscard]] inline bool should_partial_relower(std::size_t dirty_count) noexcept {
     if (dirty_count == 0)
         return false;
-    if (dirty_count >= 8)
+    if (dirty_count >= get_partial_relower_threshold())
+        return false;
+    return true;
+}
+
+// Pure decision with explicit threshold (tests / offline A/B).
+[[nodiscard]] constexpr bool should_partial_relower(std::size_t dirty_count,
+                                                    std::size_t threshold) noexcept {
+    if (dirty_count == 0)
+        return false;
+    if (threshold == 0)
+        threshold = 1;
+    if (dirty_count >= threshold)
         return false;
     return true;
 }

@@ -144,6 +144,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> instr_level_impact_hits_total{0};
     std::atomic<std::uint64_t> instr_level_impact_misses_total{0};
     std::atomic<std::uint64_t> instr_level_dirty_marks_total{0};
+    // Issue #2032: dep_graph concurrent correctness + partial threshold.
+    //   - dep_graph_edge_reject_stale_total: record_dependency rejected
+    //     because mutation_epoch advanced while waiting for the lock
+    //   - dep_graph_generation_total: exclusive cascade erase/rebuild gens
+    //   - partial_relower_threshold_used: last threshold observed at decision
+    std::atomic<std::uint64_t> dep_graph_edge_reject_stale_total{0};
+    std::atomic<std::uint64_t> dep_graph_generation_total{0};
+    std::atomic<std::uint64_t> partial_relower_threshold_used{8};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.
