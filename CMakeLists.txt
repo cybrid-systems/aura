@@ -1013,7 +1013,7 @@ add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── Speculative JIT tests (Phase 2, #53) ─────────────────────
-add_executable(test_spec_jit tests/mutation/test_spec_jit.cpp
+add_executable(test_spec_jit tests/compiler/test_spec_jit.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/shape_profiler.cpp)
 target_include_directories(test_spec_jit PRIVATE src)
