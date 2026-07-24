@@ -83,6 +83,10 @@ extern "C" __attribute__((weak)) int aura_closure_exists(std::int64_t /*closure_
     return 0;
 }
 
+// Issue #2017: weak no-op when full aura_jit_runtime is not linked.
+extern "C" __attribute__((weak)) void
+aura_invalidate_closure_cache_for(std::int64_t /*closure_id*/) {}
+
 extern "C" __attribute__((weak)) std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return 0;
 }

@@ -719,6 +719,13 @@ static void invalidate_closure_cache_for(int64_t closure_id) {
     }
 }
 
+// Issue #2017: public C entry for proactive invalidate after env compact remap.
+extern "C" void aura_invalidate_closure_cache_for(std::int64_t closure_id) {
+    if (closure_id < 0)
+        return;
+    invalidate_closure_cache_for(closure_id);
+}
+
 extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return g_closure_cache_generation_mismatch_total.load(std::memory_order_relaxed);
 }

@@ -5799,6 +5799,12 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // algorithm + concurrency contract (caller must serialize
     // at the workspace level).
     //
+    // Issue #2017: post-compact dual-epoch bump also notifies
+    // HotUpdateRegistry epoch listeners exactly once and runs
+    // targeted aura_invalidate_closure_cache_for on remapped
+    // cids (first-class hot-update epoch participant). Guard
+    // keeps notify + invalidate atomic w.r.t. other mutations.
+    //
     // Issue #1842 / #1889 / #1897 / #1955: wrap in try_acquire Guard + try/catch.
     // Pre-#1842 the primitive called compact_env_frames() raw —
     // a throw mid-remap left env_frames_ / Closure::env_id
