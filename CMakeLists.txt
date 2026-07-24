@@ -1131,7 +1131,7 @@ target_link_libraries(aura PRIVATE linenoise)
 # wires it up via a new EscapeAnalysisWrap class and verifies
 # the basic analysis correctness on hand-crafted IRFunctions.
 # Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
-add_executable(issue_212_bench tests/bench/issue_212_bench.cpp)
+add_executable(issue_212_bench tests/compiler/bench_refactor_surfaces.cpp)
 set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: contract_handler.cpp link fix.
 target_sources(issue_212_bench PRIVATE src/core/contract_handler.cpp)
@@ -1141,7 +1141,7 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # on a synthetic gradual workload. Validates the AC ">=40%
 # coercion reduction in gradual workloads" without needing
 # a full benchmark suite. Returns 0 iff the AC is met.
-add_executable(issue_508_bench tests/bench/issue_508_bench.cpp)
+add_executable(issue_508_bench tests/compiler/bench_dead_coercion_elim.cpp)
 set_property(TARGET issue_508_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(issue_508_bench PRIVATE src)
 target_compile_options(issue_508_bench PRIVATE -Wall
@@ -1157,7 +1157,7 @@ target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-refl
 # after chained mutations), AC4 (cache hit rate >80%), and
 # AC5 (no perf regression on full recompile). AC3 (this
 # benchmark file) is the deliverable.
-add_executable(issue_307_bench tests/bench/issue_307_bench.cpp)
+add_executable(issue_307_bench tests/compiler/bench_ir_relower.cpp)
 set_property(TARGET issue_307_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(issue_307_bench PRIVATE src)
 target_compile_options(issue_307_bench PRIVATE -Wall
@@ -1168,7 +1168,7 @@ target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-refl
 # Consolidated FlatAST hot-path benches (#393/#398/#399):
 #   stable-ref (1k + 10k), children-stable, mark-dirty
 # Formerly four near-duplicate drivers under tests/bench/.
-add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
+add_executable(ast_hotpath_bench tests/core/bench_ast_flatast.cpp)
 set_property(TARGET ast_hotpath_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(ast_hotpath_bench PRIVATE src)
 target_compile_options(ast_hotpath_bench PRIVATE -Wall
@@ -1188,7 +1188,7 @@ add_test(NAME mark_dirty_bench COMMAND ./ast_hotpath_bench mark-dirty)
 # roundtrip, vector<string> serialize, columnar scan vs AoS)
 # and outputs JSON to tests/bench_results/cycle14_reflect_bench.json
 # for data-driven design decisions.
-add_executable(cycle14_reflect_bench tests/bench/cycle14_reflect_bench.cpp)
+add_executable(cycle14_reflect_bench tests/reflect/bench_reflect.cpp)
 set_property(TARGET cycle14_reflect_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(cycle14_reflect_bench PRIVATE src)
 target_compile_options(cycle14_reflect_bench PRIVATE -freflection -Wall
@@ -1206,7 +1206,7 @@ add_test(NAME cycle14_reflect_bench COMMAND ./cycle14_reflect_bench)
 # design decisions. Standalone TU (no module imports — avoids the
 # GCC 16.1 std module + P2996 reflection conflict). The PCV header
 # is header-only.
-add_executable(cycle221_pcv_bench tests/bench/cycle221_pcv_bench.cpp)
+add_executable(cycle221_pcv_bench tests/core/bench_pcv.cpp)
 target_include_directories(cycle221_pcv_bench PRIVATE src)
 aura_test_compile_options(cycle221_pcv_bench)
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
