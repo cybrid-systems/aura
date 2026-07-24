@@ -510,7 +510,7 @@ target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 
 # ── Concurrent model tests ────────────────────────────
 # Tests fiber lifecycle, worker scheduling, and eventfd wakeup
-add_executable(test_concurrent tests/fiber/test_concurrent.cpp)
+add_executable(test_concurrent tests/serve/test_concurrent.cpp)
 set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
@@ -561,7 +561,7 @@ target_include_directories(test_concurrent PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
 # Issue #477: test_concurrent.cpp is the main concurrency specification;
 # opt the test source itself into strict warnings.
-aura_strict_test_warnings(tests/fiber/test_concurrent.cpp)
+aura_strict_test_warnings(tests/serve/test_concurrent.cpp)
 aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
@@ -1062,7 +1062,7 @@ add_test(NAME jit_metrics COMMAND test_jit_metrics
 # Verifies the per-function compile cache and metrics counters
 # under concurrent access. Doesn't need a full LLVM stack —
 # exercises the counter paths directly.
-add_executable(test_jit_concurrent_compile tests/fiber/test_jit_concurrent_compile.cpp
+add_executable(test_jit_concurrent_compile tests/compiler/test_jit_concurrent_compile.cpp
     tests/compiler/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
