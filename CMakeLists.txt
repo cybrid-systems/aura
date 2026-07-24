@@ -898,12 +898,12 @@ endif()
 # actually enforced at runtime. Two phases:
 #   1. test_contracts holds — pre-condition holds, no violation (exit 0)
 #   2. test_contracts fires — pre-condition violated, handler fires (exit 42)
-add_executable(test_contracts tests/core/test_contracts.cpp)
-set_source_files_properties(tests/core/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+add_executable(test_contracts tests/compiler/test_contracts.cpp)
+set_source_files_properties(tests/compiler/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
 # Issue #477: contract test is small + production-quality; opt into strict
 # warnings for the test source itself.
-aura_strict_test_warnings(tests/core/test_contracts.cpp)
+aura_strict_test_warnings(tests/compiler/test_contracts.cpp)
 # Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
 # provides `handle_contract_violation` for C++26 contract checks.
 target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)
@@ -1176,7 +1176,7 @@ target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-refl
 # Consolidated FlatAST hot-path benches (#393/#398/#399):
 #   stable-ref (1k + 10k), children-stable, mark-dirty
 # Formerly four near-duplicate drivers under tests/bench/.
-add_executable(ast_hotpath_bench tests/core/bench_ast_flatast.cpp)
+add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
 set_property(TARGET ast_hotpath_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(ast_hotpath_bench PRIVATE src)
 target_compile_options(ast_hotpath_bench PRIVATE -Wall
@@ -1214,7 +1214,7 @@ add_test(NAME cycle14_reflect_bench COMMAND ./cycle14_reflect_bench)
 # design decisions. Standalone TU (no module imports — avoids the
 # GCC 16.1 std module + P2996 reflection conflict). The PCV header
 # is header-only.
-add_executable(cycle221_pcv_bench tests/core/bench_pcv.cpp)
+add_executable(cycle221_pcv_bench tests/bench/cycle221_pcv_bench.cpp)
 target_include_directories(cycle221_pcv_bench PRIVATE src)
 aura_test_compile_options(cycle221_pcv_bench)
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)

@@ -1,4 +1,4 @@
-// @category: integration
+// tests/compiler/test_workspace_dispatch.cpp — Issue #1437: workspace :op dispatch contract test.
 // @reason: Issue #1437 (workspace :op) unified dispatcher
 
 #include "test_harness.hpp"

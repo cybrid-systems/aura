@@ -1,4 +1,4 @@
-// @category: unit
+// tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 // @reason: Issue #1770 — WorkspaceTree::delete_child must null node
 // Issue #1770 (#1978 renamed): issue# moved from filename to header.
 // fields before delete so a throwing dtor cannot leave dangling pointers.
