@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**528** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**530** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 100 primitives (19%)
-- **core**: 374 primitives (71%)
+- **core**: 376 primitives (71%)
 - **internal-observable**: 46 primitives (9%)
 - **convenience**: 8 primitives (2%)
 
@@ -537,9 +537,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (4)
+## Orch: (6)
 
 - `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-recv` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-send` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:spawn-agent` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -786,7 +788,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (374)
+### Core builtins (must remain primitive) (376)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -979,6 +981,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `number->string` — `src/compiler/evaluator_primitives_pair.cpp`
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
 - `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-recv` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-send` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:reset-metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:spawn-agent` — `src/compiler/evaluator_primitives_agent.cpp`
