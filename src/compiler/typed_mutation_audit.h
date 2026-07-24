@@ -19,9 +19,9 @@
 namespace aura::compiler::typed_audit {
 
 inline constexpr int kTypedMutationAuditPassPhase =
-    5; // #2027 composite/nested txn + partial recover
+    6; // #2029 Full per-category partial recover (lineage #2027)
 inline constexpr int kTypedMutationAuditIssue =
-    1894; // lineage 1614 / 1589; AOT wire #1882; #2027 satellite
+    1894; // lineage 1614 / 1589; AOT #1882; #2027/#2029 satellite
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
@@ -133,6 +133,15 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_batch_audit_total{0};
     std::atomic<std::uint64_t> composite_cross_batch_linear_escape_total{0};
     std::atomic<std::uint64_t> composite_partial_recover_attempt_total{0};
+    // Issue #2029: Full-strategy per-category partial recovery (all boundaries,
+    // not only composite). Prefer type/linear/provenance recover before
+    // structural rollback; soundness: re-audit must all_ok before continue.
+    std::atomic<std::uint64_t> partial_recovery_attempt_total{0};
+    std::atomic<std::uint64_t> partial_recovery_success_total{0};
+    std::atomic<std::uint64_t> partial_recovery_fail_total{0};
+    std::atomic<std::uint64_t> partial_recovery_type_total{0};
+    std::atomic<std::uint64_t> partial_recovery_linear_total{0};
+    std::atomic<std::uint64_t> partial_recovery_provenance_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -633,6 +642,17 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_partial_recover_attempt_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2029 Full per-category partial recovery
+    g_typed_mutation_audit_counters.partial_recovery_attempt_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_success_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_fail_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_type_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_linear_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_provenance_total.store(
         0, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
