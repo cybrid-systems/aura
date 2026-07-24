@@ -10077,11 +10077,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(closure_dep));
             // Issue #2013: live closures retargeted after reemit.
             insert_kv("live_closure_remap_total", static_cast<std::int64_t>(live_remap));
+            // Issue #2016 metrics (may be 0 if CompilerMetrics not wired).
+            {
+                auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                const std::uint64_t llvm_n =
+                    m ? m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t evo =
+                    m ? m->aot_evolution_region_skips_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t clr =
+                    m ? m->aot_region_mask_adapt_clears_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t rst =
+                    m ? m->aot_region_mask_adapt_restores_total.load(std::memory_order_relaxed) : 0;
+                insert_kv("aot_incremental_llvm_emit_total", static_cast<std::int64_t>(llvm_n));
+                insert_kv("aot_evolution_region_skips_total", static_cast<std::int64_t>(evo));
+                insert_kv("aot_region_mask_adapt_clears_total", static_cast<std::int64_t>(clr));
+                insert_kv("aot_region_mask_adapt_restores_total", static_cast<std::int64_t>(rst));
+            }
             insert_kv("stable-func-id-map-wired", 1);
             insert_kv("emit-callback-path-wired", 1);
             insert_kv("return-success-when-emit-wired", 1);
             insert_kv("live-closure-remap-wired", 1);
-            insert_kv("pipeline-phase", 4); // + live closure remap (#2013)
+            insert_kv("adaptive-region-mask-wired", 1);
+            insert_kv("pipeline-phase", 5); // + adaptive mask / default LLVM (#2016)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

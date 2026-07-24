@@ -51,6 +51,9 @@ public:
     void on_reload_rollback() noexcept;
     // Issue #2013: live closures remapped after reemit (count of slots).
     void on_live_closure_remap(std::uint64_t count) noexcept;
+    // Issue #2016: adaptive region-mask bit clear/restore.
+    void on_region_mask_adapt_clear(std::uint64_t region) noexcept;
+    void on_region_mask_adapt_restore(std::uint64_t region) noexcept;
 
     // Issue #2014: feed one deopt observation (from aura_deopt_inc).
     // Hot path: relaxed atomics only; clock read amortized to window edges.
@@ -115,6 +118,10 @@ public:
         std::int64_t reemit_throttle_active = 0;
         std::int64_t reemit_throttle_skips_total = 0;
         std::int64_t storm_listeners = 0;
+        // Issue #2016: adaptive region mask.
+        std::int64_t region_mask_adapt_clears_total = 0;
+        std::int64_t region_mask_adapt_restores_total = 0;
+        std::int64_t emit_region_mask_preferred = 0;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -170,6 +177,8 @@ private:
     std::atomic<std::uint64_t> deopt_storm_window_ms_{100};
     std::atomic<bool> reemit_throttled_{false};
     std::atomic<std::uint64_t> reemit_throttle_skips_{0};
+    std::atomic<std::uint64_t> region_mask_adapt_clears_{0};   // #2016
+    std::atomic<std::uint64_t> region_mask_adapt_restores_{0}; // #2016
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -213,6 +222,9 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_throttle_active;
     std::int64_t reemit_throttle_skips_total;
     std::int64_t storm_listeners;
+    std::int64_t region_mask_adapt_clears_total;   // #2016
+    std::int64_t region_mask_adapt_restores_total; // #2016
+    std::int64_t emit_region_mask_preferred;       // #2016
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.

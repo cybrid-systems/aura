@@ -7360,6 +7360,16 @@ struct CompilerMetrics {
     // bridge_epoch after successful reemit (avoids deopt storms).
     std::atomic<std::uint64_t> live_closure_remap_total{0}; // #2013
 
+    // ── Issue #2016: LLVM incremental reemit + adaptive region mask ──
+    // aot_incremental_llvm_emit_total: successful default/host LLVM reemits
+    // aot_evolution_region_skips_total: permanent Evolution (region=2) excludes
+    // aot_region_mask_adapt_clears_total: bits cleared under dirty/deopt pressure
+    // aot_region_mask_adapt_restores_total: bits restored when pressure eases
+    std::atomic<std::uint64_t> aot_incremental_llvm_emit_total{0};      // #2016
+    std::atomic<std::uint64_t> aot_evolution_region_skips_total{0};     // #2016
+    std::atomic<std::uint64_t> aot_region_mask_adapt_clears_total{0};   // #2016
+    std::atomic<std::uint64_t> aot_region_mask_adapt_restores_total{0}; // #2016
+
     // ── Issue #1630: mandate full StableNodeRef provenance ──
     // fiber_id mismatch fail-fast (unpinned); boundary_pinned auto-restamp
     // across steal; cross-COW provenance enforcement counts.

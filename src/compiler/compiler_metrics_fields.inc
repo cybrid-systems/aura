@@ -1536,6 +1536,10 @@ AURA_COMPILER_METRICS_FIELD(aot_closure_dependency_reemit_total)
 AURA_COMPILER_METRICS_FIELD(aot_region_filtered_skips)
 AURA_COMPILER_METRICS_FIELD(aot_closure_bridge_refresh_total)
 AURA_COMPILER_METRICS_FIELD(live_closure_remap_total) // #2013
+AURA_COMPILER_METRICS_FIELD(aot_incremental_llvm_emit_total)      // #2016
+AURA_COMPILER_METRICS_FIELD(aot_evolution_region_skips_total)     // #2016
+AURA_COMPILER_METRICS_FIELD(aot_region_mask_adapt_clears_total)   // #2016
+AURA_COMPILER_METRICS_FIELD(aot_region_mask_adapt_restores_total) // #2016
 AURA_COMPILER_METRICS_FIELD(stable_ref_fiber_mismatch_prevented_total)
 AURA_COMPILER_METRICS_FIELD(boundary_pinned_auto_restamp_total)
 AURA_COMPILER_METRICS_FIELD(cross_cow_provenance_enforced_total)

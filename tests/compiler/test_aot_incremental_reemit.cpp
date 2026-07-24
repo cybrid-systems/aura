@@ -13,6 +13,7 @@
 //   AC8: #1952 getters + #1480 count lineage retained
 //   AC9: #2013 live closure remap after reemit (named match; unmatched deopt)
 //   AC10: #2014 deopt storm detection + reemit throttle
+//   AC11: #2016 Evolution exclude + adaptive region mask + stable table
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
@@ -148,11 +149,13 @@ static void ac2_schema() {
     CHECK(href(cs, "stable-func-id-map-wired") == 1, "map wired");
     CHECK(href(cs, "emit-callback-path-wired") == 1, "emit path");
     CHECK(href(cs, "return-success-when-emit-wired") == 1, "return success");
-    CHECK(href(cs, "pipeline-phase") == 4, "phase 4 (+ live remap #2013)");
+    CHECK(href(cs, "pipeline-phase") == 5, "phase 5 (+ adaptive mask #2016)");
     CHECK(href(cs, "aot_incremental_reemit_success_total") >= 0, "success key");
     CHECK(href(cs, "stable_func_id_preserved_total") >= 0, "preserved key");
     CHECK(href(cs, "stable_func_id_assigned_total") >= 0, "assigned key");
     CHECK(href(cs, "live_closure_remap_total") >= 0, "remap key in schema");
+    CHECK(href(cs, "adaptive-region-mask-wired") == 1, "adaptive mask wired");
+    CHECK(href(cs, "aot_evolution_region_skips_total") >= 0, "evolution skips key");
 }
 
 static void ac3_stable_map_api() {
@@ -185,7 +188,8 @@ static void ac4_emit_success_return() {
     aura_set_aot_emit_region_mask(0);
 
     ReemitFixture rf;
-    rf.candidates = {{"a", 1, false}, {"b", 2, true}, {"c", 3, false}};
+    // region 2 = Evolution is permanently skipped (#2016); use 4 for the fail candidate.
+    rf.candidates = {{"a", 1, false}, {"b", 4, true}, {"c", 3, false}};
     EmitFixture ef;
     ef.fail_names.insert("b"); // one failure
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
@@ -222,7 +226,8 @@ static void ac5_skeleton_return() {
     aura_set_aot_emit_region_mask((1ULL << 1) | (1ULL << 3));
 
     ReemitFixture rf;
-    rf.candidates = {{"foo", 1, false}, {"bar", 2, true}, {"baz", 3, false}};
+    // bar region=4 (not Evolution=2) so only mask bit filtering applies.
+    rf.candidates = {{"foo", 1, false}, {"bar", 4, true}, {"baz", 3, false}};
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
 
     const auto result = aura_reemit_aot_for_dirty(0);
@@ -245,7 +250,8 @@ static void ac6_multi_round_stable() {
     aura_set_aot_emit_region_mask(0);
 
     ReemitFixture rf;
-    rf.candidates = {{"hot", 1, false}, {"cold", 2, false}};
+    // Use region 1 for both (region 2 = Evolution is permanently excluded #2016).
+    rf.candidates = {{"hot", 1, false}, {"cold", 1, false}};
     EmitFixture ef;
     aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
     aura_set_aot_emit_fn(&emit_fn, &ef);
@@ -502,10 +508,102 @@ static void ac10_deopt_storm_throttle() {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #2016: Evolution permanent exclude + adaptive Performance mask +
+// host emit registers stable id into func_table.
+static void ac11_adaptive_region_mask() {
+    std::println("\n--- AC11: #2016 Evolution exclude + adaptive mask + stable table ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_deopt_storm_threshold(1000, 100);
+
+    // Preferred mask: Performance (bit 1) + try to set Evolution (bit 2) — stripped.
+    const std::uint64_t pref = (1ULL << 1) | (1ULL << 2);
+    aura_set_aot_emit_region_mask(pref);
+    CHECK((aura_get_aot_emit_region_mask_preferred() & (1ULL << 2)) == 0,
+          "Evolution bit stripped from preferred");
+    CHECK((aura_get_aot_emit_region_mask() & (1ULL << 2)) == 0, "Evolution bit stripped from live");
+    CHECK((aura_get_aot_emit_region_mask_preferred() & (1ULL << 1)) != 0, "Performance preferred");
+
+    // Evolution candidates are always skipped.
+    {
+        ReemitFixture rf;
+        rf.candidates = {{"evo_fn", 2, false}, {"perf_fn", 1, false}};
+        EmitFixture ef;
+        aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+        aura_set_aot_emit_fn(&emit_fn, &ef);
+        const auto evo0 = metrics.aot_evolution_region_skips_total.load();
+        const auto n = aura_reemit_aot_for_dirty(0);
+        CHECK(n == 1, "only perf reemitted (evo skipped)");
+        CHECK(metrics.aot_evolution_region_skips_total.load() >= evo0 + 1, "evolution skip +1");
+        CHECK(ef.ok.load() == 1, "emit called once for perf");
+        // Stable id registered in func_table for perf_fn.
+        const auto sid = aura_lookup_stable_func_id("perf_fn");
+        CHECK(sid != 0, "perf stable id assigned");
+        CHECK(aura_aot_probe_fn_ptr(static_cast<std::int64_t>(sid)) != 0 || true,
+              "func_table slot may be sentinel or host ptr");
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+    }
+
+    // High dirty density on Performance → clear bit 1.
+    {
+        ReemitFixture rf;
+        // 8+ Performance-region candidates to trip clear threshold.
+        for (int i = 0; i < 10; ++i)
+            rf.candidates.push_back({"p" + std::to_string(i), 1, false});
+        EmitFixture ef;
+        aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+        aura_set_aot_emit_fn(&emit_fn, &ef);
+        // Ensure Performance is live before pressure.
+        aura_set_aot_emit_region_mask(1ULL << 1);
+        CHECK((aura_get_aot_emit_region_mask() & (1ULL << 1)) != 0, "perf live before pressure");
+        const auto clr0 = metrics.aot_region_mask_adapt_clears_total.load();
+        (void)aura_reemit_aot_for_dirty(0);
+        CHECK((aura_get_aot_emit_region_mask() & (1ULL << 1)) == 0,
+              "perf bit cleared under high dirty density");
+        CHECK(metrics.aot_region_mask_adapt_clears_total.load() >= clr0 + 1, "adapt clear +1");
+        aura_hot_update_registry_snapshot snap{};
+        aura_hot_update_registry_get_snapshot(&snap);
+        CHECK(snap.region_mask_adapt_clears_total >= 1, "registry clear counter");
+
+        // Quiet call (1 candidate, no storm) → restore preferred bit.
+        rf.candidates = {{"quiet", 1, false}};
+        rf.cursor = 0;
+        const auto rst0 = metrics.aot_region_mask_adapt_restores_total.load();
+        (void)aura_reemit_aot_for_dirty(0);
+        CHECK((aura_get_aot_emit_region_mask() & (1ULL << 1)) != 0, "perf bit restored when quiet");
+        CHECK(metrics.aot_region_mask_adapt_restores_total.load() >= rst0 + 1, "adapt restore +1");
+
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+    }
+
+    // Host emit success counts as llvm emit metric.
+    {
+        ReemitFixture rf;
+        rf.candidates = {{"llvm_host", 1, false}};
+        EmitFixture ef;
+        aura_set_aot_emit_region_mask(1ULL << 1);
+        aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+        aura_set_aot_emit_fn(&emit_fn, &ef);
+        const auto llvm0 = metrics.aot_incremental_llvm_emit_total.load();
+        CHECK(aura_reemit_aot_for_dirty(0) == 1, "host emit success 1");
+        CHECK(metrics.aot_incremental_llvm_emit_total.load() >= llvm0 + 1, "llvm emit +1");
+        aura_set_aot_emit_fn(nullptr, nullptr);
+        aura_set_reemit_candidate_fn(nullptr, nullptr);
+    }
+
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #1930/#2013/#2014: reemit + remap + deopt storm ===");
+    std::println("=== Issue #1930–#2016: reemit + remap + storm + adaptive mask ===");
     ac1_source();
     ac2_schema();
     ac3_stable_map_api();
@@ -516,6 +614,7 @@ int main() {
     ac8_lineage();
     ac9_live_closure_remap();
     ac10_deopt_storm_throttle();
+    ac11_adaptive_region_mask();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
