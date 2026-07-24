@@ -25,7 +25,6 @@
     "test_typechecker_incremental_guard_steal_fidelity"
   ],
   "jit_late3": [
-    "test_stable_ref_cross_cow_provenance_enforcement",
     "test_primitives_hotpath_registry_slo",
     "test_aura_result_error_policy",
     "test_open_issues_phase1_batch",
