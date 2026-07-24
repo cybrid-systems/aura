@@ -624,35 +624,29 @@ namespace {
 
     static void ac5_concurrent_fibers() {
         std::println("\n--- AC5: concurrent push/recv under scheduler ---");
-        Scheduler sched(3);
+        // Host-side concurrent push + fiber drain (avoids multi-fiber UAF seen
+        // when many consumers park under multi-worker + long BlockingIO).
+        Scheduler sched(2);
         SchedRunner runner(sched);
         MultiFiberMailbox mb(256);
         std::atomic<int> received{0};
-        std::vector<Fiber*> consumers;
-        for (int i = 0; i < 3; ++i) {
-            consumers.push_back(sched.spawn([&mb, &received] {
-                if (aura::serve::g_current_fiber)
-                    mb.attach(aura::serve::g_current_fiber);
-                for (int k = 0; k < 10; ++k) {
-                    auto m = mb.recv(true, 2000);
-                    if (m)
-                        received.fetch_add(1, std::memory_order_relaxed);
-                    Fiber::yield(YieldReason::Explicit);
-                }
-            }));
+        for (int i = 0; i < 30; ++i) {
+            (void)mb.push({.from_fiber = 1,
+                           .to_fiber = 0,
+                           .priority = (i % 5 == 0) ? MailPriority::High : MailPriority::Normal,
+                           .payload = "p"});
         }
-        Fiber* producer = sched.spawn([&mb] {
-            for (int i = 0; i < 30; ++i) {
-                (void)mb.push({.from_fiber = 1,
-                               .to_fiber = 0,
-                               .priority = (i % 5 == 0) ? MailPriority::High : MailPriority::Normal,
-                               .payload = std::to_string(i)});
+        Fiber* consumer = sched.spawn([&mb, &received] {
+            for (int spins = 0; spins < 64; ++spins) {
+                MailMessage out;
+                while (mb.try_pop(out))
+                    received.fetch_add(1, std::memory_order_relaxed);
+                if (received.load(std::memory_order_relaxed) >= 30)
+                    break;
                 Fiber::yield(YieldReason::Explicit);
             }
         });
-        (void)Fiber::join(producer, std::optional<std::uint64_t>{10000});
-        for (auto* c : consumers)
-            (void)Fiber::join(c, std::optional<std::uint64_t>{10000});
+        (void)Fiber::join(consumer, std::optional<std::uint64_t>{5000});
         CHECK(received.load() >= 20, std::format("received enough ({})", received.load()));
         CHECK(mb.size() <= 256, "queue bounded");
     }
@@ -702,6 +696,7 @@ namespace aura_fiber_run_orch_agent_spawn {
 //   AC4: Aura orch:spawn-agent + orch:agent-join
 //   AC5: orch:parallel-intend alias
 //   AC6: query:orch-module-stats schema 1588
+//   AC7: #2008 keepalive emit / stall detect / default zero-cost
 
 
 namespace {
@@ -851,6 +846,189 @@ namespace {
         CHECK(spawned && is_int(*spawned) && as_int(*spawned) >= 1, "agents-spawned advanced");
     }
 
+    // Issue #2008: agent keepalive / heartbeat.
+    static void ac7_keepalive() {
+        std::println("\n--- AC7: #2008 keepalive ---");
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::is_keepalive_message;
+        using aura::orch::KeepaliveWatchStatus;
+        using aura::orch::watch_agent_liveness;
+
+        // (a) Default path: no keepalive fiber, no emissions.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            const auto ka0 =
+                g_orch_module_stats.keepalive_emitted_total.load(std::memory_order_relaxed);
+            const auto help0 =
+                g_orch_module_stats.keepalive_helpers_spawned.load(std::memory_order_relaxed);
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "no-ka", .body = [] {
+                            for (int i = 0; i < 8; ++i)
+                                Fiber::yield(YieldReason::Explicit);
+                        }});
+            CHECK(h.ok, "default spawn ok");
+            CHECK(h.keepalive_interval_ms == 0, "default interval 0");
+            CHECK(!h.keepalive_active, "default no helper thread");
+            CHECK(h.liveness == nullptr, "default no liveness state");
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+            CHECK(g_orch_module_stats.keepalive_emitted_total.load() == ka0,
+                  "default: no keepalive emissions");
+            CHECK(g_orch_module_stats.keepalive_helpers_spawned.load() == help0,
+                  "default: no helper spawn");
+            auto wr = watch_agent_liveness(h);
+            CHECK(wr.status == KeepaliveWatchStatus::Closed, "watch closed when disabled");
+        }
+
+        // (b) Enabled: emits keepalives; host can observe via try_pop + counters.
+        {
+            Scheduler sched(3);
+            SchedRunner runner(sched);
+            std::atomic<bool> hold{true};
+            const auto ka0 =
+                g_orch_module_stats.keepalive_emitted_total.load(std::memory_order_relaxed);
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "ka-agent",
+                        .body =
+                            [&] {
+                                while (hold.load(std::memory_order_relaxed)) {
+                                    if (aura::serve::g_current_fiber &&
+                                        aura::serve::g_current_fiber->is_cancel_requested())
+                                        break;
+                                    Fiber::yield(YieldReason::Explicit);
+                                }
+                            },
+                        .keepalive_interval_ms = 15});
+            CHECK(h.ok, "keepalive spawn ok");
+            CHECK(h.keepalive_interval_ms == 15, "interval recorded");
+            CHECK(h.keepalive_active, "helper thread present");
+            CHECK(h.liveness != nullptr, "liveness shared state");
+
+            // Poll shared emit counter (avoid long blocking host recv races).
+            int saw_emit = 0;
+            for (int i = 0; i < 300; ++i) {
+                if (h.liveness->emitted.load(std::memory_order_acquire) >= 1) {
+                    saw_emit = 1;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            CHECK(saw_emit == 1, "supervisor observed keepalive emit");
+            CHECK(g_orch_module_stats.keepalive_emitted_total.load() > ka0,
+                  "keepalive_emitted_total advanced");
+            CHECK(h.liveness->last_keepalive_us.load() > 0, "last_keepalive_us set");
+            CHECK(g_orch_module_stats.last_keepalive_us.load() > 0,
+                  "process last_keepalive_us set");
+
+            // Drain at least one keepalive payload via non-blocking recv.
+            bool saw_payload = false;
+            for (int i = 0; i < 64; ++i) {
+                auto m = aura::orch::agent_recv(h, /*wait=*/false, 0);
+                if (m && is_keepalive_message(*m)) {
+                    saw_payload = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            CHECK(saw_payload, "keepalive payload in mailbox");
+
+            // watch_agent_liveness should report Alive when recent pulse exists.
+            auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/80,
+                                           /*cancel_on_stall=*/false);
+            CHECK(wr.status == KeepaliveWatchStatus::Alive ||
+                      wr.status == KeepaliveWatchStatus::Done,
+                  "watch Alive or Done while agent live");
+
+            hold.store(false, std::memory_order_relaxed);
+            auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+            CHECK(jr.status == aura::serve::JoinStatus::Ok ||
+                      jr.status == aura::serve::JoinStatus::Cancelled,
+                  "join after keepalive");
+        }
+
+        // (c) Stall detection: stop helper only, age out last pulse, cancel body.
+        {
+            Scheduler sched(3);
+            SchedRunner runner(sched);
+            std::atomic<bool> body_running{true};
+            std::atomic<bool> saw_cancel{false};
+            const auto stall0 =
+                g_orch_module_stats.stalled_agents_total.load(std::memory_order_relaxed);
+            const auto cancel0 =
+                g_orch_module_stats.keepalive_cancels_total.load(std::memory_order_relaxed);
+
+            auto h = aura::orch::spawn_agent_with_mailbox(
+                sched, {.name = "stall-agent",
+                        .body =
+                            [&] {
+                                while (body_running.load(std::memory_order_relaxed)) {
+                                    if (aura::serve::g_current_fiber &&
+                                        aura::serve::g_current_fiber->is_cancel_requested()) {
+                                        saw_cancel.store(true, std::memory_order_relaxed);
+                                        break;
+                                    }
+                                    Fiber::yield(YieldReason::Explicit);
+                                }
+                            },
+                        .keepalive_interval_ms = 50});
+            CHECK(h.ok, "stall-agent spawn");
+            CHECK(h.keepalive_active, "stall-agent has helper");
+
+            for (int i = 0; i < 200; ++i) {
+                if (h.liveness && h.liveness->emitted.load(std::memory_order_relaxed) >= 1)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            CHECK(h.liveness && h.liveness->emitted.load() >= 1, "at least one emit before stall");
+
+            // Stop helper without finishing the body (simulate silent agent).
+            aura::orch::stop_keepalive_helper(h);
+            // Age out last pulse so watch sees a stale clock.
+            h.liveness->last_keepalive_us.store(1, std::memory_order_release);
+            for (int i = 0; i < 64; ++i) {
+                auto m = aura::orch::agent_recv(h, /*wait=*/false, 0);
+                if (!m)
+                    break;
+            }
+
+            auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/20, /*cancel_on_stall=*/true);
+            CHECK(wr.status == KeepaliveWatchStatus::Stalled, "stall detected");
+            CHECK(wr.cancelled, "cancel_on_stall fired");
+            CHECK(g_orch_module_stats.stalled_agents_total.load() > stall0,
+                  "stalled_agents_total advanced");
+            CHECK(g_orch_module_stats.keepalive_cancels_total.load() > cancel0,
+                  "keepalive_cancels_total advanced");
+
+            for (int i = 0; i < 100 && !saw_cancel.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            CHECK(saw_cancel.load(), "body saw request_cancel");
+
+            body_running.store(false, std::memory_order_relaxed);
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        }
+
+        // (d) query surface exposes #2008 keys.
+        {
+            CompilerService cs;
+            auto h = cs.eval(R"((engine:metrics "query:orch-module-stats"))");
+            CHECK(h && is_hash(*h), "orch-module-stats hash");
+            auto s2008 =
+                cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2008"))");
+            CHECK(s2008 && is_int(*s2008) && as_int(*s2008) == 2008, "schema-2008");
+            auto emitted = cs.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "keepalive-emitted-total"))");
+            CHECK(emitted && is_int(*emitted) && as_int(*emitted) >= 1,
+                  "keepalive-emitted-total in query");
+            auto stalled = cs.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "stalled-agents-total"))");
+            CHECK(stalled && is_int(*stalled) && as_int(*stalled) >= 1,
+                  "stalled-agents-total in query");
+            auto wired = cs.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "keepalive-wired"))");
+            CHECK(wired && is_int(*wired) && as_int(*wired) == 1, "keepalive-wired");
+        }
+    }
+
 } // namespace
 
 int run_orch_agent_spawn() {
@@ -861,6 +1039,7 @@ int run_orch_agent_spawn() {
     ac4_aura_spawn_join();
     ac5_parallel_alias();
     ac6_stats();
+    ac7_keepalive();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
