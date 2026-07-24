@@ -73,6 +73,14 @@ void HotUpdateRegistry::on_live_closure_remap(std::uint64_t count) noexcept {
     live_closure_remap_.fetch_add(count, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_region_mask_adapt_clear(std::uint64_t /*region*/) noexcept {
+    region_mask_adapt_clears_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::on_region_mask_adapt_restore(std::uint64_t /*region*/) noexcept {
+    region_mask_adapt_restores_.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #2014: sliding-window deopt rate. Under threshold this is:
 //   1× fetch_add (observed) + 1× load start + 1× load window + branch.
 // Clock is read only when the window may have rolled or on first deopt.
@@ -294,6 +302,12 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.reemit_throttle_active = reemit_throttled_.load(std::memory_order_relaxed) ? 1 : 0;
     s.reemit_throttle_skips_total =
         static_cast<std::int64_t>(reemit_throttle_skips_.load(std::memory_order_relaxed));
+    s.region_mask_adapt_clears_total =
+        static_cast<std::int64_t>(region_mask_adapt_clears_.load(std::memory_order_relaxed));
+    s.region_mask_adapt_restores_total =
+        static_cast<std::int64_t>(region_mask_adapt_restores_.load(std::memory_order_relaxed));
+    s.emit_region_mask_preferred =
+        static_cast<std::int64_t>(aura_get_aot_emit_region_mask_preferred());
     return s;
 }
 
@@ -332,6 +346,9 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->reemit_throttle_active = s.reemit_throttle_active;
     out->reemit_throttle_skips_total = s.reemit_throttle_skips_total;
     out->storm_listeners = s.storm_listeners;
+    out->region_mask_adapt_clears_total = s.region_mask_adapt_clears_total;
+    out->region_mask_adapt_restores_total = s.region_mask_adapt_restores_total;
+    out->emit_region_mask_preferred = s.emit_region_mask_preferred;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {

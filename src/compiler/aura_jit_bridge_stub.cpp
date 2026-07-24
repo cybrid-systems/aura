@@ -111,6 +111,12 @@ extern "C" __attribute__((weak)) void aura_set_aot_region_mask(std::uint64_t mas
 extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_region_mask(void) {
     return g_aot_region_mask_stub;
 }
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_emit_region_mask(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_emit_region_mask_preferred(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void aura_set_aot_emit_region_mask(std::uint64_t mask) {
     g_aot_region_mask_stub = mask;
 }

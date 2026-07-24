@@ -177,6 +177,11 @@ std::uint32_t aura_lookup_stable_func_id(const char* name); // 0 if missing
 std::uint64_t aura_stable_func_id_map_size(void);
 void aura_clear_stable_func_id_map(void);
 
+// Issue #2016: live (adapted) and preferred emit region masks.
+// Evolution bit (1<<2) is always stripped from both.
+std::uint64_t aura_get_aot_emit_region_mask(void);
+std::uint64_t aura_get_aot_emit_region_mask_preferred(void);
+
 // Last re-emit count (region-filtered candidates / would-reemit).
 std::uint64_t aura_reemit_dirty_count(void);
 // Last re-emit region-filtered skip count.

@@ -269,7 +269,18 @@ static AotState& aot_state_for(void* eval_ptr) {
 }
 
 // Issue #708: emit-time region mask (process-wide; AOT emit is not multi-tenant).
+// Live mask may be adaptively cleared under pressure (#2016); preferred
+// holds the host-requested bits so quiet periods can restore.
 static std::uint64_t g_aot_emit_region_mask = 0;
+static std::uint64_t g_aot_emit_region_mask_preferred = 0;
+// Issue #2016: region index constants (must match FlatFunction::region).
+static constexpr std::uint64_t kAotRegionDefault = 0;
+static constexpr std::uint64_t kAotRegionPerformance = 1;
+static constexpr std::uint64_t kAotRegionEvolution = 2;
+// Adaptive thresholds: clear a Performance/Default bit when that region's
+// candidate count in one pipeline call reaches this; restore when a
+// subsequent call sees fewer candidates and no deopt storm.
+static constexpr std::uint64_t kAotRegionDirtyClearThreshold = 8;
 // Issue #1640: emit-time env_frame_version stamp (process-wide; AOT emit).
 // 0 = no stamp (skip drift detection). Host can raise via setter when wired.
 static std::uint64_t g_aot_emit_env_frame_version = 0;
@@ -307,9 +318,23 @@ extern "C" std::uint64_t aura_get_aot_region_mask_for_eval(void* eval_ptr) {
 }
 
 extern "C" void aura_set_aot_emit_region_mask(std::uint64_t mask) {
-    g_aot_emit_region_mask = mask;
+    // Issue #2016: Evolution (region bit 2) is never an AOT emit target —
+    // strip it from preferred + live so adaptive restore cannot re-enable it.
+    const std::uint64_t evolution_bit = 1ULL << kAotRegionEvolution;
+    const std::uint64_t sanitized = mask & ~evolution_bit;
+    g_aot_emit_region_mask_preferred = sanitized;
+    g_aot_emit_region_mask = sanitized;
     // Issue #1956: bookkeeping for HotUpdateRegistry dashboard.
-    aura::compiler::hot_update_registry().on_emit_region_mask_set(mask);
+    aura::compiler::hot_update_registry().on_emit_region_mask_set(sanitized);
+}
+
+// Issue #2016: live (possibly adapted) emit region mask.
+extern "C" std::uint64_t aura_get_aot_emit_region_mask(void) {
+    return g_aot_emit_region_mask;
+}
+
+extern "C" std::uint64_t aura_get_aot_emit_region_mask_preferred(void) {
+    return g_aot_emit_region_mask_preferred;
 }
 
 extern "C" std::uint64_t aura_get_module_version(void) {
@@ -1793,6 +1818,104 @@ extern "C" bool aura_aot_mangle_version_is_stale_ex(const char* mangled,
 //     region-filtered candidates (would re-emit)
 //   - 0 if no candidate callback is wired
 //
+// Runtime name→fn lookup (defined in aura_jit_runtime.cpp).
+extern "C" int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count,
+                                          int64_t* out_arg_count, int64_t* out_env_count);
+
+// Sentinel native body when reemit has no live JIT symbol for the name.
+static int64_t aura_aot_reemit_sentinel_fn(int64_t* /*args*/, uint32_t /*n*/) {
+    return 0;
+}
+
+// Issue #2016: default LLVM incremental reemit when host did not wire
+// aura_set_aot_emit_fn. Uses the process AuraJIT (batch-deopt target) to
+// emit a native object for the named function. Caller registers stable id.
+static bool default_llvm_incremental_emit(const char* name, std::uint64_t region) {
+    if (!name || !*name)
+        return false;
+    if (region == kAotRegionEvolution)
+        return false;
+    if (!g_batch_deopt_jit)
+        return false;
+
+    std::string safe;
+    safe.reserve(32);
+    for (const char* p = name; *p && safe.size() < 48; ++p) {
+        const char c = *p;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')
+            safe.push_back(c);
+        else
+            safe.push_back('_');
+    }
+    if (safe.empty())
+        safe = "fn";
+    static std::atomic<std::uint64_t> reemit_seq{0};
+    const auto seq = reemit_seq.fetch_add(1, std::memory_order_relaxed);
+    const std::string obj_path =
+        std::format("/tmp/aura_reemit_{}_{}.o", safe, static_cast<unsigned long long>(seq));
+
+    const bool ok = g_batch_deopt_jit->compile_function_to_object_by_name(name, obj_path);
+    std::remove(obj_path.c_str());
+    if (!ok)
+        return false;
+    if (aot_metrics())
+        aot_metrics()->aot_incremental_llvm_emit_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+static void register_stable_id_in_func_table(const char* name, std::uint32_t sid) {
+    if (!name || sid == 0)
+        return;
+    int64_t locals = 0, args = 0, env = 0;
+    const int64_t existing = aura_lookup_fn_by_name(name, &locals, &args, &env);
+    if (existing != 0)
+        aura_register_fn_tracked(static_cast<int64_t>(sid), existing);
+    else
+        aura_register_fn_tracked(
+            static_cast<int64_t>(sid),
+            static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(&aura_aot_reemit_sentinel_fn)));
+}
+
+// Issue #2016: adapt live region mask after a pipeline call.
+// Only Default (0) and Performance (1) bits are mutable; Evolution (2)
+// remains permanently cleared. Clears under high per-region dirty
+// density or an active deopt storm; restores preferred bits when quiet.
+static void adapt_emit_region_mask(const std::uint64_t dirty_by_region[3], bool storm_active) {
+    const std::uint64_t preferred = g_aot_emit_region_mask_preferred;
+    std::uint64_t live = g_aot_emit_region_mask;
+    // Never allow Evolution bit in live mask.
+    live &= ~(1ULL << kAotRegionEvolution);
+
+    auto maybe_clear = [&](std::uint64_t r) {
+        if (r == kAotRegionEvolution)
+            return;
+        const std::uint64_t bit = 1ULL << r;
+        if ((preferred & bit) == 0)
+            return; // host never requested this region
+        const bool pressure = dirty_by_region[r] >= kAotRegionDirtyClearThreshold || storm_active;
+        if (pressure && (live & bit) != 0) {
+            live &= ~bit;
+            if (aot_metrics())
+                aot_metrics()->aot_region_mask_adapt_clears_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            aura::compiler::hot_update_registry().on_region_mask_adapt_clear(r);
+        } else if (!pressure && (preferred & bit) != 0 && (live & bit) == 0) {
+            live |= bit;
+            if (aot_metrics())
+                aot_metrics()->aot_region_mask_adapt_restores_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            aura::compiler::hot_update_registry().on_region_mask_adapt_restore(r);
+        }
+    };
+    maybe_clear(kAotRegionDefault);
+    maybe_clear(kAotRegionPerformance);
+
+    if (live != g_aot_emit_region_mask) {
+        g_aot_emit_region_mask = live;
+        aura::compiler::hot_update_registry().on_emit_region_mask_set(live);
+    }
+}
+
 // Thread-safety: atomic metric increments (relaxed). commit_func_table_swap
 // uses acq_rel on the table epoch. Stable func_id map is mutex-guarded.
 extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
@@ -1827,7 +1950,12 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     std::uint64_t success_count = 0;
     std::uint64_t region_skips = 0;
     std::uint64_t closure_dep_count = 0;
+    std::uint64_t dirty_by_region[3] = {0, 0, 0};
     bool any_re_emit = false;
+    // Host emit wired → always report success_count (may be 0).
+    // Default LLVM only flips return mode after at least one real emit.
+    const bool host_emit_wired = (g_aot_emit_fn != nullptr);
+    bool real_llvm_emit_success = false;
 
     // Issue #2013: collect (name, stable_id) for successful reemits so we
     // can retarget live closures after the epoch commit.
@@ -1838,6 +1966,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
 
     // Phase 2 walk: iterate host-pushed candidates + region-mask filter.
     // #1952: host-wired LLVM emit. #1930: stable name→func_id on success.
+    // #2016: default LLVM path via AuraJIT when host emit fn is null;
+    //        permanent Evolution exclusion + adaptive mask post-pass.
     while (true) {
         const char* name = nullptr;
         std::uint64_t region = 0;
@@ -1852,9 +1982,22 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         if (from_closure_capture)
             ++closure_dep_count;
 
+        // Issue #2016: Evolution (region=2) is permanently excluded from AOT.
+        if (region == kAotRegionEvolution) {
+            ++region_skips;
+            if (aot_metrics())
+                aot_metrics()->aot_evolution_region_skips_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            continue;
+        }
+
+        if (region < 3)
+            dirty_by_region[region] += 1;
+
         // Per-function region mask filter: if host set a non-zero
         // mask, the candidate's region must have its bit set in the
-        // mask. Region 0 means "no region preference" → always emit.
+        // mask. Region 0 means "no region preference" → always emit
+        // (unless Evolution, already handled).
         if (region_mask != 0 && region != 0) {
             const std::uint64_t bit = 1ULL << (region & 63);
             if ((region_mask & bit) == 0) {
@@ -1864,11 +2007,36 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
         ++to_re_emit;
 
-        // Issue #1952 / #1930: actual LLVM re-emit via host-wired callback.
-        // On true: bump success + get_or_preserve stable func_id (preserved
-        // if name already mapped; assigned if first sighting). On false:
-        // leave func_table_epoch untouched. Skeleton (no emit fn): count
-        // would-reemit + still stamp stable map so multi-round identity holds.
+        // count_emit_success: host/default LLVM success only (not skeleton).
+        auto note_reemit = [&](std::uint32_t sid, int preserved, bool count_emit_success,
+                               bool count_llvm_metric) {
+            aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
+            if (aot_metrics()) {
+                if (count_emit_success) {
+                    aot_metrics()->aot_incremental_reemit_success_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                if (preserved) {
+                    aot_metrics()->stable_func_id_preserved_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    aot_metrics()->stable_func_id_assigned_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                if (count_llvm_metric)
+                    aot_metrics()->aot_incremental_llvm_emit_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+            if (sid != 0) {
+                reemit_names.emplace_back(name);
+                reemit_stable_ids.push_back(sid);
+            }
+            if (count_emit_success)
+                ++success_count;
+            any_re_emit = true;
+        };
+
+        // Issue #1952 / #1930 / #2016: host emit → else default LLVM → skeleton.
         if (g_aot_emit_fn) {
             const bool emitted = g_aot_emit_fn(name, region, g_aot_emit_userdata);
             if (emitted) {
@@ -1878,48 +2046,30 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
                     sid = preserve_stable_func_id_locked(name, &preserved);
                 }
-                aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
-                if (aot_metrics()) {
-                    aot_metrics()->aot_incremental_reemit_success_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    if (preserved) {
-                        aot_metrics()->stable_func_id_preserved_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    } else {
-                        aot_metrics()->stable_func_id_assigned_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-                if (sid != 0) {
-                    reemit_names.emplace_back(name);
-                    reemit_stable_ids.push_back(sid);
-                }
-                ++success_count;
-                any_re_emit = true;
+                register_stable_id_in_func_table(name, sid);
+                note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/true);
+                real_llvm_emit_success = true;
             }
-        } else {
-            // Phase 1 / #1480 skeleton: would-reemit + stable map stamp.
+        } else if (g_batch_deopt_jit && default_llvm_incremental_emit(name, region)) {
             int preserved = 0;
             std::uint32_t sid = 0;
             {
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
                 sid = preserve_stable_func_id_locked(name, &preserved);
             }
-            aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
-            if (aot_metrics()) {
-                if (preserved) {
-                    aot_metrics()->stable_func_id_preserved_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                } else {
-                    aot_metrics()->stable_func_id_assigned_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
+            register_stable_id_in_func_table(name, sid);
+            note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/false);
+            real_llvm_emit_success = true;
+        } else {
+            // Phase 1 / #1480 skeleton (or default LLVM miss): stamp stable map.
+            // Does not bump success_count (would-reemit return path).
+            int preserved = 0;
+            std::uint32_t sid = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                sid = preserve_stable_func_id_locked(name, &preserved);
             }
-            if (sid != 0) {
-                reemit_names.emplace_back(name);
-                reemit_stable_ids.push_back(sid);
-            }
-            any_re_emit = true;
+            note_reemit(sid, preserved, /*count_emit_success=*/false, /*count_llvm=*/false);
         }
     }
 
@@ -1949,9 +2099,14 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
     }
 
+    // Issue #2016: adaptive region mask based on this call's dirty density
+    // and deopt-storm throttle state (Performance/Default only).
+    adapt_emit_region_mask(dirty_by_region,
+                           aura::compiler::hot_update_registry().should_throttle_reemit());
+
     // Stamp last-call stats for tests + EDSL observability primitives.
     // dirty_count = region-filtered candidates (would-reemit); success
-    // is the actual emit count when callback is wired.
+    // is the actual emit count when emit path is active.
     g_last_reemit_dirty_count.store(to_re_emit, std::memory_order_relaxed);
     g_last_reemit_region_skips.store(region_skips, std::memory_order_relaxed);
     g_last_reemit_closure_dep_count.store(closure_dep_count, std::memory_order_relaxed);
@@ -1967,10 +2122,11 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         aot_metrics()->aot_closure_dependency_reemit_total.fetch_add(closure_dep_count,
                                                                      std::memory_order_relaxed);
         aot_metrics()->aot_region_filtered_skips.fetch_add(region_skips, std::memory_order_relaxed);
-        // Closure bridge refresh: bump by actual successes when emit
-        // wired; else by would-reemit candidate count (#1480 parity).
+        // Closure bridge refresh: host emit or real LLVM success → success_count;
+        // pure skeleton → would-reemit count (#1480 parity).
         if (any_re_emit) {
-            const std::uint64_t refresh_n = g_aot_emit_fn ? success_count : to_re_emit;
+            const std::uint64_t refresh_n =
+                (host_emit_wired || real_llvm_emit_success) ? success_count : to_re_emit;
             aot_metrics()->aot_closure_bridge_refresh_total.fetch_add(refresh_n,
                                                                       std::memory_order_relaxed);
         }
@@ -1979,9 +2135,9 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     (void)current_defuse_version; // reserved for version pin
     (void)epoch_before;           // reserved for future rollback
     (void)total_candidates;
-    // #1930 AC: return actual re-emit success when emit fn wired;
-    // skeleton path keeps #1480 "would re-emit" return semantics.
-    return g_aot_emit_fn ? success_count : to_re_emit;
+    // #1930 / #2016: host emit wired → success_count; real default LLVM
+    // success → success_count; pure skeleton → would-reemit (to_re_emit).
+    return (host_emit_wired || real_llvm_emit_success) ? success_count : to_re_emit;
 }
 
 extern "C" std::uint64_t aura_aot_last_commit_epoch(void) {

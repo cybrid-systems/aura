@@ -73,6 +73,9 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_throttle_active;
     std::int64_t reemit_throttle_skips_total;
     std::int64_t storm_listeners;
+    std::int64_t region_mask_adapt_clears_total;   // #2016
+    std::int64_t region_mask_adapt_restores_total; // #2016
+    std::int64_t emit_region_mask_preferred;       // #2016
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }
@@ -5737,6 +5740,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("reemit-throttle-active", snap.reemit_throttle_active);
             insert_kv("reemit-throttle-skips-total", snap.reemit_throttle_skips_total);
             insert_kv("storm-listeners", snap.storm_listeners);
+            // Issue #2016: adaptive region mask.
+            insert_kv("region-mask-adapt-clears-total", snap.region_mask_adapt_clears_total);
+            insert_kv("region-mask-adapt-restores-total", snap.region_mask_adapt_restores_total);
+            insert_kv("emit-region-mask-preferred", snap.emit_region_mask_preferred);
             insert_kv("mvp-single-workspace", 1); // #1943
             insert_kv("registry-class-wired", 1);
             auto hidx = g_hash_tables.size();
