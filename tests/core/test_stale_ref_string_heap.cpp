@@ -90,6 +90,50 @@ int main() {
           "growth strictly less than 3*N (pre-fix leak rate)");
     CHECK(blocked1 >= blocked0 + static_cast<std::uint64_t>(kN), "AC4: stale_ref_blocked_count +N");
 
+    // ── Issue #2001 AC5/AC6/AC7: compact + remap walks landed ──
+    std::println("\n--- AC5/AC6/AC7: #2001 compact + remap ---");
+    {
+        // AC5: query:gc-compact-stats schema-2001 reachable + non-zero counters
+        auto h = cs.eval(R"((engine:metrics "query:gc-compact-stats"))");
+        CHECK(h && is_hash(*h), "AC5: query:gc-compact-stats returns hash");
+        if (h && is_hash(*h)) {
+            auto sch = cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "schema"))");
+            CHECK(sch && is_int(*sch) && as_int(*sch) == 2001, "AC5: schema == 2001");
+            auto sc = cs.eval(
+                R"((hash-ref (engine:metrics "query:gc-compact-stats") "strings-compacted"))");
+            auto pr =
+                cs.eval(R"((hash-ref (engine:metrics "query:gc-compact-stats") "pairs-remapped"))");
+            CHECK(sc && is_int(*sc) && as_int(*sc) >= 0, "AC5: strings-compacted present");
+            CHECK(pr && is_int(*pr) && as_int(*pr) >= 0, "AC5: pairs-remapped present");
+        }
+    }
+    {
+        // AC6: string_remap_size is sized to old string_heap_ size after
+        // compact_sweep; resolve_string returns -1 for out-of-range indices.
+        const auto pre = cs.evaluator().string_heap_size();
+        for (int i = 0; i < 100; ++i)
+            (void)cs.eval(std::format(R"((make-string "stress_{}"))", i));
+        const auto post = cs.evaluator().string_heap_size();
+        CHECK(post > pre, "string_heap_ grew via make-string");
+        const auto rs = cs.evaluator().string_remap_size();
+        CHECK(rs >= 0, "AC6: string_remap_size is non-negative");
+        CHECK(cs.evaluator().resolve_string(static_cast<std::uint64_t>(post + 1000)) == -1,
+              "AC6: resolve_string out-of-range → -1");
+    }
+    {
+        // AC7: pair_remap_size is sized to old pairs_ size after compact_sweep;
+        // resolve_pair returns -1 for out-of-range indices.
+        const auto pre = cs.evaluator().pairs_size();
+        for (int i = 0; i < 100; ++i)
+            (void)cs.eval(std::format(R"((cons {} nil))", i));
+        const auto post = cs.evaluator().pairs_size();
+        CHECK(post > pre, "pairs_ grew via cons");
+        const auto rp = cs.evaluator().pair_remap_size();
+        CHECK(rp >= 0, "AC7: pair_remap_size is non-negative");
+        CHECK(cs.evaluator().resolve_pair(static_cast<std::uint64_t>(post + 1000)) == -1,
+              "AC7: resolve_pair out-of-range → -1");
+    }
+
     std::println("\n=== test_stale_ref_string_heap_1681: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

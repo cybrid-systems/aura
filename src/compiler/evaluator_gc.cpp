@@ -101,6 +101,36 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
     pairs_ = std::move(new_pairs);
     return pairs_.size();
 }
+// Issue #2001: Evaluator::compact_strings. Mirror of compact_pairs for
+// the string_heap_ arena. Builds string_remap_ (sized to old size,
+// -1 for dead) so MutationRecord / stale string indices can resolve
+// post-compact. Returns # strings after compact.
+//
+// string_heap_ is an `std::pmr::vector<std::string>` VALUE member
+// (line 4878 of evaluator.ixx), not a pointer — unlike
+// PrimitiveContext::string_heap_ which is a `std::pmr::vector<std::string>*`.
+// The pmr backing (runtime_resource_) is preserved on shrink/move.
+std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
+    const std::size_t n_old = string_heap_.size();
+    string_remap_.clear();
+    string_remap_.reserve(n_old);
+    std::pmr::vector<std::string> new_strings{&runtime_resource_};
+    new_strings.reserve(n_old);
+    std::int64_t new_idx = 0;
+    for (std::size_t i = 0; i < n_old; ++i) {
+        const bool is_live =
+            live_mask.empty() ? true : (i < live_mask.size() ? live_mask[i] : false);
+        if (is_live) {
+            string_remap_.push_back(new_idx);
+            new_strings.push_back(std::move(string_heap_[i]));
+            ++new_idx;
+        } else {
+            string_remap_.push_back(-1);
+        }
+    }
+    string_heap_ = std::move(new_strings);
+    return string_heap_.size();
+}
 // ── GC root registration (Issue #113) ──────────────────────────
 //
 // `flush_gc_roots` walks every vector heap this Evaluator owns and
@@ -754,21 +784,41 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         }
     }
 
-    // 2. string_heap_ — report dead count, no compaction.
-    //    Compaction requires remapping all references that hold
-    //    a string index (Pair car/cdr, EvalValue String tag,
-    //    Closure params, etc.). Until that work lands, the heap
-    //    keeps stale entries but the GC metric tells the caller
-    //    how much pressure exists.
+    // 2. string_heap_ — Issue #2001: actually compact + remap
+    //    (was report-only). Builds string_remap_ (sized to old size,
+    //    -1 for dead) so MutationRecord / stale string indices can
+    //    resolve via resolve_string() post-compact. Pinned FFI
+    //    buffers get invalidated by the lifetime_pin block above;
+    //    other consumers re-validate via workspace generation bump.
     if (marks->string_marks) {
-        result.strings_freed = marks->string_marks->count_dead();
+        const std::size_t n_old = string_heap_.size();
+        std::vector<bool> live_mask;
+        live_mask.reserve(n_old);
+        for (std::size_t i = 0; i < n_old; ++i)
+            live_mask.push_back(marks->string_marks->test(i));
+        const std::size_t n_new = compact_strings(live_mask);
+        result.strings_freed = n_old > n_new ? n_old - n_new : 0;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->gc_strings_compacted_total.fetch_add(
+                static_cast<std::uint64_t>(result.strings_freed), std::memory_order_relaxed);
+        }
     }
 
-    // 3. pairs_ — same. report dead count. (No pairs_ shrink yet —
-    //    pair_remap_ already cleared above so prior compact_pairs
-    //    remaps cannot outlive this sweep.)
+    // 3. pairs_ — Issue #2001: actually compact + remap (was report-
+    //    only). Uses existing compact_pairs() + pair_remap_ (cleared
+    //    above so prior remaps cannot outlive this sweep).
     if (marks->pair_marks) {
-        result.pairs_freed = marks->pair_marks->count_dead();
+        const std::size_t n_old = pairs_.size();
+        std::vector<bool> live_mask;
+        live_mask.reserve(n_old);
+        for (std::size_t i = 0; i < n_old; ++i)
+            live_mask.push_back(marks->pair_marks->test(i));
+        const std::size_t n_new = compact_pairs(live_mask);
+        result.pairs_freed = n_old > n_new ? n_old - n_new : 0;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->gc_pairs_remapped_total.fetch_add(static_cast<std::uint64_t>(result.pairs_freed),
+                                                 std::memory_order_relaxed);
+        }
     }
 
     // 4. fiber_results — owned by s_fiber_results_ (TU-local). The

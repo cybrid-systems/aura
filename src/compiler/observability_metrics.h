@@ -4200,6 +4200,16 @@ struct CompilerMetrics {
     // but the call is no longer silent: this counter surfaces the
     // skipped reclaim path for diagnostics / Agent dashboards.
     std::atomic<std::uint64_t> gc_compact_sweep_null_marks_total{0};
+    // Issue #2001: total strings compacted across all sweeps
+    // (counts dead entries reclaimed, mirrors strings_freed in
+    // CompactSweepResult but as a process-wide aggregate). Bumped
+    // from compact_sweep when string_heap_ actually shrinks.
+    std::atomic<std::uint64_t> gc_strings_compacted_total{0};
+    // Issue #2001: total pairs remapped across all sweeps
+    // (counts dead entries reclaimed, mirrors pairs_freed in
+    // CompactSweepResult but as a process-wide aggregate). Bumped
+    // from compact_sweep when pairs_ actually shrinks.
+    std::atomic<std::uint64_t> gc_pairs_remapped_total{0};
     // Issue #589: SoA EnvFrame/EnvId dual-path
     // bindings_ vs bindings_symid_ consistency + version
     // stamping + stale refresh in materialize_call_env &
