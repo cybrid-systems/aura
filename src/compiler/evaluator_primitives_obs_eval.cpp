@@ -43,6 +43,7 @@ import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
 import aura.compiler.optimization_passes;
+import aura.compiler.coercion_map; // Issue #2025: AST dead-coercion elision counter
 import aura.core.concept_constraints;
 
 // Hoisted from evaluator_primitives_obs_eval_00..13.cpp
@@ -13310,7 +13311,8 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
-            auto* ht = FlatHashTable::create(16);
+            // #1576 lineage + #2025 DeadCoercion keys → 32 slots.
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -13320,6 +13322,15 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             const auto load = [](std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
+            // Issue #2025: DeadCoercion runs + layered AST/IR elision synergy.
+            const auto dead_runs =
+                load(opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::DeadCoercion)]);
+            const auto ir_elided = load(dead_coercion_ir_elided_total);
+            const auto ir_narrow = load(dead_coercion_ir_narrow_evidence_hits);
+            const auto dce_pipeline = load(dead_coercion_pipeline_runs_total);
+            const auto ast_elided = static_cast<std::int64_t>(
+                aura::compiler::g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed));
+            const auto layered = ir_elided + ast_elided;
             const std::pair<std::string, EvalValue> fields[] = {
                 {"phase", make_int(kOptimizationPassesPhase)},
                 {"pass-runs", make_int(load(opt_pass_runs_total))},
@@ -13341,11 +13352,21 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"shape-aware-fold-runs",
                  make_int(load(
                      opt_pass_runs_by_kind[static_cast<std::size_t>(PassKind::ShapeAwareFold)]))},
+                // Issue #2025: DeadCoercion pipeline + layered elision
+                {"dead-coercion-runs", make_int(dead_runs)},
+                {"dead-coercion-pipeline-runs", make_int(dce_pipeline)},
+                {"dead-coercion-ir-elided", make_int(ir_elided)},
+                {"dead-coercion-ir-narrow-evidence-hits", make_int(ir_narrow)},
+                {"dead-coercion-ast-elided", make_int(ast_elided)},
+                {"dead-coercion-layered-total", make_int(layered)},
+                {"dead-coercion-wired", make_int(1)},
+                {"schema-2025", make_int(2025)},
+                {"issue-2025", make_int(2025)},
                 {"define-dirty-skips",
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::optimization_passes_skipped_by_define_dirty.load(
                          std::memory_order_relaxed)))},
-                {"schema", make_int(1576)},
+                {"schema", make_int(2025)}, // lineage 1576 + #2025 DeadCoercion pipeline
             };
             for (auto& [k, v] : fields) {
                 std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;

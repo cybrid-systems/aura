@@ -8,6 +8,7 @@ export module aura.compiler.optimization_passes;
 
 import std;
 import aura.compiler.ir;
+import aura.core.type;                // Issue #2025: TypeRegistry for DeadCoercion
 import aura.core.concept_constraints; // #1577: Pass / DirtyAware / …
 import aura.compiler.pass_manager;
 import aura.compiler.dirty_propagation;
@@ -37,6 +38,13 @@ inline std::atomic<std::uint64_t> render_framebuffer_present_ok{0};
 // Per-kind run counters (indexed by PassKind).
 inline std::array<std::atomic<std::uint64_t>, 16> opt_pass_runs_by_kind{};
 
+// Issue #2025: IR dead-coercion pipeline counters (AST elision lives in
+// coercion_map.ixx as g_dead_coercion_ast_elided_total). Combined on
+// query:optimization-passes-stats as dead-coercion-layered-total.
+inline std::atomic<std::uint64_t> dead_coercion_ir_elided_total{0};
+inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_hits{0};
+inline std::atomic<std::uint64_t> dead_coercion_pipeline_runs_total{0};
+
 enum class PassKind : std::uint8_t {
     ConstantFold = 0,
     Inline = 1,
@@ -48,7 +56,7 @@ enum class PassKind : std::uint8_t {
     Render = 7,
     TypePropagation = 8, // #1576 concrete core pass
     ShapeAwareFold = 9,  // #1576 concrete core pass
-    DeadCoercion = 10,   // #2066: CastOp elision driven by narrow_evidence + provenance
+    DeadCoercion = 10,   // #2066 / #2025: CastOp elision (narrow_evidence + identity)
     Count
 };
 
@@ -67,10 +75,10 @@ inline constexpr PassDescriptor kDefaultPassTable[] = {
     {PassKind::TypePropagation, "type-propagation", true, false, true, false},
     {PassKind::ComputeKind, "compute-kind", true, false, true, true},
     {PassKind::ShapeAwareFold, "shape-aware-fold", true, true, true, false},
-    // Issue #2066: DeadCoercion (CastOp elision driven by narrow_evidence) runs
-    // after TypePropagation (dirty-aware, contracts-enabled, pure-analysis-friendly).
-    // Pre-existing wire-up in service.ixx:2890 via run_pipeline(...) parameter pack
-    // — this table entry surfaces the pass to Agents via the canonical PassKind enum.
+    // Issue #2066 / #2025: DeadCoercion runs after TypePropagation so type_id
+    // / narrow_evidence stamps are available for CastOp elision. Dirty-aware
+    // (selective block scan), contracts-enabled, pure-analysis-friendly.
+    // Wired into run_default_optimization_pipeline + run_pass_kind (#2025).
     {PassKind::DeadCoercion, "dead-coercion-elim", true, false, true, true},
     {PassKind::Shape, "shape", true, true, true, true},
     {PassKind::Inline, "inline", false, false, false, false},
@@ -313,6 +321,97 @@ static_assert(aura::compiler::DirtyAwarePass<TypePropagationPass>,
 static_assert(aura::compiler::IncrementalPass<TypePropagationPass>,
               "TypePropagationPass must be Incremental (#1576)");
 
+// Issue #2025: DeadCoercionEliminationPass wrapper for the default pipeline
+// (after TypePropagation). Bridges pass_manager.ixx impl into Pass/DirtyAware
+// concepts used by run_pipeline / run_pass_kind.
+class DeadCoercionPass {
+public:
+    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
+        block_dirty_fn_ = std::move(fn);
+    }
+    [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
+        if (!block_dirty_fn_)
+            return true;
+        return block_dirty_fn_(block_id);
+    }
+    void set_pipeline_epoch(std::uint64_t epoch) noexcept { impl_.set_pipeline_epoch(epoch); }
+    [[nodiscard]] std::uint64_t pipeline_epoch_hint() const noexcept {
+        return impl_.pipeline_epoch_hint();
+    }
+    void set_type_registry(const aura::core::TypeRegistry* reg) noexcept {
+        // Reconstruct is not needed — DeadCoercionEliminationPass holds a
+        // non-owning pointer; re-bind via a fresh instance when reg changes.
+        type_reg_ = reg;
+    }
+
+    void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
+        note_pass_run(PassKind::DeadCoercion, false);
+        dead_coercion_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
+        // Rebind registry if set (ctor default is nullptr).
+        aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
+        pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
+        pass.run(m);
+        last_eliminated_ = pass.eliminated_count();
+        last_narrow_hits_ = pass.narrow_evidence_hits();
+        if (last_eliminated_ > 0) {
+            dead_coercion_ir_elided_total.fetch_add(last_eliminated_, std::memory_order_relaxed);
+            dead_coercion_ir_narrow_evidence_hits.fetch_add(last_narrow_hits_,
+                                                            std::memory_order_relaxed);
+        }
+        error_ = pass.has_error();
+        if (error_)
+            opt_pass_errors_total.fetch_add(1, std::memory_order_relaxed);
+        if (!dirty_flags_cleared_or_ok(m, error_))
+            opt_contract_violations_soft_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void run(aura::ir::IRFunction& f) {
+        aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
+        pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
+        // Dirty-aware: when a block dirty fn is set, only process dirty blocks.
+        if (block_dirty_fn_) {
+            std::vector<std::uint8_t> dirty(f.blocks.size(), 0);
+            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi)
+                dirty[bi] = is_block_dirty(static_cast<std::uint32_t>(bi)) ? 1 : 0;
+            pass.run_function(f, dirty);
+        } else {
+            pass.run_function(f);
+        }
+        last_eliminated_ += pass.eliminated_count();
+        last_narrow_hits_ += pass.narrow_evidence_hits();
+        if (pass.eliminated_count() > 0) {
+            dead_coercion_ir_elided_total.fetch_add(pass.eliminated_count(),
+                                                    std::memory_order_relaxed);
+            dead_coercion_ir_narrow_evidence_hits.fetch_add(pass.narrow_evidence_hits(),
+                                                            std::memory_order_relaxed);
+        }
+    }
+    void run(aura::ir::BasicBlock& b) {
+        aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
+        (void)pass.run_on_block(b);
+        last_eliminated_ += pass.eliminated_count();
+        last_narrow_hits_ += pass.narrow_evidence_hits();
+    }
+
+    [[nodiscard]] bool has_error() const { return error_; }
+    [[nodiscard]] std::string_view name() const { return "dead-coercion-elim"; }
+    [[nodiscard]] std::size_t eliminated_count() const noexcept { return last_eliminated_; }
+    [[nodiscard]] std::size_t narrow_evidence_hits() const noexcept { return last_narrow_hits_; }
+
+private:
+    aura::compiler::DeadCoercionEliminationPass impl_;
+    const aura::core::TypeRegistry* type_reg_ = nullptr;
+    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    bool error_ = false;
+    std::size_t last_eliminated_ = 0;
+    std::size_t last_narrow_hits_ = 0;
+};
+
+static_assert(aura::compiler::Pass<DeadCoercionPass>, "DeadCoercionPass must satisfy Pass (#2025)");
+static_assert(aura::compiler::DirtyAwarePass<DeadCoercionPass>,
+              "DeadCoercionPass must be DirtyAware (#2025)");
+static_assert(aura::compiler::IncrementalPass<DeadCoercionPass>,
+              "DeadCoercionPass must be Incremental (#2025)");
+
 static_assert(aura::compiler::Pass<ComputeKindPass>, "ComputeKindPass must satisfy Pass (#1576)");
 static_assert(aura::compiler::DirtyAwarePass<ComputeKindPass>,
               "ComputeKindPass must be DirtyAware (#1576)");
@@ -521,12 +620,16 @@ static_assert(aura::compiler::JITFriendlyPass<RenderPass>,
 static_assert(aura::compiler::ShapeStableAwarePass<RenderPass>,
               "RenderPass must be ShapeStableAware (#1578)");
 
-// ── Factory + default pipeline (#1576 AC3/AC4 + #1578 Render) ──
+// ── Factory + default pipeline (#1576 AC3/AC4 + #1578 Render + #2025 DCE) ──
 // Run core concrete passes via run_pipeline (contracts + metrics).
+// Order: ConstantFold → TypePropagation → DeadCoercion → ComputeKind →
+// ShapeAwareFold → Render. DeadCoercion sits after TypePropagation so
+// type_id / narrow_evidence stamps drive CastOp elision.
 inline bool run_default_optimization_pipeline(aura::ir::IRModule& mod) {
     opt_pipeline_factory_runs_total.fetch_add(1, std::memory_order_relaxed);
     ConstantFoldingPass cf;
     TypePropagationPass tp;
+    DeadCoercionPass dce;
     ComputeKindPass ck;
     ShapeAwareFoldingPass sa;
     RenderPass rp;
@@ -535,9 +638,10 @@ inline bool run_default_optimization_pipeline(aura::ir::IRModule& mod) {
     if (epoch != 0) {
         cf.set_pipeline_epoch(epoch);
         tp.set_pipeline_epoch(epoch);
+        dce.set_pipeline_epoch(epoch);
         rp.set_pipeline_epoch(epoch);
     }
-    return aura::compiler::run_pipeline(mod, cf, tp, ck, sa, rp);
+    return aura::compiler::run_pipeline(mod, cf, tp, dce, ck, sa, rp);
 }
 
 // Incremental render only (dirty pipeline + optional define mask).
@@ -560,6 +664,11 @@ inline bool run_pass_kind(aura::ir::IRModule& mod, PassKind kind) {
         }
         case PassKind::TypePropagation: {
             TypePropagationPass p;
+            return aura::compiler::run_one(mod, p);
+        }
+        case PassKind::DeadCoercion: {
+            // Issue #2025: explicit factory entry for DeadCoercion elim.
+            DeadCoercionPass p;
             return aura::compiler::run_one(mod, p);
         }
         case PassKind::ComputeKind: {
