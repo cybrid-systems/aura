@@ -4207,6 +4207,65 @@ void InferenceEngine::invalidate_predicate_memo_for_nodes(std::span<const aura::
     }
 }
 
+// Issue #2068: selective predicate-memo invalidation by affected var_names.
+// Walks the memo table and drops entries whose captured_var_names intersect
+// the affected set (cheap O(N) walk + per-entry var_name intersection check).
+// Keeps unrelated entries (LRU-preserving). Bumps
+// predicate_memo_selective_invalidate_total once per call. Returns # dropped.
+std::size_t InferenceEngine::invalidate_predicate_memo_for_var_names(
+    const std::unordered_set<std::string>& affected) {
+    if (affected.empty() || predicate_memo_.empty())
+        return 0;
+    std::size_t n = 0;
+    for (auto it = predicate_memo_.begin(); it != predicate_memo_.end();) {
+        bool hit = false;
+        for (const auto& name : it->second.captured_var_names) {
+            if (affected.count(name) != 0) {
+                hit = true;
+                break;
+            }
+        }
+        if (hit) {
+            it = predicate_memo_.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    if (n > 0) {
+        ++predicate_memo_partial_evictions_;
+        predicate_memo_selective_invalidate_total_ += n;
+        aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
+    }
+    return n;
+}
+
+// Issue #2068: drop predicate-memo entries with epoch < min_gen. The epoch
+// field already tracks the cache_epoch_ at insertion; entries with epoch <
+// min_gen are guaranteed stale (capture generation older than the current
+// binding generation observed at the invalidate site). Same LRU-aware
+// behavior as the var_names variant above.
+std::size_t InferenceEngine::invalidate_predicate_memo_for_min_gen(std::uint64_t min_gen) {
+    if (predicate_memo_.empty())
+        return 0;
+    std::size_t n = 0;
+    for (auto it = predicate_memo_.begin(); it != predicate_memo_.end();) {
+        if (it->second.epoch < min_gen) {
+            it = predicate_memo_.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    if (n > 0) {
+        ++predicate_memo_partial_evictions_;
+        predicate_memo_selective_invalidate_total_ += n;
+        aura_typed_audit_note_predicate_memo_eviction(static_cast<std::uint64_t>(n));
+    }
+    return n;
+}
+
+
 // Issue #518 P0 Phase 1: after occurrence refresh, ensure
 // narrowed-variable use-sites in the if branches are in the
 // affected set for the subsequent infer loop.
@@ -4424,8 +4483,14 @@ InferenceEngine::resolve_if_predicate_occurrence(FlatAST& flat, StringPool& pool
             stats_.and_or_join_uses += join_used ? 1 : 0;
             // Issue #1872: stamp last_used + partial LRU on overflow
             // (replaces pre-#1872 wholesale clear when size > 4096).
-            predicate_memo_[cond_id] =
-                PredicateMemoEntry{cond_id, cache_epoch_, occ, ++predicate_memo_clock_};
+            // Issue #2068: capture var_names from the predicate body for
+            // selective invalidation later. Empty for predicates that
+            // produced no narrowing (occ == nullopt) — no SymId refs to track.
+            std::vector<std::string> captured;
+            if (occ && !occ->var_name.empty())
+                captured.push_back(occ->var_name);
+            predicate_memo_[cond_id] = PredicateMemoEntry{
+                cond_id, cache_epoch_, occ, ++predicate_memo_clock_, std::move(captured)};
             evict_predicate_memo_if_over_capacity();
             // Issue #1455: after a forced re-walk from stale
             // provenance, clear historical stale flags so the next
