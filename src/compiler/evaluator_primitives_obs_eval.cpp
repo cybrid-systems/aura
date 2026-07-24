@@ -5925,8 +5925,21 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relower-threshold-wired", make_int(1)},
                 {"schema-2032", make_int(2032)},
                 {"issue-2032", make_int(2032)},
+                // Issue #2033: CacheEntryVersionStamp + bridge_epoch should_relower
+                {"cache_entry_version_stamp_total",
+                 make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
+                {"should_relower_bridge_epoch_mismatch_total",
+                 make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
+                {"should_relower_stamp_mismatch_total",
+                 make_int(m ? load(m->should_relower_stamp_mismatch_total) : 0)},
+                {"should-relower-bridge-epoch-mismatch",
+                 make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
+                {"cache-entry-version-stamp-wired", make_int(1)},
+                {"should-relower-bridge-epoch-wired", make_int(1)},
+                {"schema-2033", make_int(2033)},
+                {"issue-2033", make_int(2033)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032 satellite
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032/#2033 satellite
             };
             return build_hash(kv);
         });

@@ -152,6 +152,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> dep_graph_edge_reject_stale_total{0};
     std::atomic<std::uint64_t> dep_graph_generation_total{0};
     std::atomic<std::uint64_t> partial_relower_threshold_used{8};
+    // Issue #2033: CacheEntryVersionStamp / should_relower bridge check.
+    //   - cache_entry_version_stamp_total: stamps written on store_define_v2
+    //   - should_relower_bridge_epoch_mismatch_total: bridge_epoch forced re-lower
+    //   - should_relower_stamp_mismatch_total: any stamp-domain mismatch
+    std::atomic<std::uint64_t> cache_entry_version_stamp_total{0};
+    std::atomic<std::uint64_t> should_relower_bridge_epoch_mismatch_total{0};
+    std::atomic<std::uint64_t> should_relower_stamp_mismatch_total{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #1514: JIT partial_recompile requests from relower path.

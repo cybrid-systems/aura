@@ -4001,7 +4001,7 @@ public:
         std::vector<aura::ir::ClosureBridgeData> bridges; // parallel to irs
         std::vector<std::string> strings;                 // parallel string pool
         bool dirty = true;                                // needs re-lower
-        std::size_t mutation_count = 0;                   // snapshot at lower time
+        std::size_t mutation_count = 0;                   // snapshot at lower time (legacy)
         // Issue #166: epoch snapshot at lower time. On every
         // mutation, mutation_epoch_ is incremented atomically.
         // On next access, if the entry's epoch doesn't match
@@ -4011,8 +4011,19 @@ public:
         // stale?" check that complements the per-function
         // invalidate_function BFS in dep_graph_.
         std::uint64_t last_seen_epoch_ = 0;
+        // Issue #2033: monotonic stamp (mutation + bridge + defuse).
+        CacheEntryVersionStamp version_stamp_{};
         // Issue #1042: access stamp for LRU eviction under long-running serve.
         std::uint64_t last_used = 0;
+
+        // Issue #2033: write stamp after successful lower / store.
+        void stamp_version(std::uint64_t mut_epoch, std::uint64_t bridge, std::uint64_t defuse) {
+            version_stamp_.mutation_count = mut_epoch;
+            version_stamp_.bridge_epoch = bridge;
+            version_stamp_.defuse_version = defuse;
+            mutation_count = static_cast<std::size_t>(mut_epoch);
+            last_seen_epoch_ = mut_epoch;
+        }
         // Issue #196: per-block dirty bitmask. One inner
         // vector per IRFunction; each inner vector has 1 byte
         // per basic block (1=dirty, 0=clean). Indexed by
@@ -4047,6 +4058,8 @@ public:
         // Mark every block in every function dirty. Used by
         // mark_define_dirty / mark_all_defines_dirty to
         // signal a full re-lower is needed.
+        // Issue #2033: also sync SoA instruction_dirty_ from block_dirty_
+        // so stamp/dirty columns stay consistent after cascade.
         void mark_all_blocks_dirty() {
             for (auto& func_blocks : block_dirty_per_func_) {
                 for (auto& b : func_blocks)
@@ -4054,6 +4067,7 @@ public:
             }
             for (auto& soa_fn : soa_mod.functions)
                 soa_fn.mark_all_blocks_dirty();
+            (void)soa_mod.sync_instruction_dirty_from_block_dirty();
         }
 
         // Mark a single block dirty. Resizes the bitmask
@@ -4426,21 +4440,28 @@ public:
             return 2;
         // Issue #1042: touch LRU stamp on every lookup.
         it->second.last_used = ++ir_cache_v2_access_clock_;
-        // Issue #126: delegate the re-lower decision to the pure
-        // helper should_relower(). The function takes the relevant
-        // fields as values (no this->) so the same logic can be
-        // unit-tested in isolation.
+        // Issue #126 / #2033: pure should_relower with CacheEntryVersionStamp
+        // (mutation_epoch + bridge_epoch + defuse_version). Fixes the pre-#2033
+        // bug that passed mutation_count twice (never detecting epoch drift).
         // Issue #1555: also treat body-only bitmasks (dirty_block_count>0)
         // as needs-relower even if entry.dirty was cleared inconsistently.
-        if (should_relower(source_hash, it->second.source_hash, it->second.dirty,
-                           it->second.mutation_count, it->second.mutation_count) ||
-            it->second.dirty_block_count() > 0) {
-            // Issue #487: bump the should_relower counter
-            // for observability (the re-lower path fired
-            // on dirty). The ratio should_relower /
-            // affected_subtree measures the dirty-
-            // trigger rate.
+        const auto cur_mut = mutation_epoch_.load(std::memory_order_acquire);
+        const auto cur_bridge = bridge_epoch();
+        const auto cur_defuse = evaluator_.defuse_version();
+        std::uint32_t reasons = 0;
+        const bool need =
+            should_relower(source_hash, it->second.source_hash, it->second.dirty,
+                           it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse, &reasons) ||
+            it->second.dirty_block_count() > 0;
+        if (need) {
             metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2033: stamp-domain observability for silent-stale forensics.
+            if (reasons & kRelowerBridgeEpoch)
+                metrics_.should_relower_bridge_epoch_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            if (reasons & (kRelowerMutationDrift | kRelowerBridgeEpoch | kRelowerDefuseVersion))
+                metrics_.should_relower_stamp_mismatch_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             return 1;
         }
         // Issue #1915: clean hit with matching source_hash — no re-lower.
@@ -4466,7 +4487,10 @@ public:
         entry.strings = std::move(strings);
         entry.dirty = false;
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
-        entry.mutation_count = 0;
+        // Issue #2033: stamp mutation + bridge + defuse after successful lower.
+        entry.stamp_version(mutation_epoch_.load(std::memory_order_acquire), bridge_epoch(),
+                            evaluator_.defuse_version());
+        metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.
         // init_block_dirty_from_irs() sizes to irs[].blocks.size()
@@ -4482,6 +4506,8 @@ public:
             entry.soa_mod = std::move(pending_soa_snapshot_->module);
             pending_soa_snapshot_.reset();
         }
+        // Issue #2033: ensure SoA instr dirty stays in sync after store shape rebuild.
+        (void)entry.soa_mod.sync_instruction_dirty_from_block_dirty();
         // Issue #959: enforce max-size policy after store.
         maybe_evict_ir_cache_v2();
     }
