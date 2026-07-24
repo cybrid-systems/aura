@@ -11,6 +11,8 @@ module;
 #include "observability_metrics.h"
 #include "jit_typed_mutation_stats.h" // ir_soa_migration::record_capture_dirty_mark
 #include "aura_jit.h"
+#include "aura_jit_bridge.h"               // aura_reemit_aot_for_dirty (#2035)
+#include "hot_update_registry.hh"          // HotUpdateRegistry notify + region mask (#2035)
 #include "core/transparent_string_hash.hh" // TransparentStringHash for ir_cache_index
 #include <memory>
 #include <mutex>
@@ -26,6 +28,44 @@ module aura.compiler.service;
 import std;
 
 namespace aura::compiler {
+
+// ── Issue #2035: HotUpdateRegistry cascade notify + region-mask reemit ──
+void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
+                                                       const std::vector<std::string>& dependents) {
+    auto& reg = hot_update_registry();
+    // Always fan-out dirty listeners (agents / plugins / tests).
+    reg.notify_dirty_define(name.c_str());
+    std::uint64_t mask = 0;
+    if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end())
+        mask |= it->second.compute_region_mask_from_dirty();
+    for (const auto& d : dependents) {
+        if (d.empty() || d == name)
+            continue;
+        reg.notify_dirty_define(d.c_str());
+        if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end())
+            mask |= it->second.compute_region_mask_from_dirty();
+    }
+    // Body-only / soft dirty with empty bitmasks still needs a selective bit.
+    if (mask == 0) {
+        if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end() && it->second.dirty)
+            mask = (1ULL << 1);
+    }
+    if (mask != 0) {
+        // Strips Evolution bit (1<<2) inside aura_set_aot_emit_region_mask.
+        reg.set_emit_region_mask(mask);
+        reg.on_region_mask_from_dirty(mask);
+    }
+    // Selective AOT re-emit only when the host wired a reemit candidate provider.
+    // Stable func ids are preserved inside aura_reemit_aot_for_dirty on success.
+    if (reg.reemit_provider_wired()) {
+        reg.on_cascade_reemit_trigger();
+        const auto n = aura_reemit_aot_for_dirty(evaluator_.defuse_version());
+        // Always count the cascade-driven reemit attempt (#1640 / #2035).
+        metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
+        if (n > 0)
+            metrics_.commercial_reemits_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
 
 // ── mark_define_dirty (#1476 / #1523 / #1627 / #1505) ─────────────────────
 void CompilerService::mark_define_dirty(const std::string& name) {
@@ -148,6 +188,7 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // dirty so defuse_version_ + hygiene edges do not under-invalidate.
     std::queue<std::string> bfs;
     std::unordered_set<std::string> visited;
+    std::vector<std::string> cascade_dependents; // Issue #2035: hot-update fan-out
     bfs.push(name);
     visited.insert(name);
     std::size_t depth = 0;
@@ -170,6 +211,7 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             if (!visited.insert(dependent).second)
                 continue;
             bfs.push(dependent);
+            cascade_dependents.push_back(dependent);
             // Issue #1476: per-dependent atomic bump (closure
             // captures for the dependent need new epoch too —
             // paired with the helper that pairs with #1475's
@@ -248,6 +290,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         // retry
     }
     metrics_.dep_graph_hygiene_propagate.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit.
+    notify_hot_update_after_cascade_(name, cascade_dependents);
 }
 
 // Mark all defines dirty. Called when (set-code ...) re-parses the whole
@@ -283,12 +327,14 @@ void CompilerService::mark_all_defines_dirty() {
     // and N× linear-live scans). Still bumps jit-sync once so
     // query:incremental-closure-stats jit-sync-count observes redefine.
     std::size_t dirty_n = 0;
+    std::vector<std::string> dirty_names;
+    dirty_names.reserve(ir_cache_v2_.size());
     for (auto& [name, entry] : ir_cache_v2_) {
-        (void)name;
         entry.dirty = true;
         entry.mark_all_blocks_dirty();
         // Issue #2034: force SoA instruction_dirty_ on bulk invalidate.
         finish_cascade_soa_dirty_sync_(entry);
+        dirty_names.push_back(name);
         ++dirty_n;
     }
     if (dirty_n > 0) {
@@ -296,6 +342,12 @@ void CompilerService::mark_all_defines_dirty() {
         metrics_.jit_hotswap_invalidate_total.fetch_add(evicted > 0 ? evicted : dirty_n,
                                                         std::memory_order_relaxed);
         evaluator_.bump_incremental_closure_jit_sync();
+        // Issue #2035: bulk set-code soft-dirty still notifies HotUpdateRegistry
+        // (one region-mask reemit for the whole workspace replace).
+        std::vector<std::string> rest;
+        if (dirty_names.size() > 1)
+            rest.assign(dirty_names.begin() + 1, dirty_names.end());
+        notify_hot_update_after_cascade_(dirty_names.front(), rest);
     }
 }
 
@@ -711,6 +763,10 @@ void CompilerService::invalidate_function(const std::string& name) {
 
     // Issue #683: post re-lower linear ownership revalidate probe.
     run_linear_ownership_revalidate_after_invalidate(name);
+
+    // Issue #2035: HotUpdateRegistry dirty notify + region-mask reemit
+    // after hard invalidate cascade (root + dependents).
+    notify_hot_update_after_cascade_(name, dependents);
 }
 
 } // namespace aura::compiler

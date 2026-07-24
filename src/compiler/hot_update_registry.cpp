@@ -81,6 +81,15 @@ void HotUpdateRegistry::on_region_mask_adapt_restore(std::uint64_t /*region*/) n
     region_mask_adapt_restores_.fetch_add(1, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_region_mask_from_dirty(std::uint64_t mask) noexcept {
+    region_mask_from_dirty_total_.fetch_add(1, std::memory_order_relaxed);
+    last_region_mask_from_dirty_.store(mask, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::on_cascade_reemit_trigger(std::uint64_t /*candidates_hint*/) noexcept {
+    cascade_reemit_trigger_total_.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #2014: sliding-window deopt rate. Under threshold this is:
 //   1× fetch_add (observed) + 1× load start + 1× load window + branch.
 // Clock is read only when the window may have rolled or on first deopt.
@@ -308,6 +317,15 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
         static_cast<std::int64_t>(region_mask_adapt_restores_.load(std::memory_order_relaxed));
     s.emit_region_mask_preferred =
         static_cast<std::int64_t>(aura_get_aot_emit_region_mask_preferred());
+    // Issue #2035
+    s.region_mask_from_dirty_total =
+        static_cast<std::int64_t>(region_mask_from_dirty_total_.load(std::memory_order_relaxed));
+    s.cascade_reemit_trigger_total =
+        static_cast<std::int64_t>(cascade_reemit_trigger_total_.load(std::memory_order_relaxed));
+    s.last_region_mask_from_dirty =
+        static_cast<std::int64_t>(last_region_mask_from_dirty_.load(std::memory_order_relaxed));
+    s.schema_2035 = 2035;
+    s.issue_2035 = 2035;
     return s;
 }
 
@@ -349,6 +367,12 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->region_mask_adapt_clears_total = s.region_mask_adapt_clears_total;
     out->region_mask_adapt_restores_total = s.region_mask_adapt_restores_total;
     out->emit_region_mask_preferred = s.emit_region_mask_preferred;
+    // Issue #2035
+    out->region_mask_from_dirty_total = s.region_mask_from_dirty_total;
+    out->cascade_reemit_trigger_total = s.cascade_reemit_trigger_total;
+    out->last_region_mask_from_dirty = s.last_region_mask_from_dirty;
+    out->schema_2035 = s.schema_2035;
+    out->issue_2035 = s.issue_2035;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {
@@ -375,4 +399,13 @@ extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void) {
 // Issue #2017: C entry for compact-env-frames / other module-partition callers.
 extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch) {
     aura::compiler::hot_update_registry().notify_epoch_bump(epoch);
+}
+
+// Issue #2035: module-safe dirty notify for service_dirty cascade paths.
+extern "C" void aura_hot_update_notify_dirty_define(const char* name) {
+    aura::compiler::hot_update_registry().notify_dirty_define(name);
+}
+
+extern "C" int aura_hot_update_reemit_provider_wired(void) {
+    return aura::compiler::hot_update_registry().reemit_provider_wired() ? 1 : 0;
 }
