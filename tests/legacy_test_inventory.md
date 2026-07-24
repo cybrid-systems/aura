@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 333 | Preferred destination suites |
-| **Total scanned** | **333** | |
+| `tests/core/test_*.cpp` | 332 | Preferred destination suites |
+| **Total scanned** | **332** | |
 
 ### Related artifacts
 
@@ -37,9 +37,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 37 | 37 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 16 | 16 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 29 | 29 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 30 | 30 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 88 | 88 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 86 | 86 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 27 | 27 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **60**
+- Existing `*_batch` drivers (migration milestones): **61**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -107,6 +107,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_hotpath_matrix_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_incremental_relower_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_incremental_type_batch.cpp` → theme `jit_incremental`
+- `tests/compiler/test_inline_pass_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_issues_809_817_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
@@ -260,8 +261,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_incremental_relower_batch.cpp`
 - `tests/compiler/test_incremental_type_batch.cpp`
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp`
-- `tests/compiler/test_inline_pass_stats_atomic.cpp`
-- `tests/compiler/test_inline_pass_stats_unpack.cpp`
+- `tests/compiler/test_inline_pass_batch.cpp`
 - `tests/compiler/test_inline_typecheck_exception.cpp`
 - `tests/serve/test_inner_steal_starvation.cpp`
 - `tests/compiler/test_invalidate_cascade_order.cpp`
@@ -727,13 +727,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (29)
+### `jit_incremental` — JIT / AOT / incremental relower (30)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (29)
+#### domain/ (30)
 
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_mangle_top.cpp` (—) [domain_suite, theme_compiler] — test_aot_mangle_top.cpp — Issue #1369:
@@ -748,6 +748,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp` (—) [domain_suite, theme_compiler] — test_incremental_perblock_closure_bridge_safety.cpp — Issue #600:
 - `tests/compiler/test_incremental_relower_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_incremental_relower_batch.cpp — batch driver for incremental_relower family.
 - `tests/compiler/test_incremental_type_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
+- `tests/compiler/test_inline_pass_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_inline_pass_batch.cpp — inline_pass pair dup-merge (R19 phase 14).
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_jit_aot_hot_update_batch.cpp — consolidated AOT hot-update + steal-boundary drivers
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
 - `tests/compiler/test_jit_closure_cache_race.cpp` (—) [domain_suite, theme_compiler] — Issue #1707 (#1978 renamed): issue# moved from filename to header.
@@ -791,13 +792,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (88)
+### `observability` — Observability / metrics / query:*-stats (86)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (88)
+#### domain/ (86)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
@@ -820,8 +821,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_eval_relower_hotpath.cpp` (—) [domain_suite, theme_compiler] — Issue #1506/#1601/#1605/#1623 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp` (—) [domain_suite, theme_compiler] — Issue #1490/#1592/#1608/#1612 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
-- `tests/compiler/test_inline_pass_stats_atomic.cpp` (—) [domain_suite, theme_compiler] — Issue #1827 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_inline_pass_stats_unpack.cpp` (—) [domain_suite, theme_compiler] — Issue #1784 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_invalidate_consistency.cpp` (—) [domain_suite, theme_compiler] — Issue #1496/#1607/#1627 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_invalidations_stats_workspace_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1729/#1851 (#1978 renamed): issue# moved from filename to header.
