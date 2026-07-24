@@ -21,72 +21,6 @@
       "issue": null
     },
     {
-      "file": "tests/arena/test_arena_lifecycle.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_camera_rays.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_ir.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_pixel_framebuffer.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_render3d_primitives.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_render_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_terminal_lifecycle.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_voxel_frame.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_voxel_raycast.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_voxel_shade.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/arena/test_voxel_volume.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
       "file": "tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp",
       "category": "integration",
       "reason": "ADT/match exhaustiveness post-mutation reliability (#612)",
@@ -606,6 +540,12 @@
       "file": "tests/compiler/test_invalidations_stats_workspace_lock.cpp",
       "category": "unit",
       "reason": "Issue #1851 — compile:invalidations-stats must",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_ir.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
@@ -1425,6 +1365,12 @@
       "issue": null
     },
     {
+      "file": "tests/core/test_arena_lifecycle.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/core/test_ast_ops_stats_workspace_lock.cpp",
       "category": "unit",
       "reason": "Issue #1852 — compile:ast-ops-stats must shared_lock",
@@ -1761,9 +1707,33 @@
       "issue": null
     },
     {
+      "file": "tests/renderer/test_camera_rays.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_pixel_framebuffer.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_render3d_primitives.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/renderer/test_render_ai_native_template.cpp",
       "category": "unit",
       "reason": "Issue #1677 — render prim template + AI Native query/mutate evolution.",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_render_batch.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
@@ -1815,9 +1785,39 @@
       "issue": null
     },
     {
+      "file": "tests/renderer/test_terminal_lifecycle.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/renderer/test_terminal_render_production.cpp",
       "category": "unit",
       "reason": "Issue #1673 — production terminal render closed loop:",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_voxel_frame.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_voxel_raycast.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_voxel_shade.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/renderer/test_voxel_volume.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
