@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Preferred scaffold:
-//   tests/templates/test_domain_pattern.cpp
+//   tests/scaffolds/module_test_scaffold.cpp
 //     → copy to tests/domain/test_domain_<theme>_<aspect>.cpp
 //     → register in cmake/AuraDomainTests.cmake
 //
@@ -40,6 +40,6 @@ import std;
 
 // Intentionally empty of runnable ACs — open test_domain_pattern.cpp instead.
 int main() {
-    std::println("template redirect only; use tests/templates/test_domain_pattern.cpp");
+    std::println("template redirect only; use tests/scaffolds/module_test_scaffold.cpp");
     return 0;
 }

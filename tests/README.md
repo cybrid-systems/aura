@@ -30,7 +30,7 @@ tests/
     ├── fixtures/ 共享 case 数据
     ├── python/   harness + gate + runners
     ├── regression/ .aura 回归 fixture
-    └── _templates/ 起步模板 (不编译)
+    └── scaffolds/ 起步模板 (不编译, R13+R14 改名)
 ```
 
 ## 命名约定
@@ -118,7 +118,7 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 
 ## 不要做
 
-- 不要再开 `tests/domain/`、`tests/arena/`、`tests/edsl/`、`tests/compiler_core/`、`tests/jit/`、`tests/fiber/`、`tests/mutation/`、`tests/observability/`、`tests/linear/`、`tests/shape/`、`tests/misc/`、`tests/templates/`、`tests/stdlib/`、`tests/suite/` 等 theme-named dir
+- 不要再开 `tests/domain/`、`tests/arena/`、`tests/edsl/`、`tests/compiler_core/`、`tests/jit/`、`tests/fiber/`、`tests/mutation/`、`tests/observability/`、`tests/linear/`、`tests/shape/`、`tests/misc/`、`tests/stdlib/`、`tests/suite/` 等 theme-named dir
 - 不要再写 `tests/test_issue_NNNN.cpp` (legacy 模式,新代码写 `tests/<module>/test_<feature>_<issue>.cpp`)
 - 不要再写 `docs/design/NNNN-*.md` (per Anqi #1655 哲学:agent 仓库 plan 走 chat)
 - 顶层 `tests/<NAME>.cpp` 只在 fallback 时用 (老测试未迁移完),新代码必须放 `tests/<module>/` 下
