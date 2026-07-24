@@ -334,10 +334,14 @@ public:
     // last mutation/predicate are stashed for stitching the next hit.
     void clear_blame_context(bool preserve_last = false) noexcept {
         // Snapshot continuity anchors before zeroing actives.
+        // Issue #2028: also clear active_mutation_id so the next
+        // solve_delta_occurrence can restore from retained_* (cross-delta
+        // dirty-cascade continuity). Prior behavior left mutation id live.
         if (active_mutation_id_ != 0)
             retained_mutation_id_ = active_mutation_id_;
         if (active_predicate_cond_node_ != 0)
             retained_predicate_cond_node_ = active_predicate_cond_node_;
+        active_mutation_id_ = 0;
         active_predicate_cond_node_ = 0;
         active_affected_node_ = 0;
         blame_affected_nodes_.clear();
@@ -2044,5 +2048,46 @@ private:
 };
 
 static_assert(aura::ast::MutationVisitor<PostMutationInvariantVisitor>);
+
+// ── Issue #2028: stable constraint solver surface ─────────────────────────
+// Delta-oriented solve + provenance-tracked Let-Poly instantiate + selective
+// ADT/GuardShape re-narrow under dirty roots. Used by AI self-evo hot paths
+// (typed mutate / dirty cascade) without re-deriving internal solve_delta
+// priority policy.
+
+// Result of solve_delta_occurrence (cross-delta stability snapshot).
+export struct SolveDeltaOccurrenceResult {
+    SolveResult status = SolveResult::SOLVED;
+    std::size_t occurrence_priority_roots = 0;
+    std::size_t let_poly_roots = 0;
+    std::size_t touched_roots = 0;
+    // True when blame chain is complete or retained mutation/predicate
+    // anchors preserve continuity across clear_blame_context.
+    bool provenance_continuity = false;
+};
+
+// Issue #2028: mark occurrence vars, restore retained blame anchors if
+// needed, then solve_delta. Only touched / occurrence / let-poly roots
+// participate in the incremental worklist (existing solve_delta policy).
+// metrics: optional CompilerMetrics* for agent-visible counters.
+export SolveDeltaOccurrenceResult
+solve_delta_occurrence(ConstraintSystem& cs,
+                       std::span<const aura::core::TypeId> occurrence_vars = {},
+                       std::vector<Constraint>* unresolved_out = nullptr, void* metrics = nullptr);
+
+// Issue #2028: instantiate ∀ with fresh CS vars, stamp mark_let_poly_dirty
+// + mutation/blame provenance for each fresh binder. Returns body type
+// (or invalid when forall_id is not FORALL).
+export aura::core::TypeId
+let_poly_instantiate_with_provenance(ConstraintSystem& cs, aura::core::TypeRegistry& reg,
+                                     aura::core::TypeId forall_id, std::uint64_t mutation_id = 0,
+                                     std::uint32_t provenance_node = 0, void* metrics = nullptr);
+
+// Issue #2028: selective ADT match exhaustiveness + IfExpr occurrence
+// sites under dirty roots (no full-workspace re-infer). Returns count of
+// sites re-checked. Integrates refresh_adt_constructors_for_dirty_define_types.
+export std::size_t selective_adt_guardshape_renarrow(
+    aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
+    const std::vector<aura::ast::NodeId>& dirty_roots, void* metrics = nullptr);
 
 } // namespace aura::compiler

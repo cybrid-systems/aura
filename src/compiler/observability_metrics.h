@@ -4092,6 +4092,17 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> let_poly_priority_reverify_hits_total{0};
     std::atomic<std::uint64_t> let_poly_post_mutation_scope_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_size_peak{0};
+    // Issue #2028: stable solver surface (occurrence / Let-Poly / ADT renarrow).
+    //   - solve_delta_occurrence_total: solve_delta_occurrence calls
+    //   - solve_delta_occurrence_stable_total: provenance continuity held
+    //   - let_poly_instantiate_provenance_total: provenance-stamped instantiations
+    //   - adt_guardshape_selective_renarrow_total: sites re-checked under dirty
+    //   - cross_delta_solve_continuity_hits_total: retained-anchor restores
+    std::atomic<std::uint64_t> solve_delta_occurrence_total{0};
+    std::atomic<std::uint64_t> solve_delta_occurrence_stable_total{0};
+    std::atomic<std::uint64_t> let_poly_instantiate_provenance_total{0};
+    std::atomic<std::uint64_t> adt_guardshape_selective_renarrow_total{0};
+    std::atomic<std::uint64_t> cross_delta_solve_continuity_hits_total{0};
     // Issue #648: Panic Checkpoint + Yield Checkpoint Storage
     // Lifecycle + INVALID_VERSION Frame Handling in Fiber
     // Resume + Concurrent GC counters (P0 Runtime-Gap +
