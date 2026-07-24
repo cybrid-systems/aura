@@ -939,6 +939,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_production_readiness_closed_loop.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_production_roadmap_closed_loop.cpp",
       "category": "unknown",
       "reason": "",
@@ -1044,6 +1050,12 @@
       "file": "tests/compiler/test_quota_edge_cases.cpp",
       "category": "integration",
       "reason": "Issue #1548 — quota edge cases for #1481 / #1546 / #1547 wire-ups",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_refinement_closed_loop.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
@@ -1228,18 +1240,6 @@
     },
     {
       "file": "tests/compiler/test_stdlib_production_review_923.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler/test_task2_refinement_closed_loop.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler/test_task6_production_readiness_closed_loop.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null

@@ -5,7 +5,7 @@
 // gates (was test_production_sweep.cpp).
 //
 // Add new Close #N observability surfaces by editing
-// tests/domain/cases/obs_schema_cases.hpp; production flag surfaces via
+// tests/compiler/obs_schema_cases.hpp; production flag surfaces via
 // cases/production_sweep_cases.hpp — do not add a new binary.
 //
 // Coverage:
@@ -14,7 +14,7 @@
 //   - Production field-list schemas (Wave 2 production_* fold)
 //   - Light primitives used by late surfaces (terminal:*, primitives:alias)
 //
-// See tests/domain/README.md for the testing policy.
+// See tests/README.md for the testing policy.
 
 #include "test_harness.hpp"
 #include "obs_schema_cases.hpp"
