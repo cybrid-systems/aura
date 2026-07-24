@@ -48,6 +48,7 @@ enum class PassKind : std::uint8_t {
     Render = 7,
     TypePropagation = 8, // #1576 concrete core pass
     ShapeAwareFold = 9,  // #1576 concrete core pass
+    DeadCoercion = 10,   // #2066: CastOp elision driven by narrow_evidence + provenance
     Count
 };
 
@@ -66,6 +67,11 @@ inline constexpr PassDescriptor kDefaultPassTable[] = {
     {PassKind::TypePropagation, "type-propagation", true, false, true, false},
     {PassKind::ComputeKind, "compute-kind", true, false, true, true},
     {PassKind::ShapeAwareFold, "shape-aware-fold", true, true, true, false},
+    // Issue #2066: DeadCoercion (CastOp elision driven by narrow_evidence) runs
+    // after TypePropagation (dirty-aware, contracts-enabled, pure-analysis-friendly).
+    // Pre-existing wire-up in service.ixx:2890 via run_pipeline(...) parameter pack
+    // — this table entry surfaces the pass to Agents via the canonical PassKind enum.
+    {PassKind::DeadCoercion, "dead-coercion-elim", true, false, true, true},
     {PassKind::Shape, "shape", true, true, true, true},
     {PassKind::Inline, "inline", false, false, false, false},
     {PassKind::TypeCheck, "type-check", false, true, false, false},

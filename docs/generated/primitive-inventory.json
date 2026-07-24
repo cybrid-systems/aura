@@ -3,12 +3,12 @@
     "compile": 23,
     "engine": 8,
     "mutate": 6,
-    "other": 407,
+    "other": 409,
     "query": 51,
     "stats-like": 1,
     "workspace": 24
   },
-  "count": 520,
+  "count": 522,
   "frozen_count": 447,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -715,6 +715,8 @@
     "number->string",
     "number?",
     "orch:agent-join",
+    "orch:agent-recv",
+    "orch:agent-send",
     "orch:parallel-intend",
     "orch:reset-metrics",
     "orch:spawn-agent",

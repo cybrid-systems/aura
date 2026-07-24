@@ -1884,6 +1884,10 @@ set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 aura_add_issue_test(test_linear_runtime_violation)
 aura_issue_test_link_llvm_jit(test_linear_runtime_violation)
 
+# Issue #2066: DeadCoercionElimination IR-layer CastOp elision (CastOp after narrow).
+aura_add_issue_test(test_dead_coercion_elim)
+aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
