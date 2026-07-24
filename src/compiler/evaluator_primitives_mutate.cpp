@@ -64,6 +64,15 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t aot_reload_success_total;  // #2012
     std::int64_t aot_reload_rollback_total; // #2012
     std::int64_t live_closure_remap_total;  // #2013
+    // Issue #2014
+    std::int64_t deopt_storm_detected_total;
+    std::int64_t deopt_observed_total;
+    std::int64_t deopt_window_count;
+    std::int64_t deopt_storm_threshold;
+    std::int64_t deopt_storm_window_ms;
+    std::int64_t reemit_throttle_active;
+    std::int64_t reemit_throttle_skips_total;
+    std::int64_t storm_listeners;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }
@@ -5719,6 +5728,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("aot-reload-rollback-total", snap.aot_reload_rollback_total);
             // Issue #2013: live closure remaps after reemit.
             insert_kv("live-closure-remap-total", snap.live_closure_remap_total);
+            // Issue #2014: deopt storm detection + reemit throttle.
+            insert_kv("deopt-storm-detected-total", snap.deopt_storm_detected_total);
+            insert_kv("deopt-observed-total", snap.deopt_observed_total);
+            insert_kv("deopt-window-count", snap.deopt_window_count);
+            insert_kv("deopt-storm-threshold", snap.deopt_storm_threshold);
+            insert_kv("deopt-storm-window-ms", snap.deopt_storm_window_ms);
+            insert_kv("reemit-throttle-active", snap.reemit_throttle_active);
+            insert_kv("reemit-throttle-skips-total", snap.reemit_throttle_skips_total);
+            insert_kv("storm-listeners", snap.storm_listeners);
             insert_kv("mvp-single-workspace", 1); // #1943
             insert_kv("registry-class-wired", 1);
             auto hidx = g_hash_tables.size();

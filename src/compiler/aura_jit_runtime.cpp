@@ -257,8 +257,14 @@ static std::atomic<uint64_t> g_hygiene_ir_provenance_stamped_total{0};
 // counter is incremented on the hot path. The external accessor
 // `aura_deopt_count()` reads g_workspace_deopt_count for
 // telemetry; this is the write side that the JIT calls into.
+// Issue #2014: feed HotUpdateRegistry deopt-storm window (weak-safe C API).
+extern "C" void aura_hot_update_note_deopt(void);
+
 extern "C" void aura_deopt_inc() {
     g_workspace_deopt_count.fetch_add(1, std::memory_order_relaxed);
+    // Dual-check correctness path unchanged; registry only observes rate
+    // for recovery throttling / storm detection (#2014).
+    aura_hot_update_note_deopt();
 }
 
 extern "C" uint64_t aura_unchecked_fastpath_count() {

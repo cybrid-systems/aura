@@ -1737,6 +1737,18 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         return 0;
     }
 
+    // Issue #2014: during a deopt storm, coalesce reemit (skip this call).
+    // Dual-check / deopt correctness is unchanged; only recovery is delayed
+    // until the sliding window rolls and throttle clears.
+    if (aura::compiler::hot_update_registry().should_throttle_reemit()) {
+        aura::compiler::hot_update_registry().on_reemit_throttled();
+        g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+        g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+        return 0;
+    }
+
     const std::uint64_t region_mask = g_aot_emit_region_mask;
     const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
 
