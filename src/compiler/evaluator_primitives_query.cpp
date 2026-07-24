@@ -39,6 +39,8 @@ extern "C" std::uint64_t aura_jit_macro_introduced_deopt();
 extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
 // Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
+// Issue #2019: MacroIntroduced restamp-after-flat counter.
+extern "C" std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -2696,6 +2698,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           rest_hyg > rest_file ? rest_hyg : rest_file);
                 insert_kv("macro_rest_param_hygiene_total",
                           rest_hyg > rest_file ? rest_hyg : rest_file);
+                // Issue #2019
+                const std::int64_t restamp_m = static_cast<std::int64_t>(
+                    m ? m->macro_restamp_after_flat_total.load(std::memory_order_relaxed) : 0);
+                const std::int64_t restamp_f =
+                    static_cast<std::int64_t>(aura_macro_restamp_after_flat_total_v_read());
+                insert_kv("macro-restamp-after-flat-total",
+                          restamp_m > restamp_f ? restamp_m : restamp_f);
+                insert_kv("macro_restamp_after_flat_total",
+                          restamp_m > restamp_f ? restamp_m : restamp_f);
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias

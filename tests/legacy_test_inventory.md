@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 333 | Preferred destination suites |
-| **Total scanned** | **333** | |
+| `tests/core/test_*.cpp` | 334 | Preferred destination suites |
+| **Total scanned** | **334** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 78 | 78 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 36 | 36 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 7 | 7 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 17 | 17 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 18 | 18 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 30 | 30 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 86 | 86 | P2 — often thin schema probes; collapse into obs matrix |
@@ -311,6 +311,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp`
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp`
 - `tests/compiler/test_macro_reflect_batch.cpp`
+- `tests/compiler/test_macro_restamp_after_flat.cpp`
 - `tests/core/test_marker_metadata_lock.cpp`
 - `tests/compiler/test_matcher_stable_captures.cpp`
 - `tests/core/test_module_boundary.cpp`
@@ -707,13 +708,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (17)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (18)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (17)
+#### domain/ (18)
 
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
@@ -723,6 +724,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp` (—) [domain_suite, theme_compiler] — Issue #1501/#1589/#1593/#1609/#1613 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp` (—) [domain_suite, theme_compiler] — test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp — Issue #654:
 - `tests/compiler/test_macro_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_macro_reflect_batch.cpp — batch driver for macro+reflect+self-evo family.
+- `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
 - `tests/compiler/test_query_pattern_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_query_pattern_batch.cpp — query_pattern pair dup-merge (R19 phase 13).
 - `tests/compiler/test_query_pattern_hygiene_macrointroduced.cpp` (—) [domain_suite, theme_compiler] — test_query_pattern_hygiene_macrointroduced.cpp — Issue #593:

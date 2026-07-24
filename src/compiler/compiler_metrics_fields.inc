@@ -1203,6 +1203,8 @@ AURA_COMPILER_METRICS_FIELD(hygiene_ir_marker_propagation)
 AURA_COMPILER_METRICS_FIELD(macro_clone_concurrent_hygiene)
 // Issue #2018: rest-param hygiene gensyms (`__rest_*`) in clone_macro_body.
 AURA_COMPILER_METRICS_FIELD(macro_rest_param_hygiene_total)
+// Issue #2019: MacroIntroduced restamp after expand → FlatAST.
+AURA_COMPILER_METRICS_FIELD(macro_restamp_after_flat_total)
 AURA_COMPILER_METRICS_FIELD(production_sweep_1246_1250_active)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_bridge_guard)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_mutated_schema_checks)

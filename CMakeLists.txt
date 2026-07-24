@@ -1765,6 +1765,11 @@ aura_add_issue_test(test_rest_param_hygiene_self_evo)
 aura_issue_test_link_llvm_jit(test_rest_param_hygiene_self_evo)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 
+# Issue #2019: MacroIntroduced restamp after expand → FlatAST.
+aura_add_issue_test(test_macro_restamp_after_flat)
+aura_issue_test_link_llvm_jit(test_macro_restamp_after_flat)
+add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)
