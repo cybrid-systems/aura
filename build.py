@@ -943,15 +943,21 @@ def test_ai_agent_demo():
 
 
 def test_gradual():
-    """Gradual Guarantee verification (#1961 → tests/run.py gradual)."""
-    runner = ROOT / "tests" / "run.py"
+    """Gradual Guarantee verification (#1961 → tests/run.py gradual).
+
+    R10 #1932 layout migration relocated thin redirect Python scripts
+    from tests/<name>.py to tests/python/<name>.py. Test runner and
+    legacy redirect moved to tests/python/. Prefer new path; fall back
+    to legacy path for back-compat with old fixture layouts.
+    """
+    runner = ROOT / "tests" / "python" / "run.py"
     legacy = ROOT / "tests" / "check_gradual.py"
     if runner.exists():
         cmd = [sys.executable, str(runner), "gradual"]
     elif legacy.exists():
         cmd = [sys.executable, str(legacy)]
     else:
-        print(f"  {legacy} not found")
+        print(f"  {runner} not found")
         return 1
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     print(r.stdout)
@@ -963,9 +969,12 @@ def test_gradual():
 
 
 def test_bash():
-    """Bash regression (#1961 → tests/run.py bash)."""
+    """Bash regression (#1961 → tests/run.py bash).
+
+    R10 #1932: tests/run.py → tests/python/run.py.
+    """
     print(f"{B}═══ Bash regression tests ═══{N}")
-    runner = ROOT / "tests" / "run.py"
+    runner = ROOT / "tests" / "python" / "run.py"
     shell = ROOT / "tests" / "run-tests.sh"
     if runner.exists():
         r = subprocess.run(
@@ -1123,10 +1132,14 @@ def test_issues():
     print(f"{B}═══ Issue Tests (tier={tier}, jobs={jobs}{', --changed' if '--changed' in sys.argv else ''}) ═══{N}")
     # Prefer unified CLI; falls through to run_issue_tests implementation.
     cmd_name = "issues-fast" if tier == "fast" else "issues"
+    # R10 #1932: tests/run.py → tests/python/run.py.
+    run_path = ROOT / "tests" / "python" / "run.py"
+    if not run_path.exists():
+        run_path = ROOT / "tests" / "run.py"
     r = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "tests" / "run.py"),
+            str(run_path),
             cmd_name,
             "--tier",
             tier,
