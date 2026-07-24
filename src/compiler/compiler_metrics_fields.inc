@@ -1201,6 +1201,8 @@ AURA_COMPILER_METRICS_FIELD(arena_shrink_tier_hardened)
 AURA_COMPILER_METRICS_FIELD(soa_view_eval_helpers)
 AURA_COMPILER_METRICS_FIELD(hygiene_ir_marker_propagation)
 AURA_COMPILER_METRICS_FIELD(macro_clone_concurrent_hygiene)
+// Issue #2018: rest-param hygiene gensyms (`__rest_*`) in clone_macro_body.
+AURA_COMPILER_METRICS_FIELD(macro_rest_param_hygiene_total)
 AURA_COMPILER_METRICS_FIELD(production_sweep_1246_1250_active)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_bridge_guard)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_mutated_schema_checks)
