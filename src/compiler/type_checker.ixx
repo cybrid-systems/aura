@@ -744,6 +744,13 @@ public:
     std::uint64_t predicate_memo_targeted_invalidations() const noexcept {
         return predicate_memo_targeted_invalidations_;
     }
+    // Issue #2068: selective predicate-memo invalidation counter. Bumped
+    // by invalidate_predicate_memo_for_var_names (drops only entries that
+    // mention affected SymIds) + invalidate_predicate_memo_for_min_gen
+    // (drops entries with epoch < min_gen).
+    std::uint64_t predicate_memo_selective_invalidate_total() const noexcept {
+        return predicate_memo_selective_invalidate_total_;
+    }
     std::size_t predicate_memo_size() const noexcept { return predicate_memo_.size(); }
     // Issue #434: per-node occurrence dirty recovery.
     // Returns the lifetime total of narrowing
@@ -931,6 +938,11 @@ public:
         std::uint64_t epoch = 0;
         std::optional<OccurrenceInfoFlat> result; // nullopt = no narrowing found
         std::uint64_t last_used = 0;              // #1872 LRU stamp (bounded_lru)
+        // Issue #2068: captured var_names from the predicate body. Used by
+        // invalidate_predicate_memo_for_var_names to drop only the entries
+        // that mention affected SymIds (selective invalidation) instead of
+        // evicting unrelated entries via LRU thrashing.
+        std::vector<std::string> captured_var_names;
     };
     std::unordered_map<aura::ast::NodeId, PredicateMemoEntry> predicate_memo_;
     std::uint64_t predicate_memo_hits_ = 0;
@@ -942,6 +954,7 @@ public:
     std::uint64_t predicate_memo_partial_evictions_ = 0;
     // Issue #1923: partial invalidations by affected NodeId (not full epoch).
     std::uint64_t predicate_memo_targeted_invalidations_ = 0;
+    std::uint64_t predicate_memo_selective_invalidate_total_ = 0;
     std::uint64_t predicate_memo_clock_ = 0; // monotonic access stamp for LRU
     // Issue #434: per-node occurrence dirty
     // tracking. The narrowing_dirty_recovery_total
@@ -976,6 +989,13 @@ public:
                                              const aura::ast::FlatAST* flat = nullptr);
     // Prefer evicting stale-epoch entries first when over capacity.
     void prune_predicate_memo_stale_epochs();
+    // Issue #2068: selective predicate-memo invalidation by affected
+    // var_names (drop only entries that mention affected SymIds) OR by
+    // min_gen (drop entries captured under an older generation). Returns
+    // # entries dropped. Bumps predicate_memo_selective_invalidate_total_.
+    std::size_t
+    invalidate_predicate_memo_for_var_names(const std::unordered_set<std::string>& affected);
+    std::size_t invalidate_predicate_memo_for_min_gen(std::uint64_t min_gen);
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the
