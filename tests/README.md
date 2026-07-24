@@ -6,6 +6,46 @@ How and where to add tests in Aura.
 **Live layout detail:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957).
 **Fixture shard format:** [`fixtures/README.md`](fixtures/README.md).
 
+---
+
+## ⛔ STOP — Before you write a test, follow this 5-step decision tree
+
+```
+═══════════════════════════════════════════════════════════════════════════
+ STOP — new work goes to tests/<src-aligned-subdir>/, not tests/issues/
+═══════════════════════════════════════════════════════════════════════════
+
+1. New query:*-stats / engine:* schema gate?
+   └─ YES → tests/compiler/obs_schema_cases.hpp 加一行
+            (tests/compiler/production_sweep_cases.hpp if production flag)
+            跑 ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix. STOP.
+
+2. Fits existing batched suite?
+   └─ fiber / hygiene / typed_mutate / obs matrix?
+        → extend that suite (test_arena_batch / test_hotpath_matrix_batch /
+          test_soa_batch / test_obs_schema_matrix)
+   └─ Family already batched (compact, soa, linear, …)?
+        → extend tests/compiler/test_<theme>_unit_batch.cpp
+
+3. New test file (not just a row in an existing suite)?
+   └─ YES → copy tests/scaffolds/module_test_scaffold.cpp to
+            tests/<src-aligned-subdir>/test_<module>_<feature>[_<issue>].cpp
+            然后用 aura_add_issue_test() 在 CMakeLists.txt 注册
+
+4. NEVER new tests/issues/test_issue_N.cpp for routine work
+   (R1 2026-07-21 abandoned the tests/domain/ pilot in favor of src/-aligned layout)
+```
+
+**Templates:** [`tests/scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) (preferred) + [`tests/scaffolds/legacy_test_redirect.cpp`](scaffolds/legacy_test_redirect.cpp) (legacy redirect).
+
+**Decision tree src** (these files contain the same tree + more detail — they're explicit "not CMake targets" templates):
+- `tests/scaffolds/module_test_scaffold.cpp` — R17 rewrite, 5-step decision tree + copy-paste checklist
+- `tests/scaffolds/legacy_test_redirect.cpp` — legacy redirect (STOP banner + 5-step tree)
+
+**Why this tree?** Every `tests/<src-aligned-subdir>/` mirrors a `src/<dir>/` (see 哲学 below). New tests should go in the matching suite, not in theme-named dirs like `tests/arena/` / `tests/fiber/` / `tests/edsl/` / `tests/observability/` (R1 abandoned scheme). Tests live where the code lives — agent 接入点.
+
+---
+
 ## 哲学 (2026-07-24 重整)
 
 **顶层目录镜像 `src/`** —— 每个 test 在哪个 `tests/<module>/` 下,直接对应 `src/<module>/`。
@@ -46,7 +86,7 @@ tests/
 **issue 号处理**:主放 banner header (`// Issue #NNNN (#1978 renamed): issue# moved from filename to header.`)。
 文件名只在消歧义价值时带 issue 后缀。
 
-## 添加新测试 (最短路径)
+## 添加新测试 (展开 — 在 5-step tree 之后用这个)
 
 ```
 新 query:*-stats / engine:* schema gate?
@@ -132,5 +172,7 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 | [`root_test_classification.md`](root_test_classification.md) | Theme → module map + near-dups |
 | [`fixtures/README.md`](fixtures/README.md) | Sharded fixture format + 12 KB / 50-case rule |
 | [`core/arena_pilot_notes.md`](core/arena_pilot_notes.md) | #1959 arena pilot 笔记 (历史参考) |
+| [`scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) | R17 rewrite, 5-step decision tree + copy-paste checklist |
+| [`scaffolds/legacy_test_redirect.cpp`](scaffolds/legacy_test_redirect.cpp) | Legacy redirect (STOP banner + 5-step tree) |
 | [`../docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) | CMake resolve order + harness policy |
 | [`../docs/contributing.md`](../docs/contributing.md) | Repo entry → testing + workflow |
