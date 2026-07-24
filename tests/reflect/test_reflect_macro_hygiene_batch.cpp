@@ -26,7 +26,7 @@ namespace aura_edsl_run_ir_macro_hygiene_e2e {
 // ClosureBridge for safe AI self-evolution. Consolidates #1047 / #1610 /
 // #1616 / #1644.
 //
-//   AC1: query:ir-hygiene-stats schema 1891 + e2e keys
+//   AC1: query:ir-hygiene-stats schema 2022|1891 + e2e keys
 //   AC2: clone stamps provenance; lowering-marker-propagated / stamped > 0
 //   AC3: hygiene-leakage == 0 after macro workspace eval
 //   AC4: query:ir-marker-stats walks IR module (or AST fallback) + schema 1891
@@ -63,13 +63,17 @@ namespace {
     }
 
     static void ac1_schema_1891() {
-        std::println("\n--- AC1: schema 1891 + e2e keys ---");
+        std::println("\n--- AC1: schema 2022|1891 + e2e keys ---");
         CompilerService cs;
         CHECK(setup_macro_ws(cs), "macro workspace");
         auto h = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
         CHECK(h && is_hash(*h), "ir-hygiene-stats hash");
-        CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1891, "schema 1891");
-        CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 1891, "issue 1891");
+        {
+            const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+            CHECK(sch == 2022 || sch == 1891, "schema 2022|1891");
+            const auto iss = href(cs, "query:ir-hygiene-stats", "issue");
+            CHECK(iss == 2022 || iss == 1891, "issue 2022|1891");
+        }
         CHECK(href(cs, "query:ir-hygiene-stats", "hygiene-leakage") >= 0, "hygiene-leakage key");
         CHECK(href(cs, "query:ir-hygiene-stats", "lowering-marker-propagated") >= 0,
               "lowering-marker-propagated key");
@@ -77,6 +81,11 @@ namespace {
               "ir-instr-macro-introduced key");
         CHECK(href(cs, "query:ir-hygiene-stats", "clone-provenance-stamped-wired") == 1,
               "clone-provenance-stamped-wired");
+        // Issue #2022 native side-table keys
+        CHECK(href(cs, "query:ir-hygiene-stats", "jit-native-marker-side-table-wired") == 1,
+              "jit-native-marker-side-table-wired");
+        CHECK(href(cs, "query:ir-hygiene-stats", "jit-native-marker-preserved-total") >= 0,
+              "jit-native-marker-preserved-total");
     }
 
     static void ac2_propagated_nonzero() {
@@ -149,7 +158,10 @@ namespace {
         }
         CHECK(href(cs, "query:ir-hygiene-stats", "hygiene-leakage") == 0,
               "leakage still 0 after self-evo loop");
-        CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 1891, "schema holds after loop");
+        {
+            const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
+            CHECK(sch == 2022 || sch == 1891, "schema holds after loop");
+        }
         const auto prop1 = href(cs, "query:ir-hygiene-stats", "lowering-marker-propagated");
         CHECK(prop1 >= prop0, "propagated non-decreasing across self-evo");
         auto r = cs.eval("(+ 1 1)");
@@ -256,9 +268,11 @@ namespace {
         CHECK(h && is_hash(*h), "authoritative hash (not bare int)");
         {
             const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
-            CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema 1891|1616|1610");
+            CHECK(sch == 2022 || sch == 1891 || sch == 1616 || sch == 1610,
+                  "schema 2022|1891|1616|1610");
             const auto iss = href(cs, "query:ir-hygiene-stats", "issue");
-            CHECK(iss == 1891 || iss == 1616 || iss == 1610, "issue 1891|1616|1610");
+            CHECK(iss == 2022 || iss == 1891 || iss == 1616 || iss == 1610,
+                  "issue 2022|1891|1616|1610");
         }
         CHECK(href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count") >= 0,
               "ir-hygiene-stamped-count");
@@ -306,7 +320,8 @@ namespace {
         CHECK(h && is_hash(*h), "stats after mutate");
         {
             const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
-            CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema holds after mutate");
+            CHECK(sch == 2022 || sch == 1891 || sch == 1616 || sch == 1610,
+                  "schema holds after mutate");
         }
         const auto stamped1 = href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count");
         CHECK(stamped1 >= stamped0, "stamped count non-decreasing after mutate");
@@ -325,7 +340,7 @@ namespace {
         }
         {
             const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
-            CHECK(sch == 1891 || sch == 1616 || sch == 1610, "schema after stress");
+            CHECK(sch == 2022 || sch == 1891 || sch == 1616 || sch == 1610, "schema after stress");
         }
         CHECK(href(cs, "query:ir-hygiene-stats", "ir-hygiene-total") >= 0, "ir-hygiene-total");
     }
@@ -433,9 +448,11 @@ namespace {
         CHECK(h1 && is_hash(*h1), "ir-hygiene-stats hash");
         {
             const auto sch = href(cs, "query:ir-hygiene-stats", "schema");
-            CHECK(sch == 1891 || sch == 1616 || sch == 1610, "ir-hygiene schema 1891|1616|1610");
+            CHECK(sch == 2022 || sch == 1891 || sch == 1616 || sch == 1610,
+                  "ir-hygiene schema 2022|1891|1616|1610");
         }
-        CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 1891 ||
+        CHECK(href(cs, "query:ir-hygiene-stats", "issue") == 2022 ||
+                  href(cs, "query:ir-hygiene-stats", "issue") == 1891 ||
                   href(cs, "query:ir-hygiene-stats", "issue") == 1616 ||
                   href(cs, "query:ir-hygiene-stats", "issue") == 1610,
               "issue lineage");

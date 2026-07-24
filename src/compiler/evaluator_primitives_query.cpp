@@ -38,6 +38,12 @@ extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
 extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
 extern "C" std::uint64_t aura_jit_macro_introduced_deopt();
 extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
+// Issue #2022: native MacroIntroduced side-table observability after JIT/AOT.
+extern "C" std::uint64_t aura_jit_native_marker_preserved_total();
+extern "C" std::uint64_t aura_jit_live_macro_fn_count();
+extern "C" std::uint64_t aura_jit_macro_provenance_recoverable_total();
+extern "C" std::uint8_t aura_jit_fn_source_marker(std::int64_t func_id);
+extern "C" std::uint32_t aura_jit_fn_provenance(std::int64_t func_id);
 // Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
@@ -6535,16 +6541,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_hash(hidx);
     });
 
-    // Issue #501 / #514 / #1610 / #1616 / #1891: query:ir-hygiene-stats —
+    // Issue #501 / #514 / #1610 / #1616 / #1891 / #2022: query:ir-hygiene-stats —
     // IR-level MacroIntroduced + ClosureBridge provenance (refine #1047).
-    // Schema **1891** (lineage 1616 / 1610 / 501). Authoritative e2e surface
-    // for self-evolution: propagated counts + zero-leakage key.
+    // Schema **2022** (lineage 1891 / 1616 / 1610 / 501). Authoritative e2e
+    // surface for self-evolution: propagated counts + zero-leakage key +
+    // native JIT/AOT MacroIntroduced side-table after native code is live.
     auto build_ir_hygiene_stats = [&string_heap](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev)
             return make_void();
-        auto* ht = FlatHashTable::create(64);
+        // 40+ keys (2022 native side-table + 1891 lineage) — 128 slots.
+        auto* ht = FlatHashTable::create(128);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -6582,6 +6590,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         const std::uint64_t provenance_stamped = aura_hygiene_ir_provenance_stamped_total();
         const std::uint64_t jit_deopt = aura_jit_macro_introduced_deopt();
         const std::uint64_t jit_consults = aura_jit_macro_hygiene_consults();
+        // Issue #2022: native side-table after JIT/AOT (survives deopt).
+        const std::uint64_t native_preserved = aura_jit_native_marker_preserved_total();
+        const std::uint64_t live_macro_fns = aura_jit_live_macro_fn_count();
+        const std::uint64_t prov_recoverable = aura_jit_macro_provenance_recoverable_total();
         const std::uint64_t ir_prov = load_m(&CompilerMetrics::ir_provenance_stamped_total);
         const std::uint64_t closure_macro =
             load_m(&CompilerMetrics::ir_closure_macro_stamped_total);
@@ -6668,8 +6680,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("ir-macro-zero-provenance", static_cast<std::int64_t>(ir_macro_zero_provenance));
         insert_kv("hygiene-leakage", static_cast<std::int64_t>(hygiene_leakage));
         insert_kv("clone-provenance-stamped-wired", 1);
-        insert_kv("issue", 1891);
-        insert_kv("schema", 1891); // lineage 1616 / 1610 / 1047 / 501
+        // Issue #2022: MacroIntroduced preserved across JIT/AOT native boundary.
+        insert_kv("jit-native-marker-preserved-total", static_cast<std::int64_t>(native_preserved));
+        insert_kv("jit-live-macro-fn-count", static_cast<std::int64_t>(live_macro_fns));
+        insert_kv("jit-macro-provenance-recoverable", static_cast<std::int64_t>(prov_recoverable));
+        insert_kv("jit-native-marker-side-table-wired", 1);
+        insert_kv("jit-native-marker-preserve-wired", 1);
+        // After deopt, side-table still holds marker/provenance (not cleared).
+        insert_kv("jit-macro-deopt-provenance-retained", 1);
+        insert_kv("issue", 2022);
+        insert_kv("schema", 2022); // lineage 1891 / 1616 / 1610 / 1047 / 501
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

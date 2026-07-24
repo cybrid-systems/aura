@@ -2998,6 +2998,23 @@ public:
                 flat_fn.shape_map = nullptr;
                 flat_fn.escape_map = nullptr;
                 flat_fn.region = static_cast<std::uint8_t>(ir_fn.region);
+                // Issue #2022: function-level MacroIntroduced tag for native
+                // metadata (IRFunction::marker from lowering). Also OR any
+                // instruction source_marker / first provenance for deopt recovery.
+                flat_fn.source_marker = ir_fn.marker;
+                flat_fn.provenance = 0;
+                for (const auto& blk : ir_fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.source_marker == 1)
+                            flat_fn.source_marker = 1;
+                        if (flat_fn.provenance == 0 && instr.provenance != 0)
+                            flat_fn.provenance = instr.provenance;
+                        if (flat_fn.source_marker == 1 && flat_fn.provenance != 0)
+                            break;
+                    }
+                    if (flat_fn.source_marker == 1 && flat_fn.provenance != 0)
+                        break;
+                }
 
                 // Apply pre-computed escape map, or run analysis inline
                 if (g_use_arena) {
@@ -3245,9 +3262,28 @@ public:
             // register the function by name (for cross-module closure
             // identity). The name is assigned by cache_define as
             // <user_define_name>#<bundle_position>.
-            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
-                                   ir_fn.arg_count, env_count,
-                                   ir_fn.name.empty() ? nullptr : ir_fn.name.c_str());
+            // Issue #2022: pass MacroIntroduced marker + first provenance so
+            // the native side-table / FunctionMeta retain hygiene after JIT.
+            {
+                std::uint8_t reg_marker = ir_fn.marker;
+                std::uint32_t reg_prov = 0;
+                for (const auto& blk : ir_fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.source_marker == 1)
+                            reg_marker = 1;
+                        if (reg_prov == 0 && instr.provenance != 0)
+                            reg_prov = instr.provenance;
+                        if (reg_marker == 1 && reg_prov != 0)
+                            break;
+                    }
+                    if (reg_marker == 1 && reg_prov != 0)
+                        break;
+                }
+                jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
+                                       ir_fn.arg_count, env_count,
+                                       ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
+                                       reg_marker, reg_prov);
+            }
         }
 
         // Find entry function and execute it
@@ -10249,6 +10285,21 @@ public:
                 // Set escape map from escape analysis
                 if (!escape_storage.empty())
                     flat_fn.escape_map = escape_storage.data();
+                // Issue #2022: MacroIntroduced tag for try_jit path.
+                flat_fn.source_marker = ir_fn.marker;
+                flat_fn.provenance = 0;
+                for (const auto& blk : ir_fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.source_marker == 1)
+                            flat_fn.source_marker = 1;
+                        if (flat_fn.provenance == 0 && instr.provenance != 0)
+                            flat_fn.provenance = instr.provenance;
+                        if (flat_fn.source_marker == 1 && flat_fn.provenance != 0)
+                            break;
+                    }
+                    if (flat_fn.source_marker == 1 && flat_fn.provenance != 0)
+                        break;
+                }
 
                 // Skip if already cached (prevents duplicate JIT symbols)
                 {
@@ -10291,8 +10342,27 @@ public:
             }
 
             // Register with runtime for closure calls
-            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
-                                   ir_fn.arg_count, env_count);
+            // Issue #2022: preserve MacroIntroduced into native side-table.
+            {
+                std::uint8_t reg_marker = ir_fn.marker;
+                std::uint32_t reg_prov = 0;
+                for (const auto& blk : ir_fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        if (instr.source_marker == 1)
+                            reg_marker = 1;
+                        if (reg_prov == 0 && instr.provenance != 0)
+                            reg_prov = instr.provenance;
+                        if (reg_marker == 1 && reg_prov != 0)
+                            break;
+                    }
+                    if (reg_marker == 1 && reg_prov != 0)
+                        break;
+                }
+                jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
+                                       ir_fn.arg_count, env_count,
+                                       ir_fn.name.empty() ? nullptr : ir_fn.name.c_str(),
+                                       reg_marker, reg_prov);
+            }
         }
 
         // Find and execute entry function
