@@ -39,7 +39,7 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_prod("src/tui/tui_runtime.hh"))
 
     def test_test_paths(self):
-        self.assertTrue(self.m.is_test("tests/issues/test_issue_1453.cpp"))
+        self.assertTrue(self.m.is_test("tests/core/test_arena_compact_hook_concurrent.cpp"))
         self.assertTrue(self.m.is_test("tests/edsl_self_test.aura"))
         self.assertTrue(self.m.is_test("lib/std/edsl-test-harness.aura"))
         # scripts/run_pets_regression.py removed per Anqi 2026-07-19 directive wave 11 (broken — referenced deleted demos).
@@ -49,7 +49,7 @@ class TestBindingClassify(unittest.TestCase):
         code, msg = self.m.evaluate_binding(
             [
                 "src/compiler/evaluator_primitives_memory.cpp",
-                "tests/issues/test_issue_300.cpp",
+                "tests/core/test_arena_concurrent_mutex.cpp",
             ]
         )
         self.assertEqual(code, 0, msg)
@@ -90,9 +90,14 @@ class TestRegistryGen(unittest.TestCase):
         files = {t["file"] for t in data["tests"]}
         # Prefer theme batch after #1957 folds; fall back to residual issues/.
         self.assertTrue(
-            "tests/observability/test_obs_metrics_smoke_batch.cpp" in files
-            or "tests/mutation/test_mutation_guard_unit_batch.cpp" in files
-            or any(f.startswith("tests/issues/test_issue_") for f in files),
+            "tests/compiler/test_obs_metrics_smoke_batch.cpp" in files
+            or "tests/compiler/test_mutation_guard_unit_batch.cpp" in files
+            or any(
+                f.startswith("tests/core/test_issue_")
+                or f.startswith("tests/compiler/test_issue_")
+                or f.startswith("tests/serve/test_issue_")
+                for f in files
+            ),
             "registry must include theme batch or issues/ tests",
         )
 

@@ -1097,7 +1097,7 @@ add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
 # and fresh-instance zero baseline. Doesn't need a full LLVM
 # pipeline — exercises the public metrics + per-function
 # accessors directly. Same build pattern as test_jit_metrics.
-add_executable(test_jit_consistency tests/observability/test_jit_consistency.cpp
+add_executable(test_jit_consistency tests/compiler/test_jit_consistency.cpp
     tests/compiler/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
