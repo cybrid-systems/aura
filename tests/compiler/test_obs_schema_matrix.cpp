@@ -132,8 +132,9 @@ void run_standard_cases(CompilerService& cs) {
         const StandardCase& c = kStandardCases[i];
         auto h = cs.eval(aura::test::aura_call_expr(c.query));
         CHECK(h && is_hash(*h), std::format("{} returns hash", c.query));
-        CHECK(href(cs, c.query, "schema") == c.schema,
-              std::format("{} schema == {}", c.query, c.schema));
+        const auto _got_schema_a = href(cs, c.query, "schema");
+        CHECK(_got_schema_a == c.schema,
+              std::format("{} schema == {} (got {})", c.query, c.schema, _got_schema_a));
         CHECK(href(cs, c.query, "active") == 1, std::format("{} active", c.query));
         const auto t0 = href(cs, c.query, "total");
         bump_standard(ev, c.bump_slug);
@@ -149,8 +150,9 @@ void run_field_list_cases(CompilerService& cs) {
         const FieldListCase& c = kFieldListCases[i];
         auto h = cs.eval(aura::test::aura_call_expr(c.query));
         CHECK(h && is_hash(*h), std::format("{} returns hash", c.query));
-        CHECK(href(cs, c.query, "schema") == c.schema,
-              std::format("{} schema == {}", c.query, c.schema));
+        const auto _got_schema_b = href(cs, c.query, "schema");
+        CHECK(_got_schema_b == c.schema,
+              std::format("{} schema == {} (got {})", c.query, c.schema, _got_schema_b));
         for (std::size_t f = 0; f < c.n_fields; ++f) {
             const char* key = c.fields[f];
             auto v = cs.eval(
