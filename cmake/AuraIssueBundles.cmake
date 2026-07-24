@@ -83,8 +83,10 @@ function(_aura_issue_bundle_apply_extras TARGET PROFILE)
         target_sources(${TARGET} PRIVATE src/compiler/aura_jit.cpp)
         target_sources(${TARGET} PRIVATE src/compiler/aura_jit_bridge_stub.cpp)
         target_sources(${TARGET} PRIVATE src/compiler/aura_jit_runtime.cpp)
-        target_sources(${TARGET} PRIVATE tests/edsl/test_issue_178_reflect.cpp)
-        set_source_files_properties(tests/edsl/test_issue_178_reflect.cpp PROPERTIES COMPILE_OPTIONS "-freflection")
+        # R3: tests/edsl/ → tests/reflect/
+        target_sources(${TARGET} PRIVATE tests/reflect/test_issue_178_reflect.cpp)
+        set_source_files_properties(tests/reflect/test_issue_178_reflect.cpp PROPERTIES
+                                    COMPILE_OPTIONS "-freflection")
         set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
         set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     endif()
