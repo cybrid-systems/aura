@@ -221,6 +221,28 @@ inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
     // active PanicCheckpoints is tiny.
     g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
 }
+// Issue #2005: explicit ffi-pin defer — increments while any
+// (ffi:pin-buffer) primitive holds a LifetimePin for an FFI buffer that
+// the render hotpath / MutationBoundary lightweight path depends on.
+// compact_sweep / GCCollector consult ffi_pin_defer_active() before
+// destructive reclaim; if true, defer (return empty CompactSweepResult +
+// bump ffi_defer_because_pin_total in CompilerMetrics).
+inline std::atomic<std::uint32_t> g_ffi_pin_defer_depth{0};
+inline void arm_ffi_pin_defer() noexcept {
+    g_ffi_pin_defer_depth.fetch_add(1, std::memory_order_acq_rel);
+}
+inline void release_ffi_pin_defer() noexcept {
+    auto prev = g_ffi_pin_defer_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        if (g_ffi_pin_defer_depth.compare_exchange_weak(prev, prev - 1, std::memory_order_acq_rel,
+                                                        std::memory_order_relaxed))
+            return;
+    }
+}
+[[nodiscard]] inline bool ffi_pin_defer_active() noexcept {
+    return g_ffi_pin_defer_depth.load(std::memory_order_acquire) > 0;
+}
+
 
 // Issue #2002: per-evaluator release. Decrements the entry's depth;
 // when the entry's depth hits 0, clears the id slot. Always decrements

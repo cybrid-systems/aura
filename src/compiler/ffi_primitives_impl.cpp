@@ -11,6 +11,7 @@ module;
 
 #include <dlfcn.h>
 #include "compiler/ffi_hot_path.hh"
+#include "core/gc_hooks.h" // Issue #2005: ffi_pin_defer_active + arm/release
 #include "renderer/render_ffi.hh"
 #include "stdlib/render_ffi.hh"
 
@@ -18,6 +19,7 @@ module aura.compiler.ffi_primitives;
 
 import std;
 import aura.compiler.value;
+import aura.core.lifetime_pin; // Issue #2005: (ffi:pin-buffer)
 
 // (Issue #131 / #1354 / #1560).
 //
@@ -385,6 +387,59 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         }
         return make_int(aura::stdlib::render_ffi::dispatch_c_ansi_emit(args));
     });
+
+    // Issue #2005: (ffi:pin-buffer [ptr:int] [gen:int] [arena_id:int]) → handle (int).
+    // Allocates a LifetimePin, pins it to the FFI buffer, and arms
+    // g_ffi_pin_defer_depth so compact_sweep / GCCollector defer destructive
+    // reclaim while the pin is live. Used by the render hotpath + MutationBoundary
+    // lightweight path (refines #2000 LifetimePin Phase 2). Returns a stable
+    // handle (index into the FFI pin registry) for later (ffi:unpin-buffer).
+    {
+        static std::vector<std::unique_ptr<aura::core::lifetime::LifetimePin>> g_ffi_pin_registry;
+        static std::mutex g_ffi_pin_registry_mtx;
+        add("ffi:pin-buffer", [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
+                return make_int(-1);
+            void* ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(types::as_int(a[0])));
+            std::uint64_t gen = static_cast<std::uint64_t>(types::as_int(a[1]));
+            std::uint64_t arena_id = (a.size() >= 3 && types::is_int(a[2]))
+                                         ? static_cast<std::uint64_t>(types::as_int(a[2]))
+                                         : 0;
+            auto pin = std::make_unique<aura::core::lifetime::LifetimePin>();
+            pin->pin(ptr, gen, arena_id);
+            aura::gc_hooks::arm_ffi_pin_defer();
+            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            const std::int64_t handle = static_cast<std::int64_t>(g_ffi_pin_registry.size());
+            g_ffi_pin_registry.push_back(std::move(pin));
+            return make_int(handle);
+        });
+        add("ffi:unpin-buffer", [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_int(a[0]))
+                return make_int(0);
+            const std::size_t idx = static_cast<std::size_t>(types::as_int(a[0]));
+            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            if (idx >= g_ffi_pin_registry.size() || !g_ffi_pin_registry[idx])
+                return make_int(0);
+            g_ffi_pin_registry[idx]->unpin_on_compact();
+            g_ffi_pin_registry[idx].reset();
+            aura::gc_hooks::release_ffi_pin_defer();
+            return make_int(1);
+        });
+    }
+
+    // Issue #2005: (query:ffi-pin-count) → live FFI LifetimePin count (int).
+    {
+        static std::vector<std::unique_ptr<aura::core::lifetime::LifetimePin>> g_ffi_pin_registry;
+        static std::mutex g_ffi_pin_registry_mtx;
+        add("query:ffi-pin-count", [](std::span<const EvalValue>) -> EvalValue {
+            std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
+            std::int64_t n = 0;
+            for (const auto& p : g_ffi_pin_registry)
+                if (p && p->pinned())
+                    ++n;
+            return make_int(n);
+        });
+    }
 
     // Issue #1354: (query:render-ffi-count) → registered binding count (int).
     // Full Agent hash lives at query:render-ffi-available (evaluator partition).

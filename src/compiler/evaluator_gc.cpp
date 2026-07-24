@@ -768,6 +768,19 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         return result; // zeroed — no work
     }
 
+    // Issue #2005: defer destructive compact while any (ffi:pin-buffer)
+    // LifetimePin is live (render hotpath soft-gate binding). The pin
+    // protects an FFI buffer from UAF across this sweep; deferring the
+    // sweep keeps the buffer valid until the pin is released via
+    // (ffi:unpin-buffer). The pin registry's LifetimePin ctor/dtor
+    // already manages the defer depth via arm/release_ffi_pin_defer.
+    if (aura::gc_hooks::ffi_pin_defer_active()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            m->ffi_defer_because_pin_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return result; // zeroed — deferred
+    }
+
     // Issue #1489 / #1581: skip destructive reclaim while a
     // PanicCheckpoint recovery window is open (process-wide gc_hooks
     // depth or live panic_safe_source_ on this evaluator). Re-pin
