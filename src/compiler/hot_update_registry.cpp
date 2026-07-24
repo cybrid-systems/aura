@@ -371,3 +371,8 @@ extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_p
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void) {
     aura::compiler::hot_update_registry().reset_deopt_storm_state_for_test();
 }
+
+// Issue #2017: C entry for compact-env-frames / other module-partition callers.
+extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch) {
+    aura::compiler::hot_update_registry().notify_epoch_bump(epoch);
+}

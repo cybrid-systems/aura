@@ -1840,6 +1840,12 @@ std::size_t Evaluator::compact_env_frames() {
     // via remap; without the interlock, a concurrent load_module_file
     // could add closures_ to a stale view of env_frames_ (frame
     // already reclaimed or remap table wrong).
+    //
+    // Issue #2017: after reclaim + dual-epoch bump, notify HotUpdateRegistry
+    // epoch listeners once and targeted-invalidate g_closure_cache for
+    // remapped cids (first-class hot-update epoch participant). Notify +
+    // invalidate stay under this interlock (+ caller MutationBoundaryGuard
+    // on the primitive path) so they are atomic w.r.t. other mutations.
     std::lock_guard interlock(compact_env_frames_lock_);
     // Issue #1545 / #1568 / #1928: pre-compact full boundary consistency —
     // scan + force Drop linear/Moved/NULL_ENV captures + EnvFrame enforce
@@ -1860,8 +1866,17 @@ std::size_t Evaluator::compact_env_frames() {
         defuse_version_.fetch_add(1, std::memory_order_release);
         if (bridge_epoch_bump_fn_ && compiler_service_)
             bridge_epoch_bump_fn_(compiler_service_);
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        // Issue #2017: empty compact still advances epochs — notify once.
+        {
+            std::uint64_t notify_epoch = current_bridge_epoch();
+            if (notify_epoch == 0)
+                notify_epoch = defuse_version_.load(std::memory_order_acquire);
+            aura_hot_update_notify_epoch_bump(notify_epoch);
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
+            m->env_compact_epoch_notify_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return 0;
     }
     const auto current_defuse = defuse_version_.load(std::memory_order_acquire);
@@ -1920,9 +1935,12 @@ std::size_t Evaluator::compact_env_frames() {
     // got env_id pointing to a freed frame between the shared
     // read and the unique take (closure was added/updated),
     // remap returns -1 and we clear env_id to NULL_ENV_ID.
+    // Issue #2017: collect remapped cids for targeted cache invalidate.
     std::size_t rewritten = 0;
+    std::vector<std::int64_t> remapped_cids;
     {
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        remapped_cids.reserve(closures_.size());
         for (auto& kv : closures_) {
             const auto id = kv.second.env_id;
             if (id == NULL_ENV_ID || id >= remap.size())
@@ -1931,9 +1949,11 @@ std::size_t Evaluator::compact_env_frames() {
             if (new_id >= 0) {
                 kv.second.env_id = static_cast<EnvId>(new_id);
                 ++rewritten;
+                remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
             } else {
                 // Frame was reclaimed; clear the dangling env_id.
                 kv.second.env_id = NULL_ENV_ID;
+                remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
             }
         }
     }
@@ -1982,12 +2002,37 @@ std::size_t Evaluator::compact_env_frames() {
     }
 
     bump_envframe_compact(reclaimed, rewritten);
-    // Issue #1510 / #1526 metrics (CompilerMetrics surface).
+
+    // Issue #2017: targeted inline-cache invalidate for remapped cids
+    // (before epoch notify so listeners never observe remapped env +
+    // stale generation). No forced deopt — dual-check remains the
+    // recovery path; this only clears g_closure_cache.
+    std::uint64_t cache_invals = 0;
+    for (const auto cid : remapped_cids) {
+        aura_invalidate_closure_cache_for(cid);
+        ++cache_invals;
+    }
+
+    // Issue #2017: notify HotUpdateRegistry epoch listeners exactly once
+    // with the post-compact epoch (bridge preferred; defuse fallback).
+    {
+        std::uint64_t notify_epoch = current_bridge_epoch();
+        if (notify_epoch == 0)
+            notify_epoch = defuse_version_.load(std::memory_order_acquire);
+        aura_hot_update_notify_epoch_bump(notify_epoch);
+    }
+
+    // Issue #1510 / #1526 / #2017 metrics (CompilerMetrics surface).
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->envframe_compact_rewrites_total.fetch_add(rewritten + parent_rewrites,
                                                      std::memory_order_relaxed);
         m->envframe_compact_epoch_bumps_total.fetch_add(1, std::memory_order_relaxed);
         m->envframe_compact_bridge_restamps_total.fetch_add(restamped, std::memory_order_relaxed);
+        m->env_compact_epoch_notify_total.fetch_add(1, std::memory_order_relaxed);
+        if (cache_invals > 0) {
+            m->env_compact_cache_invalidate_total.fetch_add(cache_invals,
+                                                            std::memory_order_relaxed);
+        }
         // Issue #1543: restamped survivor closures are re-registered as
         // GC roots under the post-compact bridge_epoch (env_id remapped).
         if (restamped > 0) {

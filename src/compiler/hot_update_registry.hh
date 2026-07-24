@@ -234,6 +234,9 @@ void aura_hot_update_on_reemit_throttled(void);
 void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                std::uint64_t window_ms);
 void aura_hot_update_reset_deopt_storm_state_for_test(void);
+// Issue #2017: module-safe C entry for epoch notify (compact-env-frames etc.).
+// Module partitions cannot attach HotUpdateRegistry (link discipline #1956).
+void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH

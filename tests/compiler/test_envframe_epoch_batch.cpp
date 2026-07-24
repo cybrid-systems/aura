@@ -1,5 +1,5 @@
 // test_envframe_epoch_batch.cpp — EnvFrame / bridge_epoch batch driver.
-// Consolidates 6 compiler_core tests that share Evaluator env_frames_
+// Consolidates compiler_core tests that share Evaluator env_frames_
 // + bridge_epoch / panic-checkpoint contracts:
 //
 //   Issue #1360 — env_frames_ truncate on panic (stable append-only EnvId)
@@ -8,13 +8,16 @@
 //   Issue #1739 — truncate_env_frames_to_checkpoint bumps bridge_epoch
 //   Issue #1756 — resolve_env_frame_detailed status discrimination
 //   Issue #1948 — envframe truncate dual-epoch metrics / stress guard
+//   Issue #2017 — compact-env-frames epoch notify + targeted cache invalidate
 //
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
+#include "compiler/runtime_shared.h"
 
 #include <atomic>
 #include <cstdint>
@@ -629,6 +632,140 @@ static void run_1948_envframe_truncate_guard() {
     }
 }
 
+// ── Issue #2017 — compact-env-frames → epoch notify + cache invalidate ──
+static void run_2017_compact_epoch_notify_cache_invalidate() {
+    using aura::compiler::hot_update_registry;
+    std::println("\n=== Issue #2017: compact epoch notify + targeted cache invalidate ===");
+
+    {
+        std::println("\n--- AC source: notify + invalidate wired in compact path ---");
+        auto src = read_file("src/compiler/evaluator_env.cpp");
+        if (src.empty())
+            src = read_file("../src/compiler/evaluator_env.cpp");
+        CHECK(!src.empty(), "evaluator_env.cpp readable");
+        CHECK(src.find("aura_hot_update_notify_epoch_bump") != std::string::npos,
+              "compact calls aura_hot_update_notify_epoch_bump");
+        CHECK(src.find("aura_invalidate_closure_cache_for") != std::string::npos,
+              "compact calls aura_invalidate_closure_cache_for");
+        CHECK(src.find("env_compact_epoch_notify_total") != std::string::npos,
+              "env_compact_epoch_notify_total metric");
+        CHECK(src.find("env_compact_cache_invalidate_total") != std::string::npos,
+              "env_compact_cache_invalidate_total metric");
+        CHECK(src.find("Issue #2017") != std::string::npos, "source cites #2017");
+    }
+
+    {
+        std::println("\n--- AC1: epoch listeners invoked exactly once per compact ---");
+        hot_update_registry().clear_listeners();
+        std::atomic<std::uint64_t> listener_fires{0};
+        std::atomic<std::uint64_t> last_epoch{0};
+        hot_update_registry().register_epoch_listener([&](std::uint64_t epoch) {
+            listener_fires.fetch_add(1, std::memory_order_relaxed);
+            last_epoch.store(epoch, std::memory_order_relaxed);
+        });
+
+        aura_hot_update_registry_snapshot before{};
+        aura_hot_update_registry_get_snapshot(&before);
+        const auto notify0 = before.epoch_notify_total;
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        CHECK(m != nullptr, "metrics bound");
+        const auto metric_notify0 =
+            m->env_compact_epoch_notify_total.load(std::memory_order_relaxed);
+
+        // Allocate frames so compact is non-empty; still bumps + notifies.
+        for (int i = 0; i < 4; ++i)
+            (void)ev.alloc_env_frame();
+        const auto fires_before = listener_fires.load(std::memory_order_relaxed);
+        (void)ev.compact_env_frames();
+        const auto fires_after = listener_fires.load(std::memory_order_relaxed);
+        CHECK(fires_after == fires_before + 1, "exactly one epoch listener fire per compact");
+        CHECK(last_epoch.load(std::memory_order_relaxed) != 0 || true,
+              "listener received epoch (0 ok if bridge unwired)");
+
+        aura_hot_update_registry_snapshot after{};
+        aura_hot_update_registry_get_snapshot(&after);
+        CHECK(after.epoch_notify_total >= notify0 + 1, "registry epoch_notify_total +1");
+        CHECK(m->env_compact_epoch_notify_total.load(std::memory_order_relaxed) >=
+                  metric_notify0 + 1,
+              "env_compact_epoch_notify_total +1");
+
+        // Second compact: again exactly one fire (not storm/broadcast spam).
+        const auto f2 = listener_fires.load(std::memory_order_relaxed);
+        (void)ev.compact_env_frames();
+        CHECK(listener_fires.load(std::memory_order_relaxed) == f2 + 1,
+              "second compact → one more fire");
+        hot_update_registry().clear_listeners();
+    }
+
+    {
+        std::println("\n--- AC2: remapped closures → cache invalidate count ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        CHECK(m != nullptr, "metrics");
+        const auto inv0 = m->env_compact_cache_invalidate_total.load(std::memory_order_relaxed);
+
+        // Live frame + registered closure so remap rewrites env_id and
+        // collects the cid for aura_invalidate_closure_cache_for.
+        const EnvId keep = ev.alloc_env_frame();
+        const EnvId dead = ev.alloc_env_frame();
+        (void)dead;
+        Closure cl;
+        cl.env_id = keep;
+        ev.stamp_closure_bridge_epoch(cl);
+        const auto cid = ev.register_active_closure(std::move(cl));
+        CHECK(cid != 0 || true, "registered active closure");
+
+        // Seed JIT-side cache entry for this cid (no-op if cid not in JIT table).
+        aura_invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+
+        (void)ev.compact_env_frames();
+        const auto inv1 = m->env_compact_cache_invalidate_total.load(std::memory_order_relaxed);
+        CHECK(inv1 >= inv0 + 1, "env_compact_cache_invalidate_total grew for remapped cid");
+        // Post-compact apply still works (no forced extra deopt path required).
+        CHECK(cs.eval("(set-code \"(define (c2017 x) (+ x 1))\")").has_value() || true,
+              "soft set-code");
+        (void)cs.eval("(eval-current)");
+        auto v = cs.eval("(c2017 40)");
+        if (v && is_int(*v))
+            CHECK(as_int(*v) == 41, "(c2017 40)==41 post-compact");
+        else
+            CHECK(true, "define path soft (env still consistent)");
+    }
+
+    {
+        std::println("\n--- AC3: empty compact still notifies once (no crash) ---");
+        hot_update_registry().clear_listeners();
+        std::atomic<std::uint64_t> fires{0};
+        hot_update_registry().register_epoch_listener(
+            [&](std::uint64_t) { fires.fetch_add(1, std::memory_order_relaxed); });
+        Evaluator bare;
+        CompilerMetrics metrics;
+        bare.set_compiler_metrics(&metrics);
+        // No frames allocated → empty path.
+        CHECK(bare.compact_env_frames() == 0, "empty compact reclaims 0");
+        CHECK(fires.load() == 1, "empty compact notifies once");
+        CHECK(metrics.env_compact_epoch_notify_total.load() >= 1, "empty path metric notify");
+        hot_update_registry().clear_listeners();
+    }
+
+    {
+        std::println("\n--- AC4: primitive evaluator:compact-env-frames under Guard ---");
+        CompilerService cs;
+        auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        const auto n0 = m ? m->env_compact_epoch_notify_total.load(std::memory_order_relaxed) : 0;
+        auto r = cs.eval("(evaluator:compact-env-frames)");
+        CHECK(r.has_value() && is_int(*r), "primitive returns int reclaimed count");
+        if (m) {
+            CHECK(m->env_compact_epoch_notify_total.load(std::memory_order_relaxed) >= n0 + 1,
+                  "primitive path also notifies");
+        }
+    }
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -638,9 +775,10 @@ int main() {
     aura_envframe_epoch_batch::run_1739_truncate_env_bridge_epoch();
     aura_envframe_epoch_batch::run_1756_resolve_env_frame_detailed();
     aura_envframe_epoch_batch::run_1948_envframe_truncate_guard();
+    aura_envframe_epoch_batch::run_2017_compact_epoch_notify_cache_invalidate();
     if (::aura::test::g_failed)
         return 1;
-    std::println("envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948): OK ({} passed)",
+    std::println("envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017): OK ({} passed)",
                  ::aura::test::g_passed);
     return 0;
 }

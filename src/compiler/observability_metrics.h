@@ -312,11 +312,17 @@ struct CompilerMetrics {
     //     epoch bumps paired with each compact (atomic post-rewrite)
     //   - envframe_compact_bridge_restamps_total: Closure / IRClosure
     //     bridge_epoch restamped to post-compact epoch (Issue #1526)
+    //   - env_compact_epoch_notify_total: HotUpdateRegistry epoch listeners
+    //     invoked after compact (Issue #2017; once per successful compact)
+    //   - env_compact_cache_invalidate_total: targeted
+    //     aura_invalidate_closure_cache_for calls for remapped cids (#2017)
     //   - materialize_fallback_total: materialize_call_env returned
     //     empty/fallback Env (NULL/OOB/INVALID/post-compact stale)
     std::atomic<std::uint64_t> envframe_compact_rewrites_total{0};
     std::atomic<std::uint64_t> envframe_compact_epoch_bumps_total{0};
     std::atomic<std::uint64_t> envframe_compact_bridge_restamps_total{0};
+    std::atomic<std::uint64_t> env_compact_epoch_notify_total{0};
+    std::atomic<std::uint64_t> env_compact_cache_invalidate_total{0};
     // Issue #1889: truncate_env_frames_to_checkpoint dual-epoch observability.
     //   - bridge_epoch_bump_on_truncate_total: # of times truncate advanced
     //     bridge_epoch (must match successful drop path, not no-op)

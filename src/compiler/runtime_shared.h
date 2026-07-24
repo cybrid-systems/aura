@@ -124,6 +124,12 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const
                                                                const std::uint32_t* stable_ids,
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch);
+// Issue #2017: clear g_closure_cache entries for one cid (proactive after
+// compact-env-frames remap so the next call does not hit a stale generation).
+extern "C" void aura_invalidate_closure_cache_for(std::int64_t closure_id);
+// Issue #2017: module-safe C entry for HotUpdateRegistry::notify_epoch_bump
+// (module partitions cannot attach the C++ registry — #1956 link discipline).
+extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);
 extern "C" std::uint64_t aura_closure_free_total();
 extern "C" std::uint64_t aura_closure_reuse_total();
 extern "C" std::size_t aura_closure_live_count();
