@@ -999,7 +999,7 @@ add_test(NAME tc_let
 
 
 # ── Shape profiler tests (Phase 1, #53) ─────────────────────
-add_executable(test_shape tests/compiler/shape/test_shape.cpp src/compiler/shape_profiler.cpp)
+add_executable(test_shape tests/compiler/test_shape.cpp src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape PRIVATE src)
 target_link_libraries(test_shape PRIVATE stdc++)
 # Issue #278 follow-up: pre-existing build fix. shape_profiler.cpp
@@ -1046,8 +1046,8 @@ add_test(NAME test_spec_jit COMMAND test_spec_jit
 # Verifies the AuraJIT::Metrics struct (default state, atomic
 # concurrent increments, format() output, edge cases). Doesn't
 # need a full LLVM stack — exercises the counter paths directly.
-add_executable(test_jit_metrics tests/compiler/jit/test_jit_metrics.cpp
-    tests/compiler/jit/test_jit_metrics_stub.cpp
+add_executable(test_jit_metrics tests/compiler/test_jit_metrics.cpp
+    tests/compiler/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1071,7 +1071,7 @@ add_test(NAME jit_metrics COMMAND test_jit_metrics
 # under concurrent access. Doesn't need a full LLVM stack —
 # exercises the counter paths directly.
 add_executable(test_jit_concurrent_compile tests/compiler/test_jit_concurrent_compile.cpp
-    tests/compiler/jit/test_jit_metrics_stub.cpp
+    tests/compiler/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1098,7 +1098,7 @@ add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
 # pipeline — exercises the public metrics + per-function
 # accessors directly. Same build pattern as test_jit_metrics.
 add_executable(test_jit_consistency tests/compiler/test_jit_consistency.cpp
-    tests/compiler/jit/test_jit_metrics_stub.cpp
+    tests/compiler/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
