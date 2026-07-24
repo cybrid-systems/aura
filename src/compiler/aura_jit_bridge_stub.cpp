@@ -387,18 +387,70 @@ extern "C" bool aura_aot_fn_version_is_stale(void* dl_handle, const char* origin
     return false;
 }
 
+extern "C" bool aura_aot_fn_version_is_stale_ex(void* dl_handle, const char* original_name,
+                                                std::uint64_t expected_defuse,
+                                                std::uint64_t expected_env,
+                                                std::uint8_t expected_linear) {
+    (void)dl_handle;
+    (void)original_name;
+    (void)expected_defuse;
+    (void)expected_env;
+    (void)expected_linear;
+    return false;
+}
+
 extern "C" bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t* out_version) {
     if (!mangled || !out_version)
         return false;
-    // Minimal parse: trailing _vN
-    const char* p = std::strrchr(mangled, 'v');
-    if (!p || p == mangled || *(p - 1) != '_')
+    // Issue #2015: allow optional _eN_lN after _vN.
+    const char* p = std::strstr(mangled, "_v");
+    if (!p)
         return false;
+    // Prefer last _v (defuse stamp).
+    const char* last = p;
+    while ((p = std::strstr(p + 2, "_v")) != nullptr)
+        last = p;
     char* end = nullptr;
-    unsigned long long v = std::strtoull(p + 1, &end, 10);
-    if (!end || end == p + 1 || *end != '\0')
+    unsigned long long v = std::strtoull(last + 2, &end, 10);
+    if (!end || end == last + 2)
+        return false;
+    // Trailing may be '\0' or '_e...'
+    if (*end != '\0' && !(*end == '_' && *(end + 1) == 'e'))
         return false;
     *out_version = static_cast<std::uint64_t>(v);
+    return true;
+}
+
+extern "C" bool aura_aot_parse_full_version_suffix(const char* mangled, std::uint64_t* out_defuse,
+                                                   std::uint64_t* out_env,
+                                                   std::uint8_t* out_linear) {
+    if (!mangled)
+        return false;
+    std::uint64_t defuse = 0;
+    if (!aura_aot_parse_version_suffix(mangled, &defuse))
+        return false;
+    if (out_defuse)
+        *out_defuse = defuse;
+    std::uint64_t env = 0;
+    std::uint8_t lin = 0;
+    const char* pe = std::strstr(mangled, "_e");
+    if (pe) {
+        char* end = nullptr;
+        env = static_cast<std::uint64_t>(std::strtoull(pe + 2, &end, 10));
+        if (end && *end == '_' && *(end + 1) == 'l') {
+            unsigned long long lv = std::strtoull(end + 2, &end, 10);
+            if (end && *end == '\0')
+                lin = static_cast<std::uint8_t>(lv > 255 ? 255 : lv);
+            else
+                env = 0;
+        } else {
+            env = 0;
+        }
+    }
+    if (out_env)
+        *out_env = env;
+    if (out_linear)
+        *out_linear = lin;
     return true;
 }
 
@@ -407,6 +459,21 @@ extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint6
     if (!aura_aot_parse_version_suffix(mangled, &got))
         return true;
     return got != expected;
+}
+
+extern "C" bool aura_aot_mangle_version_is_stale_ex(const char* mangled,
+                                                    std::uint64_t expected_defuse,
+                                                    std::uint64_t expected_env,
+                                                    std::uint8_t expected_linear) {
+    std::uint64_t d = 0, e = 0;
+    std::uint8_t l = 0;
+    if (!aura_aot_parse_full_version_suffix(mangled, &d, &e, &l))
+        return true;
+    if (d != expected_defuse)
+        return true;
+    if (expected_env != 0 || expected_linear != 0 || e != 0 || l != 0)
+        return e != expected_env || l != expected_linear;
+    return false;
 }
 
 // ── Weak stubs pulled in by aura_test_objects (light / light_late) ──

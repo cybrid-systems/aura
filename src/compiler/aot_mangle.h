@@ -1,4 +1,4 @@
-// aot_mangle.h — AOT symbol name mangler (Issue #136, #243, #1369)
+// aot_mangle.h — AOT symbol name mangler (Issue #136, #243, #1369, #1640, #2015)
 //
 // Pure helper function used by the AOT bridge to generate valid
 // C identifiers from Aura function names. Exposed as a header
@@ -54,6 +54,10 @@ namespace aura::compiler {
 // signature (env_frame_version=0 + linear_state=0 produce the
 // same suffix as before); callers that have live env frames must
 // thread both values through `generate_registration_c`.
+//
+// Issue #2015: parse side now extracts `_eN_lN` as well as `_vN`
+// so probe / stale-check paths can detect captured-env and
+// linear-ownership drift (not only defuse epoch).
 inline std::string mangle_aot_name(std::string_view original, std::uint32_t disambiguator,
                                    std::uint64_t defuse_version = 0,
                                    std::uint64_t env_frame_version = 0,
@@ -117,11 +121,7 @@ inline std::string mangle_aot_name(std::string_view original, std::uint32_t disa
     // Issue #1640: append env_frame_version + linear_state so
     // the mangled name carries enough context for the reload
     // path to detect captured-env drift. Format `_e<N>_l<N>`
-    // (e = env_frame_version, l = linear_state) keeps the
-    // suffix parseable via aot_parse_version_suffix (which only
-    // cares about the trailing `_v<N>`) while exposing the new
-    // fields to human-readable diff tools + the bump-aot-env-
-    // frame-version-drift-prevented counter on reload.
+    // (e = env_frame_version, l = linear_state).
     if (env_frame_version != 0 || linear_state != 0) {
         result += "_e";
         result += std::to_string(env_frame_version);
@@ -141,31 +141,80 @@ inline std::string aot_link_name(const std::string& original, std::uint32_t disa
     return mangle_aot_name(original, disambiguator, defuse_version);
 }
 
-// Issue #1369: parse trailing `_vN` from a mangled name.
-// Returns true and writes *out_version on success.
-inline bool aot_parse_version_suffix(std::string_view mangled, std::uint64_t* out_version) {
-    if (!out_version)
+// Issue #2015: full version suffix components from a mangled name.
+// Layout:  ..._v<defuse>[_e<env>_l<linear>]
+struct AotVersionSuffix {
+    std::uint64_t defuse_version = 0;
+    std::uint64_t env_frame_version = 0;
+    std::uint8_t linear_state = 0;
+    bool has_defuse = false;
+    bool has_env_linear = false;
+};
+
+// Issue #2015: parse `_vN` and optional trailing `_eN_lN`.
+// Returns true when a defuse `_vN` was found (env/linear optional).
+inline bool aot_parse_full_version_suffix(std::string_view mangled, AotVersionSuffix* out) {
+    if (!out)
         return false;
-    // Find last "_v" followed by digits to end.
-    if (mangled.size() < 3)
-        return false;
+    *out = {};
+    // Find last "_v" followed by at least one digit (defuse stamp).
+    // With optional `_eN_lN` after it, digits no longer run to end-of-string.
     auto pos = mangled.rfind("_v");
     if (pos == std::string_view::npos || pos + 2 >= mangled.size())
         return false;
-    std::string_view digits = mangled.substr(pos + 2);
-    if (digits.empty())
+    std::size_t i = pos + 2;
+    if (i >= mangled.size() || mangled[i] < '0' || mangled[i] > '9')
         return false;
-    for (char c : digits) {
-        if (c < '0' || c > '9')
-            return false;
+    std::uint64_t defuse = 0;
+    while (i < mangled.size() && mangled[i] >= '0' && mangled[i] <= '9') {
+        defuse = defuse * 10ull + static_cast<std::uint64_t>(mangled[i] - '0');
+        ++i;
     }
-    // strtoull needs a C string; digits are trailing so ok if we copy.
-    std::string tmp(digits);
-    char* end = nullptr;
-    unsigned long long v = std::strtoull(tmp.c_str(), &end, 10);
-    if (!end || *end != '\0')
+    out->defuse_version = defuse;
+    out->has_defuse = true;
+
+    // Optional `_eN_lN` (Issue #1640 emit / #2015 parse).
+    if (i + 3 <= mangled.size() && mangled[i] == '_' && mangled[i + 1] == 'e') {
+        std::size_t j = i + 2;
+        if (j < mangled.size() && mangled[j] >= '0' && mangled[j] <= '9') {
+            std::uint64_t env = 0;
+            while (j < mangled.size() && mangled[j] >= '0' && mangled[j] <= '9') {
+                env = env * 10ull + static_cast<std::uint64_t>(mangled[j] - '0');
+                ++j;
+            }
+            if (j + 2 <= mangled.size() && mangled[j] == '_' && mangled[j + 1] == 'l') {
+                std::size_t k = j + 2;
+                if (k < mangled.size() && mangled[k] >= '0' && mangled[k] <= '9') {
+                    std::uint64_t lin = 0;
+                    while (k < mangled.size() && mangled[k] >= '0' && mangled[k] <= '9') {
+                        lin = lin * 10ull + static_cast<std::uint64_t>(mangled[k] - '0');
+                        ++k;
+                    }
+                    // Accept only when the env/linear suffix consumes the tail
+                    // (no trailing garbage after `_lN`).
+                    if (k == mangled.size()) {
+                        out->env_frame_version = env;
+                        out->linear_state = static_cast<std::uint8_t>(lin > 255ull ? 255ull : lin);
+                        out->has_env_linear = true;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// Issue #1369 / #2015: parse trailing `_vN` (env/linear ignored for this API).
+// Returns true and writes *out_version on success.
+// Fixed #2015: allows optional `_eN_lN` after `_vN` (previously required
+// digits to run to end-of-string, so `_v7_e5_l1` failed to parse).
+inline bool aot_parse_version_suffix(std::string_view mangled, std::uint64_t* out_version) {
+    if (!out_version)
         return false;
-    *out_version = static_cast<std::uint64_t>(v);
+    AotVersionSuffix full{};
+    if (!aot_parse_full_version_suffix(mangled, &full) || !full.has_defuse)
+        return false;
+    *out_version = full.defuse_version;
     return true;
 }
 
@@ -176,11 +225,67 @@ inline bool aot_mangle_has_version_suffix(std::string_view mangled) {
 
 // Host-side stale check: expected version vs version embedded in mangled name.
 // Demonstrable without dlopen (unit tests / pre-emit validation).
-inline bool aot_mangle_version_is_stale(std::string_view mangled, std::uint64_t expected) {
-    std::uint64_t got = 0;
-    if (!aot_parse_version_suffix(mangled, &got))
+// Issue #2015: optional expected env_frame_version + linear_state.
+// When any of (expected_env, expected_linear, mangled `_e/_l`) is active,
+// all three components must match; defuse-only names remain backward-compatible
+// when both expected env/linear are 0 and the mangled name has no `_e/_l`.
+inline bool aot_mangle_version_is_stale(std::string_view mangled, std::uint64_t expected_defuse,
+                                        std::uint64_t expected_env_frame = 0,
+                                        std::uint8_t expected_linear = 0) {
+    AotVersionSuffix got{};
+    if (!aot_parse_full_version_suffix(mangled, &got) || !got.has_defuse)
         return true; // missing version → treat as stale under #1369
-    return got != expected;
+    if (got.defuse_version != expected_defuse)
+        return true;
+    const bool host_tracks_env_linear = (expected_env_frame != 0 || expected_linear != 0);
+    if (!host_tracks_env_linear && !got.has_env_linear)
+        return false; // pure defuse comparison (legacy)
+    const std::uint64_t got_env = got.has_env_linear ? got.env_frame_version : 0;
+    const std::uint8_t got_lin = got.has_env_linear ? got.linear_state : 0;
+    return got_env != expected_env_frame || got_lin != expected_linear;
+}
+
+// Issue #2015: which component(s) mismatched (for metrics / diagnostics).
+// Returns true if stale; out flags may be null.
+inline bool aot_mangle_version_is_stale_detail(std::string_view mangled,
+                                               std::uint64_t expected_defuse,
+                                               std::uint64_t expected_env_frame,
+                                               std::uint8_t expected_linear, bool* out_defuse_stale,
+                                               bool* out_env_stale, bool* out_linear_stale) {
+    if (out_defuse_stale)
+        *out_defuse_stale = false;
+    if (out_env_stale)
+        *out_env_stale = false;
+    if (out_linear_stale)
+        *out_linear_stale = false;
+    AotVersionSuffix got{};
+    if (!aot_parse_full_version_suffix(mangled, &got) || !got.has_defuse) {
+        if (out_defuse_stale)
+            *out_defuse_stale = true;
+        return true;
+    }
+    bool stale = false;
+    if (got.defuse_version != expected_defuse) {
+        if (out_defuse_stale)
+            *out_defuse_stale = true;
+        stale = true;
+    }
+    const bool host_tracks = (expected_env_frame != 0 || expected_linear != 0);
+    if (host_tracks || got.has_env_linear) {
+        const std::uint64_t got_env = got.has_env_linear ? got.env_frame_version : 0;
+        const std::uint8_t got_lin = got.has_env_linear ? got.linear_state : 0;
+        if (got_env != expected_env_frame) {
+            if (out_env_stale)
+                *out_env_stale = true;
+            stale = true;
+        }
+        if (got_lin != expected_linear) {
+            if (out_linear_stale)
+                *out_linear_stale = true;
+            stale = true;
+        }
+    }
+    return stale;
 }
 
 } // namespace aura::compiler
