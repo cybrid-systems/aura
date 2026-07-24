@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 331 | Preferred destination suites |
-| **Total scanned** | **331** | |
+| `tests/core/test_*.cpp` | 338 | Preferred destination suites |
+| **Total scanned** | **338** | |
 
 ### Related artifacts
 
@@ -35,11 +35,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 35 | 35 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 78 | 78 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 38 | 38 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 5 | 5 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 16 | 16 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 25 | 25 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 88 | 88 | P2 — often thin schema probes; collapse into obs matrix |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 28 | 28 | P2 — link-profile heavy; migrate AC smoke first |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 19 | 19 | P2 — small-medium; soa_batch precedent |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 89 | 89 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **54**
+- Existing `*_batch` drivers (migration milestones): **56**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -108,6 +108,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_incremental_type_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_issues_809_817_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
 - `tests/compiler/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
@@ -130,6 +131,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/renderer/test_render_batch.cpp` → theme `arena_compaction`
 - `tests/core/test_resource_quota_batch.cpp` → theme `arena_compaction`
+- `tests/compiler/test_shape_soa_unit_batch.cpp` → theme `shape_soa`
 - `tests/core/test_soa_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_cow_batch.cpp` → theme `mutation_dirty`
@@ -245,6 +247,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_gc_evaluator_integration.cpp`
 - `tests/core/test_guard_dtor_batch_metrics.cpp`
 - `tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp`
+- `tests/compiler/test_hardware_resource_linear_ownership.cpp`
 - `tests/core/test_hash_iter_invalidation.cpp`
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp`
 - `tests/core/test_highperf_full_hotpath_matrix.cpp`
@@ -276,12 +279,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_issue_1993.cpp`
 - `tests/compiler/test_issues_809_817_batch.cpp`
 - `tests/compiler/test_issues_819_829_batch.cpp`
+- `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp`
 - `tests/compiler/test_jit_closure_cache_race.cpp`
 - `tests/compiler/test_jit_concurrent_compile.cpp`
 - `tests/compiler/test_jit_consistency.cpp`
 - `tests/compiler/test_jit_critical_coverage.cpp`
 - `tests/compiler/test_jit_full_opcode_coverage.cpp`
+- `tests/compiler/test_jit_metrics.cpp`
+- `tests/compiler/test_jit_metrics_stub.cpp`
 - `tests/compiler/test_let_poly_solve_delta.cpp`
 - `tests/compiler/test_linear_batch.cpp`
 - `tests/compiler/test_linear_boundary_consistency.cpp`
@@ -412,10 +418,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_set_arena_atomic_owner.cpp`
 - `tests/core/test_set_workspace_flat.cpp`
 - `tests/compiler/test_seva_demo_metrics.cpp`
+- `tests/compiler/test_shape.cpp`
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp`
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp`
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp`
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp`
+- `tests/compiler/test_shape_soa_unit_batch.cpp`
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp`
 - `tests/core/test_soa_batch.cpp`
 - `tests/compiler/test_soa_view_enforcement.cpp`
@@ -448,6 +456,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
 - `tests/core/test_type_cache_stats_snapshot.cpp`
 - `tests/compiler/test_type_prop_invariant_correlation.cpp`
+- `tests/compiler/test_type_propagation_dead_coercion.cpp`
 - `tests/core/test_type_registry_ownership.cpp`
 - `tests/compiler/test_typechecker_incremental_guard_steal_fidelity.cpp`
 - `tests/compiler/test_typechecker_incremental_locality.cpp`
@@ -680,15 +689,16 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typechecker_incremental_guard_steal_fidelity.cpp` (—) [domain_suite, theme_compiler] — test_typechecker_incremental_guard_steal_fidelity.cpp — Issue #798:
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 
-### `linear_ownership` — Linear ownership / borrow / consume (5)
+### `linear_ownership` — Linear ownership / borrow / consume (6)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (5)
+#### domain/ (6)
 
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_hardware_resource_linear_ownership.cpp` (—) [domain_suite, theme_compiler] — test_hardware_resource_linear_ownership.cpp — Issue #306:
 - `tests/compiler/test_linear_ownership_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_ownership_batch.cpp
 - `tests/compiler/test_linear_ownership_occurrence_predicate_mutate.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_occurrence_predicate_mutate.cpp — Issue #747:
 - `tests/compiler/test_render_dispatch_linear_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1676 (#1978 renamed): issue# moved from filename to header.
@@ -719,13 +729,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 
-### `jit_incremental` — JIT / AOT / incremental relower (25)
+### `jit_incremental` — JIT / AOT / incremental relower (28)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (25)
+#### domain/ (28)
 
 - `tests/compiler/test_aot_incremental_reemit.cpp` (—) [domain_suite, theme_compiler] — Issue #1480/#1930/#1943/#1952 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_mangle_top.cpp` (—) [domain_suite, theme_compiler] — test_aot_mangle_top.cpp — Issue #1369:
@@ -740,12 +750,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp` (—) [domain_suite, theme_compiler] — test_incremental_perblock_closure_bridge_safety.cpp — Issue #600:
 - `tests/compiler/test_incremental_relower_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_incremental_relower_batch.cpp — batch driver for incremental_relower family.
 - `tests/compiler/test_incremental_type_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
+- `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_jit_aot_hot_update_batch.cpp — consolidated AOT hot-update + steal-boundary drivers
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
 - `tests/compiler/test_jit_closure_cache_race.cpp` (—) [domain_suite, theme_compiler] — Issue #1707 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_jit_concurrent_compile.cpp` (—) [domain_suite, theme_compiler] — test_jit_concurrent_compile.cpp — Issue #114 concurrent compile stress
 - `tests/compiler/test_jit_consistency.cpp` (—) [domain_suite, theme_compiler] — test_jit_consistency.cpp — Issue #427: JIT ↔ IRInterpreter
 - `tests/compiler/test_jit_critical_coverage.cpp` (—) [domain_suite, theme_compiler] — Issue #1658/#1917 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_jit_full_opcode_coverage.cpp` (—) [domain_suite, theme_compiler] — Issue #1289/#1512/#1658/#427/#532 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_jit_metrics.cpp` (—) [domain_suite, theme_compiler] — test_jit_metrics.cpp — Issue #114 JIT observability + per-function cache tests
+- `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
 - `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — Issue #1711 (#1978 renamed): issue# moved from filename to header.
@@ -753,13 +766,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_render_pass_incremental.cpp` (—) [domain_suite, theme_renderer] — AC1: RenderPass satisfies DirtyAware + SoAView + JITFriendly + Incremental
 - `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
 
-### `shape_soa` — Shape / SoA / column layout (17)
+### `shape_soa` — Shape / SoA / column layout (19)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (17)
+#### domain/ (19)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
@@ -771,21 +784,23 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_shape.cpp` (—) [large, domain_suite, theme_compiler] — test_shape.cpp — Unit tests for shape infrastructure (Phase 1, #53)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp` (—) [domain_suite, theme_compiler] — test_shape_profiler_stability_deopt_fiber_task4.cpp — Issue #570:
+- `tests/compiler/test_shape_soa_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_shape_soa_unit_batch.cpp — Wave 36+ (#1957) shape_soa theme
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shapeprofiler_stability_deopt_jit_mutate.cpp — Issue #605:
 - `tests/core/test_soa_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_soa_batch.cpp
 - `tests/compiler/test_soa_view_enforcement.cpp` (—) [domain_suite, theme_compiler] — Issue #1241/#1517/#1619/#1918 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (88)
+### `observability` — Observability / metrics / query:*-stats (89)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (88)
+#### domain/ (89)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
@@ -872,6 +887,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
 - `tests/core/test_type_cache_stats_snapshot.cpp` (—) [domain_suite, theme_core] — Issue #1797 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_prop_invariant_correlation.cpp` (—) [domain_suite, theme_compiler] — Issue #1884 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_type_propagation_dead_coercion.cpp` (—) [domain_suite, theme_compiler] — test_type_propagation_dead_coercion.cpp — Issue #1874 (#1978 renamed):
 - `tests/compiler/test_typechecker_incremental_locality.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1923 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
