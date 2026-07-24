@@ -1594,6 +1594,9 @@ AURA_COMPILER_METRICS_FIELD(ffi_pin_active_count)
 AURA_COMPILER_METRICS_FIELD(ffi_defer_because_pin_total)
 // Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback (refine #1589 / #1216).
 AURA_COMPILER_METRICS_FIELD(coercion_blame_missing_total)
+// Issue #2063: cascade subtree-skip (summary-dirty early-exit).
+AURA_COMPILER_METRICS_FIELD(cascade_skip_subtree_total)
+
 AURA_COMPILER_METRICS_FIELD(dynamic_degrade_with_blame_total)
 
 // Issue #2067: IR-executor linear runtime enforcement (refine #747 / #1926).

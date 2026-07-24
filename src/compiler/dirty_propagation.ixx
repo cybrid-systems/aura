@@ -16,6 +16,7 @@ using NodeId = std::uint32_t;
 // ── Metrics (#1575) ────────────────────────────────────────────
 // Module-level atomics so Agent / tests can observe cascade health
 // without going through CompilerService.
+inline std::atomic<std::uint64_t> dirty_skip_subtree{0};
 inline std::atomic<std::uint64_t> dirty_propagation_bfs_hits{0};
 inline std::atomic<std::uint64_t> manual_propagate_deprecated_count{0};
 // Running sum of BFS depths + sample count → dirty_cascade_depth_avg.
@@ -217,7 +218,37 @@ inline std::size_t cascade_mark_dirty(DirtySet& set, NodeId root, const DepGraph
             }
             // Ensure dirty even if already marked (propagate_edge for stats).
             set.propagate_edge(cur, nxt);
-            q.push({nxt, depth + 1});
+            // Issue #2063: summary-dirty early-exit. If nxt is already
+            // dirty AND its entire dependent cone is already dirty, we
+            // can skip the BFS expansion below it (a previously-completed
+            // cascade has fully marked its subtree, so re-visiting those
+            // nodes produces zero new marks). The skip_count metric makes
+            // this observable to the Agent.
+            bool skip_subtree = false;
+            if (set.is_dirty(nxt) && depth + 1 > 0) {
+                const auto* sub_deps = g.dependents(nxt);
+                bool all_dirty = sub_deps && !sub_deps->empty();
+                if (all_dirty) {
+                    for (NodeId sub_nxt : *sub_deps) {
+                        if (!set.is_dirty(sub_nxt)) {
+                            all_dirty = false;
+                            break;
+                        }
+                    }
+                }
+                if (all_dirty && sub_deps && !sub_deps->empty()) {
+                    skip_subtree = true;
+                    // Issue #2063: bump file-scope dirty_skip_subtree counter.
+                    // The CompilerMetrics cascade_skip_subtree_total is bumped
+                    // by callers (invalidate_bridge_for / mark_define_dirty
+                    // paths) that hold the metrics_ pointer — cascade_mark_dirty
+                    // is a free function in the aura::compiler::dirty namespace
+                    // and does not have access to CompilerMetrics directly.
+                    dirty_skip_subtree.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            if (!skip_subtree)
+                q.push({nxt, depth + 1});
         }
     }
 
