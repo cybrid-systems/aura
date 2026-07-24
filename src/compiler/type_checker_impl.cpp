@@ -592,6 +592,17 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         (touched_roots_.size() + occurrence_priority_roots_.size() + let_poly_dirty_roots_.size()) *
         2);
     auto collect_clean_for_root = [&](std::uint32_t root) {
+        // Issue #2065: epoch skip — same semantics as the
+        // solve_delta_impl::collect_for_root above. Skips roots
+        // already processed in the current epoch.
+        if (processed_roots_this_epoch_.count(root) > 0) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->solve_delta_epoch_skip_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
+        processed_roots_this_epoch_.insert(root);
         auto it = var_to_constraints_.find(root);
         if (it == var_to_constraints_.end())
             return;
@@ -1322,6 +1333,19 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         // Issue #1871: also drain pending_full_solve_roots_ from prior
         // local prunes so residual dirty is not starved indefinitely.
         auto collect_for_root = [&](std::uint32_t root) {
+            // Issue #2065: epoch skip — if this root was already
+            // collected+processed in the current epoch, skip the
+            // re-collection (avoids redundant dirty walks on the
+            // same root within the same mutation epoch). Bumps
+            // solve_delta_epoch_skip_total for observability.
+            if (processed_roots_this_epoch_.count(root) > 0) {
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->solve_delta_epoch_skip_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return;
+            }
+            processed_roots_this_epoch_.insert(root);
             auto it = var_to_constraints_.find(root);
             if (it == var_to_constraints_.end())
                 return;

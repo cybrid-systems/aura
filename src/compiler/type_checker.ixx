@@ -193,6 +193,20 @@ export class ConstraintSystem {
     // local-root collection so residual dirty is not silently
     // starved after mark_clean of only the local subset.
     std::unordered_set<std::uint32_t> pending_full_solve_roots_;
+    // Issue #2065: epoch-processed roots set. Cleared whenever
+    // cache_epoch_ advances via set_cache_epoch. collect_for_root +
+    // collect_clean_for_root check this set to skip already-processed
+    // roots (bump solve_delta_epoch_skip_total for observability).
+    std::unordered_set<std::uint32_t> processed_roots_this_epoch_;
+
+public:
+    // Issue #2065: clear the processed-roots set so roots from prior
+    // epochs can be re-collected. Called by InferenceEngine::set_cache_epoch
+    // when the epoch advances. Public so InferenceEngine (which holds
+    // the ConstraintSystem cs_ member) can invoke it from the epoch gate.
+    void clear_processed_roots_this_epoch() noexcept { processed_roots_this_epoch_.clear(); }
+
+private:
     // Issue #536: optional hooks for Evaluator observability
     // (touched_roots snapshot + cross-delta CONFLICT detection).
     std::function<void(std::size_t)> on_touched_roots_snapshot_;
@@ -663,7 +677,14 @@ public:
     // inference, the whole cache is invalidated (re-infer
     // everything). This is the safety net for mutations
     // that don't set is_dirty on the right nodes.
-    void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+    void set_cache_epoch(std::uint64_t epoch) {
+        // Issue #2065: when the epoch advances, clear ConstraintSystem's
+        // processed_roots_this_epoch_ so roots from prior epochs can be
+        // re-collected by collect_for_root (InferenceEngine owns cs_).
+        if (epoch != cache_epoch_)
+            cs_.clear_processed_roots_this_epoch();
+        cache_epoch_ = epoch;
+    }
     // Issue #258: forward the metrics pointer to the
     // ConstraintSystem so solve_delta timing accumulates
     // into CompilerMetrics::delta_solve_time_us.

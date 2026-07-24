@@ -1896,6 +1896,10 @@ aura_issue_test_link_llvm_jit(test_linear_runtime_violation)
 aura_add_issue_test(test_dead_coercion_elim)
 aura_issue_test_link_llvm_jit(test_dead_coercion_elim)
 
+# Issue #2065: solve_delta epoch filter — skip already-processed roots in current epoch.
+aura_add_issue_test(test_solve_delta_epoch_filter)
+aura_issue_test_link_llvm_jit(test_solve_delta_epoch_filter)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
