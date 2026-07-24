@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 329 | Preferred destination suites |
-| **Total scanned** | **329** | |
+| `tests/core/test_*.cpp` | 327 | Preferred destination suites |
+| **Total scanned** | **327** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 34 | 34 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 78 | 78 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 76 | 76 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 36 | 36 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 16 | 16 | P1 — domain hygiene suite exists |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **64**
+- Existing `*_batch` drivers (migration milestones): **65**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -142,6 +142,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_soa_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_stable_ref_cow_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_stable_ref_provenance_batch.cpp` → theme `mutation_dirty`
 - `tests/repl/test_terminal_domain_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_typechecker_incremental_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_walk_batch.cpp` → theme `mutation_dirty`
@@ -431,10 +432,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/stdlib/test_spec_runtime.cpp`
 - `tests/compiler/test_stable_ref_batch.cpp`
 - `tests/compiler/test_stable_ref_cow_batch.cpp`
-- `tests/compiler/test_stable_ref_cow_subworkspace_concurrent_ai.cpp`
-- `tests/compiler/test_stable_ref_full_provenance_enforcement.cpp`
+- `tests/compiler/test_stable_ref_provenance_batch.cpp`
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp`
-- `tests/compiler/test_stable_ref_provenance_mandate.cpp`
 - `tests/compiler/test_stale_closure_fallback.cpp`
 - `tests/core/test_stale_ref_string_heap.cpp`
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp`
@@ -553,13 +552,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (78)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (76)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (78)
+#### domain/ (76)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
@@ -624,10 +623,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:
 - `tests/compiler/test_stable_ref_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_batch.cpp
 - `tests/compiler/test_stable_ref_cow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #1912 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_stable_ref_cow_subworkspace_concurrent_ai.cpp` (—) [domain_suite, theme_compiler] — - AC1: query:stable-ref-boundary-stats-hash reachable (schema 738)
-- `tests/compiler/test_stable_ref_full_provenance_enforcement.cpp` (—) [domain_suite, theme_compiler] — ensure_valid_or_refresh, auto-refresh counters, epoch fence, 1000-iter
+- `tests/compiler/test_stable_ref_provenance_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_provenance_batch.cpp — test_stable_ref 3-merge (R19 phase 20).
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
-- `tests/compiler/test_stable_ref_provenance_mandate.cpp` (—) [domain_suite, theme_compiler] — Issue #1500/#1564/#1630 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_stale_ref_string_heap.cpp` (—) [domain_suite, theme_core] — Issue #1681 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_terminal_render_production.cpp` (—) [domain_suite, theme_renderer] — Issue #1673 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp — Issue #745:
