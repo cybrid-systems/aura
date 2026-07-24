@@ -251,6 +251,20 @@ static std::atomic<uint64_t> g_jit_macro_introduced_deopt{0};
 static std::atomic<uint64_t> g_hygiene_ir_macro_marker_total{0};
 static std::atomic<uint64_t> g_hygiene_ir_provenance_stamped_total{0};
 
+// Issue #2022: native MacroIntroduced side-table — survives after JIT/AOT
+// so deopt / mutate / provenance-blame can still distinguish macro-origin
+// functions once native code is live. Parallel to AOT func table (4096).
+// Non-macro path never writes (source_marker stays 0) — zero hot-path cost.
+static constexpr unsigned kJitMacroMarkerSlots = 4096;
+static std::uint8_t g_jit_fn_source_marker[kJitMacroMarkerSlots]{};
+static std::uint32_t g_jit_fn_provenance[kJitMacroMarkerSlots]{};
+// Stamp count = how many times a MacroIntroduced tag was preserved into
+// native metadata (compile or register). Live count = slots currently
+// holding marker==1. Recoverable = slots with marker==1 and provenance!=0.
+static std::atomic<uint64_t> g_jit_native_marker_preserved_total{0};
+static std::atomic<uint64_t> g_jit_live_macro_fn_count{0};
+static std::atomic<uint64_t> g_jit_macro_provenance_recoverable_total{0};
+
 // Issue #157 Phase 1c: in-LLVM-callable deopt counter. The JIT
 // emits a call to this at the start of every deopt basic block
 // (bb_slow in OpCar/OpCdr SHAPE_PAIR lowering) so the deopt
@@ -317,6 +331,91 @@ extern "C" uint64_t aura_hygiene_ir_provenance_stamped_total() {
     return g_hygiene_ir_provenance_stamped_total.load(std::memory_order_relaxed);
 }
 
+// Issue #2022: stamp MacroIntroduced into native side-table by IR func_id.
+// Safe no-op for out-of-range ids and for marker==0 (non-macro path).
+// When upgrading 0→1, live_macro_fn_count increments; provenance!=0 bumps
+// recoverable. Re-stamp with same marker is idempotent for live count.
+extern "C" void aura_jit_stamp_fn_macro_marker(int64_t func_id, uint8_t marker,
+                                               uint32_t provenance) {
+    if (func_id < 0)
+        return;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kJitMacroMarkerSlots)
+        return;
+    const uint8_t prev = g_jit_fn_source_marker[idx];
+    if (marker == 0) {
+        // Explicit clear (rare — invalidate). Adjust live/recoverable if needed.
+        if (prev == 1) {
+            g_jit_live_macro_fn_count.fetch_sub(1, std::memory_order_relaxed);
+            if (g_jit_fn_provenance[idx] != 0)
+                g_jit_macro_provenance_recoverable_total.fetch_sub(1, std::memory_order_relaxed);
+        }
+        g_jit_fn_source_marker[idx] = 0;
+        g_jit_fn_provenance[idx] = 0;
+        return;
+    }
+    g_jit_fn_source_marker[idx] = marker;
+    if (provenance != 0)
+        g_jit_fn_provenance[idx] = provenance;
+    else if (g_jit_fn_provenance[idx] == 0 && marker == 1) {
+        // Weak fallback: func_id itself so blame never loses origin entirely.
+        g_jit_fn_provenance[idx] = static_cast<uint32_t>(func_id == 0 ? 1 : func_id);
+    }
+    g_jit_native_marker_preserved_total.fetch_add(1, std::memory_order_relaxed);
+    if (prev != 1 && marker == 1) {
+        g_jit_live_macro_fn_count.fetch_add(1, std::memory_order_relaxed);
+        if (g_jit_fn_provenance[idx] != 0)
+            g_jit_macro_provenance_recoverable_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (prev == 1 && marker == 1 && provenance != 0 && g_jit_fn_provenance[idx] != 0) {
+        // Already live; ensure recoverable is counted if we just filled provenance.
+        // (recoverable was bumped only on 0→1; if prev had zero prov this is rare)
+        (void)0;
+    }
+}
+
+extern "C" uint8_t aura_jit_fn_source_marker(int64_t func_id) {
+    if (func_id < 0)
+        return 0;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kJitMacroMarkerSlots)
+        return 0;
+    return g_jit_fn_source_marker[idx];
+}
+
+extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id) {
+    if (func_id < 0)
+        return 0;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kJitMacroMarkerSlots)
+        return 0;
+    return g_jit_fn_provenance[idx];
+}
+
+extern "C" uint64_t aura_jit_native_marker_preserved_total() {
+    return g_jit_native_marker_preserved_total.load(std::memory_order_relaxed);
+}
+
+extern "C" uint64_t aura_jit_live_macro_fn_count() {
+    return g_jit_live_macro_fn_count.load(std::memory_order_relaxed);
+}
+
+extern "C" uint64_t aura_jit_macro_provenance_recoverable_total() {
+    return g_jit_macro_provenance_recoverable_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2022: note a MacroIntroduced preserve on the JIT compile path
+// when no IR func_id is available yet (name-keyed FnTracker holds the
+// per-function tag). Only bumps global observability counters — does not
+// write the func_id side-table (avoids colliding with real AOT ids).
+extern "C" void aura_jit_note_native_macro_preserved(uint8_t marker, uint32_t provenance) {
+    if (marker != 1)
+        return;
+    g_jit_native_marker_preserved_total.fetch_add(1, std::memory_order_relaxed);
+    g_jit_live_macro_fn_count.fetch_add(1, std::memory_order_relaxed);
+    if (provenance != 0)
+        g_jit_macro_provenance_recoverable_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 extern "C" void aura_counters_reset() {
     g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
     g_workspace_unchecked_fastpath_count.store(0, std::memory_order_relaxed);
@@ -327,6 +426,13 @@ extern "C" void aura_counters_reset() {
     g_jit_macro_introduced_deopt.store(0, std::memory_order_relaxed);
     g_hygiene_ir_macro_marker_total.store(0, std::memory_order_relaxed);
     g_hygiene_ir_provenance_stamped_total.store(0, std::memory_order_relaxed);
+    g_jit_native_marker_preserved_total.store(0, std::memory_order_relaxed);
+    g_jit_live_macro_fn_count.store(0, std::memory_order_relaxed);
+    g_jit_macro_provenance_recoverable_total.store(0, std::memory_order_relaxed);
+    for (unsigned i = 0; i < kJitMacroMarkerSlots; ++i) {
+        g_jit_fn_source_marker[i] = 0;
+        g_jit_fn_provenance[i] = 0;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

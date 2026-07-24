@@ -84,6 +84,14 @@ struct FlatFunction {
     // (0 = Untracked / no linear captures). Paired with env_frame_version
     // in mangle_aot_name for captured-env drift detection.
     uint8_t linear_ownership_state = 0;
+    // Issue #2022: function-level SyntaxMarker (0=User, 1=MacroIntroduced).
+    // Set from IRFunction::marker / OR of instruction source_marker during
+    // FlatFunction build so native metadata retains MacroIntroduced after JIT.
+    // Non-macro path leaves 0 — no extra work in lower().
+    uint8_t source_marker = 0;
+    // Issue #2022: representative provenance id for macro-origin functions
+    // (first non-zero instruction provenance when source_marker==1).
+    uint32_t provenance = 0;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
@@ -105,6 +113,10 @@ struct FunctionMeta {
     uint32_t local_count;
     uint32_t arg_count;
     uint32_t env_count;
+    // Issue #2022: native-side MacroIntroduced tag surviving JIT/AOT.
+    // Queried after native code is live (deopt / provenance / self-evo).
+    uint8_t source_marker = 0;
+    uint32_t provenance = 0;
 };
 
 class AuraJIT {
@@ -159,8 +171,20 @@ public:
     void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
                            uint32_t arg_count, uint32_t env_count, const char* name = nullptr);
 
+    // Issue #2022: register with optional MacroIntroduced marker + provenance
+    // so the native side-table / FunctionMeta retain hygiene after JIT/AOT.
+    void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
+                           uint32_t arg_count, uint32_t env_count, const char* name,
+                           uint8_t source_marker, uint32_t provenance);
+
     // Get all compiled functions metadata
     const std::vector<FunctionMeta>& compiled_functions() const;
+
+    // Issue #2022: query MacroIntroduced identity for a live native function
+    // (by name). Returns 0 when unknown / User; 1 when MacroIntroduced was
+    // preserved at compile/register. Provenance is 0 when unavailable.
+    uint8_t fn_source_marker(const char* name) const;
+    uint32_t fn_provenance(const char* name) const;
 
     // Register an external C symbol with the JIT (e.g., from dlopen)
     void register_symbol(const char* name, void* ptr);

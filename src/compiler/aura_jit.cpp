@@ -52,6 +52,12 @@ extern "C" void aura_jit_macro_hygiene_consult_inc();
 extern "C" void aura_jit_macro_introduced_deopt_inc();
 extern "C" uint64_t aura_jit_macro_hygiene_consults();
 extern "C" uint64_t aura_jit_macro_introduced_deopt();
+// Issue #2022: native MacroIntroduced side-table + counters.
+extern "C" void aura_jit_stamp_fn_macro_marker(int64_t func_id, uint8_t marker,
+                                               uint32_t provenance);
+extern "C" void aura_jit_note_native_macro_preserved(uint8_t marker, uint32_t provenance);
+extern "C" uint8_t aura_jit_fn_source_marker(int64_t func_id);
+extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id);
 
 namespace aura::jit {
 
@@ -2578,10 +2584,14 @@ struct AuraJIT::Impl {
     // Issue #1522: tracker entry carries compile epoch + soft deopt flag.
     // deopt_pending: bridge epoch bumped for this name; refuse cache hits
     // until next recompile clears the flag.
+    // Issue #2022: source_marker + provenance survive after native is live
+    // so deopt / mutate / Agent blame can still recover MacroIntroduced.
     struct FnTrackerEntry {
         llvm::orc::ResourceTrackerSP tracker;
         std::uint64_t compile_epoch = 0;
         bool deopt_pending = false;
+        uint8_t source_marker = 0;
+        uint32_t provenance = 0;
     };
 
     // Per-function resource trackers for hot-swap (remove old module, add new one)
@@ -2611,6 +2621,12 @@ struct AuraJIT::Impl {
         entry.tracker = rt;
         entry.compile_epoch = compile_epoch;
         entry.deopt_pending = false;
+        // Preserve MacroIntroduced tag across hot-swap recompile when
+        // the prior entry had it (until the new compile re-stamps).
+        if (it != fn_trackers_.end()) {
+            entry.source_marker = it->second.source_marker;
+            entry.provenance = it->second.provenance;
+        }
         fn_trackers_[name] = std::move(entry);
         return rt;
     }
@@ -3058,6 +3074,47 @@ struct AuraJIT::Impl {
             compile_fns_[std::string(fn.name)] = fn_ptr;
         }
 
+        // Issue #2022: preserve MacroIntroduced into native metadata after
+        // successful compile so query/deopt/blame still see the marker once
+        // native code is live. Scan FlatInstructions once; OR with
+        // FlatFunction::source_marker (set by service from IRFunction::marker).
+        // Non-macro path: all markers 0 → no side-table write / no counter bump.
+        {
+            uint8_t max_marker = fn.source_marker;
+            uint32_t first_prov = fn.provenance;
+            for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+                const auto& fb = fn.blocks[bi];
+                if (!fb.instructions)
+                    continue;
+                for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                    const auto& inst = fb.instructions[ii];
+                    if (inst.source_marker == 1) {
+                        max_marker = 1;
+                        if (first_prov == 0 && inst.provenance != 0)
+                            first_prov = inst.provenance;
+                    } else if (first_prov == 0 && inst.provenance != 0) {
+                        first_prov = inst.provenance;
+                    }
+                    if (max_marker == 1 && first_prov != 0)
+                        break;
+                }
+                if (max_marker == 1 && first_prov != 0)
+                    break;
+            }
+            // If marker is MacroIntroduced but provenance still 0, keep 0 here;
+            // register_function / note will apply weak func_id fallback.
+            if (fn.name && fn.name[0]) {
+                auto tit = fn_trackers_.find(std::string(fn.name));
+                if (tit != fn_trackers_.end()) {
+                    tit->second.source_marker = max_marker;
+                    if (first_prov != 0)
+                        tit->second.provenance = first_prov;
+                }
+            }
+            if (max_marker == 1)
+                aura_jit_note_native_macro_preserved(max_marker, first_prov);
+        }
+
         // Update metrics. The compile_count covers all calls
         // including cache hits (visible at the top of the function).
         if (metrics) {
@@ -3108,7 +3165,8 @@ struct AuraJIT::Impl {
     }
 
     void register_fn_func(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
-                          uint32_t arg_count, uint32_t env_count, const char* name = nullptr) {
+                          uint32_t arg_count, uint32_t env_count, const char* name = nullptr,
+                          uint8_t source_marker = 0, uint32_t provenance = 0) {
         // Issue #660 Option 1: also register by name if provided.
         if (name && *name) {
             aura_register_fn_named(name, func_id, fn_ptr, static_cast<int32_t>(local_count),
@@ -3119,12 +3177,25 @@ struct AuraJIT::Impl {
                 std::lock_guard<std::mutex> lock(compile_mtx_);
                 fn_id_to_name_[static_cast<std::uint32_t>(func_id)] = name;
             }
+            // Issue #2022: mirror marker into name-keyed tracker when live.
+            if (source_marker == 1) {
+                std::lock_guard<std::mutex> lock(compile_mtx_);
+                auto tit = fn_trackers_.find(std::string(name));
+                if (tit != fn_trackers_.end()) {
+                    tit->second.source_marker = 1;
+                    if (provenance != 0)
+                        tit->second.provenance = provenance;
+                }
+            }
         } else {
             aura_register_fn(func_id, fn_ptr, static_cast<int32_t>(local_count),
                              static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
         }
-        compiled_fns_.push_back(
-            {name ? std::string(name) : std::string(), fn_ptr, local_count, arg_count, env_count});
+        // Issue #2022: func_id side-table for AOT/native query after register.
+        if (source_marker == 1)
+            aura_jit_stamp_fn_macro_marker(func_id, source_marker, provenance);
+        compiled_fns_.push_back({name ? std::string(name) : std::string(), fn_ptr, local_count,
+                                 arg_count, env_count, source_marker, provenance});
     }
 };
 
@@ -3516,11 +3587,39 @@ void AuraJIT::set_string_pool(const std::vector<std::string>* pool) {
 
 void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
                                 uint32_t arg_count, uint32_t env_count, const char* name) {
-    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count, name);
+    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count, name, 0, 0);
+}
+
+void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
+                                uint32_t arg_count, uint32_t env_count, const char* name,
+                                uint8_t source_marker, uint32_t provenance) {
+    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count, name, source_marker,
+                            provenance);
 }
 
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     return impl_->compiled_fns_;
+}
+
+// Issue #2022: name-keyed MacroIntroduced query after native code is live.
+uint8_t AuraJIT::fn_source_marker(const char* name) const {
+    if (!impl_ || !name || !name[0])
+        return 0;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    auto it = impl_->fn_trackers_.find(name);
+    if (it == impl_->fn_trackers_.end())
+        return 0;
+    return it->second.source_marker;
+}
+
+uint32_t AuraJIT::fn_provenance(const char* name) const {
+    if (!impl_ || !name || !name[0])
+        return 0;
+    std::lock_guard<std::mutex> lock(impl_->compile_mtx_);
+    auto it = impl_->fn_trackers_.find(name);
+    if (it == impl_->fn_trackers_.end())
+        return 0;
+    return it->second.provenance;
 }
 
 // Issue #1545: declared in aura_jit_bridge.h — host linear live-closure scan.
@@ -3895,6 +3994,14 @@ std::uint64_t AuraJIT::exception_opcode_coverage_count() const noexcept {
 void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*) {}
+void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t, const char*,
+                                uint8_t, uint32_t) {}
+uint8_t AuraJIT::fn_source_marker(const char*) const {
+    return 0;
+}
+uint32_t AuraJIT::fn_provenance(const char*) const {
+    return 0;
+}
 void AuraJIT::invalidate(const char*) {}
 void AuraJIT::invalidate_prefix(const char*) {}
 std::size_t AuraJIT::invalidate_all() noexcept {
