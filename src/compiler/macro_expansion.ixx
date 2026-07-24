@@ -58,6 +58,12 @@ export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
 // Issue #2019: post-expand MacroIntroduced generation restamp calls.
 export extern std::atomic<std::uint64_t> g_macro_restamp_after_flat_total;
 
+// Issue #2023: MacroSelfEvo capability gate observability.
+export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;
+export extern std::atomic<std::uint64_t> g_macro_self_evo_allowed_total;
+export extern std::atomic<std::uint64_t> g_macro_self_evo_pass_clamp_total;
+export extern std::atomic<std::uint64_t> g_macro_self_evo_depth_clamp_total;
+
 export struct MacroExpansionDef {
     std::vector<std::string> params;
     bool dotted = false;

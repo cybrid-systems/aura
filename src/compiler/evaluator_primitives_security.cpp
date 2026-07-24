@@ -128,7 +128,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto bits = static_cast<std::uint16_t>(as_int(a[1]));
         const auto tenant = a.size() >= 3 && is_int(a[2]) ? static_cast<std::uint64_t>(as_int(a[2]))
                                                           : ev.capability_tenant_id();
-        ev.grant_effect_capability(tenant, ev.string_heap_[sidx], bits, 0);
+        const auto& name = ev.string_heap_[sidx];
+        ev.grant_effect_capability(tenant, name, bits, 0);
+        // Issue #2023: MacroSelfEvo bit / name seeds default policy limits.
+        if ((bits & aura::compiler::security::kEffectMacroSelfEvo) != 0 ||
+            name == "macro-self-evo" || name == "MacroSelfEvo") {
+            using aura::core::capability::g_capability_registry;
+            using aura::core::capability::MacroSelfEvoPolicy;
+            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{});
+        }
         return make_bool(true);
     });
 
@@ -243,7 +251,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->capability_effect_check_total.store(snap.checks, std::memory_order_relaxed);
             }
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(32);
+            // 1565 + 1876 + #2023 MacroSelfEvo keys
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -308,10 +317,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       m ? static_cast<std::int64_t>(
                               m->sandbox_provenance_records_total.load(std::memory_order_relaxed))
                         : 0);
+            // Issue #2023: MacroSelfEvo expand gate observability
+            insert_kv("macro-self-evo-checks",
+                      static_cast<std::int64_t>(snap.macro_self_evo_checks));
+            insert_kv("macro-self-evo-allowed",
+                      static_cast<std::int64_t>(snap.macro_self_evo_allowed));
+            insert_kv("macro-self-evo-denied",
+                      static_cast<std::int64_t>(snap.macro_self_evo_denied));
+            insert_kv("macro-self-evo-depth-clamps",
+                      static_cast<std::int64_t>(snap.macro_self_evo_depth_clamps));
+            insert_kv("macro-self-evo-pass-clamps",
+                      static_cast<std::int64_t>(snap.macro_self_evo_pass_clamps));
+            insert_kv("macro-self-evo-wired", 1);
+            insert_kv("macro-self-evo-schema", 2023);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2023: MacroSelfEvo grant/revoke is C++ API
+    // (g_capability_registry().grant_macro_self_evo / revoke_macro_self_evo)
+    // to avoid SlimSurface public-name growth. security:grant-effect! with
+    // name "macro-self-evo" + MacroSelfEvo bit also seeds a default policy
+    // via the grant-effect path below when bits include kEffectMacroSelfEvo.
 
     // Issue #1566: (security:set-tenant-principal! id [allow-cross?])
     add("security:set-tenant-principal!", [&ev](std::span<const EvalValue> a) -> EvalValue {

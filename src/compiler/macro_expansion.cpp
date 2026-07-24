@@ -6,6 +6,8 @@ module;
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
+#include "core/capability_model.hh" // Issue #2023: MacroSelfEvo gate
+#include "core/sandbox.hh"          // Issue #2023: is_sandbox_active
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 
@@ -170,6 +172,24 @@ namespace detail {
 // fibers / threads on the same Evaluator).
 thread_local int s_hygiene_depth = 0;
 
+// Issue #2023: MacroSelfEvo policy depth for this expand (set by
+// macro_expand_all / top-level clone). Always ≤ MAX_HYGIENE_DEPTH.
+// Default = hard limit so unconstrained paths keep historical behaviour.
+thread_local int s_effective_max_depth = MAX_HYGIENE_DEPTH;
+// Issue #2023: when false, rest-param hygiene gensym is skipped.
+thread_local bool s_allow_rest_hygiene = true;
+
+// Issue #2023: MacroSelfEvo gate counters (also mirrored in capability metrics).
+std::atomic<std::uint64_t> g_macro_self_evo_denied_total{0};
+std::atomic<std::uint64_t> g_macro_self_evo_allowed_total{0};
+std::atomic<std::uint64_t> g_macro_self_evo_pass_clamp_total{0};
+std::atomic<std::uint64_t> g_macro_self_evo_depth_clamp_total{0};
+
+// Forward decl — body runs under MacroSelfEvo TLS depth policy set by expand entry.
+static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
+                                               aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                               int max_passes);
+
 // Issue #1245 Phase 1: concurrent hygiene / dirty observability.
 std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total{0};
 std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
@@ -307,6 +327,56 @@ aura::ast::NodeId clone_macro_body(
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
     } concurrent_guard;
+    // Issue #2023: top-level clone entry also consults MacroSelfEvo so
+    // direct clone_macro_body (without macro_expand_all) cannot bypass
+    // the sandbox. Nested recursion skips the check.
+    struct TopLevelMacroCapGuard {
+        bool armed = false;
+        int prev_depth = MAX_HYGIENE_DEPTH;
+        bool prev_rest = true;
+        TopLevelMacroCapGuard() noexcept {
+            if (s_hygiene_depth != 0)
+                return;
+            using aura::core::capability::check_macro_self_evo;
+            using aura::core::capability::g_capability_registry;
+            const auto tenant = g_capability_registry().default_tenant;
+            const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+            const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+            if (!chk.allowed) {
+                g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+                // Signal denial to outer scope via depth sentinel.
+                s_effective_max_depth = -1;
+                return;
+            }
+            armed = true;
+            prev_depth = s_effective_max_depth;
+            prev_rest = s_allow_rest_hygiene;
+            if (chk.effective.max_depth > 0) {
+                int d = static_cast<int>(chk.effective.max_depth);
+                if (d > MAX_HYGIENE_DEPTH)
+                    d = MAX_HYGIENE_DEPTH;
+                // Only tighten if expand_all has not already set a tighter bound.
+                if (s_effective_max_depth == MAX_HYGIENE_DEPTH || d < s_effective_max_depth)
+                    s_effective_max_depth = d;
+            }
+            s_allow_rest_hygiene = chk.effective.allow_rest_hygiene;
+        }
+        ~TopLevelMacroCapGuard() noexcept {
+            if (!armed)
+                return;
+            s_effective_max_depth = prev_depth;
+            s_allow_rest_hygiene = prev_rest;
+        }
+        TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
+        TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
+        [[nodiscard]] bool denied() const noexcept { return s_effective_max_depth < 0; }
+    } top_cap_guard;
+    if (top_cap_guard.denied()) {
+        std::fprintf(stderr, "[#2023 MacroSelfEvo] clone_macro_body denied: capability not granted "
+                             "(no clone work performed)\n");
+        s_effective_max_depth = MAX_HYGIENE_DEPTH; // restore after deny sentinel
+        return NULL_NODE;
+    }
     // Issue #365: depth guard. The public API starts at
     // depth=0 (s_hygiene_depth is bumped on recursion inside
     // the function body below). When the depth exceeds
@@ -327,7 +397,11 @@ aura::ast::NodeId clone_macro_body(
     if (s_hygiene_depth == 0) {
         s_warned_this_call = false;
     }
-    if (s_hygiene_depth >= MAX_HYGIENE_DEPTH) {
+    // Issue #2023: honour MacroSelfEvo effective max_depth (≤ hard limit).
+    const int depth_limit = (s_effective_max_depth > 0 && s_effective_max_depth < MAX_HYGIENE_DEPTH)
+                                ? s_effective_max_depth
+                                : MAX_HYGIENE_DEPTH;
+    if (s_hygiene_depth >= depth_limit) {
         if (!s_warned_this_call) {
             s_warned_this_call = true;
             // Issue #1247: include macro-origin provenance in the diagnostic
@@ -336,15 +410,17 @@ aura::ast::NodeId clone_macro_body(
             // Issue #1652: paired bump — depth exceeded is a hygiene violation
             // against the macro expand contract. Bump the new g_* counter.
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            if (depth_limit < MAX_HYGIENE_DEPTH)
+                g_macro_self_evo_depth_clamp_total.fetch_add(1, std::memory_order_relaxed);
             const char* origin = (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced)
                                      ? "MacroIntroduced"
                                      : "User";
             std::fprintf(stderr,
-                         "[#365/#1247 warning] clone_macro_body exceeded "
-                         "MAX_HYGIENE_DEPTH=%d; marker=%s depth=%d "
+                         "[#365/#1247/#2023 warning] clone_macro_body exceeded "
+                         "depth_limit=%d (hard MAX_HYGIENE_DEPTH=%d); marker=%s depth=%d "
                          "[MacroIntroduced provenance path]; falling back to "
                          "unhygienic substitution (original name).\n",
-                         MAX_HYGIENE_DEPTH, origin, s_hygiene_depth);
+                         depth_limit, MAX_HYGIENE_DEPTH, origin, s_hygiene_depth);
         }
         return NULL_NODE;
     }
@@ -436,6 +512,9 @@ aura::ast::NodeId clone_macro_body(
     // this map when they are not template-introduced rest bindings.
     auto rename_rest_binding_pre = [&](SymId sid) -> SymId {
         if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        // Issue #2023: MacroSelfEvo policy may disable rest hygiene.
+        if (!s_allow_rest_hygiene)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
         // Macro rest param itself is substituted (subst), not a template
@@ -895,6 +974,86 @@ aura::ast::NodeId expand_inner_macros(
 }
 aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                    aura::ast::NodeId root, int max_passes) {
+    using namespace aura::ast;
+    // Issue #2023: MacroSelfEvo capability gate — consult before any clone work.
+    // Sandbox Off → permissive (no clamp). Strict / Restricted+active without
+    // grant → reject with clear error and return root unchanged.
+    {
+        using aura::core::capability::check_macro_self_evo;
+        using aura::core::capability::g_capability_effect_metrics;
+        using aura::core::capability::g_capability_registry;
+        const auto tenant = g_capability_registry().default_tenant;
+        const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+        const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+        if (!chk.allowed) {
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr,
+                         "[#2023 MacroSelfEvo] macro_expand_all denied: %s "
+                         "(no clone work performed)\n",
+                         chk.deny_reason ? chk.deny_reason : "capability denied");
+            return root;
+        }
+        g_macro_self_evo_allowed_total.fetch_add(1, std::memory_order_relaxed);
+        // Clamp passes / depth when policy sets positive limits.
+        if (chk.effective.max_expansion_passes > 0 &&
+            max_passes > static_cast<int>(chk.effective.max_expansion_passes)) {
+            max_passes = static_cast<int>(chk.effective.max_expansion_passes);
+            g_macro_self_evo_pass_clamp_total.fetch_add(1, std::memory_order_relaxed);
+            g_capability_effect_metrics().macro_self_evo_pass_clamp_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        // RAII-ish restore of TLS policy for nested clone_macro_body.
+        struct DepthPolicyGuard {
+            int prev_depth;
+            bool prev_rest;
+            DepthPolicyGuard(int d, bool rest) noexcept
+                : prev_depth(s_effective_max_depth)
+                , prev_rest(s_allow_rest_hygiene) {
+                s_effective_max_depth = d;
+                s_allow_rest_hygiene = rest;
+            }
+            ~DepthPolicyGuard() noexcept {
+                s_effective_max_depth = prev_depth;
+                s_allow_rest_hygiene = prev_rest;
+            }
+            DepthPolicyGuard(const DepthPolicyGuard&) = delete;
+            DepthPolicyGuard& operator=(const DepthPolicyGuard&) = delete;
+        };
+        int eff_depth = MAX_HYGIENE_DEPTH;
+        if (chk.effective.max_depth > 0) {
+            eff_depth = static_cast<int>(chk.effective.max_depth);
+            if (eff_depth > MAX_HYGIENE_DEPTH)
+                eff_depth = MAX_HYGIENE_DEPTH;
+            if (eff_depth < MAX_HYGIENE_DEPTH) {
+                g_macro_self_evo_depth_clamp_total.fetch_add(1, std::memory_order_relaxed);
+                g_capability_effect_metrics().macro_self_evo_depth_clamp_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        // Concurrent-fiber policy: deny when other top-level clones are live
+        // and policy forbids concurrent expand.
+        if (!chk.effective.allow_concurrent_fiber &&
+            g_macro_clone_in_flight.load(std::memory_order_relaxed) > 0) {
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_capability_effect_metrics().macro_self_evo_denied_total.fetch_add(
+                1, std::memory_order_relaxed);
+            std::fprintf(stderr, "[#2023 MacroSelfEvo] macro_expand_all denied: "
+                                 "concurrent fiber expand not allowed by policy\n");
+            return root;
+        }
+        DepthPolicyGuard depth_guard(eff_depth, chk.effective.allow_rest_hygiene);
+        // Fall through into expand body with max_passes possibly clamped
+        // and TLS depth set. Guard must outlive the loop — so we restructure:
+        // the rest of the function body continues below with guard in scope.
+        return macro_expand_all_body(flat, pool, root, max_passes);
+    }
+}
+
+// Issue #2023: body of macro_expand_all after capability gate (DepthPolicyGuard
+// is held by the caller via TLS already set).
+static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
+                                               aura::ast::StringPool& pool, aura::ast::NodeId root,
+                                               int max_passes) {
     using namespace aura::ast;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).

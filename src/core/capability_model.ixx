@@ -21,6 +21,15 @@ enum class Effect : std::uint16_t {
     Network = 1 << 4,
     Ffi = 1 << 5,
     Render = 1 << 6,
+    MacroSelfEvo = 1 << 7, // Issue #2023 — keep in sync with capability_model.hh
+};
+
+// Issue #2023: policy limits (header form in capability_model.hh is authoritative).
+struct MacroSelfEvoPolicy {
+    std::uint32_t max_expansion_passes = 32;
+    std::uint32_t max_depth = 256;
+    bool allow_rest_hygiene = true;
+    bool allow_concurrent_fiber = true;
 };
 
 [[nodiscard]] constexpr Effect operator|(Effect a, Effect b) noexcept {
