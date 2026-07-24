@@ -14,7 +14,8 @@ inline constexpr int kParallelOrchPhase = 2;
 inline constexpr int kParallelOrchIssue = 1586;
 
 // Scaffold counters retained for Phase-1 sweep queries (#1202).
-// Live counters are in parallel_orch.h (g_parallel_orch_stats atomics).
+// Live counters + FailurePolicy are in parallel_orch.h (g_parallel_orch_stats).
+// #2007: production API lives in the header; module keeps policy shape notes.
 struct ParallelPolicy {
     std::uint32_t max_concurrency = 8;
     std::uint32_t timeout_ms = 0;

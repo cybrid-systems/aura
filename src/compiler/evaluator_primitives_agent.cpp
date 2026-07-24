@@ -2315,7 +2315,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // safety; orchestration/join/policy still exercise the C++ parallel path.
     add("parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(std::max<std::size_t>(16, kv.size() * 2));
+            // FlatHashTable probes with (cap-1) mask → capacity must be power of 2.
+            // #2007 added retries/circuit keys; kv*2 can become non-pow2 (e.g. 20).
+            std::size_t need = std::max<std::size_t>(16, kv.size() * 2);
+            std::size_t cap = 16;
+            while (cap < need)
+                cap <<= 1;
+            auto* ht = FlatHashTable::create(cap);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2430,6 +2436,36 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "collect-errors" || k == "collect_errors") &&
                            types::is_bool(val)) {
                     policy.collect_errors = types::as_bool(val);
+                } else if ((k == "max-retries" || k == "max_retries") && types::is_int(val)) {
+                    // Issue #2007 RetryN
+                    policy.max_retries =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                    policy.failure_policy = aura::serve::parallel_orch::FailurePolicy::RetryN;
+                } else if ((k == "consecutive-fail-limit" || k == "consecutive_fail_limit") &&
+                           types::is_int(val)) {
+                    // Issue #2007 CircuitBreaker
+                    policy.consecutive_fail_limit =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                    policy.failure_policy =
+                        aura::serve::parallel_orch::FailurePolicy::CircuitBreaker;
+                } else if ((k == "retry-backoff-ms" || k == "retry_backoff_ms") &&
+                           types::is_int(val)) {
+                    policy.retry_backoff_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "failure-policy" || k == "failure_policy") &&
+                           (types::is_string(val) || types::is_keyword(val))) {
+                    auto v = heap_str(val);
+                    while (!v.empty() && v[0] == ':')
+                        v = v.substr(1);
+                    using FP = aura::serve::parallel_orch::FailurePolicy;
+                    if (v == "fail-fast" || v == "fail_fast")
+                        policy.failure_policy = FP::FailFast;
+                    else if (v == "collect-all" || v == "collect_all")
+                        policy.failure_policy = FP::CollectAll;
+                    else if (v == "retry-n" || v == "retry_n" || v == "retry")
+                        policy.failure_policy = FP::RetryN;
+                    else if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
+                        policy.failure_policy = FP::CircuitBreaker;
                 }
                 i += 2;
                 continue;
@@ -2610,8 +2646,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"err-count", make_int(static_cast<std::int64_t>(batch.err_count))},
             {"aborted-count", make_int(static_cast<std::int64_t>(batch.aborted_count))},
             {"wait-us", make_int(static_cast<std::int64_t>(batch.wait_us))},
+            // Issue #2007 FailurePolicy outcomes
+            {"retries-performed", make_int(static_cast<std::int64_t>(batch.retries_performed))},
+            {"circuit-opened", make_bool(batch.circuit_opened)},
             {"results", make_vector(rvidx)},
             {"schema", make_int(1587)},
+            {"schema-2007", make_int(2007)},
         };
         return build_hash(kv);
     });

@@ -47,6 +47,7 @@ using MailPriority = serve::mf_mailbox::MailPriority;
 using PushStatus = serve::mf_mailbox::PushStatus;
 
 using ParallelPolicy = serve::parallel_orch::ParallelPolicy;
+using FailurePolicy = serve::parallel_orch::FailurePolicy; // #2007
 using TaskSpec = serve::parallel_orch::TaskSpec;
 using TaskResult = serve::parallel_orch::TaskResult;
 using BatchResult = serve::parallel_orch::BatchResult;
@@ -55,6 +56,7 @@ using BatchStatus = serve::parallel_orch::BatchStatus;
 // Primary batch API (re-export). No orch-specific parallel alias.
 using serve::parallel_orch::parallel_intend;
 using serve::parallel_orch::parallel_run;
+using serve::parallel_orch::resolved_failure_policy;
 using serve::parallel_orch::sequential_run;
 using serve::parallel_orch::validate_policy;
 

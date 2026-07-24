@@ -4,6 +4,7 @@
 // Fiber::join (#1584), optional MultiFiberMailbox result routing (#1585).
 // #1595: join Ok bumps linear enforcement counters; host refresh via
 // complete_post_join_linear_enforcement.
+// #2007: composable FailurePolicy (FailFast / CollectAll / RetryN / CircuitBreaker).
 
 #ifndef AURA_SERVE_PARALLEL_ORCH_H
 #define AURA_SERVE_PARALLEL_ORCH_H
@@ -30,13 +31,36 @@ namespace aura::serve::parallel_orch {
 inline constexpr int kParallelOrchPhase = 3; // #1881 observability
 inline constexpr int kParallelOrchIssue = 1881;
 
+// ── Failure policy (#2007) ─────────────────────────────
+// Composable strategies for body errors under parallel_intend / parallel_run.
+// `ParallelPolicy::fail_fast == true` remains a convenience alias for FailFast
+// and overrides `failure_policy` when set.
+enum class FailurePolicy : std::uint8_t {
+    FailFast = 0,      // stop admitting after first body error
+    CollectAll = 1,    // default: run all admitted work, keep partial results
+    RetryN = 2,        // bounded per-task body retries (+ optional backoff)
+    CircuitBreaker = 3 // abort admit after N consecutive body errors
+};
+
 // ── Policy ─────────────────────────────────────────────
 struct ParallelPolicy {
     std::uint32_t max_concurrency = 8; // 1..1024
     std::uint32_t timeout_ms = 0;      // 0 = no overall deadline
-    bool fail_fast = false;            // stop admitting work after first error
+    bool fail_fast = false;            // convenience alias → FailurePolicy::FailFast
     bool collect_errors = true;        // keep err results (vs only ok)
+    // #2007: when fail_fast is false, this selects the body-error strategy.
+    FailurePolicy failure_policy = FailurePolicy::CollectAll;
+    std::uint32_t max_retries = 0;            // RetryN: extra attempts after first try
+    std::uint32_t consecutive_fail_limit = 3; // CircuitBreaker open threshold
+    std::uint32_t retry_backoff_ms = 0;       // RetryN: yield-spin between attempts
 };
+
+// Resolve effective policy: fail_fast flag wins for binary compatibility.
+[[nodiscard]] inline FailurePolicy resolved_failure_policy(const ParallelPolicy& p) noexcept {
+    if (p.fail_fast)
+        return FailurePolicy::FailFast;
+    return p.failure_policy;
+}
 
 // ── Task I/O ───────────────────────────────────────────
 struct TaskResult {
@@ -70,6 +94,9 @@ struct BatchResult {
     std::uint32_t err_count = 0;
     std::uint32_t aborted_count = 0;
     JoinStatus join_status = JoinStatus::Ok;
+    // Issue #2007: policy outcome surfaces.
+    std::uint32_t retries_performed = 0;
+    bool circuit_opened = false;
 };
 
 // ── Process-wide stats ─────────────────────────────────
@@ -93,12 +120,22 @@ struct ParallelOrchStats {
     std::atomic<std::uint64_t> batch_partial_total{0};
     std::atomic<std::uint64_t> batch_fail_fast_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
+    // Issue #2007: FailurePolicy counters.
+    std::atomic<std::uint64_t> retries_performed{0};
+    std::atomic<std::uint64_t> circuit_opened_total{0};
 };
 
 inline ParallelOrchStats g_parallel_orch_stats{};
 
 [[nodiscard]] inline bool validate_policy(const ParallelPolicy& p) noexcept {
-    return p.max_concurrency > 0 && p.max_concurrency <= 1024;
+    if (p.max_concurrency == 0 || p.max_concurrency > 1024)
+        return false;
+    // CircuitBreaker requires a positive consecutive-fail threshold.
+    if (resolved_failure_policy(p) == FailurePolicy::CircuitBreaker &&
+        p.consecutive_fail_limit == 0)
+        return false;
+    // RetryN: max_retries is free-form (0 means no extra attempts = single try).
+    return true;
 }
 
 // Issue #1600: preflight fiber capacity for parallel_intend (check only).
@@ -123,13 +160,15 @@ inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std:
 }
 
 // Issue #1881: extended snapshot for health dashboards.
+// Issue #2007: optional out-params retries / circuit (pass nullptr to skip).
 inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                                 std::uint64_t& joined, std::uint64_t& ok, std::uint64_t& err,
                                 std::uint64_t& fail_fast, std::uint64_t& timeouts,
                                 std::uint64_t& mailbox_posts, std::uint64_t& quota_rejects,
                                 std::uint64_t& invalid, std::uint64_t& batch_ok,
                                 std::uint64_t& batch_partial, std::uint64_t& join_wait_us,
-                                std::uint64_t& elapsed_us) noexcept {
+                                std::uint64_t& elapsed_us, std::uint64_t* retries = nullptr,
+                                std::uint64_t* circuit_opened = nullptr) noexcept {
     snapshot_global(batches, spawned, joined, ok, err, fail_fast, timeouts, mailbox_posts);
     quota_rejects = g_parallel_orch_stats.quota_rejects.load(std::memory_order_relaxed);
     invalid = g_parallel_orch_stats.invalid_batches.load(std::memory_order_relaxed);
@@ -137,6 +176,11 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
     batch_partial = g_parallel_orch_stats.batch_partial_total.load(std::memory_order_relaxed);
     join_wait_us = g_parallel_orch_stats.join_wait_us_total.load(std::memory_order_relaxed);
     elapsed_us = g_parallel_orch_stats.parallel_elapsed_us.load(std::memory_order_relaxed);
+    if (retries)
+        *retries = g_parallel_orch_stats.retries_performed.load(std::memory_order_relaxed);
+    if (circuit_opened)
+        *circuit_opened =
+            g_parallel_orch_stats.circuit_opened_total.load(std::memory_order_relaxed);
 }
 
 // ── Core: parallel_run ─────────────────────────────────
@@ -216,6 +260,10 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
         std::atomic<std::uint32_t> ok_n{0};
         std::atomic<std::uint32_t> err_n{0};
         std::atomic<std::uint32_t> aborted_n{0};
+        // #2007 FailurePolicy shared state
+        std::atomic<std::uint32_t> consecutive_fails{0};
+        std::atomic<std::uint32_t> retries_n{0};
+        std::atomic<bool> circuit_opened{false};
     };
     auto sh = std::make_shared<Shared>();
     sh->results.resize(tasks.size());
@@ -228,21 +276,30 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
     std::vector<Fiber*> fibers;
     fibers.reserve(tasks.size());
     const auto max_c = policy.max_concurrency;
-    const bool fail_fast = policy.fail_fast;
+    const FailurePolicy fp = resolved_failure_policy(policy);
+    const bool use_fail_fast = (fp == FailurePolicy::FailFast);
+    const bool use_retry = (fp == FailurePolicy::RetryN);
+    const bool use_circuit = (fp == FailurePolicy::CircuitBreaker);
+    const std::uint32_t max_retries = policy.max_retries;
+    const std::uint32_t consecutive_fail_limit = policy.consecutive_fail_limit;
+    const std::uint32_t retry_backoff_ms = policy.retry_backoff_ms;
     bool hit_quota = false;
 
     for (std::size_t i = 0; i < tasks.size(); ++i) {
         auto body = tasks[i].body;
         const std::string name = tasks[i].name;
-        Fiber* f = sched.spawn([sh, i, body = std::move(body), name, max_c, fail_fast,
-                                mb]() mutable {
+        Fiber* f = sched.spawn([sh, i, body = std::move(body), name, max_c, use_fail_fast,
+                                use_retry, use_circuit, max_retries, consecutive_fail_limit,
+                                retry_backoff_ms, mb]() mutable {
             // Concurrency gate: yield until a permit is free (steal-friendly).
             for (;;) {
                 if (sh->abort_admit.load(std::memory_order_acquire) ||
                     (g_current_fiber && g_current_fiber->is_cancel_requested())) {
                     TaskResult aborted;
                     aborted.ok = false;
-                    aborted.error = "aborted:fail-fast";
+                    aborted.error = sh->circuit_opened.load(std::memory_order_relaxed)
+                                        ? "aborted:circuit-open"
+                                        : "aborted:fail-fast";
                     aborted.task_index = i;
                     if (g_current_fiber)
                         aborted.fiber_id = g_current_fiber->id();
@@ -270,19 +327,47 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
 
             const auto t_task = std::chrono::steady_clock::now();
             TaskResult r;
-            try {
-                if (body)
-                    r = body();
-                else {
-                    r.ok = false;
-                    r.error = "empty-body";
+            // #2007 RetryN: re-invoke body up to max_retries extra times on failure.
+            const std::uint32_t max_attempts = use_retry ? (max_retries + 1u) : 1u;
+            for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt) {
+                if (attempt > 0) {
+                    sh->retries_n.fetch_add(1, std::memory_order_relaxed);
+                    g_parallel_orch_stats.retries_performed.fetch_add(1, std::memory_order_relaxed);
+                    // Optional backoff: cooperative yield until deadline.
+                    if (retry_backoff_ms > 0) {
+                        const auto deadline = std::chrono::steady_clock::now() +
+                                              std::chrono::milliseconds(retry_backoff_ms);
+                        while (std::chrono::steady_clock::now() < deadline) {
+                            if (g_current_fiber && g_current_fiber->is_cancel_requested())
+                                break;
+                            Fiber::yield(YieldReason::Explicit);
+                        }
+                    } else {
+                        Fiber::yield(YieldReason::Explicit);
+                    }
+                    if (sh->abort_admit.load(std::memory_order_acquire) ||
+                        (g_current_fiber && g_current_fiber->is_cancel_requested())) {
+                        r.ok = false;
+                        r.error = "aborted:during-retry";
+                        break;
+                    }
                 }
-            } catch (const std::exception& ex) {
-                r.ok = false;
-                r.error = ex.what();
-            } catch (...) {
-                r.ok = false;
-                r.error = "unknown-exception";
+                try {
+                    if (body)
+                        r = body();
+                    else {
+                        r.ok = false;
+                        r.error = "empty-body";
+                    }
+                } catch (const std::exception& ex) {
+                    r.ok = false;
+                    r.error = ex.what();
+                } catch (...) {
+                    r.ok = false;
+                    r.error = "unknown-exception";
+                }
+                if (r.ok)
+                    break;
             }
             r.task_index = i;
             r.fiber_id = fiber_id;
@@ -305,13 +390,32 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
             if (ok) {
                 sh->ok_n.fetch_add(1, std::memory_order_relaxed);
                 g_parallel_orch_stats.tasks_ok.fetch_add(1, std::memory_order_relaxed);
+                // Success resets CircuitBreaker consecutive-error streak.
+                if (use_circuit)
+                    sh->consecutive_fails.store(0, std::memory_order_release);
             } else {
                 sh->err_n.fetch_add(1, std::memory_order_relaxed);
                 g_parallel_orch_stats.tasks_err.fetch_add(1, std::memory_order_relaxed);
-                if (fail_fast) {
+                if (use_fail_fast) {
                     sh->abort_admit.store(true, std::memory_order_release);
                     g_parallel_orch_stats.fail_fast_aborts.fetch_add(1, std::memory_order_relaxed);
+                } else if (use_circuit) {
+                    const auto n =
+                        sh->consecutive_fails.fetch_add(1, std::memory_order_acq_rel) + 1;
+                    if (n >= consecutive_fail_limit) {
+                        bool expected = false;
+                        if (sh->circuit_opened.compare_exchange_strong(expected, true,
+                                                                       std::memory_order_acq_rel)) {
+                            sh->abort_admit.store(true, std::memory_order_release);
+                            g_parallel_orch_stats.circuit_opened_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            // Already opened by a peer; still stop admitting.
+                            sh->abort_admit.store(true, std::memory_order_release);
+                        }
+                    }
                 }
+                // CollectAll / exhausted RetryN: keep going (no abort).
             }
 
             if (mb) {
@@ -390,6 +494,8 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
     out.ok_count = sh->ok_n.load(std::memory_order_relaxed);
     out.err_count = sh->err_n.load(std::memory_order_relaxed);
     out.aborted_count = sh->aborted_n.load(std::memory_order_relaxed);
+    out.retries_performed = sh->retries_n.load(std::memory_order_relaxed);
+    out.circuit_opened = sh->circuit_opened.load(std::memory_order_relaxed);
 
     if (!policy.collect_errors) {
         for (auto& r : out.results) {
@@ -404,7 +510,8 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
         out.status = BatchStatus::QuotaExceeded;
     } else if (jr.status == JoinStatus::Timeout) {
         out.status = BatchStatus::Timeout;
-    } else if (out.aborted_count > 0 || (policy.fail_fast && out.err_count > 0)) {
+    } else if (out.aborted_count > 0 || out.circuit_opened ||
+               (use_fail_fast && out.err_count > 0)) {
         out.status = BatchStatus::FailFast;
         // Issue #1881: ensure fail-fast batch outcomes always bump counter
         // (body path may have already incremented fail_fast_aborts).

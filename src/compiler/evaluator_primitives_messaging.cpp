@@ -308,9 +308,10 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:parallel-orch-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::serve::parallel_orch;
             std::uint64_t batches = 0, spawned = 0, joined = 0, ok = 0, err = 0, ff = 0, to = 0,
-                          mb = 0, qr = 0, inv = 0, bok = 0, bpart = 0, jwait = 0, elapsed = 0;
+                          mb = 0, qr = 0, inv = 0, bok = 0, bpart = 0, jwait = 0, elapsed = 0,
+                          retries = 0, circuit = 0;
             snapshot_global_ext(batches, spawned, joined, ok, err, ff, to, mb, qr, inv, bok, bpart,
-                                jwait, elapsed);
+                                jwait, elapsed, &retries, &circuit);
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -354,9 +355,13 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("join-wait-us-total", static_cast<std::int64_t>(jwait));
             insert_kv("avg-join-us", batches > 0 ? static_cast<std::int64_t>(jwait / batches) : 0);
             insert_kv("parallel-elapsed-us", static_cast<std::int64_t>(elapsed));
+            // Issue #2007 FailurePolicy counters
+            insert_kv("retries-performed", static_cast<std::int64_t>(retries));
+            insert_kv("circuit-opened-total", static_cast<std::int64_t>(circuit));
             insert_kv("phase", static_cast<std::int64_t>(kParallelOrchPhase));
             insert_kv("schema", 1586);
             insert_kv("schema-1881", 1881);
+            insert_kv("schema-2007", 2007);
             insert_kv("health-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
