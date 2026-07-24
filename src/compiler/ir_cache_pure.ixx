@@ -70,55 +70,92 @@ bool should_relower(std::size_t source_hash, std::size_t cached_source_hash, boo
 }
 
 // ── compute_impact_scope ──────────────────────────────────
-// Issue #460: pure walker that computes the per-block /
+// Issue #460 / #2031: pure walker that computes the per-block /
 // per-instruction impact of a mutation rooted at `root`.
-// Returns the list of (function-index, block-index) pairs
-// that are affected by the mutation. The decision is
-// based on:
-//   1. The AST subtree rooted at `root` (the mutated node)
-//   2. The `source_to_ir_map` (maps each source AST NodeId
-//      to its corresponding IR function/block/instruction)
-//   3. The `ir_cache_index` (maps each function name to
-//      its index in the IR module)
+// Returns affected (function, block) pairs and precise
+// (function, block, instr) triples when the source map has
+// instruction indices (from IRInstruction::source_ast_node_id).
 //
-// For the P0 ship we return the affected blocks only
-// (function-block pairs). Per-instruction impact is a
-// follow-up (#460 follow-up 1).
+// Based on:
+//   1. The AST subtree rooted at `root` (the mutated node)
+//   2. The `source_to_ir_map` (NodeId → function/block[/instr])
+//   3. The `ir_cache_index` (function name → index; reserved)
 //
 // The function is pure: same inputs → same output.
+
+// Issue #2031: location of one AST node in lowered IR.
+// instr_index == UINT32_MAX means block-level only (no precise instr).
+struct SourceIrLoc {
+    std::size_t function_index = 0;
+    std::uint32_t block_index = 0;
+    std::uint32_t instr_index = UINT32_MAX;
+    [[nodiscard]] bool has_instr() const noexcept { return instr_index != UINT32_MAX; }
+};
+
 struct ImpactScope {
     struct BlockRef {
-        std::size_t function_index; // index in ir_cache_index
+        std::size_t function_index; // index in ir_cache_index / irs[]
         std::uint32_t block_index;
     };
+    // Issue #2031: precise instruction impact (subset of blocks).
+    struct InstrRef {
+        std::size_t function_index = 0;
+        std::uint32_t block_index = 0;
+        std::uint32_t instr_index = 0; // in-block index
+    };
     std::vector<BlockRef> affected_blocks;
+    std::vector<InstrRef> affected_instrs; // NEW #2031
     // Number of AST nodes walked (for observability).
     std::size_t ast_nodes_visited = 0;
+    // Issue #2031: AST nodes in subtree with no source_to_ir mapping.
+    std::size_t unmapped_ast_nodes = 0;
+    // Issue #2031: how many mapped locs had a precise instr index.
+    std::size_t instr_level_hits = 0;
 };
+
+// Map type used by compute_impact_scope (block+optional instr).
+using SourceToIrMap = std::unordered_map<aura::ast::NodeId, SourceIrLoc>;
+
+// Backward-compat alias: block-only maps (func, block) without instr.
+using SourceToIrBlockMap =
+    std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>;
+
 ImpactScope compute_impact_scope(
-    const aura::ast::FlatAST& flat, aura::ast::NodeId root,
-    const std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>>&
-        source_to_ir_map,
+    const aura::ast::FlatAST& flat, aura::ast::NodeId root, const SourceToIrMap& source_to_ir_map,
     const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                              std::equal_to<>>& ir_cache_index) {
     ImpactScope result;
     if (root == aura::ast::NULL_NODE || root >= flat.size()) {
         return result;
     }
-    // Walk the AST subtree and collect affected blocks
-    // (function_index, block_index) pairs. Dedupe via a set.
-    std::unordered_set<std::uint64_t> seen;
+    // Walk the AST subtree; collect affected blocks + instructions.
+    // Block key: (func << 32) | block. Instr key: (func << 40) | (block << 20) | instr.
+    std::unordered_set<std::uint64_t> seen_blocks;
+    std::unordered_set<std::uint64_t> seen_instrs;
     auto walk = [&](auto self, aura::ast::NodeId id) -> void {
         if (id == aura::ast::NULL_NODE || id >= flat.size())
             return;
         result.ast_nodes_visited++;
         auto it = source_to_ir_map.find(id);
         if (it != source_to_ir_map.end()) {
-            auto key = (static_cast<std::uint64_t>(it->second.first) << 32) |
-                       static_cast<std::uint64_t>(it->second.second);
-            if (seen.insert(key).second) {
-                result.affected_blocks.push_back({it->second.first, it->second.second});
+            const auto& loc = it->second;
+            const auto bkey = (static_cast<std::uint64_t>(loc.function_index) << 32) |
+                              static_cast<std::uint64_t>(loc.block_index);
+            if (seen_blocks.insert(bkey).second) {
+                result.affected_blocks.push_back({loc.function_index, loc.block_index});
             }
+            if (loc.has_instr()) {
+                const auto ikey = (static_cast<std::uint64_t>(loc.function_index) << 40) |
+                                  (static_cast<std::uint64_t>(loc.block_index) << 20) |
+                                  static_cast<std::uint64_t>(loc.instr_index);
+                if (seen_instrs.insert(ikey).second) {
+                    result.affected_instrs.push_back(
+                        {loc.function_index, loc.block_index, loc.instr_index});
+                    ++result.instr_level_hits;
+                }
+            }
+        } else {
+            ++result.unmapped_ast_nodes;
         }
         auto node = flat.get(id);
         for (std::size_t ci = 0; ci < node.children.size(); ++ci) {
@@ -126,8 +163,26 @@ ImpactScope compute_impact_scope(
         }
     };
     walk(walk, root);
-    (void)ir_cache_index; // used by follow-up for cross-function cascade
+    (void)ir_cache_index; // reserved for cross-function cascade
     return result;
+}
+
+// Issue #2031: overload accepting legacy block-only maps (no instr index).
+inline ImpactScope compute_impact_scope(
+    const aura::ast::FlatAST& flat, aura::ast::NodeId root,
+    const SourceToIrBlockMap& source_to_ir_blocks,
+    const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                             std::equal_to<>>& ir_cache_index) {
+    SourceToIrMap rich;
+    rich.reserve(source_to_ir_blocks.size());
+    for (const auto& [nid, fb] : source_to_ir_blocks) {
+        SourceIrLoc loc;
+        loc.function_index = fb.first;
+        loc.block_index = fb.second;
+        loc.instr_index = UINT32_MAX;
+        rich.emplace(nid, loc);
+    }
+    return compute_impact_scope(flat, root, rich, ir_cache_index);
 }
 
 // ── compute_dependencies ──────────────────────────────────

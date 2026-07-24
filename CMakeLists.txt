@@ -1825,6 +1825,11 @@ aura_add_issue_test(test_blame_occurrence_agent_ratios)
 aura_issue_test_link_llvm_jit(test_blame_occurrence_agent_ratios)
 add_dependencies(all_test_issue_targets test_blame_occurrence_agent_ratios)
 
+# Issue #2031: instruction-level impact scope + selective dirty.
+aura_add_issue_test(test_instr_level_impact_scope)
+aura_issue_test_link_llvm_jit(test_instr_level_impact_scope)
+add_dependencies(all_test_issue_targets test_instr_level_impact_scope)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

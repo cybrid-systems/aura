@@ -4533,6 +4533,9 @@ public:
         std::unordered_set<std::size_t> affected_funcs;
         for (const auto& b : scope.affected_blocks)
             affected_funcs.insert(b.function_index);
+        // Issue #2031: also collect funcs touched only via precise instr refs.
+        for (const auto& i : scope.affected_instrs)
+            affected_funcs.insert(i.function_index);
 
         pending_impact_func_indices_ = affected_funcs;
 
@@ -4557,24 +4560,126 @@ public:
             metrics_.incremental_closure_bridge_impact_blocks_total.fetch_add(
                 block_count, std::memory_order_relaxed);
             evaluator_.bump_incremental_closure_bridge_impact_blocks(block_count);
+            // Issue #2031: instr-level impact observability on bridge path.
+            if (scope.instr_level_hits > 0)
+                metrics_.instr_level_impact_hits_total.fetch_add(scope.instr_level_hits,
+                                                                 std::memory_order_relaxed);
+            if (!scope.affected_instrs.empty())
+                metrics_.instr_level_dirty_marks_total.fetch_add(scope.affected_instrs.size(),
+                                                                 std::memory_order_relaxed);
         }
     }
 
-    // Issue #680: compute ir_cache_pure impact_scope for a Define
-    // mutation root and bump Evaluator observability counters.
+    // Issue #2031: build NodeId → (func, block, instr) from lowered IR
+    // source_ast_node_id stamps (for compute_impact_scope precision).
+    static void populate_source_to_ir_from_irs(const std::vector<aura::ir::IRFunction>& irs,
+                                               SourceToIrMap& out) {
+        for (std::size_t fi = 0; fi < irs.size(); ++fi) {
+            const auto& fn = irs[fi];
+            for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(fn.blocks.size()); ++bi) {
+                const auto& blk = fn.blocks[bi];
+                for (std::uint32_t ii = 0; ii < static_cast<std::uint32_t>(blk.instructions.size());
+                     ++ii) {
+                    const auto sn = blk.instructions[ii].source_ast_node_id;
+                    if (sn == 0)
+                        continue;
+                    const auto nid = static_cast<aura::ast::NodeId>(sn);
+                    SourceIrLoc loc{fi, bi, ii};
+                    auto it = out.find(nid);
+                    if (it == out.end() || !it->second.has_instr())
+                        out[nid] = loc;
+                }
+            }
+        }
+    }
+
+    // Issue #2031: stamp block + instruction dirty bits from ImpactScope.
+    // Returns number of instruction dirty marks applied.
+    std::size_t apply_impact_scope_dirty(IRCacheEntry& entry, const ImpactScope& scope) {
+        for (const auto& b : scope.affected_blocks)
+            entry.mark_block_dirty(b.function_index, b.block_index);
+        std::size_t marks = 0;
+        for (const auto& ir : scope.affected_instrs) {
+            entry.mark_instruction_dirty(ir.function_index, ir.block_index, ir.instr_index);
+            // Dual-emit SoA column (absolute instruction index).
+            if (ir.function_index < entry.soa_mod.functions.size() &&
+                ir.function_index < entry.irs.size()) {
+                const auto& fn = entry.irs[ir.function_index];
+                std::uint32_t abs = 0;
+                for (std::uint32_t bi = 0; bi < ir.block_index && bi < fn.blocks.size(); ++bi)
+                    abs += static_cast<std::uint32_t>(fn.blocks[bi].instructions.size());
+                abs += ir.instr_index;
+                entry.soa_mod.functions[ir.function_index].mark_instruction_dirty(abs);
+            }
+            ++marks;
+        }
+        if (scope.instr_level_hits > 0)
+            metrics_.instr_level_impact_hits_total.fetch_add(scope.instr_level_hits,
+                                                             std::memory_order_relaxed);
+        if (scope.unmapped_ast_nodes > 0)
+            metrics_.instr_level_impact_misses_total.fetch_add(scope.unmapped_ast_nodes,
+                                                               std::memory_order_relaxed);
+        if (marks > 0) {
+            metrics_.instr_level_dirty_marks_total.fetch_add(marks, std::memory_order_relaxed);
+            metrics_.relower_instruction_level_hits.fetch_add(1, std::memory_order_relaxed);
+            evaluator_.bump_relower_instruction_level_hit();
+        }
+        return marks;
+    }
+
+    // Issue #680 / #2031: compute ir_cache_pure impact_scope for a Define
+    // mutation root, stamp instruction-level dirty, bump observability.
     void run_define_impact_scope(aura::ast::NodeId root) {
         auto* flat = evaluator_.workspace_flat();
         if (!flat || root == aura::ast::NULL_NODE || root >= flat->size())
             return;
-        std::unordered_map<aura::ast::NodeId, std::pair<std::size_t, std::uint32_t>> source_to_ir;
+        SourceToIrMap source_to_ir;
         std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                            std::equal_to<>>
             ir_cache_index;
+        // Prefer IR cache reverse index when define name is known.
+        std::string define_name;
+        if (flat->get(root).tag == aura::ast::NodeTag::Define) {
+            if (auto* pool = evaluator_.workspace_pool())
+                define_name = std::string(pool->resolve(flat->get(root).sym_id));
+        } else {
+            // Walk up to enclosing Define for mutate:rebind body roots.
+            auto cur = root;
+            std::size_t safety = 0;
+            while (cur != aura::ast::NULL_NODE && cur < flat->size() && safety++ < flat->size()) {
+                if (flat->get(cur).tag == aura::ast::NodeTag::Define) {
+                    if (auto* pool = evaluator_.workspace_pool())
+                        define_name = std::string(pool->resolve(flat->get(cur).sym_id));
+                    break;
+                }
+                cur = flat->parent_of(cur);
+            }
+        }
+        if (!define_name.empty()) {
+            if (auto it = ir_cache_v2_.find(define_name); it != ir_cache_v2_.end()) {
+                populate_source_to_ir_from_irs(it->second.irs, source_to_ir);
+                for (std::size_t fi = 0; fi < it->second.irs.size(); ++fi)
+                    ir_cache_index[it->second.irs[fi].name] = fi;
+            }
+        }
         auto scope = compute_impact_scope(*flat, root, source_to_ir, ir_cache_index);
         const std::uint64_t blocks =
             scope.affected_blocks.empty() ? 1u : scope.affected_blocks.size();
         evaluator_.bump_impact_scope_calls(blocks);
         evaluator_.bump_edsl_mutate_invalidate_precision();
+        // Issue #2031: apply instruction-level dirty to the cached entry.
+        if (!define_name.empty()) {
+            if (auto it = ir_cache_v2_.find(define_name); it != ir_cache_v2_.end())
+                (void)apply_impact_scope_dirty(it->second, scope);
+        } else if (scope.instr_level_hits > 0 || scope.unmapped_ast_nodes > 0) {
+            // Still record observability when cache miss.
+            if (scope.instr_level_hits > 0)
+                metrics_.instr_level_impact_hits_total.fetch_add(scope.instr_level_hits,
+                                                                 std::memory_order_relaxed);
+            if (scope.unmapped_ast_nodes > 0)
+                metrics_.instr_level_impact_misses_total.fetch_add(scope.unmapped_ast_nodes,
+                                                                   std::memory_order_relaxed);
+        }
         if (flat->is_macro_introduced(root)) {
             evaluator_.bump_macro_hygiene_dirty_impact();
             // Issue #1145: wire selfevo hygiene dirty-epoch hit path.
@@ -4586,11 +4691,6 @@ public:
         // Issue #741: quote/lambda defines — selective bridge refresh +
         // live EnvFrame version re-stamp for captured closures.
         if (flat_has_quote_or_lambda(*flat)) {
-            std::string define_name;
-            if (flat->get(root).tag == aura::ast::NodeTag::Define) {
-                if (auto* pool = evaluator_.workspace_pool())
-                    define_name = std::string(pool->resolve(flat->get(root).sym_id));
-            }
             if (!define_name.empty()) {
                 selective_invalidate_bridge_for_impact(define_name, scope);
                 metrics_.incremental_closure_quote_lambda_stale_prevented_total.fetch_add(
