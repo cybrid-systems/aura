@@ -6327,7 +6327,56 @@ public:
         } else {
             arena_group_->bump_auto_compact_guard_call();
         }
+        // Issue #2004: explicit live_compact(Soft) opportunity after the
+        // MutationBoundary outermost exit — soft-gates under render hotpath
+        // / boundary, bumps generation + invalidates LifetimePins on success.
+        // Wire-up mirrors the live_compact body in arena.ixx (bumping
+        // per-CompilerMetrics atomics from the Evaluator host ctx here
+        // avoids the C-linkage shim import issue — same pattern as
+        // #1908 macro_provenance).
+        const aura::ast::LiveCompactResult lc =
+            arena_group_->live_compact(aura::ast::LiveCompactMode::Soft);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->arena_live_compact_reclaimed_bytes_total.fetch_add(lc.bytes_reclaimed,
+                                                                  std::memory_order_relaxed);
+            m->arena_live_compact_freelist_hits_total.fetch_add(lc.slots_recycled,
+                                                                std::memory_order_relaxed);
+            if (lc.invalidates_pins) {
+                m->arena_live_compact_gen_restamps_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     }
+
+    // Issue #2004: Evaluator-level live_compact(aura::ast::LiveCompactMode). Delegates
+    // to arena_group_->live_compact(mode) (which iterates every managed
+    // arena) + bumps per-CompilerMetrics atomics. Returns the aggregated
+    // aura::ast::LiveCompactResult so callers (the (arena:live-compact) primitive,
+    // Agents, mutation-boundary probe) can observe bytes_reclaimed /
+    // slots_recycled / new_gen / soft_gated / invalidates_pins.
+    [[nodiscard]] aura::ast::LiveCompactResult
+    live_compact(aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft) noexcept {
+        if (!arena_group_)
+            return {};
+        const aura::ast::LiveCompactResult lc = arena_group_->live_compact(mode);
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            if (mode == aura::ast::LiveCompactMode::Soft) {
+                m->arena_live_compact_soft_count.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                m->arena_live_compact_force_count.fetch_add(1, std::memory_order_relaxed);
+            }
+            m->arena_live_compact_reclaimed_bytes_total.fetch_add(lc.bytes_reclaimed,
+                                                                  std::memory_order_relaxed);
+            m->arena_live_compact_freelist_hits_total.fetch_add(lc.slots_recycled,
+                                                                std::memory_order_relaxed);
+            if (lc.invalidates_pins) {
+                m->arena_live_compact_gen_restamps_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        return lc;
+    }
+
     void probe_arena_auto_policy_on_fiber_transition() noexcept {
         if (!arena_group_)
             return;

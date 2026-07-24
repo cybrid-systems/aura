@@ -20,6 +20,7 @@ module;
 export module aura.core.arena;
 import std;
 import aura.core.error;
+import aura.core.lifetime_pin;
 
 // Issue #1390: one-shot stderr warning when request_defrag() is
 // called with no GC safepoint registered. Exported as free
@@ -134,6 +135,15 @@ export struct ArenaStats {
     std::size_t compact_deopt_throttled = 0;     // deopt storm throttle skips
     std::size_t frag_post_compact_bp = 0;        // last post-compact frag ratio (basis points)
     std::size_t compact_soft_gated_boundary = 0; // skipped due to MutationBoundary
+    // Issue #2004: explicit live_compact observability. Soft / Force counts,
+    // bytes reclaimed (sum across all calls), freelist hits, generation
+    // restamps, and # LifetimePins invalidated on success.
+    std::size_t live_compact_soft_count = 0;
+    std::size_t live_compact_force_count = 0;
+    std::size_t live_compact_reclaimed_bytes_total = 0;
+    std::size_t live_compact_freelist_hits_total = 0;
+    std::size_t live_compact_gen_restamps_total = 0;
+    std::size_t live_compact_invalidated_pins_total = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -178,6 +188,14 @@ export struct ArenaStats {
         compact_deopt_triggered += other.compact_deopt_triggered;
         compact_deopt_throttled += other.compact_deopt_throttled;
         compact_soft_gated_boundary += other.compact_soft_gated_boundary;
+        // Issue #2004: explicit live_compact counters (Soft / Force counts,
+        // reclaimed bytes, freelist hits, gen restamps, invalidated pins).
+        live_compact_soft_count += other.live_compact_soft_count;
+        live_compact_force_count += other.live_compact_force_count;
+        live_compact_reclaimed_bytes_total += other.live_compact_reclaimed_bytes_total;
+        live_compact_freelist_hits_total += other.live_compact_freelist_hits_total;
+        live_compact_gen_restamps_total += other.live_compact_gen_restamps_total;
+        live_compact_invalidated_pins_total += other.live_compact_invalidated_pins_total;
         if (other.frag_post_compact_bp > 0)
             frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)
@@ -407,6 +425,35 @@ private:
 //   create<T>() → sizeof(T) <= 64 → SmallObjectPool
 //               → else             → pmr monotonic_buffer_resource
 //
+// Issue #2004: explicit live_compact + freelist path coordinated with
+// MutationBoundary soft-gate + GC safepoint. live_compact(LiveCompactMode)
+// returns a struct (bytes_reclaimed / slots_recycled / new_gen / soft_gated /
+// invalidates_pins) so Agents, MutationBoundary probe, and compact_sweep body
+// can observe the outcome — replacing the prior std::size_t return.
+export enum class LiveCompactMode : std::uint8_t {
+    Soft = 0,  // Soft-gates under render hotpath / MutationBoundary (existing auto path)
+    Force = 1, // Force path — STW-friendly, used by explicit Agent calls
+};
+
+export struct LiveCompactResult {
+    std::size_t bytes_reclaimed = 0; // bytes saved by defrag_impl (buffer resize)
+    std::size_t slots_recycled = 0;  // freelist slots recycled (free_slot + recycle_hits)
+    std::uint64_t new_gen = 0;       // generation after restamp (0 = no restamp)
+    LiveCompactMode mode = LiveCompactMode::Soft;
+    bool soft_gated = false;       // true if Soft mode skipped (render hotpath / boundary held)
+    bool invalidates_pins = false; // true if new_gen bumped (LifetimePins invalidated)
+
+    [[nodiscard]] bool empty() const noexcept {
+        return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated;
+    }
+};
+
+// Module-internal counter used by ASTArena constructors to mint stable per-arena
+// ids. LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
+// invalidation to the specific arena that bumped its generation, instead of
+// over-invalidating pins tied to other arenas.
+inline std::atomic<std::uint64_t> g_arena_id_counter{0};
+
 export class ASTArena {
 public:
     // Default upstream is the system allocator. Tests can pass a
@@ -416,7 +463,12 @@ public:
                       std::pmr::memory_resource* upstream = std::pmr::new_delete_resource())
         : initial_size_(initial_size)
         , buffer_(initial_size)
-        , resource_(buffer_.data(), buffer_.size(), upstream) {}
+        , resource_(buffer_.data(), buffer_.size(), upstream)
+        // Issue #2004: mint a stable per-arena id at construction so
+        // LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
+        // invalidation to THIS arena (not all arenas).
+        , arena_id_(g_arena_id_counter.fetch_add(1, std::memory_order_relaxed) + 1)
+        , generation_(0) {}
 
     // Issue #300 (P1) Phase 3: defrag request flag. Set by
     // (arena:request-defrag) primitive to signal that a defrag is
@@ -868,25 +920,43 @@ public:
     //   3. Compact: conservative buffer trim (defrag_impl)
     //   4. Coordinate: compact hook + deopt throttle (no deopt storm)
     //
-    // Returns number of live objects marked (dtors_ size).
-    [[nodiscard]] std::size_t live_defrag() noexcept { return live_compact(/*force=*/true); }
+    // Returns number of freelist slots recycled (Issue #2004: the new
+    // LiveCompactResult::slots_recycled is the closest analogue to the prior
+    // total_marked semantics; Force mode bypasses MutationBoundary soft-gate).
+    [[nodiscard]] std::size_t live_defrag() noexcept {
+        return live_compact(LiveCompactMode::Force).slots_recycled;
+    }
 
-    // Issue #1518: live_compact — same as live_defrag; force=false soft-gates
-    // on render hotpath / MutationBoundary (auto path).
-    [[nodiscard]] std::size_t live_compact(bool force = true) noexcept {
+    // Issue #1518 + #2004: live_compact — explicit controllable API with
+    // LiveCompactMode (Soft / Force) + LiveCompactResult struct. Returns
+    // bytes_reclaimed / slots_recycled / new_gen / soft_gated /
+    // invalidates_pins so Agents, MutationBoundary probe, and compact_sweep
+    // body can observe the full outcome. Force mode bypasses the soft-gate.
+    [[nodiscard]] LiveCompactResult
+    live_compact(LiveCompactMode mode = LiveCompactMode::Soft) noexcept {
         aura::core::cpp26::record_hotpath_invariant_hit(); // Issue #1519
-        // Soft-gate auto path during render / active mutation boundary so
-        // fiber yield / Guard pins stay coherent (explicit Agent calls use force).
-        if (!force) {
+        LiveCompactResult result;
+        result.mode = mode;
+        result.new_gen = generation_.load(std::memory_order_acquire);
+
+        // Soft-gate the auto path during render / active MutationBoundary
+        // so fiber yield / Guard pins stay coherent. Force bypasses both.
+        if (mode == LiveCompactMode::Soft) {
             if (aura::core::arena_policy::in_render_hotpath()) {
                 aura::core::arena_policy::record_compact_soft_gated_render();
-                return 0;
+                result.soft_gated = true;
+                ++stats_.compact_soft_gated_boundary;
+                return result;
             }
             if (arena_mutation_boundary_depth() > 0) {
-                stats_.compact_soft_gated_boundary++;
+                ++stats_.compact_soft_gated_boundary;
                 aura::core::arena_policy::record_compact_soft_gated_boundary();
-                return 0;
+                result.soft_gated = true;
+                return result;
             }
+            ++stats_.live_compact_soft_count;
+        } else {
+            ++stats_.live_compact_force_count;
         }
 
         // ── Mark ──
@@ -903,13 +973,19 @@ public:
         // Free slots are already "relocated out"; recycle hits are real reuses.
         const std::size_t holes = small_pool_.free_slot_count();
         const std::size_t reuses = small_pool_.recycle_hits();
-        stats_.live_relocate_count += holes + reuses;
-        aura::core::arena_policy::record_live_relocate(holes + reuses);
+        const std::size_t relocated = holes + reuses;
+        stats_.live_relocate_count += relocated;
+        stats_.live_compact_freelist_hits_total += relocated;
+        aura::core::arena_policy::record_live_relocate(relocated);
+        result.slots_recycled = relocated;
 
         // ── Compact tail (no hook — we invoke once below) ──
         const auto frag_before = stats().fragmentation_ratio();
-        (void)defrag_impl(/*clear_request_flag=*/false, /*invoke_hook=*/false);
+        const std::size_t saved_bytes =
+            defrag_impl(/*clear_request_flag=*/false, /*invoke_hook=*/false);
         small_pool_.rebind_tiers();
+        stats_.live_compact_reclaimed_bytes_total += saved_bytes;
+        result.bytes_reclaimed = saved_bytes;
 
         const auto frag_after = stats().fragmentation_ratio();
         stats_.frag_post_compact_bp = static_cast<std::size_t>(frag_after * 10000.0);
@@ -919,9 +995,46 @@ public:
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
 
+        // ── Generation restamp + LifetimePin invalidation (Issue #2004) ──
+        // Bump generation if we actually changed layout (saved bytes OR
+        // recycled slots). Soft-gated no-op runs return early above so they
+        // never bump gen. invalidate_all_pins_for_arena is keyed to THIS
+        // arena_id_ (other arenas' pins are untouched).
+        if (saved_bytes > 0 || relocated > 0) {
+            result.new_gen = generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
+            result.invalidates_pins = true;
+            ++stats_.live_compact_gen_restamps_total;
+            const std::size_t invalidated =
+                aura::core::lifetime::invalidate_all_pins_for_arena(arena_id_);
+            stats_.live_compact_invalidated_pins_total += invalidated;
+        }
+
         // ── Shape/JIT deopt coordination (throttled in service hook) ──
         invoke_compact_hook_with_deopt_();
-        return total_marked;
+        return result;
+    }
+
+    // Issue #2004: backwards-compat bool wrapper. New callers should use the
+    // LiveCompactMode overload above to observe the full LiveCompactResult
+    // struct (bytes_reclaimed / slots_recycled / new_gen / soft_gated /
+    // invalidates_pins). This wrapper returns slots_recycled (the closest
+    // analogue to the prior total_marked std::size_t semantics).
+    [[nodiscard]] std::size_t live_compact(bool force) noexcept {
+        return live_compact(force ? LiveCompactMode::Force : LiveCompactMode::Soft).slots_recycled;
+    }
+
+    // Issue #2004: per-arena stable id (minted at construction from
+    // g_arena_id_counter). Used by LifetimePin::pin(p, g, arena_id_) so
+    // invalidate_all_pins_for_arena can target THIS arena's pins without
+    // over-invalidating pins tied to other arenas.
+    [[nodiscard]] std::uint64_t arena_id() const noexcept { return arena_id_; }
+
+    // Issue #2004: current arena generation counter (0 initially; bumped on
+    // each successful live_compact that actually changes layout). External
+    // references (LifetimePin, StableNodeRef) check this to detect stale
+    // post-compact pointers.
+    [[nodiscard]] std::uint64_t generation() const noexcept {
+        return generation_.load(std::memory_order_acquire);
     }
 
     // Issue #1467 / #1518: live-defrag counters (from ArenaStats).
@@ -939,6 +1052,29 @@ public:
     }
     [[nodiscard]] std::uint64_t frag_post_compact_bp_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.frag_post_compact_bp);
+    }
+
+    // Issue #2004: explicit live_compact observability accessors (mirror
+    // stats_.live_compact_* fields; _relaxed suffix matches the pattern used
+    // by the live_defrag_* accessors above). Used by (query:arena-live-
+    // compact-stats) primitive to surface the metrics to Aura Agents.
+    [[nodiscard]] std::uint64_t live_compact_soft_count_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_soft_count);
+    }
+    [[nodiscard]] std::uint64_t live_compact_force_count_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_force_count);
+    }
+    [[nodiscard]] std::uint64_t live_compact_reclaimed_bytes_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_reclaimed_bytes_total);
+    }
+    [[nodiscard]] std::uint64_t live_compact_freelist_hits_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_freelist_hits_total);
+    }
+    [[nodiscard]] std::uint64_t live_compact_gen_restamps_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_gen_restamps_total);
+    }
+    [[nodiscard]] std::uint64_t live_compact_invalidated_pins_total_relaxed() const noexcept {
+        return static_cast<std::uint64_t>(stats_.live_compact_invalidated_pins_total);
     }
 
     // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
@@ -1269,6 +1405,11 @@ private:
     mutable std::shared_mutex owner_mtx_;
     void* arena_owner_ = nullptr;
     ArenaQuotaAllowFn quota_allow_fn_ = nullptr;
+    // Issue #2004: per-arena stable id (minted from g_arena_id_counter in
+    // the constructor) + generation counter (atomic, bumped on successful
+    // live_compact). arena_id_ keys LifetimePin invalidation to THIS arena.
+    std::uint64_t arena_id_ = 0;
+    std::atomic<std::uint64_t> generation_{0};
 };
 
 // Issue #685: aggregate auto-compact policy stats for observability.
@@ -1450,6 +1591,26 @@ public:
             compaction_yield_checks_.fetch_add(1, std::memory_order_relaxed);
         }
         return adaptive_compact_all_unlocked_();
+    }
+
+    // Issue #2004: live_compact — iterate every managed arena, invoke
+    // ASTArena::live_compact(mode) under the shared mutex, aggregate the
+    // LiveCompactResult fields across the call. Soft-gating happens per
+    // arena (render hotpath / MutationBoundary check is inside
+    // ASTArena::live_compact). Returns aggregated result.
+    [[nodiscard]] LiveCompactResult live_compact(LiveCompactMode mode) noexcept {
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        LiveCompactResult agg;
+        agg.mode = mode;
+        for (auto& [_, arena] : arenas_) {
+            LiveCompactResult r = arena->live_compact(mode);
+            agg.bytes_reclaimed += r.bytes_reclaimed;
+            agg.slots_recycled += r.slots_recycled;
+            agg.new_gen = std::max(agg.new_gen, r.new_gen);
+            agg.soft_gated = agg.soft_gated || r.soft_gated;
+            agg.invalidates_pins = agg.invalidates_pins || r.invalidates_pins;
+        }
+        return agg;
     }
 
     // Issue #464: bump_auto_compact_guard_call() — called

@@ -2209,6 +2209,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_compact_deopt_throttled_total{0};
     std::atomic<std::uint64_t> arena_frag_post_compact_bp{0};
     std::atomic<std::uint64_t> arena_compact_soft_gated_boundary_total{0};
+    // Issue #2004: explicit live_compact + freelist observability. Mirrors
+    // ArenaStats::live_compact_* fields; bumped by Evaluator::live_compact
+    // (mirroring arena.ixx::live_compact counters via Evaluator* host ctx).
+    std::atomic<std::uint64_t> arena_live_compact_soft_count{0};
+    std::atomic<std::uint64_t> arena_live_compact_force_count{0};
+    std::atomic<std::uint64_t> arena_live_compact_reclaimed_bytes_total{0};
+    std::atomic<std::uint64_t> arena_live_compact_freelist_hits_total{0};
+    std::atomic<std::uint64_t> arena_live_compact_gen_restamps_total{0};
+    std::atomic<std::uint64_t> arena_live_compact_invalidated_pins_total{0};
     // Issue #1521: ShapeProfiler versioning + Arena compact synergy.
     std::atomic<std::uint64_t> shape_inval_on_compact_triggered_total{0};
     std::atomic<std::uint64_t> deopt_from_arena_compact_total{0};

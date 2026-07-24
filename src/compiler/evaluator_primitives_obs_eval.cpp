@@ -1539,6 +1539,116 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2004: explicit live_compact primitive — invokes Evaluator::live_compact
+    // (delegates to arena_group_->live_compact, which iterates every managed
+    // arena). Returns a hash with bytes_reclaimed / slots_recycled / new_gen /
+    // soft_gated / invalidates_pins / mode / schema=2004. Optional int arg
+    // selects mode: 0 = Soft (default), 1 = Force (bypasses soft-gate).
+    ObservabilityPrims::register_stats_impl(
+        "arena:live-compact", [&ev](const auto& args) -> EvalValue {
+            aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft;
+            if (!args.empty()) {
+                const std::int64_t m = as_int(args[0]);
+                mode =
+                    (m != 0) ? aura::ast::LiveCompactMode::Force : aura::ast::LiveCompactMode::Soft;
+            }
+            const aura::ast::LiveCompactResult lc = ev.live_compact(mode);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("bytes-reclaimed", static_cast<std::int64_t>(lc.bytes_reclaimed));
+            insert_kv("slots-recycled", static_cast<std::int64_t>(lc.slots_recycled));
+            insert_kv("new-gen", static_cast<std::int64_t>(lc.new_gen));
+            insert_kv("mode", static_cast<std::int64_t>(static_cast<std::uint8_t>(lc.mode)));
+            insert_kv("soft-gated", lc.soft_gated ? 1 : 0);
+            insert_kv("invalidates-pins", lc.invalidates_pins ? 1 : 0);
+            insert_kv("schema", 2004);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2004: live_compact observability primitive — surfaces the 6 new
+    // per-CompilerMetrics counters (soft / force counts, reclaimed bytes total,
+    // freelist hits total, gen restamps total, invalidated pins total).
+    ObservabilityPrims::register_stats_impl(
+        "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
+                          invalidated = 0;
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+                soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
+                force_count = m->arena_live_compact_force_count.load(std::memory_order_relaxed);
+                reclaimed =
+                    m->arena_live_compact_reclaimed_bytes_total.load(std::memory_order_relaxed);
+                hits = m->arena_live_compact_freelist_hits_total.load(std::memory_order_relaxed);
+                restamps = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+                invalidated =
+                    m->arena_live_compact_invalidated_pins_total.load(std::memory_order_relaxed);
+            }
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("soft-count", static_cast<std::int64_t>(soft_count));
+            insert_kv("force-count", static_cast<std::int64_t>(force_count));
+            insert_kv("reclaimed-bytes-total", static_cast<std::int64_t>(reclaimed));
+            insert_kv("freelist-hits-total", static_cast<std::int64_t>(hits));
+            insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
+            insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
+            insert_kv("schema", 2004);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 12 (orig lines 2349-2569)
