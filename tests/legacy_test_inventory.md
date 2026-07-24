@@ -358,6 +358,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_primitives_registry_core_consistency.cpp`
 - `tests/compiler/test_primitives_surface_convergence.cpp`
 - `tests/compiler/test_production_hardening_985.cpp`
+- `tests/compiler/test_production_readiness_closed_loop.cpp`
 - `tests/compiler/test_production_roadmap_closed_loop.cpp`
 - `tests/compiler/test_production_safety.cpp`
 - `tests/compiler/test_production_safety_1047.cpp`
@@ -379,6 +380,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_query_pattern_hygiene_macrointroduced.cpp`
 - `tests/compiler/test_quota_edge_cases.cpp`
 - `tests/core/test_raw_pointer_safety.cpp`
+- `tests/compiler/test_refinement_closed_loop.cpp`
 - `tests/compiler/test_reflect_batch.cpp`
 - `tests/reflect/test_reflect_hygiene_unit_batch.cpp`
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp`
@@ -441,8 +443,6 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_stdlib_production_review_923.cpp`
 - `tests/core/test_stress_alloc_storage_lock.cpp`
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp`
-- `tests/compiler/test_task2_refinement_closed_loop.cpp`
-- `tests/compiler/test_task6_production_readiness_closed_loop.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
 - `tests/renderer/test_terminal_concurrent.cpp`
 - `tests/renderer/test_terminal_deprecation.cpp`
@@ -719,6 +719,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_hygiene_closedloop_health.cpp` (—) [domain_suite, theme_compiler] — Issue #1501/#1589/#1593/#1609/#1613 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp` (—) [domain_suite, theme_compiler] — test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp — Issue #654:
 - `tests/compiler/test_macro_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_macro_reflect_batch.cpp — batch driver for macro+reflect+self-evo family.
+- `tests/compiler/test_production_readiness_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #514/#547/#550/#551/#597/#619 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
 - `tests/compiler/test_query_pattern_hygiene.cpp` (—) [domain_suite, theme_compiler] — Issue #1047/#1501/#1609/#1636/#547 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_query_pattern_hygiene_macrointroduced.cpp` (—) [domain_suite, theme_compiler] — test_query_pattern_hygiene_macrointroduced.cpp — Issue #593:
@@ -727,7 +728,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_macro_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_task6_production_readiness_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #514/#547/#550/#551/#597/#619 (#1978 renamed): issue# moved from filename to header.
 
 ### `jit_incremental` — JIT / AOT / incremental relower (25)
 
@@ -860,6 +860,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_production_sweep.cpp` (—) [small, domain_suite, theme_serve] — test_production_sweep.cpp — fiber production sweep (standalone; SIGSEGV in batch)
 - `tests/compiler/test_query_dispatch.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1435 (query :op) unified dispatcher
 - `tests/core/test_raw_pointer_safety.cpp` (—) [domain_suite, theme_core] — Issue #1898 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_ffi_hotpath.cpp` (—) [domain_suite, theme_renderer] — c-render-bind / c-render-draw / c-present-batch / c-ansi-emit, micro-benchmark.
 - `tests/renderer/test_render_hotpath_observability.cpp` (—) [obs_named, domain_suite, theme_renderer] — Issue #1674/#1676 (#1978 renamed): issue# moved from filename to header.
 - `tests/renderer/test_render_hotpath_stability_under_mutation.cpp` (—) [domain_suite, theme_renderer] — high-frequency mutate + present; no deopt storm; AOT hit rate observable.
@@ -878,7 +879,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stats_facade_bench.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1434 stretch: facade vs N direct stats dispatches.
 - `tests/compiler/test_stats_module_unification.cpp` (—) [domain_suite, theme_compiler] — test_stats_module_unification.cpp — Issue #560:
 - `tests/compiler/test_stdlib_production_review_923.cpp` (#923) [small, domain_suite, theme_compiler] — test_stdlib_production_review_923_940.cpp — Issues #923–#940 Phase 1
-- `tests/compiler/test_task2_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_tenant_isolation_enforcement.cpp` (—) [domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
 - `tests/compiler/test_test_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #1623/#1624/#1627/#1887 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives

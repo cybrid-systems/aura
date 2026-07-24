@@ -1458,8 +1458,8 @@ aura_issue_test_link_llvm_jit(test_dirty_reason_verification_propagation)
 aura_add_issue_test(test_coercion_dead_elim_castop_flow_zerooverhead)
 aura_issue_test_link_llvm_jit(test_coercion_dead_elim_castop_flow_zerooverhead)
 # Issue #495: Task2 refinement closed-loop integration matrix.
-aura_add_issue_test(test_task2_refinement_closed_loop)
-aura_issue_test_link_llvm_jit(test_task2_refinement_closed_loop)
+aura_add_issue_test(test_refinement_closed_loop)
+aura_issue_test_link_llvm_jit(test_refinement_closed_loop)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a

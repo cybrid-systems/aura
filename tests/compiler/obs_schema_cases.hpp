@@ -1,7 +1,7 @@
 // tests/compiler/obs_schema_cases.hpp — observability schema case table.
 //
 // History:
-//   - Originally expected at tests/domain/cases/obs_schema_cases.hpp but the
+//   - Originally expected at a R1-pilot tests/domain/cases/ location, but that
 //     file never landed (only references in docs/scripts/legacy inventory).
 //   - During the tests/ reorg (R1 7fd24ede → R11 b5a30303), this header was
 //     created as a placeholder in tests/compiler/obs_schema_cases.hpp.
