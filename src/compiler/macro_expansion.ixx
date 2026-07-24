@@ -43,6 +43,10 @@ export extern std::atomic<std::uint64_t> g_macro_origin_provenance_errors;
 export extern std::atomic<std::uint64_t> g_hygiene_tracer_expansions;
 export extern std::atomic<std::uint64_t> g_hygiene_tracer_depth_max;
 
+// Issue #2018: rest-param gensyms (`__rest_<name>_<n>`) applied in
+// clone_macro_body pre-scan / rename path.
+export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;
+
 export struct MacroExpansionDef {
     std::vector<std::string> params;
     bool dotted = false;

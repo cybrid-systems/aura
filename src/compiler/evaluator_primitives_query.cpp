@@ -37,6 +37,8 @@ extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
 extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
 extern "C" std::uint64_t aura_jit_macro_introduced_deopt();
 extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
+// Issue #2018: rest-param hygiene gensym counter (clone_macro_body).
+extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -2680,6 +2682,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("macro-audit-allowed", audit_allowed);
             insert_kv("audit-trail-writes", trail_writes);
             insert_kv("allow-macro-mutate", ev->get_allow_macro_mutate() ? 1 : 0);
+            // Issue #2018: rest-param hygiene gensyms (file-level atomic +
+            // CompilerMetrics mirror). Prefer metrics when wired.
+            {
+                const std::int64_t rest_hyg = static_cast<std::int64_t>(
+                    m ? m->macro_rest_param_hygiene_total.load(std::memory_order_relaxed)
+                      : aura_macro_rest_param_hygiene_total_v_read());
+                // If CompilerMetrics is zero but the file-level counter
+                // advanced (module-unaware clone path), surface the larger.
+                const std::int64_t rest_file =
+                    static_cast<std::int64_t>(aura_macro_rest_param_hygiene_total_v_read());
+                insert_kv("macro-rest-param-hygiene-total",
+                          rest_hyg > rest_file ? rest_hyg : rest_file);
+                insert_kv("macro_rest_param_hygiene_total",
+                          rest_hyg > rest_file ? rest_hyg : rest_file);
+            }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias
             insert_kv("recommendation", recommendation);

@@ -185,6 +185,9 @@ std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0};
 std::atomic<std::uint64_t> g_macro_expansion_total{0};
 std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total{0};
 std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total{0};
+// Issue #2018: rest-param gensyms applied in clone_macro_body pre-scan /
+// rename path (`__rest_<name>_<n>`). Folded into macro-hygiene-stats.
+std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total{0};
 
 // Issue #1652: C-linkage accessors so the (query:pattern-hygiene-stats)
 // primitive can read these file-level atomics from another TU without the
@@ -201,6 +204,10 @@ inline std::uint64_t aura_macro_introduced_nodes_created_total_v_read() noexcept
 }
 inline std::uint64_t aura_hygiene_violation_in_macro_expand_total_v_read() noexcept {
     return g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
+}
+// Non-inline: other TUs (query:macro-hygiene-stats) read this counter.
+std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept {
+    return g_macro_rest_param_hygiene_total.load(std::memory_order_relaxed);
 }
 } // extern "C"
 
@@ -339,12 +346,41 @@ aura::ast::NodeId clone_macro_body(
         return target_pool.intern(fresh);
     };
 
+    // Issue #2018: rest-param binding hygiene. Dotted Lambda / MacroDef last
+    // params get a dedicated `__rest_<name>_<n>` gensym so call-site free
+    // identifiers cannot collide with the rest binding. name_map is filled
+    // in pre-scan so body uses resolve via resolve_name / rename_binding.
+    // Macro-param names that appear only as free uses still go through the
+    // Variable subst path (source-name lookup) and are not forced through
+    // this map when they are not template-introduced rest bindings.
+    auto rename_rest_binding_pre = [&](SymId sid) -> SymId {
+        if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        // Macro rest param itself is substituted (subst), not a template
+        // binding — leave free uses substitutable under the original name.
+        if (subst && subst->count(name))
+            return transplant(sid);
+        if (detail::hygiene_builtins().count(name))
+            return transplant(sid);
+        auto it = name_map->find(name);
+        if (it != name_map->end())
+            return target_pool.intern(it->second);
+        auto fresh = std::string("__rest_") + name + "_" + std::to_string(hyg_ctr++);
+        (*name_map)[name] = fresh;
+        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
+        return target_pool.intern(fresh);
+    };
+
     // Issue #120: pre-scan the body to populate name_map BEFORE cloning.
     // The body may reference gensym'd bindings (e.g., `(let ((tmp a)) (set! b tmp))`
     // — the inner `tmp` Variable reference must see the gensym'd name
     // when it's cloned). Without the pre-scan, the recursive clone
     // would process the inner `tmp` (as a Variable reference) before the
     // let binding is processed (which is what gensym's `tmp`).
+    //
+    // Issue #2018: Lambda / MacroDef with dotted rest — last param is a
+    // rest binding; gensym via rename_rest_binding_pre (`__rest_` prefix).
     if (name_map) {
         std::function<void(NodeId)> pre_scan = [&](NodeId nid) {
             if (nid == NULL_NODE || nid >= source.size())
@@ -355,8 +391,25 @@ aura::ast::NodeId clone_macro_body(
             if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
                 rename_binding_pre(nv.sym_id);
             } else if (nv.tag == NodeTag::Lambda) {
-                for (auto pid : nv.params)
-                    rename_binding_pre(pid);
+                const bool dotted = nv.int_value != 0;
+                const auto nparams = nv.params.size();
+                for (std::size_t i = 0; i < nparams; ++i) {
+                    if (dotted && i + 1 == nparams)
+                        rename_rest_binding_pre(nv.params[i]);
+                    else
+                        rename_binding_pre(nv.params[i]);
+                }
+            } else if (nv.tag == NodeTag::MacroDef) {
+                // Nested macro defs inside a template: rest bit is bit 0 of
+                // int_value (same encoding as add_macrodef).
+                const bool dotted = (nv.int_value & 1) != 0;
+                const auto nparams = nv.params.size();
+                for (std::size_t i = 0; i < nparams; ++i) {
+                    if (dotted && i + 1 == nparams)
+                        rename_rest_binding_pre(nv.params[i]);
+                    else
+                        rename_binding_pre(nv.params[i]);
+                }
             }
             std::vector<aura::ast::NodeId> scan_children(nv.children.begin(), nv.children.end());
             for (auto c : scan_children)
@@ -369,12 +422,14 @@ aura::ast::NodeId clone_macro_body(
         if (sid == INVALID_SYM || !name_map)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
-        // Macro params, builtins, and already-renamed names keep their name
-        if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
-            return transplant(sid);
+        // Prefer pre-scan / rest renames first so template-introduced
+        // rest bindings (name_map) win over a same-named macro param.
         auto it = name_map->find(name);
         if (it != name_map->end())
             return target_pool.intern(it->second);
+        // Macro params, builtins keep their name (free uses → Variable subst)
+        if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
+            return transplant(sid);
         // Gensym! Create fresh name and track in name_map
         auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
         (*name_map)[name] = fresh;
@@ -403,7 +458,9 @@ aura::ast::NodeId clone_macro_body(
         --s_hygiene_depth;
     }
 
-    // Clone params (for Lambda nodes) — with hygienic renaming
+    // Clone params (for Lambda nodes) — with hygienic renaming.
+    // Issue #2018: rest (dotted last) already mapped via pre-scan
+    // rename_rest_binding_pre; rename_binding prefers name_map.
     std::vector<aura::ast::SymId> param_syms;
     for (auto pid : v.params)
         param_syms.push_back(rename_binding(pid));
@@ -437,8 +494,10 @@ aura::ast::NodeId clone_macro_body(
                 new_id = target.add_if(child_ids[0], child_ids[1], child_ids[2]);
             break;
         case NodeTag::Lambda:
+            // Issue #2018: preserve dotted rest flag (int_value != 0).
             if (!child_ids.empty())
-                new_id = target.add_lambda(param_syms, child_ids[0]);
+                new_id = target.add_lambda(param_syms, child_ids[0],
+                                           /*dotted=*/v.int_value != 0);
             break;
         case NodeTag::Let:
         case NodeTag::LetRec:
@@ -691,10 +750,17 @@ aura::ast::NodeId expand_inner_macros(
                     const auto& md = it->second;
                     auto subst = aura::compiler::pure::compute_macro_subst_pure(
                         md.params, call_args, md.dotted);
-                    if (md.dotted) {
-                        // Rest params on inner macros: not yet supported
-                        // (same limitation as the main hygienic path).
-                        return root;
+                    // Issue #2018: rest params on inner macros — build
+                    // (list remaining...) into subst (same as eval_flat
+                    // hygienic path).
+                    if (md.dotted && !md.params.empty()) {
+                        const std::size_t regular_count = md.params.size() - 1;
+                        std::vector<aura::ast::NodeId> remaining;
+                        for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
+                            remaining.push_back(call_args[ai]);
+                        auto list_var = flat->add_variable(pool->intern("list"));
+                        auto list_call = flat->add_call(list_var, remaining);
+                        subst[md.params.back()] = list_call;
                     }
                     // Clone the macro body into the current flat and
                     // re-intern sym_ids. Use the runtime registry's
@@ -801,44 +867,16 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                         auto& md = it->second;
                         auto subst = aura::compiler::pure::compute_macro_subst_pure(
                             md.params, call_args, md.dotted);
-                        // Rest param: collect remaining args as a quoted list.
-                        // We need regular_count locally to know where the
-                        // rest args start; recompute it (cheap).
-                        std::size_t regular_count = md.dotted && md.params.size() > 0
-                                                        ? md.params.size() - 1
-                                                        : md.params.size();
-                        if (md.dotted && !md.params.empty() &&
-                            regular_count + 1 < call_args.size()) {
-                            auto& rest_name = md.params.back();
-                            // Build a data list of the remaining arg nodes as a quote
-                            // Create () as the base, then cons each remaining arg
+                        // Issue #2018: rest param → (list remaining...) in subst
+                        // so clone_macro_body substitutes free rest uses.
+                        if (md.dotted && !md.params.empty()) {
+                            const std::size_t regular_count = md.params.size() - 1;
                             std::vector<aura::ast::NodeId> remaining;
                             for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
                                 remaining.push_back(call_args[ai]);
-                            // Create nested quote: (quote (arg1 arg2 ...)) using add_call chains
-                            // Actually, clone_macro_body substitutes Variable nodes, so we need
-                            // the rest arg as an expression node, not data.
-                            // For simplicity: build a (begin remaining...) — but that evaluates
-                            // them. Build as (quote (arg1 arg2 ...)) by creating a proper list:
-                            // cons arg1 (cons arg2 (cons ... ())) then wrap in quote
-                            // Since these are NodeIds in the SAME FlatAST, we can build an
-                            // expression that produces a list: (list arg1 arg2 ...)
                             auto list_var = flat.add_variable(pool.intern("list"));
-                            std::vector<aura::ast::NodeId> all_args;
-                            all_args.push_back(list_var);
-                            all_args.insert(all_args.end(), remaining.begin(), remaining.end());
-                            auto list_call = flat.add_call(list_var, all_args);
-                            // But this would be (list arg1 arg2 ...) which EVALUATES the args.
-                            // Macros need syntax (unevaluated). We need (quote (arg1 arg2 ...)).
-                            // Create a quoted version: for each remaining arg, convert to data via
-                            // ast_to_data... but we don't have access to the evaluator's pairs_.
-                            // For now: just use the (list ...) approach and note that rest args
-                            // in macro_expand_all will be evaluated (same as the evaluator's
-                            // version) Actually this is the same issue as the evaluator's macros_
-                            // expansion. The difference: in macro_expand_all we can directly
-                            // substitute. Let me just not handle rest in macro_expand_all for now —
-                            // the evaluator's macros_ handles it correctly. This path is only for
-                            // same-expression macros.
+                            auto list_call = flat.add_call(list_var, remaining);
+                            subst[md.params.back()] = list_call;
                         }
                         // Clone macro body with substitution
                         std::unordered_map<std::string, std::string,

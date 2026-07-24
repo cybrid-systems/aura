@@ -3225,13 +3225,14 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             // automatic gensym for template-introduced
                             // bindings). Non-hygienic macros keep the legacy
                             // double-eval path for backward compatibility.
+                            //
+                            // Issue #2018: hygienic rest params — build a
+                            // (list remaining...) AST for the rest binding
+                            // and put it in subst so free uses of the rest
+                            // identifier expand to the rest-arg list. Nested
+                            // dotted lambdas inside the body get `__rest_`
+                            // gensym via clone_macro_body pre-scan.
                             if (md.hygienic) {
-                                if (is_rest) {
-                                    // Rest params on hygienic macros are
-                                    // not yet supported — fall through to a
-                                    // "no expansion" return.
-                                    return make_void();
-                                }
                                 // Issue #146 follow-up: build the subst
                                 // map via the pure helper. Local
                                 // materialization of v.children into a
@@ -3240,7 +3241,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 std::vector<aura::ast::NodeId> call_args(v.children.begin(),
                                                                          v.children.end());
                                 auto subst = aura::compiler::pure::compute_macro_subst_pure(
-                                    md.params, call_args, /*dotted=*/false);
+                                    md.params, call_args, /*dotted=*/is_rest);
+                                if (is_rest && !md.params.empty()) {
+                                    const std::size_t regular_count = md.params.size() - 1;
+                                    std::vector<aura::ast::NodeId> remaining;
+                                    for (std::size_t ai = regular_count + 1; ai < call_args.size();
+                                         ++ai)
+                                        remaining.push_back(call_args[ai]);
+                                    // Rest list as (list a1 a2 …) — evaluated
+                                    // when the expanded body runs (same
+                                    // runtime shape as non-hygienic rest list).
+                                    auto list_var = f->add_variable(p->intern("list"));
+                                    auto list_call = f->add_call(list_var, remaining);
+                                    subst[md.params.back()] = list_call;
+                                }
                                 // Clone the macro body with substitution +
                                 // name_map. The cloned tree is in the
                                 // *current* FlatAST (we use the target's

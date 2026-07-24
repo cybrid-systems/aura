@@ -1760,6 +1760,11 @@ aura_add_issue_test(test_reflect_macro_hygiene_batch)
 aura_issue_test_link_llvm_jit(test_reflect_macro_hygiene_batch)
 add_dependencies(all_test_issue_targets test_reflect_macro_hygiene_batch)
 
+# Issue #2018: rest-param hygiene in clone_macro_body + hygienic rest expand.
+aura_add_issue_test(test_rest_param_hygiene_self_evo)
+aura_issue_test_link_llvm_jit(test_rest_param_hygiene_self_evo)
+add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)
