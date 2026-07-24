@@ -2017,6 +2017,12 @@ aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
 aura_add_issue_test(test_incremental_restamp_2061)
 aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
 
+# Issue #2072: force check_and_record_effect on all side-effect primitives
+# (FFI/Network/Exec/Render). require_effect() helper + git-commit +
+# render3d:create-volume wired at primitive entry points.
+aura_add_issue_test(test_capability_effect_force_2072)
+aura_issue_test_link_llvm_jit(test_capability_effect_force_2072)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

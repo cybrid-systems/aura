@@ -124,27 +124,6 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // When evaluator sandbox is off and effect mode is Off, still record.
     const bool sb_active = sandbox_mode_ || is_strict() || is_sandbox_active();
 
-    // Issue #1876: under sandbox, deny when explicit tenant arg mismatches
-    // the evaluator's capability_tenant_id_ (cross-tenant effect).
-    if (sb_active && !wildcard) {
-        const auto cur_tenant = capability_tenant_id_;
-        if (tenant_id != 0 && cur_tenant != 0 && tenant_id != cur_tenant) {
-            bump_capability_denial();
-            g_sandbox_state().effect_denials++;
-            g_sandbox_state().effect_checks++;
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
-                m->sandbox_violations_total.fetch_add(1, std::memory_order_relaxed);
-                m->sandbox_provenance_invalid_total.fetch_add(1, std::memory_order_relaxed);
-                m->capability_denials_by_effect.fetch_or(required_effect_bits,
-                                                         std::memory_order_relaxed);
-                using aura::compiler::security::kEffectMutate;
-                if (required_effect_bits & kEffectMutate)
-                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            return false;
-        }
-    }
-
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
         tenant, op, wildcard, sb_active);
@@ -206,6 +185,19 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     }
     g_sandbox_state().effect_checks++;
     return ok;
+}
+
+// Issue #2072: single production entry for new side-effect paths.
+// Wraps check_and_record_effect with the standard arguments (required =
+// actual = req_bits, tenant = capability_tenant_id_, provenance = 0
+// when no active mutation). All new FFI / network / exec / render /
+// hotpath entry points MUST go through require_effect (not call
+// check_and_record_effect directly) so the audit ring + capability
+// metrics surface stays consistent. Returns true on allow, false on deny.
+bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
+                               ast::NodeId target_node) noexcept {
+    return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_,
+                                   /*provenance_mutation_id=*/0);
 }
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.

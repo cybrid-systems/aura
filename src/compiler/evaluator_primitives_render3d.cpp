@@ -11,6 +11,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "primitives_detail.h"
+#include "compiler/security_capabilities.h"
 #include "renderer/render3d_runtime.hh"
 #include "renderer/voxel_frame.hh"
 #include "renderer/voxel_shade.hh"
@@ -108,7 +109,12 @@ void register_render3d_primitives(PrimRegistrar add, Evaluator& ev) {
 #else
     // 1. (render3d:create-volume sx sy sz) → vol-id (1-based) or 0
     add("render3d:create-volume", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)ev;
+        // Issue #2072: force render3d:create-volume through capability
+        // effect check (render — GPU + windowing side effects).
+        using aura::compiler::security::kEffectRender;
+        if (!ev.require_effect(static_cast<std::uint16_t>(kEffectRender), "render3d:create-volume",
+                               0))
+            return make_int(0);
         const int sx = static_cast<int>(arg_i(a, 0, 32));
         const int sy = static_cast<int>(arg_i(a, 1, 16));
         const int sz = static_cast<int>(arg_i(a, 2, 32));
