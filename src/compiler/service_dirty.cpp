@@ -111,6 +111,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             for (auto& sfn : primary.soa_mod.functions)
                 sfn.mark_all_blocks_dirty();
         }
+        // Issue #2034: force SoA instruction_dirty_ after primary cascade.
+        finish_cascade_soa_dirty_sync_(primary);
     }
     // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
     // ordering — vector-as-stack is technically DFS, which is fine for
@@ -216,10 +218,14 @@ void CompilerService::mark_define_dirty(const std::string& name) {
                     }
                 }
                 metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2034: AoS body bits set directly above —
+                // force SoA instruction_dirty_ parity.
+                finish_cascade_soa_dirty_sync_(centry);
             } else if (nested_lambdas) {
                 // Fallback: no body bitmask → full dirty (pre-#1505).
                 centry.dirty = true;
                 centry.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(centry);
                 metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
                 metrics_.dep_graph_nested_lambda_full_dirty.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -227,6 +233,7 @@ void CompilerService::mark_define_dirty(const std::string& name) {
                 // conservatively mark all blocks dirty.
                 centry.dirty = true;
                 centry.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(centry);
                 metrics_.cascade_full_count.fetch_add(1, std::memory_order_relaxed);
             }
         }
@@ -280,6 +287,8 @@ void CompilerService::mark_all_defines_dirty() {
         (void)name;
         entry.dirty = true;
         entry.mark_all_blocks_dirty();
+        // Issue #2034: force SoA instruction_dirty_ on bulk invalidate.
+        finish_cascade_soa_dirty_sync_(entry);
         ++dirty_n;
     }
     if (dirty_n > 0) {
@@ -362,6 +371,8 @@ void CompilerService::invalidate_function(const std::string& name) {
             vit->second.mark_all_blocks_dirty();
             metrics_.dirty_propagation_full_func_marks.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2034: force SoA instruction_dirty_ after invalidate root.
+        finish_cascade_soa_dirty_sync_(vit->second);
         // When body-only left other funcs clean, credit minimal scope.
         const auto dirty_fns = vit->second.dirty_func_count();
         const auto total_fns = vit->second.irs.size();
@@ -488,6 +499,9 @@ void CompilerService::invalidate_function(const std::string& name) {
                     metrics_.dirty_propagation_full_func_marks.fetch_add(1,
                                                                          std::memory_order_relaxed);
                 }
+                // Issue #2034: force SoA instruction_dirty_ after
+                // dependent body-only / full cascade mark.
+                finish_cascade_soa_dirty_sync_(dit->second);
             }
         }
         // Drop stale AuraJIT modules inside the same lock as erase.

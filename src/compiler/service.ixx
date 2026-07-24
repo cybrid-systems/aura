@@ -4058,8 +4058,9 @@ public:
         // Mark every block in every function dirty. Used by
         // mark_define_dirty / mark_all_defines_dirty to
         // signal a full re-lower is needed.
-        // Issue #2033: also sync SoA instruction_dirty_ from block_dirty_
-        // so stamp/dirty columns stay consistent after cascade.
+        // Issue #2033 / #2034: also force SoA instruction_dirty_
+        // sync from block_dirty_ so stamp/dirty columns stay
+        // consistent after cascade.
         void mark_all_blocks_dirty() {
             for (auto& func_blocks : block_dirty_per_func_) {
                 for (auto& b : func_blocks)
@@ -4067,12 +4068,35 @@ public:
             }
             for (auto& soa_fn : soa_mod.functions)
                 soa_fn.mark_all_blocks_dirty();
-            (void)soa_mod.sync_instruction_dirty_from_block_dirty();
+            (void)force_soa_instruction_dirty_sync();
+        }
+
+        // Issue #2034: mirror AoS block_dirty_per_func_ into SoA
+        // block_dirty_, then force instruction_dirty_ cascade for
+        // every dirty block. Returns # of instruction bits flipped
+        // 0→1 (for soa_dirty_sync_total accounting). Safe to call
+        // after any cascade path that set AoS bits directly.
+        std::size_t force_soa_instruction_dirty_sync() {
+            for (std::size_t fi = 0; fi < block_dirty_per_func_.size(); ++fi) {
+                if (fi >= soa_mod.functions.size())
+                    break;
+                auto& soa_fn = soa_mod.functions[fi];
+                const auto& aos = block_dirty_per_func_[fi];
+                for (std::uint32_t bi = 0; bi < static_cast<std::uint32_t>(aos.size()); ++bi) {
+                    if (aos[bi] != 0)
+                        soa_fn.mark_block_dirty(bi);
+                }
+            }
+            return soa_mod.sync_instruction_dirty_from_block_dirty();
         }
 
         // Mark a single block dirty. Resizes the bitmask
         // for that function if needed (e.g. caller doesn't
         // know the block count up front).
+        // Issue #2034: dual-emits SoA block+instr dirty so
+        // partial re-lower / walk_soa_function_hotpath stay
+        // trustworthy. Batch cascade paths should still call
+        // force_soa_instruction_dirty_sync() once at the end.
         void mark_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
             if (func_idx >= block_dirty_per_func_.size()) {
                 block_dirty_per_func_.resize(func_idx + 1);
@@ -4298,6 +4322,10 @@ public:
                 mark_block_dirty(body_idx, bi);
                 ++n;
             }
+            // Issue #2034: one force-sync after the body block batch
+            // (not per-block) so SoA instruction_dirty_ is fully
+            // mirrored before metrics / partial re-lower consult it.
+            (void)force_soa_instruction_dirty_sync();
             dirty = true;
             return n;
         }
@@ -4506,8 +4534,10 @@ public:
             entry.soa_mod = std::move(pending_soa_snapshot_->module);
             pending_soa_snapshot_.reset();
         }
-        // Issue #2033: ensure SoA instr dirty stays in sync after store shape rebuild.
-        (void)entry.soa_mod.sync_instruction_dirty_from_block_dirty();
+        // Issue #2033 / #2034: ensure SoA instr dirty stays in sync
+        // after store shape rebuild (AoS bits may be clean; still
+        // force-sync for dual-emit parity).
+        (void)entry.force_soa_instruction_dirty_sync();
         // Issue #959: enforce max-size policy after store.
         maybe_evict_ir_cache_v2();
     }
@@ -4617,6 +4647,15 @@ public:
         }
     }
 
+    // Issue #2034: force SoA instruction_dirty_ parity after cascade
+    // block marks and bump soa_dirty_sync_total (at least +1 so every
+    // cascade that touches blocks is observable).
+    void finish_cascade_soa_dirty_sync_(IRCacheEntry& entry) {
+        const auto flipped = entry.force_soa_instruction_dirty_sync();
+        const auto n = flipped > 0 ? static_cast<std::uint64_t>(flipped) : 1u;
+        metrics_.soa_dirty_sync_total.fetch_add(n, std::memory_order_relaxed);
+    }
+
     // Issue #2031: stamp block + instruction dirty bits from ImpactScope.
     // Returns number of instruction dirty marks applied.
     std::size_t apply_impact_scope_dirty(IRCacheEntry& entry, const ImpactScope& scope) {
@@ -4637,6 +4676,8 @@ public:
             }
             ++marks;
         }
+        // Issue #2034: force SoA instr dirty after impact-scope marks.
+        finish_cascade_soa_dirty_sync_(entry);
         if (scope.instr_level_hits > 0)
             metrics_.instr_level_impact_hits_total.fetch_add(scope.instr_level_hits,
                                                              std::memory_order_relaxed);
@@ -4853,9 +4894,12 @@ public:
             // re-lower.
             entry.dirty = true;
             entry.mark_all_blocks_dirty();
+            finish_cascade_soa_dirty_sync_(entry);
             return true;
         }
         entry.mark_block_dirty(func_idx, block_idx);
+        // Issue #2034: force SoA instruction_dirty_ after single-block mark.
+        finish_cascade_soa_dirty_sync_(entry);
         metrics_.ir_soa_block_dirty_hits_total.fetch_add(1, std::memory_order_relaxed);
         if (func_idx < entry.irs.size() && block_idx < entry.irs[func_idx].blocks.size()) {
             metrics_.irsoa_dirty_cascade_savings.fetch_add(

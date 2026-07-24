@@ -123,9 +123,11 @@ struct CompilerMetrics {
     //   - dep_graph_edge_miss_count: dep_graph_ populate/record
     //     missed a Quote + Lambda free-var + macro-expanded subtree
     //     reference (caller-side fallback to coarse full dirty)
-    //   - soa_dirty_sync_total: count of
-    //     sync_instruction_dirty_from_block_dirty() invocations
-    //     (block→instruction dirty propagation)
+    //   - soa_dirty_sync_total: Issue #1657 / #2034 — cumulative
+    //     flipped instruction bits (or +1 per cascade) from
+    //     force_soa_instruction_dirty_sync /
+    //     sync_instruction_dirty_from_block_dirty after every
+    //     cascade / invalidate block dirty mark
     //   - soa_consistency_partial_dirty_total: count of
     //     consistency-mismatch handlers that correctly dirty only
     //     affected functions instead of mark_all_blocks_dirty() on

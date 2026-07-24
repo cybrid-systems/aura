@@ -790,6 +790,12 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"instr-level-impact-wired", make_int(1)},
                 {"schema-2031", make_int(2031)},
                 {"issue-2031", make_int(2031)},
+                // Issue #2034: force instruction_dirty_ sync after cascade
+                {"soa_dirty_sync_total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
+                {"soa-dirty-sync-total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
+                {"soa-cascade-instr-dirty-sync-wired", make_int(1)},
+                {"schema-2034", make_int(2034)},
+                {"issue-2034", make_int(2034)},
             };
             return build_hash(kv);
         });

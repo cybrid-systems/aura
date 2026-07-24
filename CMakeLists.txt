@@ -1840,6 +1840,11 @@ aura_add_issue_test(test_cache_entry_version_stamp)
 aura_issue_test_link_llvm_jit(test_cache_entry_version_stamp)
 add_dependencies(all_test_issue_targets test_cache_entry_version_stamp)
 
+# Issue #2034: force instruction_dirty_ sync after cascade block dirty marks.
+aura_add_issue_test(test_soa_cascade_instr_dirty_sync)
+aura_issue_test_link_llvm_jit(test_soa_cascade_instr_dirty_sync)
+add_dependencies(all_test_issue_targets test_soa_cascade_instr_dirty_sync)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

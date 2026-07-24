@@ -485,11 +485,12 @@ export struct IRModuleV2 {
         func.instruction_dirty_[idx] = 1;
     }
 
-    // Issue #1657: explicit block→instruction dirty propagation
+    // Issue #1657 / #2034: explicit block→instruction dirty propagation
     // helper. Walks every dirty block on every function and ensures
     // all of its instructions are also marked dirty. Returns the
     // number of instruction bits flipped 0→1 (for metric accounting).
     // Called from cascade_block_to_instructions callers + from
+    // IRCacheEntry::force_soa_instruction_dirty_sync (#2034) + from
     // lowering consistency-mismatch fallback in lowering_impl.cpp.
     std::size_t sync_instruction_dirty_from_block_dirty() {
         std::size_t flipped = 0;
@@ -512,6 +513,33 @@ export struct IRModuleV2 {
             }
         }
         return flipped;
+    }
+
+    // Issue #2034: count remaining block↔instruction dirty desyncs
+    // (dirty block with a clean instruction). Dual-emit treats any
+    // remaining desync as a hard consistency_mismatch.
+    [[nodiscard]] std::size_t count_block_instr_dirty_desync() const {
+        std::size_t desync = 0;
+        for (const auto& func : functions) {
+            for (std::uint32_t bi = 0; bi < func.block_dirty_.size(); ++bi) {
+                if (func.block_dirty_[bi] == 0)
+                    continue;
+                if (bi >= func.blocks_.size())
+                    continue;
+                const auto& block = func.blocks_[bi];
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    if (i >= func.instruction_dirty_.size() || func.instruction_dirty_[i] == 0)
+                        ++desync;
+                }
+            }
+        }
+        return desync;
+    }
+
+    // Issue #2034: true when every dirty block has all of its
+    // instructions marked dirty in the SoA column.
+    [[nodiscard]] bool instruction_dirty_synced_with_blocks() const {
+        return count_block_instr_dirty_desync() == 0;
     }
 
     // Get a view of the i-th instruction in a function.

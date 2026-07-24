@@ -1762,7 +1762,7 @@ static IRModule lower_to_ir_impl(
     if (state.dual_emit_soa) {
         const auto aos_fns = state.module.functions.size();
         const auto soa_fns = g_last_soa_snapshot.module.functions.size();
-        const bool ok = (soa_fns == aos_fns) || (aos_fns == 0);
+        bool ok = (soa_fns == aos_fns) || (aos_fns == 0);
         g_last_soa_snapshot.consistency_ok = ok;
         ++g_last_soa_snapshot.consistency_checks;
         if (!ok) {
@@ -1791,6 +1791,15 @@ static IRModule lower_to_ir_impl(
                 for (auto& fn : g_last_soa_snapshot.module.functions)
                     fn.mark_all_blocks_dirty();
             }
+        }
+        // Issue #2034: remaining block↔instruction dirty desync is a
+        // hard consistency_mismatch. Sync repairs the column; dual-
+        // emit consumers then see every dirty block fully dirty.
+        const auto desync = g_last_soa_snapshot.module.count_block_instr_dirty_desync();
+        if (desync > 0) {
+            ++g_last_soa_snapshot.consistency_mismatches;
+            g_last_soa_snapshot.consistency_ok = false;
+            (void)g_last_soa_snapshot.module.sync_instruction_dirty_from_block_dirty();
         }
     }
     return state.module;
