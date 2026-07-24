@@ -1800,6 +1800,11 @@ aura_add_issue_test(test_dead_coercion_pipeline_wire)
 aura_issue_test_link_llvm_jit(test_dead_coercion_pipeline_wire)
 add_dependencies(all_test_issue_targets test_dead_coercion_pipeline_wire)
 
+# Issue #2026: linear ownership + provenance consistency post-steal / GC.
+aura_add_issue_test(test_linear_provenance_steal_gc_closed_loop)
+aura_issue_test_link_llvm_jit(test_linear_provenance_steal_gc_closed_loop)
+add_dependencies(all_test_issue_targets test_linear_provenance_steal_gc_closed_loop)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

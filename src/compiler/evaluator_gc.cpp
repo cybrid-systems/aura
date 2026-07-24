@@ -8,6 +8,7 @@ module;
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
 #include "core/gc_hooks.h"
+#include "core/provenance_tracker.hh" // Issue #2026: validate_linear_provenance
 
 module aura.compiler.evaluator;
 
@@ -230,25 +231,22 @@ bool Evaluator::validate_linear_ownership_state(
     std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
     std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
     std::atomic<std::uint64_t>* bridge_epoch_drift_counter) noexcept {
-    // Issue #1515: untracked (0) always ok; Moved (4) is a terminal
-    // state that fails EnvFrame / bridge coordination checks so GC
-    // and runtime never treat moved values as live roots.
-    if (linear_state == 0)
-        return true;
-    if (linear_state == 4) // Moved — never a valid live ownership root
-        return false;
-    if (frame_version < current_version)
-        return false;
-    // Issue #1515 / #1755: bridge_epoch drift — caller-supplied
-    // closure stamp vs current_bridge_epoch (safepoint snapshot or
-    // live). bridge_epoch==0 means unbridged → skip. On mismatch
-    // the capture is stale across COW / compact / truncate; optional
-    // counter surfaces the drift for observability (#1755).
-    if (bridge_epoch != 0 && bridge_epoch != current_bridge_epoch) {
-        if (bridge_epoch_drift_counter)
+    // Issue #1515 / #2026: route through provenance_tracker::validate_linear_provenance
+    // so GC / steal / boundary / IR share one consistency policy.
+    // require_complete=false here (hot dual-check); steal/GC use require_complete
+    // via probe paths that call validate_linear_provenance directly.
+    using aura::core::provenance::validate_linear_provenance;
+    const auto r = validate_linear_provenance(
+        linear_state, /*node_id=*/0, /*provenance_id=*/0, /*mutation_id=*/0, frame_version,
+        current_version, bridge_epoch, current_bridge_epoch, /*require_complete=*/false);
+    if (!r.ok) {
+        if (bridge_epoch_drift_counter && r.reason &&
+            std::string_view(r.reason).find("bridge") != std::string_view::npos)
             bridge_epoch_drift_counter->fetch_add(1, std::memory_order_relaxed);
         return false;
     }
+    // Preserve legacy: bridge_epoch==0 skip is already handled inside
+    // validate_linear_provenance (only mismatches when both non-zero).
     return true;
 }
 
@@ -301,6 +299,10 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
     auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
+    using aura::core::provenance::g_provenance_enforcement;
+    using aura::core::provenance::validate_linear_provenance;
+    g_provenance_enforcement().linear_provenance_gc_checks_total.fetch_add(
+        1, std::memory_order_relaxed);
     for (const auto& [id, cl] : closures_) {
         (void)id;
         if (cl.bridge_epoch == 0)
@@ -308,11 +310,42 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
             continue;
         const auto& fr = env_frames_[cl.env_id];
-        // EnvFrame.version_ × bridge_epoch coordination (Issue #1515 / #1755).
-        // (IRClosure.env_version is dual-checked on the IR apply path
-        // in #1513; TW Closure map uses frame.version_ here.)
-        if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                             current_bridge, drift_ctr)) {
+        // Issue #2026: explicit linear × provenance validation at GC.
+        // Scan binding ownership states; require complete forensic trail
+        // on tracked linear roots (steal/GC closed-loop).
+        bool frame_has_linear = false;
+        bool frame_has_moved = false;
+        for (const auto s : fr.bindings_linear_ownership_state_) {
+            if (s == linear_rt::Moved)
+                frame_has_moved = true;
+            if (s != linear_rt::Untracked)
+                frame_has_linear = true;
+        }
+        if (frame_has_moved) {
+            const auto pr = validate_linear_provenance(
+                linear_rt::Moved, static_cast<std::uint32_t>(cl.env_id), 0, 0, fr.version_,
+                current_ver, cl.bridge_epoch, current_bridge, /*require_complete=*/true);
+            if (!pr.ok) {
+                violation = true;
+                break;
+            }
+        }
+        if (frame_has_linear) {
+            // Hygiene stamp provides weak mutation/provenance when present.
+            const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+            const auto pr = validate_linear_provenance(
+                linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), hy.node_id,
+                hy.source_mutation_id, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                /*require_complete=*/false);
+            if (!pr.ok ||
+                !validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                                 current_bridge, drift_ctr)) {
+                violation = true;
+                break;
+            }
+        } else if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                                    current_bridge, drift_ctr)) {
+            // Non-linear bridged closure still dual-checks epoch (legacy).
             violation = true;
             break;
         }
@@ -583,7 +616,44 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
     // 4) GC root registration consistency audit (monotonicity + balance).
     (void)run_linear_gc_root_audit(path);
 
-    // 5) Mirror issue metrics aliases used by query surface.
+    // 5) Issue #2026: linear × provenance consistency after enforce (shared
+    // with IR / steal / GC). Soft require_complete=false so boundary stays
+    // non-blocking; force_deopt mismatches still mark !all_safe.
+    {
+        using aura::core::provenance::validate_linear_provenance;
+        const auto current_ver = defuse_version_snapshot();
+        const auto current_bridge = current_bridge_epoch();
+        const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        for (const auto& [id, cl] : closures_) {
+            (void)id;
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                continue;
+            const auto& fr = env_frames_[cl.env_id];
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s == linear_rt::Untracked)
+                    continue;
+                const auto pr = validate_linear_provenance(
+                    s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
+                    fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                    /*require_complete=*/false);
+                if (!pr.ok && pr.force_deopt) {
+                    out.all_safe = false;
+                    if (m) {
+                        m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                        m->linear_ownership_violation_prevented.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    break;
+                }
+            }
+            if (!out.all_safe)
+                break;
+        }
+    }
+
+    // 6) Mirror issue metrics aliases used by query surface.
     if (m) {
         // linear_post_mutate_enforcements already bumped per-frame in enforce;
         // also bump the aggregate total once for boundary entry visibility.
@@ -680,12 +750,48 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
         enforce_linear_boundary_consistency(kLinearGcRootAuditFiberSteal, /*mark_all_linear=*/true);
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     std::atomic<std::uint64_t>* site = m ? &m->linear_steal_enforced : nullptr;
-    record_linear_gc_probe(*this, !r.all_safe, site);
-    if (!r.all_safe) {
+    // Issue #2026: post-enforce linear × provenance closed-loop at steal.
+    using aura::core::provenance::g_provenance_enforcement;
+    using aura::core::provenance::validate_linear_provenance;
+    g_provenance_enforcement().linear_provenance_steal_checks_total.fetch_add(
+        1, std::memory_order_relaxed);
+    bool prov_violation = false;
+    {
+        const auto current_ver = defuse_version_snapshot();
+        const auto current_bridge = current_bridge_epoch();
+        const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        for (const auto& [id, cl] : closures_) {
+            (void)id;
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                continue;
+            const auto& fr = env_frames_[cl.env_id];
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s == linear_rt::Untracked)
+                    continue;
+                const auto pr = validate_linear_provenance(
+                    s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
+                    fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                    /*require_complete=*/false);
+                if (!pr.ok && pr.force_deopt) {
+                    prov_violation = true;
+                    break;
+                }
+            }
+            if (prov_violation)
+                break;
+        }
+    }
+    const bool any_violation = !r.all_safe || prov_violation;
+    record_linear_gc_probe(*this, any_violation, site);
+    if (any_violation) {
         bump_runtime_observability_steal_ownership_violation_correlated();
         if (m) {
             m->multifiber_mutate_races_detected_total.fetch_add(1, std::memory_order_relaxed);
             m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            if (prov_violation)
+                m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Issue #1473 / #1497: unified auto-restamp at fiber-steal time.

@@ -41,6 +41,15 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> macro_hygiene_provenance_hits_total{0};
     // Issue #1877: Strict sandbox engaged FailOnStale provenance policy.
     std::atomic<std::uint64_t> fail_on_stale_strict_sandbox_total{0};
+    // Issue #2026: linear ownership × provenance consistency closed-loop.
+    std::atomic<std::uint64_t> linear_provenance_checks_total{0};
+    std::atomic<std::uint64_t> linear_provenance_ok_total{0};
+    std::atomic<std::uint64_t> linear_provenance_mismatch_total{0};
+    std::atomic<std::uint64_t> linear_provenance_moved_live_total{0};
+    std::atomic<std::uint64_t> linear_provenance_incomplete_total{0};
+    std::atomic<std::uint64_t> linear_provenance_deopt_total{0};
+    std::atomic<std::uint64_t> linear_provenance_steal_checks_total{0};
+    std::atomic<std::uint64_t> linear_provenance_gc_checks_total{0};
 };
 
 inline ProvenanceEnforcementMetrics& g_provenance_enforcement() noexcept {
@@ -93,6 +102,108 @@ inline void record_macro_hygiene_provenance_hit(std::uint64_t n = 1) noexcept {
 inline void record_fail_on_stale_strict_sandbox(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().fail_on_stale_strict_sandbox_total.fetch_add(
         n, std::memory_order_relaxed);
+}
+
+// Issue #2026: linear ownership state codes (mirror linear_rt without
+// depending on the evaluator module).
+inline constexpr std::uint8_t kLinearUntracked = 0;
+inline constexpr std::uint8_t kLinearOwned = 1;
+inline constexpr std::uint8_t kLinearBorrowed = 2;
+inline constexpr std::uint8_t kLinearMutBorrowed = 3;
+inline constexpr std::uint8_t kLinearMoved = 4;
+
+// Result of validate_linear_provenance (shared by steal / GC / IR / boundary).
+struct LinearProvenanceResult {
+    bool ok = true;
+    bool force_deopt = false; // mismatch severe enough to drop/deopt
+    const char* reason = nullptr;
+};
+
+// Issue #2026: unified linear ownership + provenance consistency check.
+//
+// Policy (shared across fiber-steal, GC safepoint, MutationBoundary failure,
+// and IR executor linear ops):
+//   - Untracked: always ok (no linear root)
+//   - Moved as a live root: mismatch + force_deopt (use-after-move)
+//   - Owned/Borrowed/MutBorrowed with stale frame_version: mismatch + deopt
+//   - bridge_epoch != 0 and != current: mismatch + deopt (steal/GC domain)
+//   - Tracked linear with both provenance_id==0 and mutation_id==0:
+//     incomplete forensic trail → bump incomplete; force_deopt only when
+//     require_complete=true (steal/GC enforce paths pass true)
+//
+// node_id is for audit/forensics (env_id or AST node); 0 when unavailable.
+[[nodiscard]] inline LinearProvenanceResult
+validate_linear_provenance(std::uint8_t linear_state, std::uint32_t node_id = 0,
+                           std::uint32_t provenance_id = 0, std::uint64_t mutation_id = 0,
+                           std::uint64_t frame_version = 0, std::uint64_t current_version = 0,
+                           std::uint64_t bridge_epoch = 0, std::uint64_t current_bridge_epoch = 0,
+                           bool require_complete = false) noexcept {
+    (void)node_id;
+    auto& m = g_provenance_enforcement();
+    m.linear_provenance_checks_total.fetch_add(1, std::memory_order_relaxed);
+    LinearProvenanceResult r;
+
+    if (linear_state == kLinearUntracked) {
+        m.linear_provenance_ok_total.fetch_add(1, std::memory_order_relaxed);
+        return r;
+    }
+
+    // Moved must never remain a live GC/steal root.
+    if (linear_state == kLinearMoved) {
+        r.ok = false;
+        r.force_deopt = true;
+        r.reason = "Moved linear live root";
+        m.linear_provenance_mismatch_total.fetch_add(1, std::memory_order_release);
+        m.linear_provenance_moved_live_total.fetch_add(1, std::memory_order_release);
+        m.linear_provenance_deopt_total.fetch_add(1, std::memory_order_release);
+        m.cross_layer_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        return r;
+    }
+
+    // EnvFrame version drift (steal / mutate concurrent with GC).
+    if (current_version != 0 && frame_version != 0 && frame_version < current_version) {
+        r.ok = false;
+        r.force_deopt = true;
+        r.reason = "linear EnvFrame version stale";
+        m.linear_provenance_mismatch_total.fetch_add(1, std::memory_order_release);
+        m.linear_provenance_deopt_total.fetch_add(1, std::memory_order_release);
+        return r;
+    }
+
+    // Bridge epoch drift across COW / compact / steal.
+    if (bridge_epoch != 0 && current_bridge_epoch != 0 && bridge_epoch != current_bridge_epoch) {
+        r.ok = false;
+        r.force_deopt = true;
+        r.reason = "linear bridge_epoch mismatch";
+        m.linear_provenance_mismatch_total.fetch_add(1, std::memory_order_release);
+        m.linear_provenance_deopt_total.fetch_add(1, std::memory_order_release);
+        return r;
+    }
+
+    // Tracked linear without forensic provenance (incomplete chain).
+    if (provenance_id == 0 && mutation_id == 0) {
+        m.linear_provenance_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+        if (require_complete) {
+            r.ok = false;
+            r.force_deopt = true;
+            r.reason = "linear provenance incomplete";
+            m.linear_provenance_mismatch_total.fetch_add(1, std::memory_order_release);
+            m.linear_provenance_deopt_total.fetch_add(1, std::memory_order_release);
+            return r;
+        }
+        // Soft: incomplete but not force-deopt on hot IR path.
+    }
+
+    m.linear_provenance_ok_total.fetch_add(1, std::memory_order_relaxed);
+    return r;
+}
+
+// Completeness ratio in basis points (0–10000): ok / checks.
+[[nodiscard]] inline std::uint64_t linear_provenance_consistency_bp() noexcept {
+    auto& m = g_provenance_enforcement();
+    const auto c = m.linear_provenance_checks_total.load(std::memory_order_relaxed);
+    const auto ok = m.linear_provenance_ok_total.load(std::memory_order_relaxed);
+    return c > 0 ? (ok * 10000u) / c : 10000u;
 }
 
 // Issue #1877: last MacroIntroduced hygiene → provenance stamp so truncated
@@ -235,6 +346,14 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.cross_cow_provenance_enforced_total.store(0, std::memory_order_relaxed);
     m.macro_hygiene_provenance_hits_total.store(0, std::memory_order_relaxed);
     m.fail_on_stale_strict_sandbox_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_mismatch_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_moved_live_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_incomplete_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_deopt_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_steal_checks_total.store(0, std::memory_order_relaxed);
+    m.linear_provenance_gc_checks_total.store(0, std::memory_order_relaxed);
     g_provenance_tracker().last_hygiene = {};
 }
 

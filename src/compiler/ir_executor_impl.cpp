@@ -18,6 +18,7 @@ module;
 #include "runtime_shared.h"
 #include "observability_logger.h"
 #include "shape_jit_pass_closedloop_stats.h"
+#include "core/provenance_tracker.hh" // Issue #2026: validate_linear_provenance
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -139,11 +140,26 @@ static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept
     return true;
 }
 
-// Issue #1515: pure state-machine gate. Caller records metrics once
-// per op path (either state reject, or heap pass/fail) to avoid
-// double-counting linear_check_pass + violations.
+// Issue #1515 / #2026: pure state-machine gate + provenance consistency.
+// Caller records metrics once per op path (either state reject, or heap
+// pass/fail) to avoid double-counting linear_check_pass + violations.
+// Shared helper with Evaluator GC/steal/boundary via provenance_tracker.
 static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op) noexcept {
-    return linear_state_allows_op(state, op);
+    if (!linear_state_allows_op(state, op))
+        return false;
+    // Issue #2026: Moved is never a valid live state for any op (double-drop
+    // / use-after-move). Owned/Borrow gates are op-specific above.
+    if (state == 0)
+        return true;
+    using aura::core::provenance::validate_linear_provenance;
+    // Hot IR path: require_complete=false (soft incomplete forensic trail).
+    // force_deopt on Moved live / would-be-stale is still hard-fail.
+    const auto r = validate_linear_provenance(state, /*node_id=*/0, /*provenance_id=*/0,
+                                              /*mutation_id=*/0, /*frame_version=*/0,
+                                              /*current_version=*/0, /*bridge_epoch=*/0,
+                                              /*current_bridge_epoch=*/0,
+                                              /*require_complete=*/false);
+    return r.ok;
 }
 
 static void record_epoch_stale_steal_caught(CompilerMetrics* metrics) {
