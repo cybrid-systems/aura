@@ -23,6 +23,7 @@ import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
 import aura.compiler.lowering_linear_types;
 import aura.core.ast;
+import aura.core.lifetime_pin;
 
 namespace aura::compiler::primitives_detail {
 
@@ -750,6 +751,26 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"lifetime-pin-scaffold", make_int(m ? load_u64(m, m->lifetime_pin_scaffold) : 1)},
                 {"hot-path-primitives-module",
                  make_int(m ? load_u64(m, m->hot_path_primitives_module) : 1)},
+            };
+            return build_kv_hash(ev, kv);
+        });
+
+    // Issue #2000 Phase 2: real LifetimePin RAII pinning + generation stamp
+    // + FFI handoff + restamp/invalidate. Reads from g_lifetime_pin_stats
+    // (lifetime_pin module owns source of truth; per-CompilerMetrics
+    // lifetime_pin_invalidations_total / lifetime_pin_restamps_total are
+    // bridged from these via compact_sweep + MutationBoundaryGuard dtor).
+    ObservabilityPrims::register_stats_impl(
+        "query:lifetime-pin-stats", [&ev](std::span<const EvalValue>) -> EvalValue {
+            const auto& s = aura::core::lifetime::g_lifetime_pin_stats;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema", make_int(2000)},
+                {"phase", make_int(aura::core::lifetime::kLifetimePinPhase)},
+                {"pins", make_int(static_cast<std::int64_t>(s.pins))},
+                {"unpins", make_int(static_cast<std::int64_t>(s.unpins))},
+                {"ffi-handoffs", make_int(static_cast<std::int64_t>(s.ffi_handoffs))},
+                {"invalidations", make_int(static_cast<std::int64_t>(s.invalidations))},
+                {"restamps", make_int(static_cast<std::int64_t>(s.restamps))},
             };
             return build_kv_hash(ev, kv);
         });

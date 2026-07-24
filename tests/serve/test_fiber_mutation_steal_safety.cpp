@@ -66,6 +66,7 @@ import aura.core.ast;
 import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.compiler.service;
+import aura.core.lifetime_pin;
 
 namespace aura_542_detail {
 
@@ -407,17 +408,75 @@ bool test_happy_path_regression() {
     return true;
 }
 
+// ── Issue #2000 Phase 2: concurrent LifetimePin + compact_sweep stress ──
+// Worker threads create / pin / restamp / unpin pins. Main thread
+// fires invalidate_all_pins_for_arena(0) periodically to simulate
+// compact_sweep. Verifies: no UAF, counters monotonic, registry
+// consistent.
+static bool test_lifetime_pin_concurrent_compact() {
+    using aura::core::lifetime::g_lifetime_pin_stats;
+    using aura::core::lifetime::invalidate_all_pins_for_arena;
+    using aura::core::lifetime::LifetimePin;
+    using aura::core::lifetime::live_pin_count;
+
+    const auto pins_before = g_lifetime_pin_stats.pins;
+    const auto inv_before = g_lifetime_pin_stats.invalidations;
+
+    constexpr int kThreads = 4;
+    constexpr int kIters = 200;
+    std::atomic<bool> done{false};
+    std::atomic<std::uint64_t> pins_created{0};
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&done, &pins_created]() {
+            std::vector<LifetimePin> local;
+            local.reserve(kIters);
+            std::vector<int> bufs(kIters);
+            for (int i = 0; i < kIters && !done.load(std::memory_order_relaxed); ++i) {
+                local.emplace_back();
+                local.back().pin(&bufs[i], static_cast<std::uint64_t>(i + 1), 0);
+                pins_created.fetch_add(1, std::memory_order_relaxed);
+                if ((i & 3) == 0)
+                    local.back().restamp(static_cast<std::uint64_t>(i + 100));
+                else if ((i & 3) == 1)
+                    local.back().unpin_on_compact();
+            }
+            // dtor of local pins runs on scope exit (pins drop → unpins++)
+        });
+    }
+
+    // main thread simulates concurrent compact_sweep via invalidate_all
+    for (int i = 0; i < 50 && !done.load(std::memory_order_relaxed); ++i) {
+        invalidate_all_pins_for_arena(0);
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+    done.store(true, std::memory_order_relaxed);
+    for (auto& th : threads)
+        th.join();
+
+    CHECK(pins_created.load() >= static_cast<std::uint64_t>(kThreads * 100),
+          "created ≥ 100 pins/thread");
+    CHECK(g_lifetime_pin_stats.pins >= pins_before + pins_created.load(), "pins counter grew");
+    CHECK(g_lifetime_pin_stats.invalidations > inv_before,
+          "invalidations counter grew from concurrent invalidate_all");
+    CHECK(live_pin_count() == 0, "all pins destructed → live_pin_count == 0");
+    return true;
+}
+
 } // namespace aura_542_detail
 
 int main() {
     using namespace aura_542_detail;
     std::println("Issue #542 — Multi-Fiber MutationBoundary + Work-Stealing "
-                 "Safety + Starvation Prevention");
+                 "Safety + Starvation Prevention (+ #2000 phase 2)");
     test_eight_thread_mutate();
     test_fifty_thread_starvation();
     test_gc_during_mutation();
     test_fuzz_long_running();
     test_scheduler_fiber_yield_metrics();
     test_happy_path_regression();
+    test_lifetime_pin_concurrent_compact();
     return run_pilot_tests();
 }

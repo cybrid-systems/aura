@@ -6524,20 +6524,22 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> audit_wal_replay_count{0};
     std::atomic<std::uint64_t> audit_crash_recovery_success{0};
     std::atomic<std::uint64_t> audit_wal_bytes_written{0};
-    std::atomic<std::uint64_t> arena_moving_defrag_scaffold{1};   // #1214
-    std::atomic<std::uint64_t> production_health_slo_scaffold{1}; // #1215
-    std::atomic<std::uint64_t> typed_mutation_audit_pass{1};      // #1216
-    std::atomic<std::uint64_t> envframe_version_propagate{1};     // #1217
-    std::atomic<std::uint64_t> ir_region_effect_annotations{1};   // #1218
-    std::atomic<std::uint64_t> slo_self_heal_triggers{1};         // #1219
-    std::atomic<std::uint64_t> closure_bridge_epoch_scaffold{1};  // #1220
-    std::atomic<std::uint64_t> hotpath_contract_test_gates{1};    // #1221
-    std::atomic<std::uint64_t> metrics_prometheus_scaffold{1};    // #1222
-    std::atomic<std::uint64_t> gc_ffi_root_registration{1};       // #1223
-    std::atomic<std::uint64_t> dead_metric_detection_scaffold{1}; // #1224
-    std::atomic<std::uint64_t> arena_stats_per_fiber{1};          // #1225
-    std::atomic<std::uint64_t> lifetime_pin_scaffold{1};          // #1226
-    std::atomic<std::uint64_t> hot_path_primitives_module{1};     // #1227
+    std::atomic<std::uint64_t> arena_moving_defrag_scaffold{1};     // #1214
+    std::atomic<std::uint64_t> production_health_slo_scaffold{1};   // #1215
+    std::atomic<std::uint64_t> typed_mutation_audit_pass{1};        // #1216
+    std::atomic<std::uint64_t> envframe_version_propagate{1};       // #1217
+    std::atomic<std::uint64_t> ir_region_effect_annotations{1};     // #1218
+    std::atomic<std::uint64_t> slo_self_heal_triggers{1};           // #1219
+    std::atomic<std::uint64_t> closure_bridge_epoch_scaffold{1};    // #1220
+    std::atomic<std::uint64_t> hotpath_contract_test_gates{1};      // #1221
+    std::atomic<std::uint64_t> metrics_prometheus_scaffold{1};      // #1222
+    std::atomic<std::uint64_t> gc_ffi_root_registration{1};         // #1223
+    std::atomic<std::uint64_t> dead_metric_detection_scaffold{1};   // #1224
+    std::atomic<std::uint64_t> arena_stats_per_fiber{1};            // #1225
+    std::atomic<std::uint64_t> lifetime_pin_scaffold{2};            // #1226 / #2000 phase 2
+    std::atomic<std::uint64_t> lifetime_pin_invalidations_total{0}; // #2000 phase 2
+    std::atomic<std::uint64_t> lifetime_pin_restamps_total{0};      // #2000 phase 2
+    std::atomic<std::uint64_t> hot_path_primitives_module{1};       // #1227
     // ── Issues #1229–#1240: EDA/FFI/agent security + verification Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1229_1240_active{1};
     std::atomic<std::uint64_t> ffi_opaque_tracking_hardened{1};     // #1230
