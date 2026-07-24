@@ -198,6 +198,95 @@ export enum class SummaryFlag : std::uint32_t {
 // into Envs holding that pool. resolve() / find_by_name() are const
 // reads and are safe only while no concurrent intern runs.
 //
+// Issue #2062: intern/resolve/find_by_name now use a shared_mutex
+// (OwnedSharedMutex, defined above before this class). concurrent
+// intern is serialized, concurrent resolve / find_by_name is parallel.
+//
+
+// Issue #2062: file-level atomic observability for StringPool intern.
+// g_stringpool_intern_total is bumped on every intern() call (after the
+// write_lock is acquired — counts actual intern operations, not lock
+// contention). g_stringpool_intern_concurrent_readers_total is bumped on
+// every successful shared_lock acquisition in resolve() / find_by_name()
+// so an Agent can compute read/write contention ratio. Exposed via the
+// export accessors below (consumed by the query:stringpool-intern-stats
+// primitive in evaluator_primitives_query.cpp).
+static std::atomic<std::uint64_t> g_stringpool_intern_total{0};
+static std::atomic<std::uint64_t> g_stringpool_intern_concurrent_readers_total{0};
+
+export [[nodiscard]] std::uint64_t stringpool_intern_total() noexcept {
+    return g_stringpool_intern_total.load(std::memory_order_relaxed);
+}
+
+export [[nodiscard]] std::uint64_t stringpool_intern_concurrent_readers_total() noexcept {
+    return g_stringpool_intern_concurrent_readers_total.load(std::memory_order_relaxed);
+}
+
+// ── Issue #222: OwnedSharedMutex wrapper ──────────────────────
+//
+// std::shared_mutex is neither copyable nor movable, so a class
+// containing it directly has its implicit copy/move ctors
+// deleted. This wrapper stores the mutex inline and defines the
+// copy/move semantics we want for FlatAST + StringPool:
+//
+//   - Copy ctor: placement-new a FRESH shared_mutex. Each copy
+//     gets its own mutex (independent mutation isolation).
+//   - Copy assign: no-op (the destination keeps its own mutex;
+//     only the data members are overwritten).
+//   - Move ctor / move assign: destination gets a fresh mutex;
+//     the source keeps its own until destroyed (lock state is
+//     not transferred — same discipline as the old unique_ptr
+//     move, which left the moved-from FlatAST with nullptr).
+//
+// Issue #300 follow-up #1: the previous unique_ptr<std::shared_mutex>
+// allocated the mutex on the heap. ~FlatAST ran ~OwnedSharedMutex
+// (freeing that heap block) before ~children_, and ASAN caught a
+// PCV shared_ptr control block UAF — the freed mutex block was
+// reused with a corrupted use_count. Inline storage removes the
+// extra heap free entirely.
+//
+// Used as the type of `FlatAST::structural_mtx_` /
+// `FlatAST::metadata_mtx_` and `StringPool::mtx_` (Issue #2062).
+class OwnedSharedMutex {
+public:
+    OwnedSharedMutex() noexcept { construct(); }
+    ~OwnedSharedMutex() { destroy(); }
+
+    // Copy: fresh mutex (independent isolation).
+    OwnedSharedMutex(const OwnedSharedMutex&) noexcept { construct(); }
+    // Move: fresh mutex in the destination; source keeps its own.
+    OwnedSharedMutex(OwnedSharedMutex&&) noexcept { construct(); }
+    // Copy-assign: keep our own mutex (the data being copied
+    // doesn't include the mutex state).
+    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept { return *this; }
+    // Move-assign: keep our own mutex.
+    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept { return *this; }
+
+    std::shared_mutex& get() noexcept { return *mutex_ptr(); }
+    const std::shared_mutex& get() const noexcept { return *mutex_ptr(); }
+    // Like get() but returns a non-const reference even through
+    // a const OwnedSharedMutex. Needed because shared_lock /
+    // unique_lock require a non-const mutex reference to acquire
+    // (the lock state is part of the mutex). The const_cast is
+    // safe here because acquiring a lock is a "logical const"
+    // operation: it doesn't modify the protected data.
+    std::shared_mutex& mutable_get() const noexcept {
+        return *const_cast<std::shared_mutex*>(mutex_ptr());
+    }
+
+private:
+    alignas(std::shared_mutex) std::byte storage_[sizeof(std::shared_mutex)];
+
+    std::shared_mutex* mutex_ptr() noexcept {
+        return std::launder(reinterpret_cast<std::shared_mutex*>(storage_));
+    }
+    const std::shared_mutex* mutex_ptr() const noexcept {
+        return std::launder(reinterpret_cast<const std::shared_mutex*>(storage_));
+    }
+    void construct() { std::construct_at(mutex_ptr()); }
+    void destroy() { std::destroy_at(mutex_ptr()); }
+};
+
 export class StringPool {
 public:
     explicit StringPool(std::pmr::polymorphic_allocator<std::byte> alloc = {})
@@ -210,8 +299,16 @@ public:
     }
 
     // Intern a string — returns a stable SymId.
-    // Not thread-safe (Issue #1861); see class comment.
+    // Issue #2062: thread-safe under concurrent readers + writers via
+    // std::shared_mutex placed in storage_ (placement-new, see construct()).
+    // Readers (resolve/find_by_name) take std::shared_lock; writers
+    // (intern) take std::unique_lock. Concurrent intern is serialized,
+    // concurrent resolve/find_by_name is parallel. StringPool remains
+    // a not-safe-across-compact target (see compact_sweep restamp in
+    // evaluator.ixx — SymId is rebuilt across compact).
     SymId intern(std::string_view s) {
+        std::unique_lock<std::shared_mutex> write_lock(mtx_.mutable_get());
+        g_stringpool_intern_total.fetch_add(1, std::memory_order_relaxed);
         if (s.empty())
             return 0;
 
@@ -221,7 +318,10 @@ public:
 
         while (hash_tbl_[idx] != INVALID_SYM) {
             auto existing = hash_tbl_[idx];
-            auto view = resolve(existing);
+            // Use resolve_unlocked here — intern() already holds the
+            // write_lock, so calling resolve() would deadlock trying to
+            // re-acquire the same shared_mutex as a shared_lock.
+            auto view = resolve_unlocked(existing);
             if (view == s)
                 return existing;    // already interned
             idx = (idx + 1) & mask; // linear probe
@@ -242,8 +342,11 @@ public:
         return offset;
     }
 
-    // Resolve a SymId back to string_view
+    // Resolve a SymId back to string_view. Issue #2062: thread-safe
+    // under concurrent intern via std::shared_mutex shared_lock.
     std::string_view resolve(SymId id) const {
+        std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
+        g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
         if (id >= buf_.size())
             return {};
         return std::string_view(buf_.data() + id);
@@ -267,7 +370,11 @@ public:
     // the resolved SymId from a captured ref) → walk the AST
     // of that pool's flat. We don't try to unify SymIds
     // across pools (that's deferred — see #372 follow-ups).
+    // Issue #2062: thread-safe find_by_name under concurrent intern
+    // via std::shared_mutex shared_lock.
     [[nodiscard]] std::optional<SymId> find_by_name(std::string_view s) const noexcept {
+        std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
+        g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
         if (s.empty())
             return SymId{0};
         auto hash = hash_str(s);
@@ -275,11 +382,20 @@ public:
         auto idx = hash & mask;
         while (hash_tbl_[idx] != INVALID_SYM) {
             auto existing = hash_tbl_[idx];
-            if (resolve(existing) == s)
+            if (resolve_unlocked(existing) == s)
                 return existing;
             idx = (idx + 1) & mask;
         }
         return std::nullopt;
+    }
+
+    // Issue #2062: resolve helper that bypasses the shared_mutex
+    // (assumes the caller already holds the appropriate lock).
+    // Used by find_by_name which holds a shared_lock.
+    [[nodiscard]] std::string_view resolve_unlocked(SymId id) const noexcept {
+        if (id >= buf_.size())
+            return {};
+        return std::string_view(buf_.data() + id);
     }
 
     // Total bytes used for string data
@@ -387,7 +503,11 @@ private:
 
         for (std::uint32_t i = 0; i < old_cap; ++i) {
             if (old_tbl[i] != INVALID_SYM) {
-                auto hash = hash_str(resolve(old_tbl[i]));
+                // Use resolve_unlocked here — rehash is always called
+                // from intern() which already holds the write_lock,
+                // so calling resolve() would deadlock trying to
+                // re-acquire the same shared_mutex as a shared_lock.
+                auto hash = hash_str(resolve_unlocked(old_tbl[i]));
                 auto mask = hash_capacity_ - 1;
                 auto idx = hash & mask;
                 while (hash_tbl_[idx] != INVALID_SYM)
@@ -405,6 +525,11 @@ private:
     std::pmr::vector<SymId> hash_tbl_;
     std::uint32_t hash_capacity_ = 0;
     std::uint32_t entry_count_ = 0;
+    // Issue #2062: thread-safe intern via OwnedSharedMutex (placement-new
+    // helper for the std::shared_mutex). intern() takes mutable_get() (unique_lock);
+    // resolve() / find_by_name() take get() (shared_lock). Concurrent intern
+    // is serialized; concurrent resolve/find_by_name is parallel.
+    mutable OwnedSharedMutex mtx_;
 };
 
 // ── Node metadata (constexpr table for reflection/validation) ──
@@ -555,70 +680,6 @@ export struct MatchClauseInfo {
     bool exhaustiveness_checked = false;
     // Normalized subject TypeId.index from last exhaustiveness check (0 = unknown).
     std::uint32_t subject_type_id = 0;
-};
-
-// ── Issue #222: OwnedSharedMutex wrapper ──────────────────────
-//
-// std::shared_mutex is neither copyable nor movable, so a class
-// containing it directly has its implicit copy/move ctors
-// deleted. This wrapper stores the mutex inline and defines the
-// copy/move semantics we want for FlatAST:
-//
-//   - Copy ctor: placement-new a FRESH shared_mutex. Each copy
-//     gets its own mutex (independent mutation isolation).
-//   - Copy assign: no-op (the destination keeps its own mutex;
-//     only the data members are overwritten).
-//   - Move ctor / move assign: destination gets a fresh mutex;
-//     the source keeps its own until destroyed (lock state is
-//     not transferred — same discipline as the old unique_ptr
-//     move, which left the moved-from FlatAST with nullptr).
-//
-// Issue #300 follow-up #1: the previous unique_ptr<std::shared_mutex>
-// allocated the mutex on the heap. ~FlatAST ran ~OwnedSharedMutex
-// (freeing that heap block) before ~children_, and ASAN caught a
-// PCV shared_ptr control block UAF — the freed mutex block was
-// reused with a corrupted use_count. Inline storage removes the
-// extra heap free entirely.
-//
-// Used as the type of `FlatAST::structural_mtx_`.
-class OwnedSharedMutex {
-public:
-    OwnedSharedMutex() noexcept { construct(); }
-    ~OwnedSharedMutex() { destroy(); }
-
-    // Copy: fresh mutex (independent isolation).
-    OwnedSharedMutex(const OwnedSharedMutex&) noexcept { construct(); }
-    // Move: fresh mutex in the destination; source keeps its own.
-    OwnedSharedMutex(OwnedSharedMutex&&) noexcept { construct(); }
-    // Copy-assign: keep our own mutex (the data being copied
-    // doesn't include the mutex state).
-    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept { return *this; }
-    // Move-assign: keep our own mutex.
-    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept { return *this; }
-
-    std::shared_mutex& get() noexcept { return *mutex_ptr(); }
-    const std::shared_mutex& get() const noexcept { return *mutex_ptr(); }
-    // Like get() but returns a non-const reference even through
-    // a const OwnedSharedMutex. Needed because shared_lock /
-    // unique_lock require a non-const mutex reference to acquire
-    // (the lock state is part of the mutex). The const_cast is
-    // safe here because acquiring a lock is a "logical const"
-    // operation: it doesn't modify the protected data.
-    std::shared_mutex& mutable_get() const noexcept {
-        return *const_cast<std::shared_mutex*>(mutex_ptr());
-    }
-
-private:
-    alignas(std::shared_mutex) std::byte storage_[sizeof(std::shared_mutex)];
-
-    std::shared_mutex* mutex_ptr() noexcept {
-        return std::launder(reinterpret_cast<std::shared_mutex*>(storage_));
-    }
-    const std::shared_mutex* mutex_ptr() const noexcept {
-        return std::launder(reinterpret_cast<const std::shared_mutex*>(storage_));
-    }
-    void construct() { std::construct_at(mutex_ptr()); }
-    void destroy() { std::destroy_at(mutex_ptr()); }
 };
 
 // Issue #261: observability POD for NodeId lifecycle / fragmentation.
