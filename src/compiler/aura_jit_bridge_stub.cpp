@@ -422,6 +422,16 @@ aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out) {
     std::memset(out, 0, sizeof(*out));
 }
 
+// Issue #2014: weak no-ops when hot_update_registry.cpp is not linked.
+extern "C" __attribute__((weak)) void aura_hot_update_note_deopt(void) {}
+extern "C" __attribute__((weak)) int aura_hot_update_should_throttle_reemit(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_hot_update_on_reemit_throttled(void) {}
+extern "C" __attribute__((weak)) void
+aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
+extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
+
 extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void) {}
 extern "C" __attribute__((weak)) void aura_1637_note_compact_restore_fallback(void) {}
 extern "C" __attribute__((weak)) void aura_1637_note_hot_swap_restore_fallback(void) {}

@@ -12,6 +12,7 @@
 //   AC7: 1000-iter fuzz candidates + partial emit failure — no crash
 //   AC8: #1952 getters + #1480 count lineage retained
 //   AC9: #2013 live closure remap after reemit (named match; unmatched deopt)
+//   AC10: #2014 deopt storm detection + reemit throttle
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
@@ -25,8 +26,16 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
+
+// Declared in aura_jit_runtime / stubs.
+extern "C" void aura_deopt_inc();
+extern "C" void aura_hot_update_note_deopt(void);
+extern "C" int aura_hot_update_should_throttle_reemit(void);
+extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
+extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
 
 import std;
 import aura.compiler.evaluator;
@@ -398,10 +407,105 @@ static void ac9_live_closure_remap() {
     aura_set_aot_defuse_version(0);
 }
 
+// Issue #2014: deopt storm detection + reemit recovery throttle.
+static void ac10_deopt_storm_throttle() {
+    std::println("\n--- AC10: #2014 deopt storm detection + reemit throttle ---");
+    using aura::compiler::hot_update_registry;
+    using aura::compiler::kHotUpdateDeoptStormEpoch;
+
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    // Low threshold for a fast, deterministic test (50 deopts / 1000 ms).
+    aura_hot_update_set_deopt_storm_threshold(50, 1000);
+    hot_update_registry().clear_listeners();
+
+    std::atomic<std::uint64_t> storm_hits{0};
+    std::atomic<std::uint64_t> storm_deopts{0};
+    std::atomic<std::uint64_t> epoch_storm_sentinels{0};
+    hot_update_registry().register_storm_listener([&](std::uint64_t n, std::uint64_t /*w*/) {
+        storm_hits.fetch_add(1, std::memory_order_relaxed);
+        storm_deopts.store(n, std::memory_order_relaxed);
+    });
+    hot_update_registry().register_epoch_listener([&](std::uint64_t epoch) {
+        if (epoch == kHotUpdateDeoptStormEpoch)
+            epoch_storm_sentinels.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    aura_hot_update_registry_snapshot before{};
+    aura_hot_update_registry_get_snapshot(&before);
+    const auto det0 = before.deopt_storm_detected_total;
+    const auto obs0 = before.deopt_observed_total;
+
+    // Under threshold: no storm, no throttle.
+    for (int i = 0; i < 10; ++i)
+        aura_deopt_inc();
+    CHECK(!aura_hot_update_should_throttle_reemit(), "under threshold → no throttle");
+    {
+        aura_hot_update_registry_snapshot mid{};
+        aura_hot_update_registry_get_snapshot(&mid);
+        CHECK(mid.deopt_observed_total >= obs0 + 10, "observed +10");
+        CHECK(mid.deopt_storm_detected_total == det0, "no storm under threshold");
+    }
+
+    // Cross threshold within the window → storm once + throttle.
+    for (int i = 0; i < 50; ++i)
+        aura_deopt_inc();
+    CHECK(aura_hot_update_should_throttle_reemit(), "over threshold → throttle active");
+    {
+        aura_hot_update_registry_snapshot after{};
+        aura_hot_update_registry_get_snapshot(&after);
+        CHECK(after.deopt_storm_detected_total >= det0 + 1, "storm detected +1");
+        CHECK(after.reemit_throttle_active == 1, "throttle flag");
+        CHECK(after.deopt_storm_threshold == 50, "threshold config");
+        CHECK(after.deopt_storm_window_ms == 1000, "window config");
+    }
+    CHECK(storm_hits.load() >= 1, "storm listener fired");
+    CHECK(storm_deopts.load() >= 50, "storm listener saw ≥50");
+    CHECK(epoch_storm_sentinels.load() >= 1, "epoch listeners got storm sentinel");
+
+    // Reemit pipeline should coalesce (return 0 + skip counter).
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    ReemitFixture rf;
+    rf.candidates = {{"storm_fn", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+    const auto skips0 = [&] {
+        aura_hot_update_registry_snapshot s{};
+        aura_hot_update_registry_get_snapshot(&s);
+        return s.reemit_throttle_skips_total;
+    }();
+    CHECK(aura_reemit_aot_for_dirty(0) == 0, "throttled reemit returns 0");
+    CHECK(ef.calls.load() == 0, "emit callback not invoked under throttle");
+    {
+        aura_hot_update_registry_snapshot s{};
+        aura_hot_update_registry_get_snapshot(&s);
+        CHECK(s.reemit_throttle_skips_total >= skips0 + 1, "throttle skips +1");
+    }
+
+    // query surface
+    CompilerService cs;
+    auto reg = cs.eval("(engine:metrics \"query:hot-update-registry-stats\")");
+    CHECK(reg && is_hash(*reg), "registry stats hash");
+    auto storm = cs.eval("(hash-ref (engine:metrics \"query:hot-update-registry-stats\") "
+                         "\"deopt-storm-detected-total\")");
+    CHECK(storm && is_int(*storm) && as_int(*storm) >= 1, "query storm total");
+
+    // Reset: throttle clears; low-rate deopts stay unthrottled.
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    CHECK(!aura_hot_update_should_throttle_reemit(), "reset clears throttle");
+    // Restore production defaults.
+    aura_hot_update_set_deopt_storm_threshold(1000, 100);
+    hot_update_registry().clear_listeners();
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+}
+
 } // namespace
 
 int main() {
-    std::println("=== Issue #1930/#2013: AOT reemit + stable func_id + live remap ===");
+    std::println("=== Issue #1930/#2013/#2014: reemit + remap + deopt storm ===");
     ac1_source();
     ac2_schema();
     ac3_stable_map_api();
@@ -411,6 +515,7 @@ int main() {
     ac7_fuzz();
     ac8_lineage();
     ac9_live_closure_remap();
+    ac10_deopt_storm_throttle();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
