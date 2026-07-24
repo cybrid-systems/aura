@@ -2209,6 +2209,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_compact_deopt_throttled_total{0};
     std::atomic<std::uint64_t> arena_frag_post_compact_bp{0};
     std::atomic<std::uint64_t> arena_compact_soft_gated_boundary_total{0};
+    // Issue #2005: render hotpath FFI buffer safety — surfaced via the
+    // (ffi:pin-buffer) / (ffi:unpin-buffer) primitives. ffi_pin_active_count
+    // is the live LifetimePin count for FFI buffers; ffi_defer_because_pin_total
+    // is the cumulative # of compact_sweep deferrals while ffi_pin_defer_active.
+    std::atomic<std::uint64_t> ffi_pin_active_count{0};
+    std::atomic<std::uint64_t> ffi_defer_because_pin_total{0};
     // Issue #2004: explicit live_compact + freelist observability. Mirrors
     // ArenaStats::live_compact_* fields; bumped by Evaluator::live_compact
     // (mirroring arena.ixx::live_compact counters via Evaluator* host ctx).

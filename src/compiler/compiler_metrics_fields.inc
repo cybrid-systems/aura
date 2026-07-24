@@ -1589,5 +1589,9 @@ AURA_COMPILER_METRICS_FIELD(arena_live_compact_reclaimed_bytes_total)
 AURA_COMPILER_METRICS_FIELD(arena_live_compact_freelist_hits_total)
 AURA_COMPILER_METRICS_FIELD(arena_live_compact_gen_restamps_total)
 AURA_COMPILER_METRICS_FIELD(arena_live_compact_invalidated_pins_total)
+// Issue #2005: FFI buffer pin/defer observability (refine #2000).
+AURA_COMPILER_METRICS_FIELD(ffi_pin_active_count)
+AURA_COMPILER_METRICS_FIELD(ffi_defer_because_pin_total)
+
 
 #undef AURA_COMPILER_METRICS_FIELD
