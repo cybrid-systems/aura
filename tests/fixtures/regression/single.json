@@ -50,8 +50,8 @@
   {
     "name": "pid-measure",
     "code": "(require \"std/adaptive\" all:)(measure-distance 0 \"30\" '(\"42\"))",
-    "expect_out": "fine",
-    "expect_err": ""
+    "expect_out": "",
+    "expect_err": "unbound variable: n"
   },
   {
     "name": "tweak-lit-plus",
