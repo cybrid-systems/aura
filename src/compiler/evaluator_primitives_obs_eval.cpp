@@ -38,6 +38,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.arena;
+import aura.core.envframe_lifetime;
 import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
@@ -2815,6 +2816,66 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 2001);
             insert_kv("strings-compacted", static_cast<std::int64_t>(strings_compacted));
             insert_kv("pairs-remapped", static_cast<std::int64_t>(pairs_remapped));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2003: query:envframe-lifetime-stats — EnvFrame explicit
+    // lifetime protocol RAII guard run counter. Tracks 3 wire-up sites
+    // (BoundaryExit / FiberSteal / CompactSweep) plus process-wide
+    // g_envframe_lifetime_stats (guards_constructed/destructed + scans_run).
+    // schema=2003 marks the explicit protocol landed (vs implicit drift
+    // between the 3 sites pre-#2003).
+    ObservabilityPrims::register_stats_impl(
+        "query:envframe-lifetime-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = ev.compiler_metrics()
+                          ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          : nullptr;
+            const std::uint64_t guard_runs_total =
+                m ? m->envframe_lifetime_guard_runs_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t invalidations_total =
+                m ? m->envframe_lifetime_guard_invalidations_total.load(std::memory_order_relaxed)
+                  : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2003);
+            insert_kv("guards-constructed",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_guards_constructed()));
+            insert_kv("guards-destructed",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_guards_destructed()));
+            insert_kv("scans-run",
+                      static_cast<std::int64_t>(
+                          aura::core::envframe_lifetime::envframe_lifetime_scans_run()));
+            insert_kv("guard-runs-total", static_cast<std::int64_t>(guard_runs_total));
+            insert_kv("invalidations-total", static_cast<std::int64_t>(invalidations_total));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

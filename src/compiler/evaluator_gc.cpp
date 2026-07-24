@@ -13,6 +13,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 
 namespace aura::compiler {
@@ -629,7 +630,48 @@ Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
     return out;
 }
 
+// Issue #2003: EnvFrame explicit lifetime protocol — RAII guard ctor
+// site. run_envframe_lifetime_guard is the host.scan_skip_freed callback
+// body; it runs scan_live_closures_for_linear_captures (which skips
+// already-tombstoned / erased slots per #1665) + bumps the per-site
+// envframe_lifetime_guard_runs_total counter. The trampoline cast
+// ctx back to Evaluator* (always set by the wire-up sites) and forwards.
+void Evaluator::run_envframe_lifetime_guard(
+    aura::core::envframe_lifetime::EnvFrameLifetimeSite site) noexcept {
+    scan_live_closures_for_linear_captures(/*mark_invalid=*/true);
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->envframe_lifetime_guard_runs_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    (void)site;
+}
+
+void Evaluator::envframe_lifetime_trampoline(
+    void* ctx, aura::core::envframe_lifetime::EnvFrameLifetimeSite site) noexcept {
+    auto* ev = static_cast<Evaluator*>(ctx);
+    if (ev)
+        ev->run_envframe_lifetime_guard(site);
+}
+
+// Helper: build an EnvFrameLifetimeHost bound to this Evaluator. The
+// returned host is passed to EnvFrameLifetimeGuard's ctor; the guard's
+// dtor invokes host.scan_skip_freed(ctx, site) which dispatches via
+// envframe_lifetime_trampoline to run_envframe_lifetime_guard.
+static aura::core::envframe_lifetime::EnvFrameLifetimeHost
+make_envframe_lifetime_host(Evaluator& ev) {
+    aura::core::envframe_lifetime::EnvFrameLifetimeHost h{};
+    h.ctx = static_cast<void*>(&ev);
+    h.scan_skip_freed = &Evaluator::envframe_lifetime_trampoline;
+    return h;
+}
+
 void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
+    // Issue #2003: EnvFrame explicit lifetime protocol — guard runs
+    // scan_skip_freed_closures + bumps site-tagged counter on dtor
+    // (scope exit). Instantiated at function entry so its dtor runs
+    // after the enforce + restamp below complete.
+    aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
+        make_envframe_lifetime_host(*this),
+        aura::core::envframe_lifetime::EnvFrameLifetimeSite::FiberSteal};
     // Issue #1557 / #1568: full boundary consistency (scan all linear +
     // epoch fence + enforce_all + GC root audit).
     // Issue #1664: scan_live_closures (via enforce) uses closures → env
@@ -697,7 +739,12 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
 // equivalent) and in a future iteration of the Aura evaluator
 // (likely via a generation index table).
 
+// Forward decl: helper is `static`, defined at file scope below
+// compact_sweep (per Issue #2003 — runs scan_skip_freed on dtor).
+static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev);
+
 Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
+    (void)run_envframe_lifetime_guard_compact_sweep_helper(*this);
     // Issue #1732: typed CompactSweepResult (by value) — no void* cast
     // at call sites. Layout is 4×size_t, matching messaging_bridge.h
     // GCSweepResultMsg for optional bridge conversion.
@@ -828,6 +875,19 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     result.fiber_results_freed = 0;
 
     return result;
+}
+
+// Issue #2003: EnvFrame explicit lifetime protocol — compact_sweep itself
+// runs the guard. The guard's dtor invokes host.scan_skip_freed (which
+// dispatches to run_envframe_lifetime_guard(CompactSweep)). Scope-bound
+// below the result finalization so the scan runs after remap tables are
+// fully populated + bridge_epoch bump committed.
+static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev) {
+    using namespace aura::core::envframe_lifetime;
+    EnvFrameLifetimeGuard guard{make_envframe_lifetime_host(ev),
+                                EnvFrameLifetimeSite::CompactSweep};
+    (void)guard.site();
+    return 0;
 }
 
 } // namespace aura::compiler
