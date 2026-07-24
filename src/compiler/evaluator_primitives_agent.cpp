@@ -2781,14 +2781,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         };
         auto handle = aura::orch::spawn_agent_with_mailbox(
             *orch_sched.sched, aura::orch::AgentSpec{.name = name, .body = std::move(body)});
-        if (handle.ok)
-            orch_agent_names.put(handle); // copy into table; keep local for response
+        // Issue #2009: AgentHandle is move-only; snapshot response fields then
+        // move into the name table so the table owns the reservation.
+        const bool ok = handle.ok;
+        const auto id = handle.id;
+        const std::string out_name = handle.name.empty() ? name : handle.name;
+        if (ok)
+            orch_agent_names.put(std::move(handle));
 
         auto nidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(handle.name.empty() ? name : handle.name);
+        ev.string_heap_.push_back(out_name);
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(handle.ok)},
-            {"id", make_int(static_cast<std::int64_t>(handle.id))},
+            {"ok", make_bool(ok)},
+            {"id", make_int(static_cast<std::int64_t>(id))},
             {"name", make_string(nidx)},
             {"schema", make_int(1588)},
         };
