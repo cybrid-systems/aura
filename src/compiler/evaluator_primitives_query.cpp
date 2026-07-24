@@ -12,10 +12,13 @@ module;
 #include "core/gc_hooks.h" // #1593 safepoint wait linkage
 #include "serve/fiber.h"
 #include "serve/metrics.h"
-#include "serve/multi_fiber_mailbox.h" // #1597 orch readiness
-#include "serve/parallel_orch.h"       // #1597 orch readiness
-#include "hash_meta.h"                 // FNV constants (#901)
-#include "typed_mutation_audit.h"      // Issue #1613 macro hygiene audit trail
+#include "serve/multi_fiber_mailbox.h"      // #1597 orch readiness
+#include "serve/parallel_orch.h"            // #1597 orch readiness
+#include "hash_meta.h"                      // FNV constants (#901)
+#include "typed_mutation_audit.h"           // Issue #1613 macro hygiene audit trail
+#include "linear_occurrence_mutate_stats.h" // Issue #2030 occurrence hit-rate ratios
+#include "basis_points.h"                   // Issue #2030 ratio bp helpers
+#include "core/provenance_tracker.hh"       // Issue #2030 linear-provenance consistency bp
 
 #include <filesystem>
 #include <fstream>
@@ -5384,8 +5387,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->blame_chain_completeness_rate.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; #1923+#1924+#2024 keys (create(128) headroom).
-            auto* ht = FlatHashTable::create(128);
+            // Power-of-2 capacity; #1923+#1924+#2024+#2028+#2030 keys.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5501,8 +5504,57 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("adt-guardshape-renarrow-wired", 1);
             insert_kv("schema-2028", 2028);
             insert_kv("issue-2028", 2028);
-            insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 satellite)
-            insert_kv("schema", 1617); // keep 1617 for existing ACs; #2028 via schema-2028
+            // Issue #2030: agent blame completeness + occurrence post-mutate hit rate
+            {
+                const std::uint64_t blame_c =
+                    m ? m->blame_chain_complete_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t blame_m =
+                    m ? m->blame_propagation_miss_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t blame_den = blame_c + blame_m;
+                const std::int64_t blame_ratio_bp =
+                    blame_den == 0 ? 10000
+                                   : static_cast<std::int64_t>((blame_c * 10000ull) / blame_den);
+                const std::uint64_t ren_hits =
+                    m ? m->occurrence_renarrow_hits_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t ren_tot =
+                    m ? m->occurrence_renarrow_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t stale_r =
+                    m ? m->occurrence_stale_refreshes_total.load(std::memory_order_relaxed) : 0;
+                const std::uint64_t occ_blame =
+                    m ? m->occurrence_blame_chain_complete_total.load(std::memory_order_relaxed)
+                      : 0;
+                std::int64_t occ_hit_bp = 10000;
+                if (ren_tot > 0)
+                    occ_hit_bp = static_cast<std::int64_t>((ren_hits * 10000ull) / ren_tot);
+                else if (stale_r > 0)
+                    occ_hit_bp = static_cast<std::int64_t>((occ_blame * 10000ull) / stale_r);
+                using namespace aura::compiler::linear_occurrence_mutate;
+                const std::uint64_t lin_reval =
+                    revalidate_hits_total.load(std::memory_order_relaxed) +
+                    (m ? m->linear_occurrence_revalidate_hits_total.load(std::memory_order_relaxed)
+                       : 0);
+                const std::uint64_t lin_esc =
+                    escape_violations_prevented_total.load(std::memory_order_relaxed) +
+                    (m ? m->linear_occurrence_escape_prevented_total.load(std::memory_order_relaxed)
+                       : 0);
+                const std::uint64_t lin_den = lin_reval + lin_esc;
+                const std::int64_t lin_occ_bp =
+                    lin_den == 0 ? 10000
+                                 : static_cast<std::int64_t>((lin_reval * 10000ull) / lin_den);
+                insert_kv("blame_completeness_ratio", blame_ratio_bp);
+                insert_kv("blame-completeness-ratio-bp", blame_ratio_bp);
+                insert_kv("occurrence_narrowing_post_mutate_hit_rate", occ_hit_bp);
+                insert_kv("occurrence-narrowing-post-mutate-hit-rate-bp", occ_hit_bp);
+                insert_kv("linear-occurrence-consistency-bp", lin_occ_bp);
+                insert_kv("linear-provenance-consistency-bp",
+                          static_cast<std::int64_t>(
+                              aura::core::provenance::linear_provenance_consistency_bp()));
+                insert_kv("blame-occurrence-ratios-wired", 1);
+                insert_kv("schema-2030", 2030);
+                insert_kv("issue-2030", 2030);
+            }
+            insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 / #2030)
+            insert_kv("schema", 1617); // keep 1617 for existing ACs; #2030 via schema-2030
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -7463,6 +7515,82 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::int64_t inv_pass_bp =
                 inv_aud == 0 ? 10000 : static_cast<std::int64_t>((inv_pass * 10000ull) / inv_aud);
 
+            // ── Issue #2030: provenance blame completeness + occurrence hit rate ──
+            // blame_completeness_ratio = complete / (complete + miss) in bp.
+            // Prefer CompilerMetrics when populated; else process-wide audit counters.
+            const std::uint64_t m_blame_c = load_m(&CompilerMetrics::blame_chain_complete_total);
+            const std::uint64_t m_blame_m = load_m(&CompilerMetrics::blame_propagation_miss_total);
+            const std::uint64_t blame_c =
+                m_blame_c > 0 ? m_blame_c
+                              : ac.blame_chain_complete_total.load(std::memory_order_relaxed);
+            const std::uint64_t blame_m =
+                m_blame_m > 0 ? m_blame_m
+                              : ac.blame_propagation_miss_total.load(std::memory_order_relaxed);
+            const std::uint64_t blame_den = blame_c + blame_m;
+            const std::int64_t blame_completeness_ratio_bp =
+                blame_den == 0 ? 10000
+                               : static_cast<std::int64_t>((blame_c * 10000ull) / blame_den);
+            // occurrence_narrowing_post_mutate_hit_rate: renarrow hits/total,
+            // else stale-refresh blame-complete ratio, else N/A → 10000.
+            const std::uint64_t renarrow_hits =
+                load_m(&CompilerMetrics::occurrence_renarrow_hits_total);
+            const std::uint64_t renarrow_total =
+                load_m(&CompilerMetrics::occurrence_renarrow_total);
+            const std::uint64_t stale_refresh =
+                load_m(&CompilerMetrics::occurrence_stale_refreshes_total);
+            const std::uint64_t occ_blame_ok =
+                load_m(&CompilerMetrics::occurrence_blame_chain_complete_total);
+            const std::uint64_t narrowing_refresh = ev->get_narrowing_refresh_count();
+            std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp = 10000;
+            if (renarrow_total > 0) {
+                occurrence_narrowing_post_mutate_hit_rate_bp =
+                    static_cast<std::int64_t>((renarrow_hits * 10000ull) / renarrow_total);
+            } else if (stale_refresh > 0) {
+                occurrence_narrowing_post_mutate_hit_rate_bp =
+                    static_cast<std::int64_t>((occ_blame_ok * 10000ull) / stale_refresh);
+            } else if (narrowing_refresh > 0) {
+                // Refresh activity without miss accounting → treat as hit.
+                occurrence_narrowing_post_mutate_hit_rate_bp = 10000;
+            }
+            // Linear × occurrence consistency (process-wide atomics + metrics).
+            using namespace aura::compiler::linear_occurrence_mutate;
+            const std::uint64_t lin_reval =
+                revalidate_hits_total.load(std::memory_order_relaxed) +
+                load_m(&CompilerMetrics::linear_occurrence_revalidate_hits_total);
+            const std::uint64_t lin_escape =
+                escape_violations_prevented_total.load(std::memory_order_relaxed) +
+                load_m(&CompilerMetrics::linear_occurrence_escape_prevented_total);
+            const std::uint64_t lin_pred_safe =
+                predicate_branch_linear_safe_total.load(std::memory_order_relaxed) +
+                load_m(&CompilerMetrics::linear_occurrence_predicate_safe_total);
+            const std::uint64_t lin_den = lin_reval + lin_escape;
+            const std::int64_t linear_occurrence_consistency_bp =
+                lin_den == 0 ? 10000 : static_cast<std::int64_t>((lin_reval * 10000ull) / lin_den);
+            const std::uint64_t type_ok = ac.type_invariant_ok.load(std::memory_order_relaxed);
+            const std::uint64_t type_fail = ac.type_invariant_fail.load(std::memory_order_relaxed);
+            const std::uint64_t lin_ok = ac.linear_invariant_ok.load(std::memory_order_relaxed);
+            const std::uint64_t lin_inv_fail =
+                ac.linear_invariant_fail.load(std::memory_order_relaxed);
+            const std::uint64_t prov_ok =
+                ac.provenance_invariant_ok.load(std::memory_order_relaxed);
+            const std::uint64_t prov_fail =
+                ac.provenance_invariant_fail.load(std::memory_order_relaxed);
+            const std::int64_t type_invariant_ratio_bp =
+                (type_ok + type_fail) == 0
+                    ? 10000
+                    : static_cast<std::int64_t>((type_ok * 10000ull) / (type_ok + type_fail));
+            const std::int64_t linear_invariant_ratio_bp =
+                (lin_ok + lin_inv_fail) == 0
+                    ? 10000
+                    : static_cast<std::int64_t>((lin_ok * 10000ull) / (lin_ok + lin_inv_fail));
+            const std::int64_t provenance_invariant_ratio_bp =
+                (prov_ok + prov_fail) == 0
+                    ? 10000
+                    : static_cast<std::int64_t>((prov_ok * 10000ull) / (prov_ok + prov_fail));
+            const std::int64_t linear_provenance_consistency_bp = static_cast<std::int64_t>(
+                aura::core::provenance::linear_provenance_consistency_bp());
+            (void)lin_pred_safe;
+
             // ── SV closed-loop rounds (self-evo signal) ──
             const std::uint64_t sv_rounds =
                 load_m(&CompilerMetrics::sv_self_evo_closed_loop_rounds_total);
@@ -7475,7 +7603,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (hygiene_viol > 0 || pattern_leak > 0 || hygiene_leakage > 0 || inv_fail > 0)
                 recommendation = 2;
             else if (hygiene_violation_rate_bp > 500 || hold_avg_us > 10000 ||
-                     macro_introduced_ratio_bp > 5000)
+                     macro_introduced_ratio_bp > 5000 || blame_completeness_ratio_bp < 5000)
                 recommendation = 1;
             // health-score: average of inverted risk signals (higher better)
             const std::int64_t hygiene_health =
@@ -7487,14 +7615,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     ? 10000
                     : std::max<std::int64_t>(
                           0, 10000 - static_cast<std::int64_t>(hygiene_leakage * 1000));
+            // Issue #2030: fold blame + occurrence hit rate into health.
             const std::int64_t health_score_bp =
-                (hygiene_health + inv_health + rb_health + ir_health) / 4;
+                (hygiene_health + inv_health + rb_health + ir_health + blame_completeness_ratio_bp +
+                 occurrence_narrowing_post_mutate_hit_rate_bp) /
+                6;
 
             if (m)
                 m->self_evo_unified_health_queries_total.fetch_add(1, std::memory_order_relaxed);
 
             auto& string_heap = ev->string_heap_mut();
-            auto* ht = FlatHashTable::create(64);
+            // #1909 + #2030 agent ratio keys → 128 slots.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -7559,6 +7691,28 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("invariant-fail", static_cast<std::int64_t>(inv_fail));
             insert_kv("sv-closed-loop-rounds", static_cast<std::int64_t>(sv_rounds));
             insert_kv("sv-convergence-hits", static_cast<std::int64_t>(sv_hits));
+            // Issue #2030: agent-facing blame + occurrence + linear/provenance ratios
+            insert_kv("blame_completeness_ratio", blame_completeness_ratio_bp);
+            insert_kv("blame-completeness-ratio-bp", blame_completeness_ratio_bp);
+            insert_kv("blame-chain-complete-total", static_cast<std::int64_t>(blame_c));
+            insert_kv("blame-propagation-miss-total", static_cast<std::int64_t>(blame_m));
+            insert_kv("occurrence_narrowing_post_mutate_hit_rate",
+                      occurrence_narrowing_post_mutate_hit_rate_bp);
+            insert_kv("occurrence-narrowing-post-mutate-hit-rate-bp",
+                      occurrence_narrowing_post_mutate_hit_rate_bp);
+            insert_kv("occurrence-renarrow-hits", static_cast<std::int64_t>(renarrow_hits));
+            insert_kv("occurrence-renarrow-total", static_cast<std::int64_t>(renarrow_total));
+            insert_kv("occurrence-stale-refreshes", static_cast<std::int64_t>(stale_refresh));
+            insert_kv("narrowing-refresh-count", static_cast<std::int64_t>(narrowing_refresh));
+            insert_kv("linear-occurrence-consistency-bp", linear_occurrence_consistency_bp);
+            insert_kv("linear_occurrence_consistency_bp", linear_occurrence_consistency_bp);
+            insert_kv("type-invariant-ratio-bp", type_invariant_ratio_bp);
+            insert_kv("linear-invariant-ratio-bp", linear_invariant_ratio_bp);
+            insert_kv("provenance-invariant-ratio-bp", provenance_invariant_ratio_bp);
+            insert_kv("linear-provenance-consistency-bp", linear_provenance_consistency_bp);
+            insert_kv("blame-occurrence-ratios-wired", 1);
+            insert_kv("schema-2030", 2030);
+            insert_kv("issue-2030", 2030);
             insert_kv("health-score-bp", health_score_bp);
             insert_kv("recommendation", recommendation);
             insert_kv("unified-dashboard-wired", 1);
@@ -7566,7 +7720,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("pattern-hygiene-lineage", 1892);
             insert_kv("typed-audit-lineage", 1894);
             insert_kv("loop-stats-lineage", 1883);
-            insert_kv("schema", 1909);
+            insert_kv("schema", 1909); // primary lineage; #2030 via schema-2030
             insert_kv("issue", 1909);
             insert_kv("active", 1);
             auto hidx = g_hash_tables.size();

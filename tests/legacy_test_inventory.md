@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 344 | Preferred destination suites |
-| **Total scanned** | **344** | |
+| `tests/core/test_*.cpp` | 345 | Preferred destination suites |
+| **Total scanned** | **345** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 35 | 35 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 83 | 83 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 84 | 84 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 36 | 36 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 7 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 21 | 21 | P1 — domain hygiene suite exists |
@@ -180,6 +180,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_auto_evolve_closure_live.cpp`
 - `tests/compiler/test_bidirectional_annotation.cpp`
 - `tests/core/test_bidirectional_stats.cpp`
+- `tests/compiler/test_blame_occurrence_agent_ratios.cpp`
 - `tests/compiler/test_blame_stamp_on_degrade.cpp`
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp`
 - `tests/compiler/test_bugfix_968.cpp`
@@ -570,19 +571,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_terminal_lifecycle.cpp` (—) [domain_suite, theme_renderer] — test_terminal_lifecycle.cpp — Issue #1352: delete/compact + use-after-delete
 - `tests/core/test_zero_copy_arena.cpp` (—) [domain_suite, theme_core] — integration; no pair-alloc growth over 10k presents; concurrent fiber/thread.
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (83)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (84)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (83)
+#### domain/ (84)
 
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #192/#459/#529/#553 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_atomic_batch_rollback_fiber_task1.cpp —
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
+- `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/core/test_capability_sandbox_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/core/test_capability_sandbox_batch.cpp
 - `tests/compiler/test_closure_bridge_lifetime.cpp` (—) [domain_suite, theme_compiler] — Issue #1888/#1895/#1926/#1928/#1929/#1947 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
