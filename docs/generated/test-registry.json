@@ -189,6 +189,12 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_jit_concurrent_compile.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_matcher_stable_captures.cpp",
       "category": "unit",
       "reason": "Issue #1695 — QueryMatcher captures store StableNodeRef",
@@ -240,6 +246,12 @@
       "file": "tests/compiler/test_query_dispatch.cpp",
       "category": "integration",
       "reason": "Issue #1435 (query :op) unified dispatcher",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_query_namespace_audit.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
@@ -357,6 +369,12 @@
       "issue": null
     },
     {
+      "file": "tests/core/test_set_arena_atomic_owner.cpp",
+      "category": "unit",
+      "reason": "Issue #1663 — set_arena owner pair atomic w.r.t. concurrent",
+      "issue": null
+    },
+    {
       "file": "tests/core/test_set_workspace_flat.cpp",
       "category": "unit",
       "reason": "Issue #1729 — set_workspace_flat must lock + roll back on",
@@ -364,6 +382,12 @@
     },
     {
       "file": "tests/core/test_soa_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_stress_alloc_storage_lock.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
@@ -402,90 +426,6 @@
       "file": "tests/core/test_workspace_swap_guard.cpp",
       "category": "unit",
       "reason": "Issue #1717 — synthesize:optimize child workspace swap must use",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_concurrent.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_fiber_concurrent_unit_batch.cpp",
-      "category": "unit",
-      "reason": "Issue #1730 — current_agent_fingerprint_ must be atomic",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_fiber_orch_core_batch.cpp",
-      "category": "integration",
-      "reason": "Issue #1584 — Fiber::join / join(span) structured multi-fiber",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_fiber_orch_parallel_quota_batch.cpp",
-      "category": "integration",
-      "reason": "Issue #1587 — Aura (parallel-intend) primitive over parallel_orch.",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_fiber_strategy_evolve_batch.cpp",
-      "category": "unit",
-      "reason": "Issue #1712 — auto-evolve-tick must not fprintf [DBG tick] to",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_fiber_synthesize_batch.cpp",
-      "category": "unit",
-      "reason": "Issue #1715 — synthesize:define must parse LLM JSON via",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_jit_concurrent_compile.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_per_fiber_stack_pool_high_concurrency.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_production_sweep.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_query_namespace_audit.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_self_heal_policy_engine.cpp",
-      "category": "integration",
-      "reason": "Issue #1582 — policy-driven SelfHealing engine + graceful drain",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_set_arena_atomic_owner.cpp",
-      "category": "unit",
-      "reason": "Issue #1663 — set_arena owner pair atomic w.r.t. concurrent",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_stress_alloc_storage_lock.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/fiber/test_terminal_concurrent.cpp",
-      "category": "unknown",
-      "reason": "",
       "issue": null
     },
     {
@@ -2025,15 +1965,57 @@
       "issue": null
     },
     {
+      "file": "tests/renderer/test_terminal_concurrent.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/repl/test_terminal_domain_batch.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
+      "file": "tests/serve/test_concurrent.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_fiber_concurrent_unit_batch.cpp",
+      "category": "unit",
+      "reason": "Issue #1730 — current_agent_fingerprint_ must be atomic",
+      "issue": null
+    },
+    {
       "file": "tests/serve/test_fiber_integration_batch.cpp",
       "category": "unknown",
       "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_fiber_orch_core_batch.cpp",
+      "category": "integration",
+      "reason": "Issue #1584 — Fiber::join / join(span) structured multi-fiber",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_fiber_orch_parallel_quota_batch.cpp",
+      "category": "integration",
+      "reason": "Issue #1587 — Aura (parallel-intend) primitive over parallel_orch.",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_fiber_strategy_evolve_batch.cpp",
+      "category": "unit",
+      "reason": "Issue #1712 — auto-evolve-tick must not fprintf [DBG tick] to",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_fiber_synthesize_batch.cpp",
+      "category": "unit",
+      "reason": "Issue #1715 — synthesize:define must parse LLM JSON via",
       "issue": null
     },
     {
@@ -2052,6 +2034,24 @@
       "file": "tests/serve/test_gc_compact_sweep_batch.cpp",
       "category": "unknown",
       "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_production_sweep.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/serve/test_self_heal_policy_engine.cpp",
+      "category": "integration",
+      "reason": "Issue #1582 — policy-driven SelfHealing engine + graceful drain",
       "issue": null
     },
     {
