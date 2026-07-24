@@ -321,13 +321,18 @@ void ConstraintSystem::update_blame_chain_completeness_rate() noexcept {
 }
 
 void ConstraintSystem::record_cross_delta_blame_hit() {
-    // Issue #1529 / #1873: build a dumpable blame chain from stamped
+    // Issue #1529 / #1873 / #2024: build a dumpable blame chain from stamped
     // delta constraints + active occurrence context, then bump
     // complete / incomplete / length metrics. Truncation and missing
     // provenance still leave a partial chain (never empty when any
-    // context is available).
+    // context is available). Issue #2024: stitch retained mutation /
+    // predicate from clear_blame_context for dirty-cascade continuity.
+    const std::uint64_t eff_mut =
+        active_mutation_id_ != 0 ? active_mutation_id_ : retained_mutation_id_;
+    const std::uint32_t eff_pred = active_predicate_cond_node_ != 0 ? active_predicate_cond_node_
+                                                                    : retained_predicate_cond_node_;
     last_blame_chain_ = {};
-    last_blame_chain_.root_mutation_id = active_mutation_id_;
+    last_blame_chain_.root_mutation_id = eff_mut;
     last_blame_chain_.truncated_reverify = last_reverify_truncated_;
     last_blame_chain_.unscanned_constraint_count = last_reverify_unscanned_;
 
@@ -354,27 +359,26 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
             c.source_mutation_id != 0 || c.predicate_cond_node != 0 || c.affected_node != 0;
         if (!dirty && !has_prov)
             continue;
-        if (!has_prov && active_mutation_id_ == 0)
+        if (!has_prov && eff_mut == 0)
             continue;
-        push_frame(c.source_mutation_id != 0 ? c.source_mutation_id : active_mutation_id_,
-                   c.predicate_cond_node != 0 ? c.predicate_cond_node : active_predicate_cond_node_,
+        push_frame(c.source_mutation_id != 0 ? c.source_mutation_id : eff_mut,
+                   c.predicate_cond_node != 0 ? c.predicate_cond_node : eff_pred,
                    c.affected_node != 0 ? c.affected_node : active_affected_node_,
                    static_cast<std::uint32_t>(i), static_cast<std::uint8_t>(c.kind));
     }
     // Explicit affected NodeId sequence (from infer_flat_partial).
     for (auto nid : blame_affected_nodes_) {
-        push_frame(active_mutation_id_, active_predicate_cond_node_, nid, UINT32_MAX, 0);
+        push_frame(eff_mut, eff_pred, nid, UINT32_MAX, 0);
     }
     // Fallback single frame so unit tests with only active_mutation_id
     // still produce a dumpable chain.
-    if (last_blame_chain_.frames.empty() && active_mutation_id_ != 0) {
-        push_frame(active_mutation_id_, active_predicate_cond_node_, active_affected_node_,
-                   UINT32_MAX, 0);
+    if (last_blame_chain_.frames.empty() && eff_mut != 0) {
+        push_frame(eff_mut, eff_pred, active_affected_node_, UINT32_MAX, 0);
     }
     // Issue #1873: even with zero active context, leave a synthetic
     // partial frame so truncation / conflict is never a silent empty chain.
     if (last_blame_chain_.frames.empty()) {
-        push_frame(0, active_predicate_cond_node_, active_affected_node_, UINT32_MAX, 0);
+        push_frame(0, eff_pred, active_affected_node_, UINT32_MAX, 0);
         last_blame_chain_.partial = true;
     }
 
@@ -405,7 +409,7 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
         m->reverify_truncation_partial_blame_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    if (active_mutation_id_ == 0) {
+    if (eff_mut == 0) {
         m->constraint_stale_blame_invalidation_total.fetch_add(1, std::memory_order_relaxed);
         m->cross_delta_blame_incomplete_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #1924: conflict without mutation stamp is a propagation miss.
@@ -413,7 +417,8 @@ void ConstraintSystem::record_cross_delta_blame_hit() {
         update_blame_chain_completeness_rate();
         return;
     }
-    // Legacy complete: active mutation id set (preserves #745 / #690 ACs).
+    // Legacy complete: effective mutation id set (preserves #745 / #690 ACs;
+    // #2024 includes retained cross-delta continuity).
     m->constraint_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
     m->type_incremental_cross_delta_blame_complete_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #1873: rich_complete only when is_complete() (triple present

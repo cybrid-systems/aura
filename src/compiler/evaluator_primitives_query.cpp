@@ -27,6 +27,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.core.type;
+import aura.compiler.coercion_map; // Issue #2024: provenance completeness counters
 import aura.compiler.ir;
 import aura.compiler.macro_expansion; // Issue #2020: hygiene atomics for Agent diagnostics
 import aura.compiler.pass_manager;
@@ -5365,8 +5366,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? static_cast<std::int64_t>(
                         m->blame_propagation_narrow_stamped_total.load(std::memory_order_relaxed))
                   : 0;
-            // Power-of-2 capacity; #1923+#1924 keys (create(64) headroom).
-            auto* ht = FlatHashTable::create(64);
+            // Issue #2024: apply_coercion_map provenance chain completeness.
+            const std::int64_t coercion_prov_complete =
+                static_cast<std::int64_t>(aura::compiler::g_coercion_provenance_complete_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_prov_miss = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_miss_total.load(std::memory_order_relaxed));
+            const std::int64_t coercion_prov_sentinel =
+                static_cast<std::int64_t>(aura::compiler::g_coercion_provenance_sentinel_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_prov_walks = static_cast<std::int64_t>(
+                aura::compiler::g_coercion_provenance_chain_walk_total.load(
+                    std::memory_order_relaxed));
+            const std::int64_t coercion_completeness_bp =
+                static_cast<std::int64_t>(aura::compiler::coercion_provenance_completeness_bp());
+            const std::int64_t blame_rate =
+                m ? static_cast<std::int64_t>(
+                        m->blame_chain_completeness_rate.load(std::memory_order_relaxed))
+                  : 0;
+            // Power-of-2 capacity; #1923+#1924+#2024 keys (create(128) headroom).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5435,8 +5454,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("blame-propagation-wired", 1);
             insert_kv("schema-1924", 1924);
             insert_kv("issue-1924", 1924);
-            insert_kv("issue", 1617);
-            insert_kv("schema", 1617); // lineage 798 → 1617 + #1923 + #1924
+            // Issue #2024: occurrence narrowing provenance chain completeness
+            insert_kv("coercion-provenance-complete-total", coercion_prov_complete);
+            insert_kv("coercion-provenance-miss-total", coercion_prov_miss);
+            insert_kv("coercion-provenance-sentinel-total", coercion_prov_sentinel);
+            insert_kv("coercion-provenance-chain-walks", coercion_prov_walks);
+            insert_kv("coercion-provenance-completeness-bp", coercion_completeness_bp);
+            insert_kv("blame-chain-completeness-rate", blame_rate);
+            // completeness-ratio-bp aliases coercion apply completeness for Agents
+            insert_kv("completeness-ratio-bp", coercion_completeness_bp);
+            insert_kv("occurrence-provenance-chain-wired", 1);
+            insert_kv("schema-2024", 2024);
+            insert_kv("issue-2024", 2024);
+            insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924)
+            insert_kv("schema", 1617); // keep 1617 for existing ACs; #2024 via schema-2024
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
