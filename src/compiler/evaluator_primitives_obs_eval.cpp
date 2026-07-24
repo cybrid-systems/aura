@@ -8539,7 +8539,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(64);
+            // #1660 lineage + #1916 + #2026 linear-provenance keys → 256 slots.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8641,8 +8642,45 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fiber-lifecycle-mandate-active", 1);
             insert_kv("resume-pre-swap-migration-wired", 1);
             insert_kv("resume-post-swap-validate-wired", 1);
+            // Issue #2026: linear ownership × provenance consistency closed-loop
+            // (post-steal / GC / boundary / IR shared validate_linear_provenance).
+            {
+                using aura::core::provenance::g_provenance_enforcement;
+                using aura::core::provenance::linear_provenance_consistency_bp;
+                auto& pe = g_provenance_enforcement();
+                const auto checks = static_cast<std::int64_t>(
+                    pe.linear_provenance_checks_total.load(std::memory_order_relaxed));
+                const auto ok = static_cast<std::int64_t>(
+                    pe.linear_provenance_ok_total.load(std::memory_order_relaxed));
+                const auto lp_mismatch = static_cast<std::int64_t>(
+                    pe.linear_provenance_mismatch_total.load(std::memory_order_relaxed));
+                const auto moved = static_cast<std::int64_t>(
+                    pe.linear_provenance_moved_live_total.load(std::memory_order_relaxed));
+                const auto incomplete = static_cast<std::int64_t>(
+                    pe.linear_provenance_incomplete_total.load(std::memory_order_relaxed));
+                const auto deopt = static_cast<std::int64_t>(
+                    pe.linear_provenance_deopt_total.load(std::memory_order_relaxed));
+                const auto steal_c = static_cast<std::int64_t>(
+                    pe.linear_provenance_steal_checks_total.load(std::memory_order_relaxed));
+                const auto gc_c = static_cast<std::int64_t>(
+                    pe.linear_provenance_gc_checks_total.load(std::memory_order_relaxed));
+                const auto ratio = static_cast<std::int64_t>(linear_provenance_consistency_bp());
+                insert_kv("linear-provenance-checks", checks);
+                insert_kv("linear-provenance-ok", ok);
+                insert_kv("linear-provenance-mismatch", lp_mismatch);
+                insert_kv("linear-provenance-moved-live", moved);
+                insert_kv("linear-provenance-incomplete", incomplete);
+                insert_kv("linear-provenance-deopt", deopt);
+                insert_kv("linear-provenance-steal-checks", steal_c);
+                insert_kv("linear-provenance-gc-checks", gc_c);
+                insert_kv("linear-provenance-consistency-bp", ratio);
+                insert_kv("linear-provenance-consistency-ratio-bp", ratio);
+                insert_kv("linear-provenance-wired", 1);
+                insert_kv("schema-2026", 2026);
+                insert_kv("issue-2026", 2026);
+            }
             insert_kv("issue", 1631);
-            insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490
+            insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 satellite)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
