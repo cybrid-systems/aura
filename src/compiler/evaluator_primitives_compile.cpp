@@ -29,6 +29,7 @@ import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.value;
 import aura.compiler.service;
+import aura.compiler.ir_cache_pure; // Issue #2032: partial relower threshold
 import aura.compiler.type_checker;
 import aura.compiler.pass_manager;
 import aura.compiler.query;
@@ -2947,10 +2948,14 @@ void CompilePrims::register_compile_p29(PrimRegistrar add, Evaluator& ev) {
                     return make_keyword(sym_idx);
                 }
                 const std::size_t dirty = *dirty_opt;
+                const auto thr = aura::compiler::get_partial_relower_threshold();
+                // Issue #2032: stamp last threshold used for agent observability.
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                    m->partial_relower_threshold_used.store(thr, std::memory_order_relaxed);
                 const char* tag = nullptr;
                 if (dirty == 0)
                     tag = "none";
-                else if (dirty < 8)
+                else if (aura::compiler::should_partial_relower(dirty))
                     tag = "incremental";
                 else
                     tag = "full";

@@ -4324,22 +4324,20 @@ public:
             return n;
         }
 
-        // Issue #293: count of functions whose dirty block
+        // Issue #293 / #2032: count of functions whose dirty block
         // count falls in the "incremental re-lower" range
-        // (1..7 dirty blocks, per estimate_relower_blocks).
-        // Functions with 8+ dirty blocks are considered
-        // "full re-lower" candidates and excluded from this
-        // count.
+        // (1..(T-1) dirty blocks, per estimate_relower_blocks /
+        // get_partial_relower_threshold). Functions at/above
+        // threshold are "full re-lower" candidates.
         std::size_t incremental_candidates_count() const {
+            const auto thr = get_partial_relower_threshold();
             std::size_t n = 0;
             for (const auto& fb : block_dirty_per_func_) {
                 std::size_t dirty = 0;
                 for (auto b : fb)
                     if (b)
                         ++dirty;
-                // estimate_relower_blocks(dirty): 0 if 0 dirty,
-                // (-1) if >= 8, else dirty (1..7).
-                if (dirty > 0 && dirty < 8)
+                if (dirty > 0 && dirty < thr)
                     ++n;
             }
             return n;
@@ -6373,6 +6371,9 @@ public:
                                                                          std::memory_order_relaxed);
                         metrics_.incremental_partial_relower_total.fetch_add(
                             1, std::memory_order_relaxed);
+                        // Issue #2032: stamp threshold used at partial decision.
+                        metrics_.partial_relower_threshold_used.store(
+                            get_partial_relower_threshold(), std::memory_order_relaxed);
                     }
                     // relower_define_blocks / store_define_v2 already stamp
                     // source_hash; avoid touching `it` (may invalidate on store).
@@ -8978,6 +8979,10 @@ private:
     };
     std::unordered_map<std::string, DepEntry, aura::core::TransparentStringHash, std::equal_to<>>
         dep_graph_;
+    // Issue #2032: generation bumped under exclusive dep_graph_mtx_ when
+    // cascade erase/rebuild runs; record_dependency rejects edges stamped
+    // against a stale generation (concurrent fiber/GC/mutate window).
+    std::atomic<std::uint64_t> dep_graph_generation_{0};
 
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
@@ -8994,11 +8999,23 @@ private:
         // Issue #1376: the #687 find+push TOCTOU is only safe under
         // an exclusive lock. Concurrent populate / cache_define /
         // invalidate_function writers race on dep_graph_ without it.
+        //
+        // Issue #2032: reject insert if mutation_epoch advanced while
+        // waiting for the lock (stale concurrent cascade window), or if
+        // dep_graph_generation_ advanced (exclusive erase/rebuild).
         metrics_.dep_graph_record_total.fetch_add(1, std::memory_order_relaxed);
+        const auto epoch_before = mutation_epoch_.load(std::memory_order_acquire);
+        const auto gen_before = dep_graph_generation_.load(std::memory_order_acquire);
         // Issue #1523: dep_graph is LAST — safe alone or under mutate.
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
         sync_lock_order_metrics_();
+        const auto epoch_after = mutation_epoch_.load(std::memory_order_acquire);
+        const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
+        if (epoch_before != epoch_after || gen_before != gen_after) {
+            metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         auto& caller_entry = dep_graph_[caller];
         if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) !=
             caller_entry.calls.end()) {

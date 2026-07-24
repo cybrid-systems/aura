@@ -450,6 +450,10 @@ void CompilerService::invalidate_function(const std::string& name) {
                 dep_graph_.erase(f);
             }
         }
+        // Issue #2032: advance dep_graph generation so concurrent
+        // record_dependency that raced the exclusive window rejects.
+        dep_graph_generation_.fetch_add(1, std::memory_order_release);
+        metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Invalidate JIT cache for affected functions.
     // Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate in

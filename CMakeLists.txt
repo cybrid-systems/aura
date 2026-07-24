@@ -1830,6 +1830,11 @@ aura_add_issue_test(test_instr_level_impact_scope)
 aura_issue_test_link_llvm_jit(test_instr_level_impact_scope)
 add_dependencies(all_test_issue_targets test_instr_level_impact_scope)
 
+# Issue #2032: dep_graph stale-edge reject + configurable partial-relower threshold.
+aura_add_issue_test(test_dep_graph_partial_relower_threshold)
+aura_issue_test_link_llvm_jit(test_dep_graph_partial_relower_threshold)
+add_dependencies(all_test_issue_targets test_dep_graph_partial_relower_threshold)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)

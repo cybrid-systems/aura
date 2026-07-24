@@ -43,7 +43,8 @@ import aura.compiler.value;
 import aura.compiler.pass_manager;
 import aura.compiler.soa_view;
 import aura.compiler.optimization_passes;
-import aura.compiler.coercion_map; // Issue #2025: AST dead-coercion elision counter
+import aura.compiler.coercion_map;  // Issue #2025: AST dead-coercion elision counter
+import aura.compiler.ir_cache_pure; // Issue #2032: get_partial_relower_threshold
 import aura.core.concept_constraints;
 
 // Hoisted from evaluator_primitives_obs_eval_00..13.cpp
@@ -5706,7 +5707,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(128); // #1601 / #1623 / #1915 more keys
+                auto* ht = FlatHashTable::create(256); // #1601 / #1623 / #1915 / #2032
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -5908,8 +5909,24 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 // Keep schema=1639 for lineage tests (#718…#1639); #1915 is additive.
                 {"schema-1915", make_int(1915)},
                 {"issue-1915", make_int(1915)},
+                // Issue #2032: dep_graph stale-edge reject + configurable threshold
+                {"dep_graph_edge_reject_stale_total",
+                 make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
+                {"dep-graph-edge-reject-stale",
+                 make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
+                {"dep_graph_generation_total",
+                 make_int(m ? load(m->dep_graph_generation_total) : 0)},
+                {"partial_relower_threshold_used",
+                 make_int(m ? load(m->partial_relower_threshold_used) : 8)},
+                {"partial-relower-threshold",
+                 make_int(
+                     static_cast<std::int64_t>(aura::compiler::get_partial_relower_threshold()))},
+                {"dep-graph-stale-reject-wired", make_int(1)},
+                {"partial-relower-threshold-wired", make_int(1)},
+                {"schema-2032", make_int(2032)},
+                {"issue-2032", make_int(2032)},
                 {"issue", make_int(1639)},
-                {"schema", make_int(1639)}, // lineage 718 → 1605 → 1601 → 1506 → 1623 → 1639
+                {"schema", make_int(1639)}, // lineage 718 → … → 1639; #2032 satellite
             };
             return build_hash(kv);
         });
