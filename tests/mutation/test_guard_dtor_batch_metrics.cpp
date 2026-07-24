@@ -37,7 +37,10 @@ std::string read_file(const char* path) {
 }
 
 std::string dtor_window(const std::string& src) {
-    auto pos = src.find("~MutationBoundaryGuard()");
+    // Wave3a: prefer out-of-line dtor body (~Evaluator::MutationBoundaryGuard::...)
+    auto pos = src.find("::~MutationBoundaryGuard()");
+    if (pos == std::string::npos)
+        pos = src.find("~MutationBoundaryGuard()");
     if (pos == std::string::npos)
         return {};
     // Capture hold-metrics region until post-boundary linear block.
@@ -72,13 +75,16 @@ int main() {
     // ── AC1: source shape ──
     {
         std::println("\n--- AC1: BatchMutationMetrics + ≤6 common-path atomics ---");
+        // Wave3a: BatchMutationMetrics lives in evaluator_mutation_boundary.cpp dtor.
         std::string ixx;
-        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp",
+                              "src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
             ixx = read_file(p);
-            if (!ixx.empty())
+            if (!ixx.empty() && ixx.find("BatchMutationMetrics") != std::string::npos)
                 break;
         }
-        CHECK(!ixx.empty(), "read evaluator.ixx");
+        CHECK(!ixx.empty(), "read Guard dtor source");
         CHECK(ixx.find("#1747") != std::string::npos, "cites #1747");
         CHECK(ixx.find("BatchMutationMetrics") != std::string::npos,
               "BatchMutationMetrics present");

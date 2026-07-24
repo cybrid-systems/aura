@@ -57,8 +57,36 @@ namespace {
         return {};
     }
 
+    // Wave3a: Guard body lives in evaluator_mutation_boundary.cpp; interface in evaluator.ixx.
+    std::string read_guard_sources() {
+        std::string out;
+        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx",
+                              "../../src/compiler/evaluator.ixx"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += s;
+                break;
+            }
+        }
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp",
+                              "../../src/compiler/evaluator_mutation_boundary.cpp"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += "\n";
+                out += s;
+                break;
+            }
+        }
+        return out;
+    }
+
+
     std::string dtor_window(const std::string& src) {
-        auto pos = src.find("~MutationBoundaryGuard()");
+        // Wave3a: prefer out-of-line dtor body (~Evaluator::MutationBoundaryGuard::...)
+        auto pos = src.find("::~MutationBoundaryGuard()");
+        if (pos == std::string::npos)
+            pos = src.find("~MutationBoundaryGuard()");
         if (pos == std::string::npos)
             return {};
         // Span the full dtor body through ensure_* / hygiene / arena probes.
@@ -76,13 +104,9 @@ int run_guard_dtor_1766() {
     // ── AC1/AC2/AC3: source contract ──
     {
         std::println("\n--- AC1/AC2/AC3: dtor order + noexcept probes ---");
-        std::string ixx;
-        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
-            ixx = read_file(p);
-            if (!ixx.empty())
-                break;
-        }
-        CHECK(!ixx.empty(), "read evaluator.ixx");
+        // Wave3a: dtor body in evaluator_mutation_boundary.cpp; probes stay in .ixx.
+        std::string ixx = read_guard_sources();
+        CHECK(!ixx.empty(), "read evaluator.ixx + mutation_boundary");
         CHECK(ixx.find("#1766") != std::string::npos, "cites #1766");
         CHECK(ixx.find("void ensure_mutation_invariants() noexcept") != std::string::npos,
               "ensure_mutation_invariants is noexcept");
@@ -180,8 +204,36 @@ namespace {
         return {};
     }
 
+    // Wave3a: Guard body lives in evaluator_mutation_boundary.cpp; interface in evaluator.ixx.
+    std::string read_guard_sources() {
+        std::string out;
+        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx",
+                              "../../src/compiler/evaluator.ixx"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += s;
+                break;
+            }
+        }
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp",
+                              "../../src/compiler/evaluator_mutation_boundary.cpp"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += "\n";
+                out += s;
+                break;
+            }
+        }
+        return out;
+    }
+
+
     std::string dtor_window(const std::string& src) {
-        auto pos = src.find("~MutationBoundaryGuard()");
+        // Wave3a: prefer out-of-line dtor body (~Evaluator::MutationBoundaryGuard::...)
+        auto pos = src.find("::~MutationBoundaryGuard()");
+        if (pos == std::string::npos)
+            pos = src.find("~MutationBoundaryGuard()");
         if (pos == std::string::npos)
             return {};
         auto end = src.find("post-boundary linear closed-loop", pos);
@@ -196,13 +248,8 @@ int run_guard_enter_ts_1764() {
     // ── AC1/AC2: source shape ──
     {
         std::println("\n--- AC1/AC2: optional enter_ts_ + no magic sentinel ---");
-        std::string ixx;
-        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
-            ixx = read_file(p);
-            if (!ixx.empty())
-                break;
-        }
-        CHECK(!ixx.empty(), "read evaluator.ixx");
+        std::string ixx = read_guard_sources();
+        CHECK(!ixx.empty(), "read evaluator.ixx + mutation_boundary");
         CHECK(ixx.find("#1764") != std::string::npos, "cites #1764");
         CHECK(ixx.find("std::optional<std::chrono::steady_clock::time_point> enter_ts_") !=
                   std::string::npos,
@@ -301,8 +348,36 @@ namespace {
         return {};
     }
 
+    // Wave3a: Guard body lives in evaluator_mutation_boundary.cpp; interface in evaluator.ixx.
+    std::string read_guard_sources() {
+        std::string out;
+        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx",
+                              "../../src/compiler/evaluator.ixx"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += s;
+                break;
+            }
+        }
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp",
+                              "../../src/compiler/evaluator_mutation_boundary.cpp"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += "\n";
+                out += s;
+                break;
+            }
+        }
+        return out;
+    }
+
+
     std::string dtor_window(const std::string& src) {
-        auto pos = src.find("~MutationBoundaryGuard()");
+        // Wave3a: prefer out-of-line dtor body (~Evaluator::MutationBoundaryGuard::...)
+        auto pos = src.find("::~MutationBoundaryGuard()");
+        if (pos == std::string::npos)
+            pos = src.find("~MutationBoundaryGuard()");
         if (pos == std::string::npos)
             return {};
         auto end = src.find("post-boundary linear closed-loop", pos);
@@ -317,13 +392,8 @@ int run_guard_hold_max_1765() {
     // ── AC1/AC2: source shape ──
     {
         std::println("\n--- AC1/AC2: CAS loop on hold duration max ---");
-        std::string ixx;
-        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
-            ixx = read_file(p);
-            if (!ixx.empty())
-                break;
-        }
-        CHECK(!ixx.empty(), "read evaluator.ixx");
+        std::string ixx = read_guard_sources();
+        CHECK(!ixx.empty(), "read evaluator.ixx + mutation_boundary");
         CHECK(ixx.find("#1765") != std::string::npos, "cites #1765");
         auto win = dtor_window(ixx);
         CHECK(!win.empty(), "found dtor window");
@@ -450,23 +520,47 @@ namespace {
         return {};
     }
 
+    // Wave3a: Guard body lives in evaluator_mutation_boundary.cpp; interface in evaluator.ixx.
+    std::string read_guard_sources() {
+        std::string out;
+        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx",
+                              "../../src/compiler/evaluator.ixx"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += s;
+                break;
+            }
+        }
+        for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                              "../src/compiler/evaluator_mutation_boundary.cpp",
+                              "../../src/compiler/evaluator_mutation_boundary.cpp"}) {
+            auto s = read_file(p);
+            if (!s.empty()) {
+                out += "\n";
+                out += s;
+                break;
+            }
+        }
+        return out;
+    }
+
+
 } // namespace
 
 int run_guard_move_1767() {
     // ── AC1: source ──
     {
         std::println("\n--- AC1: move ctor transfers enter_ts_ / is_outermost_ ---");
-        std::string ixx;
-        for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
-            ixx = read_file(p);
-            if (!ixx.empty())
-                break;
-        }
-        CHECK(!ixx.empty(), "read evaluator.ixx");
+        std::string ixx = read_guard_sources();
+        CHECK(!ixx.empty(), "read evaluator.ixx + mutation_boundary");
         CHECK(ixx.find("#1767") != std::string::npos, "cites #1767");
-        auto pos = ixx.find("MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept");
+        // Prefer out-of-line move ctor body (Wave3a partition); fall back to any match.
+        auto pos = ixx.find(
+            "MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept");
+        if (pos == std::string::npos)
+            pos = ixx.find("MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept");
         CHECK(pos != std::string::npos, "move ctor present");
-        auto win = ixx.substr(pos, 1200);
+        auto win = ixx.substr(pos, 1800);
         CHECK(win.find("enter_ts_(std::move(o.enter_ts_))") != std::string::npos,
               "moves enter_ts_");
         CHECK(win.find("is_outermost_(o.is_outermost_)") != std::string::npos,
