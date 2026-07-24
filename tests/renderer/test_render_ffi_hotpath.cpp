@@ -17,6 +17,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.lifetime_pin;
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
@@ -24,6 +25,10 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::core::lifetime::g_lifetime_pin_stats;
+using aura::core::lifetime::invalidate_all_pins_for_arena;
+using aura::core::lifetime::LifetimePin;
+using aura::core::lifetime::live_pin_count;
 
 namespace {
 
@@ -236,6 +241,38 @@ int main() {
         CHECK(kFfiHotPathPhase == 2, "kFfiHotPathPhase == 2");
         CHECK(kStdlibRenderFfiPhase == 1, "kStdlibRenderFfiPhase == 1");
         CHECK(aura::renderer::ffi::kRenderFfiPhase == 3, "kRenderFfiPhase == 3");
+    }
+
+    // ── Issue #2000 Phase 2: LifetimePin across FFI hotpath ──
+    // FFI buffer pinned across the hotpath survives (or gets explicitly
+    // invalidated by compact_sweep via invalidate_all_pins_for_arena).
+    // No UAF: pin either still validates for the current gen OR ptr==null.
+    {
+        const auto pins_before = g_lifetime_pin_stats.pins;
+        const auto inv_before = g_lifetime_pin_stats.invalidations;
+        const auto handoffs_before = g_lifetime_pin_stats.ffi_handoffs;
+
+        LifetimePin pin;
+        std::array<std::uint8_t, 64> buf{};
+        pin.pin(buf.data(), 1, 0);
+        pin.mark_ffi_handoff();
+        CHECK(pin.pinned(), "pinned across hotpath");
+        CHECK(pin.ffi_handoff(), "ffi_handoff flipped on mark_ffi_handoff");
+        CHECK(pin.validate(1, 0), "validate(gen=1) true");
+
+        // Simulate boundary + compact_sweep invalidation
+        const auto n_inv = invalidate_all_pins_for_arena(0);
+        CHECK(n_inv >= 1, "bulk invalidate covers the pin");
+        CHECK(!pin.pinned(), "pin invalidated post invalidate_all");
+        CHECK(!pin.validate(1, 0), "validate(gen=1) false post-invalidate");
+
+        CHECK(g_lifetime_pin_stats.pins > pins_before, "pins counter bumped");
+        CHECK(g_lifetime_pin_stats.invalidations > inv_before, "invalidations counter bumped");
+        CHECK(g_lifetime_pin_stats.ffi_handoffs > handoffs_before, "ffi_handoffs counter bumped");
+
+        // query:lifetime-pin-stats is reachable from FFI hotpath too
+        auto r = cs.eval("(engine:metrics \"query:lifetime-pin-stats\")");
+        CHECK(r && is_hash(*r), "query:lifetime-pin-stats is hash");
     }
 
     if (::aura::test::g_failed)

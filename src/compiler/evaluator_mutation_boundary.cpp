@@ -28,10 +28,13 @@ module;
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <utility>
+#include <vector>
 
 module aura.compiler.evaluator;
 
 import std;
+import aura.core.lifetime_pin;
 
 namespace aura::compiler {
 
@@ -754,6 +757,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // remain usable across the Guard boundary.
     if (outermost) {
         (void)ev_->restamp_pinned_stable_refs();
+        // Issue #2000: restamp surviving pinned FFI buffers at boundary
+        // exit so pins that outlived the boundary keep tracking the
+        // current gen / arena id. Pins that compact_sweep invalidated
+        // (ptr=null) are skipped (restamp early-return on !pinned).
+        const auto n_pins = aura::core::lifetime::restamp_all_pins_for_arena(0, 0);
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+            if (n_pins > 0)
+                m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),
+                                                         std::memory_order_relaxed);
+        }
     }
     // Issue #285: explicit flush at the boundary exit so any
     // pending mutation stack state is visible to other fibers

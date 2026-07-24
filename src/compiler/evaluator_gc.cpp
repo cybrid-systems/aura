@@ -13,6 +13,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.compiler.value;
+import aura.core.lifetime_pin;
 
 namespace aura::compiler {
 
@@ -704,6 +705,21 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     }
 
     std::lock_guard<std::mutex> lock(heap_mutex());
+
+    // Issue #2000: invalidate pinned FFI buffers during sweep. Pins may
+    // reference swept closure / heap state — conservatively mark them
+    // dead. FFI consumers observe validate() returning false and re-pin
+    // on next use (no UAF). Per-CompilerMetrics counter bump via direct
+    // wire-up (lifetime_pin module can't import evaluator; same bridge
+    // pattern as #1908 file-level atomic fallbacks).
+    {
+        const auto n_invalidated = aura::core::lifetime::invalidate_all_pins_for_arena(0);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+            if (n_invalidated > 0)
+                m->lifetime_pin_invalidations_total.fetch_add(
+                    static_cast<std::uint64_t>(n_invalidated), std::memory_order_relaxed);
+        }
+    }
 
     // Issue #1865: drop pair_remap_ at the start of any successful
     // sweep path. compact_pairs() builds remaps for a prior live_mask;

@@ -14,6 +14,9 @@ set(AURA_CXX_MODULE_CORE
     src/core/mutation.ixx
     src/core/mutators.ixx
     src/core/ast.ixx
+    # Issue #2000 Phase 2: real LifetimePin RAII pinning + generation stamp
+    # + FFI handoff + restamp/invalidate hooks (refines #1226 Phase 1 scaffold).
+    src/core/lifetime_pin.ixx
     src/core/panic_checkpoint_raii.ixx
     src/core/core.ixx
     src/core/type_arena.ixx
