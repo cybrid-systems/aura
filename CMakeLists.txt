@@ -1764,19 +1764,19 @@ aura_add_issue_test(test_envframe_epoch_batch)
 aura_issue_test_link_llvm_jit(test_envframe_epoch_batch)
 add_dependencies(all_test_issue_targets test_envframe_epoch_batch)
 
-# tests/edsl/ hygiene consolidation — pattern / IR-macro / unit batches
-# (merged from ~16 standalones). Prefer extending these over new test_edsl_*.
-aura_add_issue_test(test_edsl_pattern_hygiene_batch)
-aura_issue_test_link_llvm_jit(test_edsl_pattern_hygiene_batch)
-add_dependencies(all_test_issue_targets test_edsl_pattern_hygiene_batch)
+# tests/reflect/ hygiene consolidation (R3 renamed edsl → reflect).
+# Prefer extending these over new test_edsl_* / test_reflect_* singles.
+aura_add_issue_test(test_reflect_pattern_hygiene_batch)
+aura_issue_test_link_llvm_jit(test_reflect_pattern_hygiene_batch)
+add_dependencies(all_test_issue_targets test_reflect_pattern_hygiene_batch)
 
-aura_add_issue_test(test_edsl_macro_hygiene_batch)
-aura_issue_test_link_llvm_jit(test_edsl_macro_hygiene_batch)
-add_dependencies(all_test_issue_targets test_edsl_macro_hygiene_batch)
+aura_add_issue_test(test_reflect_macro_hygiene_batch)
+aura_issue_test_link_llvm_jit(test_reflect_macro_hygiene_batch)
+add_dependencies(all_test_issue_targets test_reflect_macro_hygiene_batch)
 
-aura_add_issue_test(test_edsl_hygiene_unit_batch)
-aura_issue_test_link_llvm_jit(test_edsl_hygiene_unit_batch)
-add_dependencies(all_test_issue_targets test_edsl_hygiene_unit_batch)
+aura_add_issue_test(test_reflect_hygiene_unit_batch)
+aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
+add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)
 
 # tests/fiber/ consolidation — strategy/evolve, synthesize, orch, concurrent units.
 # Keep test_concurrent + test_jit_concurrent_compile (custom targets) and
@@ -1803,11 +1803,11 @@ aura_add_issue_test(test_fiber_concurrent_unit_batch)
 aura_issue_test_link_llvm_jit(test_fiber_concurrent_unit_batch)
 add_dependencies(all_test_issue_targets test_fiber_concurrent_unit_batch)
 
-# tests/jit/ AOT hot-update consolidation (#1640/#544/#1370/#1480/#1641).
+# tests/compiler/jit/ AOT hot-update consolidation (#1640/#544/#1370/#1480/#1641).
 # Keep test_jit_metrics (+ stub) as custom non-module LLVM target above.
-aura_add_issue_test(test_jit_aot_hot_update_batch)
-aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_batch)
-add_dependencies(all_test_issue_targets test_jit_aot_hot_update_batch)
+aura_add_issue_test(test_jit_aot_hot_update_unit_batch)
+aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_unit_batch)
+add_dependencies(all_test_issue_targets test_jit_aot_hot_update_unit_batch)
 
 # tests/issues/ removed (wave 58–60 / #1957): range batches + #178 folded into
 # theme suites (domain/arena, mutation, obs, edsl, fiber, shape, linear).

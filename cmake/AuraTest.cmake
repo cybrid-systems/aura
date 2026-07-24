@@ -16,9 +16,12 @@ function(aura_resolve_test_cpp NAME OUT_VAR)
     if(EXISTS "${CMAKE_SOURCE_DIR}/tests/domain/${NAME}.cpp")
         set(${OUT_VAR} "tests/domain/${NAME}.cpp" PARENT_SCOPE)
     else()
+        # Also match tests/<area>/<theme>/<NAME>.cpp (e.g. tests/compiler/linear/)
+        # after multi-level folds (#1977 / R3–R5).
         file(GLOB _aura_theme_hits
             "${CMAKE_SOURCE_DIR}/tests/domain/*/${NAME}.cpp"
-            "${CMAKE_SOURCE_DIR}/tests/*/${NAME}.cpp")
+            "${CMAKE_SOURCE_DIR}/tests/*/${NAME}.cpp"
+            "${CMAKE_SOURCE_DIR}/tests/*/*/${NAME}.cpp")
         list(LENGTH _aura_theme_hits _aura_theme_n)
         if(_aura_theme_n GREATER 0)
             list(GET _aura_theme_hits 0 _aura_theme_abs)
