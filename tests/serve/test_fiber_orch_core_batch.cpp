@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include "compiler/observability_metrics.h"
+#include "core/resource_quota.hh"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
 #include <string>
@@ -840,6 +841,7 @@ namespace aura_fiber_run_orch_agent_spawn {
 //   AC5: orch:parallel-intend alias
 //   AC6: query:orch-module-stats schema 1588
 //   AC7: #2008 keepalive emit / stall detect / default zero-cost
+//   AC8: #2011 orch:agent-send / agent-recv + quota-reject typed error
 
 
 namespace {
@@ -848,9 +850,11 @@ namespace {
     using aura::compiler::types::as_bool;
     using aura::compiler::types::as_int;
     using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_error;
     using aura::compiler::types::is_hash;
     using aura::compiler::types::is_int;
     using aura::compiler::types::is_string;
+    using aura::compiler::types::is_vector;
     using aura::serve::Fiber;
     using aura::serve::Scheduler;
     using aura::serve::YieldReason;
@@ -987,6 +991,69 @@ namespace {
         auto spawned =
             cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "agents-spawned"))");
         CHECK(spawned && is_int(*spawned) && as_int(*spawned) >= 1, "agents-spawned advanced");
+    }
+
+    // Issue #2011: language primitives for send/recv + quota-reject typing.
+    static void ac8_agent_send_recv_2011() {
+        std::println("\n--- AC8: #2011 orch:agent-send / agent-recv ---");
+        CompilerService cs;
+
+        // Spawn with explicit mailbox options, send, recv (non-blocking), join.
+        auto r = cs.eval(R"(
+(begin
+  (orch:spawn-agent "mail-agent" (lambda () 1)
+                    :attach-mailbox #t :high-water 64)
+  (let ((s (orch:agent-send "mail-agent" "ping-from-host")))
+    (let ((recv (orch:agent-recv "mail-agent" :wait #f :timeout-ms 0)))
+      (vector (hash-ref s "ok")
+              (hash-ref s "status")
+              (hash-ref s "schema-2011")
+              (hash-ref recv "ok")
+              (hash-ref recv "payload")
+              (hash-ref (orch:agent-join "mail-agent" :timeout-ms 5000) "status")))))
+)");
+        CHECK(r && is_vector(*r), "send/recv vector result");
+        // Prefer discrete checks so failures are readable.
+        auto send_ok = cs.eval(R"(
+(begin
+  (orch:spawn-agent "mail-a2" (lambda () 2) :high-water 32)
+  (hash-ref (orch:agent-send "mail-a2" "hello") "ok"))
+)");
+        CHECK(send_ok && is_bool(*send_ok) && as_bool(*send_ok), "agent-send ok");
+        auto payload = cs.eval(R"(
+(begin
+  (hash-ref (orch:agent-recv "mail-a2" :wait #f) "payload"))
+)");
+        CHECK(payload && is_string(*payload), "agent-recv payload string");
+        auto join_st = cs.eval(R"(
+(hash-ref (orch:agent-join "mail-a2" :timeout-ms 5000) "status")
+)");
+        CHECK(join_st && is_string(*join_st), "join after send/recv");
+
+        // Unknown agent → typed error (no panic).
+        auto bad = cs.eval(R"((orch:agent-send "no-such-agent" "x"))");
+        CHECK(bad && is_error(*bad), "unknown agent send is error");
+        auto bad_recv = cs.eval(R"((orch:agent-recv "no-such-agent"))");
+        CHECK(bad_recv && is_error(*bad_recv), "unknown agent recv is error");
+
+        // Quota reject → typed ResourceQuotaExceeded error.
+        {
+            using aura::core::resource_quota::Dimension;
+            using aura::core::resource_quota::process_resource_quota;
+            using aura::core::resource_quota::reset_process_resource_quota_for_test;
+            reset_process_resource_quota_for_test();
+            process_resource_quota().set_limit(Dimension::Memory, 100);
+            auto q = cs.eval(R"((orch:spawn-agent "quota-agent" (lambda () 1)))");
+            CHECK(q && is_error(*q), "quota reject is Aura error");
+            // Message should mention ResourceQuotaExceeded when available.
+            // (error-message primitive may vary; is_error is the AC bar.)
+            reset_process_resource_quota_for_test();
+        }
+
+        // Stats query still advances after language primitives.
+        auto sends =
+            cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "agents-send"))");
+        CHECK(sends && is_int(*sends) && as_int(*sends) >= 1, "agents-send advanced");
     }
 
     // Issue #2008: agent keepalive / heartbeat.
@@ -1183,6 +1250,7 @@ int run_orch_agent_spawn() {
     ac5_parallel_alias();
     ac6_stats();
     ac7_keepalive();
+    ac8_agent_send_recv_2011();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

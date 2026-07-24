@@ -1,0 +1,68 @@
+;; === agent_primitives_2011.aura ===
+;; Issue #2011: Aura language surface for orch MVP primitives.
+;;
+;; Covers:
+;;   (orch:spawn-agent name thunk [:high-water n] [:attach-mailbox bool])
+;;   (orch:agent-send name payload)
+;;   (orch:agent-recv name [:wait bool] [:timeout-ms n])
+;;   (orch:agent-join name [:timeout-ms n])
+;;   (orch:parallel-intend …)
+;;   (engine:metrics "query:orch-module-stats")
+;;
+;; Run:
+;;   ./build/aura < tests/orch/agent_primitives_2011.aura
+;;   (or via CompilerService in test_fiber_orch_core_batch AC8)
+
+(display "=== orch agent primitives (#2011) ===\n")
+
+;; ── spawn + join ──────────────────────────────────────
+(define sp (orch:spawn-agent "a2011" (lambda () 42) :high-water 32))
+(display "spawn ok=")
+(display (hash-ref sp "ok"))
+(newline)
+(if (not (hash-ref sp "ok"))
+    (error "spawn failed")
+    #t)
+
+(define j (orch:agent-join "a2011" :timeout-ms 5000))
+(display "join status=")
+(display (hash-ref j "status"))
+(newline)
+
+;; ── send / recv ───────────────────────────────────────
+(define sp2 (orch:spawn-agent "mail2011" (lambda () 1) :attach-mailbox #t))
+(define s (orch:agent-send "mail2011" "hello-2011"))
+(display "send ok=")
+(display (hash-ref s "ok"))
+(newline)
+(define r (orch:agent-recv "mail2011" :wait #f :timeout-ms 0))
+(display "recv payload=")
+(display (hash-ref r "payload"))
+(newline)
+(orch:agent-join "mail2011" :timeout-ms 5000)
+
+;; ── parallel-intend alias ─────────────────────────────
+(define batch
+  (orch:parallel-intend
+   (vector (lambda () 1) (lambda () 2) (lambda () 3))
+   :max-concurrency 2
+   :timeout-ms 10000))
+(display "parallel ok-count=")
+(display (hash-ref batch "ok-count"))
+(newline)
+
+;; ── stats query ───────────────────────────────────────
+(define st (engine:metrics "query:orch-module-stats"))
+(display "schema=")
+(display (hash-ref st "schema"))
+(display " spawned=")
+(display (hash-ref st "agents-spawned"))
+(newline)
+
+;; ── unknown agent → error (no panic) ──────────────────
+(define err? (error? (orch:agent-send "nope" "x")))
+(display "unknown-send-is-error=")
+(display err?)
+(newline)
+
+(display "=== orch agent primitives (#2011): done ===\n")

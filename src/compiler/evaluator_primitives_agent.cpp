@@ -2656,16 +2656,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return build_hash(kv);
     });
 
-    // ── Issue #1588: unified src/orch/ Aura surface ─────────────────
+    // ── Issue #1588 / #2011: unified src/orch/ Aura surface ────────
     //
-    // (orch:spawn-agent name [thunk]) → hash {ok, id, name, schema=1588}
-    // (orch:agent-join name-or-id [:timeout-ms n]) → hash {status, wait-us, ok}
+    // (orch:spawn-agent name [thunk]
+    //    [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n])
+    //   → hash {ok, id, name, schema=1588, [quota-exceeded, error]}
+    // (orch:agent-join name [:timeout-ms n]) → hash {status, wait-us, ok}
+    // (orch:agent-send name payload) → hash {ok, status, schema}
+    // (orch:agent-recv name [:wait bool] [:timeout-ms n]) → hash {ok, empty, payload}
     // (orch:parallel-intend …) → alias of (parallel-intend …)
-    // (query:orch-module-stats) → module counters
+    // (engine:metrics "query:orch-module-stats") → OrchModuleStats snapshot
 
     auto build_orch_hash =
         [&ev](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-        auto* ht = FlatHashTable::create(std::max<std::size_t>(16, kv.size() * 2));
+        // FlatHashTable probes with (cap-1) mask → capacity must be power of 2.
+        std::size_t need = std::max<std::size_t>(16, kv.size() * 2);
+        std::size_t cap = 16;
+        while (cap < need)
+            cap <<= 1;
+        auto* ht = FlatHashTable::create(cap);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -2702,6 +2711,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
+    };
+
+    auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
+        std::string k;
+        if (types::is_string(v))
+            k = heap_str_from(ev.string_heap_, v);
+        else if (types::is_keyword(v)) {
+            auto ki = types::as_keyword_idx(v);
+            if (ki < ev.keyword_table_.size())
+                k = ev.keyword_table_[ki];
+        }
+        while (!k.empty() && k[0] == ':')
+            k = k.substr(1);
+        return k;
     };
 
     // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
@@ -2750,126 +2773,260 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     };
     static OrchAgentNameTable orch_agent_names;
 
-    add("orch:spawn-agent", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0])) {
+    add("orch:spawn-agent",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:spawn-agent: usage (orch:spawn-agent name [thunk] [:kw val]…)",
+                    ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            std::optional<std::uint64_t> cid;
+            std::size_t i = 1;
+            if (i < a.size() && types::is_closure(a[i])) {
+                cid = types::as_closure_id(a[i]);
+                ++i;
+            }
+            // Issue #2011: optional policy keywords.
+            bool attach_mailbox = true;
+            std::size_t high_water = 256;
+            std::uint32_t keepalive_interval_ms = 0;
+            for (; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "attach-mailbox" || k == "attach_mailbox") && types::is_bool(val)) {
+                    attach_mailbox = types::as_bool(val);
+                } else if ((k == "high-water" || k == "high_water" || k == "mailbox-high-water") &&
+                           types::is_int(val)) {
+                    high_water =
+                        static_cast<std::size_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                } else if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
+                           types::is_int(val)) {
+                    keepalive_interval_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                }
+            }
+
+            orch_sched.ensure(2);
+            auto body = [&ev, cid]() {
+                if (!cid)
+                    return;
+                try {
+                    static std::mutex orch_eval_mu;
+                    std::lock_guard lock(orch_eval_mu);
+                    // Issue #1719: refuse apply on freed thunk closure.
+                    if (!agent_cid_live(ev, *cid)) {
+                        agent_note_closure_freed_call(ev);
+                        return;
+                    }
+                    (void)ev.apply_closure(*cid, {});
+                } catch (...) {
+                    // [SILENCE-PRIM-#615] swallow: agent body errors surface
+                    // via join/status only (#1669 class B intentional-state).
+                }
+            };
+            aura::orch::AgentSpec spec;
+            spec.name = name;
+            spec.body = std::move(body);
+            spec.attach_mailbox = attach_mailbox;
+            spec.mailbox_high_water = high_water;
+            spec.keepalive_interval_ms = keepalive_interval_ms;
+            auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
+            // Issue #2009: move-only handle; snapshot then put on success.
+            const bool ok = handle.ok;
+            const bool quota_exceeded = handle.quota_exceeded;
+            const auto id = handle.id;
+            const std::string out_name = handle.name.empty() ? name : handle.name;
+            const std::string err = handle.error;
+            if (ok)
+                orch_agent_names.put(std::move(handle));
+
+            // Issue #2011: quota reject surfaces as typed Aura error (no panic).
+            if (!ok && quota_exceeded) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    err.empty() ? "ResourceQuotaExceeded: orch spawn rejected" : err,
+                    ev.primitive_error_counter_ptr());
+            }
+
+            auto nidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(out_name);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(ok)},           {"id", make_int(static_cast<std::int64_t>(id))},
+                {"name", make_string(nidx)},     {"schema", make_int(1588)},
+                {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(quota_exceeded)},
+            };
+            if (!ok && !err.empty()) {
+                auto eidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(err);
+                kv.push_back({"error", make_string(eidx)});
+            }
+            return build_orch_hash(kv);
+        });
+
+    add("orch:agent-join",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty()) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-join: need name",
+                                            ev.primitive_error_counter_ptr());
+            }
+            std::optional<std::uint64_t> timeout_ms;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
+                    timeout_ms = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+            }
+
+            aura::orch::AgentHandle* hp = nullptr;
+            if (types::is_string(a[0])) {
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                hp = orch_agent_names.find(name);
+            }
+            // Join-by-id is intentionally not supported (name table is name-keyed).
+            if (!hp) {
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("invalid");
+                         return make_string(s);
+                     }()},
+                    {"wait-us", make_int(0)},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                };
+                return build_orch_hash(kv);
+            }
+
+            auto jr = aura::orch::join_agent(*hp, timeout_ms);
+            const char* st = "ok";
+            switch (jr.status) {
+                case aura::serve::JoinStatus::Ok:
+                    st = "ok";
+                    break;
+                case aura::serve::JoinStatus::Timeout:
+                    st = "timeout";
+                    break;
+                case aura::serve::JoinStatus::Cancelled:
+                    st = "cancelled";
+                    break;
+                case aura::serve::JoinStatus::Invalid:
+                    st = "invalid";
+                    break;
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+                {"status", make_string(sidx)},
+                {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
+                {"schema", make_int(1588)},
+                {"schema-2011", make_int(2011)},
+            };
+            return build_orch_hash(kv);
+        });
+
+    // Issue #2011: language surface for agent_send / agent_recv.
+    add("orch:agent-send", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:spawn-agent: usage (orch:spawn-agent name [thunk])",
+                                        "orch:agent-send: usage (orch:agent-send name payload)",
                                         ev.primitive_error_counter_ptr());
         }
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        std::optional<std::uint64_t> cid;
-        if (a.size() >= 2 && types::is_closure(a[1]))
-            cid = types::as_closure_id(a[1]);
-
-        orch_sched.ensure(2);
-        auto body = [&ev, cid]() {
-            if (!cid)
-                return;
-            try {
-                static std::mutex orch_eval_mu;
-                std::lock_guard lock(orch_eval_mu);
-                // Issue #1719: refuse apply on freed thunk closure.
-                if (!agent_cid_live(ev, *cid)) {
-                    agent_note_closure_freed_call(ev);
-                    return;
-                }
-                (void)ev.apply_closure(*cid, {});
-            } catch (...) {
-                // [SILENCE-PRIM-#615] swallow: agent body errors surface
-                // via join/status only (#1669 class B intentional-state).
-            }
-        };
-        auto handle = aura::orch::spawn_agent_with_mailbox(
-            *orch_sched.sched, aura::orch::AgentSpec{.name = name, .body = std::move(body)});
-        // Issue #2009: AgentHandle is move-only; snapshot response fields then
-        // move into the name table so the table owns the reservation.
-        const bool ok = handle.ok;
-        const auto id = handle.id;
-        const std::string out_name = handle.name.empty() ? name : handle.name;
-        if (ok)
-            orch_agent_names.put(std::move(handle));
-
-        auto nidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(out_name);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(ok)},
-            {"id", make_int(static_cast<std::int64_t>(id))},
-            {"name", make_string(nidx)},
-            {"schema", make_int(1588)},
-        };
-        return build_orch_hash(kv);
-    });
-
-    add("orch:agent-join", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) {
+        auto* hp = orch_agent_names.find(name);
+        if (!hp || !hp->ok) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-join: need name or id",
+                                        "orch:agent-send: unknown agent",
                                         ev.primitive_error_counter_ptr());
         }
-        std::optional<std::uint64_t> timeout_ms;
-        for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-            std::string k;
-            if (types::is_string(a[i]))
-                k = heap_str_from(ev.string_heap_, a[i]);
-            else if (types::is_keyword(a[i])) {
-                auto ki = types::as_keyword_idx(a[i]);
-                if (ki < ev.keyword_table_.size())
-                    k = ev.keyword_table_[ki];
-            }
-            while (!k.empty() && k[0] == ':')
-                k = k.substr(1);
-            if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
-                timeout_ms =
-                    static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-        }
+        std::string payload;
+        if (types::is_string(a[1]))
+            payload = heap_str_from(ev.string_heap_, a[1]);
+        else if (types::is_int(a[1]))
+            payload = std::to_string(types::as_int(a[1]));
+        else if (types::is_bool(a[1]))
+            payload = types::as_bool(a[1]) ? "#t" : "#f";
+        else
+            payload = "payload";
 
-        aura::orch::AgentHandle* hp = nullptr;
-        if (types::is_string(a[0])) {
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            hp = orch_agent_names.find(name);
-        }
-        // Join-by-id is intentionally not supported (name table is name-keyed).
-        if (!hp) {
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(false)},
-                {"status",
-                 [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back("invalid");
-                     return make_string(s);
-                 }()},
-                {"wait-us", make_int(0)},
-                {"schema", make_int(1588)},
-            };
-            return build_orch_hash(kv);
-        }
-
-        auto jr = aura::orch::join_agent(*hp, timeout_ms);
-        const char* st = "ok";
-        switch (jr.status) {
-            case aura::serve::JoinStatus::Ok:
-                st = "ok";
-                break;
-            case aura::serve::JoinStatus::Timeout:
-                st = "timeout";
-                break;
-            case aura::serve::JoinStatus::Cancelled:
-                st = "cancelled";
-                break;
-            case aura::serve::JoinStatus::Invalid:
-                st = "invalid";
-                break;
-        }
+        aura::serve::mf_mailbox::MailMessage msg;
+        msg.payload = std::move(payload);
+        msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
+        auto st = aura::orch::agent_send(*hp, std::move(msg));
+        const char* st_s = "ok";
+        if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
+            st_s = "backpressure";
+        else if (st == aura::serve::mf_mailbox::PushStatus::Closed)
+            st_s = "closed";
         auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(st);
+        ev.string_heap_.push_back(st_s);
         std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+            {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
             {"status", make_string(sidx)},
-            {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
             {"schema", make_int(1588)},
+            {"schema-2011", make_int(2011)},
         };
         return build_orch_hash(kv);
     });
+
+    add("orch:agent-recv",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:agent-recv: usage (orch:agent-recv name [:wait bool] [:timeout-ms n])",
+                    ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            auto* hp = orch_agent_names.find(name);
+            if (!hp || !hp->ok) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-recv: unknown agent",
+                                            ev.primitive_error_counter_ptr());
+            }
+            bool wait = true;
+            int timeout_ms = -1;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                if ((k == "wait") && types::is_bool(a[i + 1])) {
+                    wait = types::as_bool(a[i + 1]);
+                } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
+                    timeout_ms =
+                        static_cast<int>(std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                }
+            }
+            if (!wait && timeout_ms < 0)
+                timeout_ms = 0;
+            auto msg = aura::orch::agent_recv(*hp, wait, timeout_ms);
+            if (!msg) {
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"empty", make_bool(true)},
+                    {"payload",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("");
+                         return make_string(s);
+                     }()},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                };
+                return build_orch_hash(kv);
+            }
+            auto pidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(msg->payload);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},         {"empty", make_bool(false)},
+                {"payload", make_string(pidx)},  {"schema", make_int(1588)},
+                {"schema-2011", make_int(2011)},
+            };
+            return build_orch_hash(kv);
+        });
 
     add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto prim = ev.primitives_.lookup("parallel-intend");
