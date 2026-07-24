@@ -71,4 +71,8 @@ __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {
 }
 __attribute__((weak, used)) void aura_orch_agent_body_release_guard() {}
 
+// Issue #2010: mailbox backpressure → orch dashboard (strong def in
+// evaluator_fiber_mutation.cpp when evaluator/orch is linked).
+__attribute__((weak, used)) void aura_orch_note_mailbox_backpressure() {}
+
 } // extern "C"
