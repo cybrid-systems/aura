@@ -10025,12 +10025,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const std::uint64_t preserved = qev->get_stable_func_id_preserved_total();
             const std::uint64_t assigned = qev->get_stable_func_id_assigned_total();
             const std::uint64_t closure_dep = qev->get_aot_closure_dependency_reemit_total();
+            const std::uint64_t live_remap = qev->get_live_closure_remap_total();
             // Legacy compact sum path: (engine:metrics "query:..." "sum")
             if (!a.empty() && is_string(a[0])) {
                 auto sidx = as_string_idx(a[0]);
                 if (sidx < string_heap.size() && string_heap[sidx] == "sum") {
                     return make_int(static_cast<std::int64_t>(total + success + preserved +
-                                                              assigned + closure_dep));
+                                                              assigned + closure_dep + live_remap));
                 }
             }
             auto* ht = FlatHashTable::create(32);
@@ -10066,6 +10067,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-1930", 1930);
             insert_kv("issue-1930", 1930);
             insert_kv("schema-1952", 1952);
+            insert_kv("schema-2013", 2013);
             insert_kv("active", 1);
             insert_kv("aot_incremental_reemit_count", static_cast<std::int64_t>(total));
             insert_kv("aot_incremental_reemit_success_total", static_cast<std::int64_t>(success));
@@ -10073,10 +10075,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stable_func_id_assigned_total", static_cast<std::int64_t>(assigned));
             insert_kv("aot_closure_dependency_reemit_total",
                       static_cast<std::int64_t>(closure_dep));
+            // Issue #2013: live closures retargeted after reemit.
+            insert_kv("live_closure_remap_total", static_cast<std::int64_t>(live_remap));
             insert_kv("stable-func-id-map-wired", 1);
             insert_kv("emit-callback-path-wired", 1);
             insert_kv("return-success-when-emit-wired", 1);
-            insert_kv("pipeline-phase", 3); // skeleton + region + emit + stable map
+            insert_kv("live-closure-remap-wired", 1);
+            insert_kv("pipeline-phase", 4); // + live closure remap (#2013)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

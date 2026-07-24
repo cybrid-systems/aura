@@ -7356,6 +7356,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> aot_incremental_reemit_success_total{0}; // #1952
     std::atomic<std::uint64_t> stable_func_id_preserved_total{0};       // #1930
     std::atomic<std::uint64_t> stable_func_id_assigned_total{0};        // #1930
+    // Issue #2013: live closures retargeted to stable func id + restamped
+    // bridge_epoch after successful reemit (avoids deopt storms).
+    std::atomic<std::uint64_t> live_closure_remap_total{0}; // #2013
 
     // ── Issue #1630: mandate full StableNodeRef provenance ──
     // fiber_id mismatch fail-fast (unpinned); boundary_pinned auto-restamp

@@ -1802,6 +1802,11 @@ aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
 target_link_options(test_aot_reload_primitive PRIVATE -Wl,--export-dynamic)
 add_dependencies(all_test_issue_targets test_aot_reload_primitive)
 
+# Issue #1930 / #1952 / #2013: incremental reemit + stable func_id + live remap.
+aura_add_issue_test(test_aot_incremental_reemit)
+aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)
+add_dependencies(all_test_issue_targets test_aot_incremental_reemit)
+
 # tests/issues/ removed (wave 58–60 / #1957): range batches + #178 folded into
 # theme suites (domain/arena, mutation, obs, edsl, fiber, shape, linear).
 

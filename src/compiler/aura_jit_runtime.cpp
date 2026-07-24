@@ -919,6 +919,64 @@ void aura_closure_set_name(int64_t closure_id, const char* name) {
     aura_unlock_workspace_write();
 }
 
+// Issue #2013: targeted live-closure remap after successful reemit.
+// For each live cid whose name is in the reemitted set, rewrite
+// g_closure_func_ids to the process-stable id and restamp bridge_epoch
+// (and defuse_version) so aura_closure_call dual-freshness passes without
+// deopt. Hold the exclusive table lock so concurrent calls observe either
+// fully-old or fully-new (func_id + epoch) for each slot.
+extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const* names,
+                                                               const std::uint32_t* stable_ids,
+                                                               std::size_t n,
+                                                               std::uint64_t new_bridge_epoch) {
+    if (!names || !stable_ids || n == 0)
+        return 0;
+
+    // Build name → stable_id lookup (small n: reemit batch size).
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        name_to_id;
+    name_to_id.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!names[i] || !*names[i] || stable_ids[i] == 0)
+            continue;
+        name_to_id.emplace(names[i], stable_ids[i]);
+    }
+    if (name_to_id.empty())
+        return 0;
+
+    const std::uint64_t host_defuse = aura_get_aot_defuse_version();
+
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+
+    std::uint64_t remapped = 0;
+    const std::size_t nslots = g_closure_func_ids.size();
+    for (std::size_t cid = 0; cid < nslots; ++cid) {
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+            continue;
+        if (cid >= g_closure_names.size() || g_closure_names[cid].empty())
+            continue;
+        auto it = name_to_id.find(g_closure_names[cid]);
+        if (it == name_to_id.end())
+            continue;
+
+        // Atomic-from-callers' view: both fields under exclusive table lock.
+        g_closure_func_ids[cid] = static_cast<std::int64_t>(it->second);
+        if (cid >= g_closure_bridge_epochs.size())
+            g_closure_bridge_epochs.resize(cid + 1, 0);
+        if (cid >= g_closure_defuse_versions.size())
+            g_closure_defuse_versions.resize(cid + 1, 0);
+        g_closure_bridge_epochs[cid] = new_bridge_epoch;
+        g_closure_defuse_versions[cid] = host_defuse;
+        invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+        ++remapped;
+    }
+
+    aura_unlock_workspace_write();
+    return remapped;
+}
+
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     // Issue #157 Phase 2 + #1361: table mutex + workspace write when hooked.
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);

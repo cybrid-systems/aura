@@ -112,9 +112,18 @@ extern "C" std::uint64_t aura_tl_arena_oom_total();
 extern "C" void aura_free_closure(std::int64_t closure_id);
 extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
 extern "C" std::int64_t aura_alloc_closure_arena(std::int64_t func_id);
+extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name);
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
                                           std::int64_t argc);
+// Issue #2013: after successful reemit, retarget live closures whose name
+// matches a reemitted stable func id: rewrite func_id + restamp bridge_epoch
+// under the closure table write lock. Returns remapped closure count.
+// names/stable_ids length n; new_bridge_epoch is post-commit table epoch.
+extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const char* const* names,
+                                                               const std::uint32_t* stable_ids,
+                                                               std::size_t n,
+                                                               std::uint64_t new_bridge_epoch);
 extern "C" std::uint64_t aura_closure_free_total();
 extern "C" std::uint64_t aura_closure_reuse_total();
 extern "C" std::size_t aura_closure_live_count();
