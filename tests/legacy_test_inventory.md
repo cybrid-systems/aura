@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 332 | Preferred destination suites |
-| **Total scanned** | **332** | |
+| `tests/core/test_*.cpp` | 331 | Preferred destination suites |
+| **Total scanned** | **331** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 35 | 35 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 34 | 34 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 78 | 78 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 37 | 37 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 6 | 6 | P1 — small, already partially batched |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **61**
+- Existing `*_batch` drivers (migration milestones): **62**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -93,6 +93,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_env_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_env_lookup_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_envframe_epoch_batch.cpp` → theme `arena_compaction`
+- `tests/compiler/test_epoch_apply_batch.cpp` → theme `arena_compaction`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp` → theme `fiber_orch`
 - `tests/serve/test_fiber_integration_batch.cpp` → theme `fiber_orch`
 - `tests/serve/test_fiber_orch_core_batch.cpp` → theme `fiber_orch`
@@ -228,8 +229,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_envframe_resolve_distinction.cpp`
 - `tests/compiler/test_envframe_truncate_epoch.cpp`
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp`
-- `tests/compiler/test_epoch_apply_hotpath.cpp`
-- `tests/compiler/test_epoch_apply_mandate.cpp`
+- `tests/compiler/test_epoch_apply_batch.cpp`
 - `tests/reflect/test_error_merr.cpp`
 - `tests/compiler/test_eval_relower_hotpath.cpp`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp`
@@ -510,13 +510,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (35)
+### `arena_compaction` — Arena / compaction / GC (34)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (35)
+#### domain/ (34)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp` (—) [domain_suite, theme_core] — (aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run). Stays at tests/core/ per
@@ -534,8 +534,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_epoch_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_envframe_epoch_batch.cpp — EnvFrame / bridge_epoch batch driver.
 - `tests/compiler/test_envframe_truncate_epoch.cpp` (—) [domain_suite, theme_compiler] — Issue #1842/#1889 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp` (—) [domain_suite, theme_core] — Issue #1739/#1842/#1889/#1927/#1948 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_epoch_apply_hotpath.cpp` (—) [domain_suite, theme_compiler] — Issue #1475/#1496/#1558/#1598 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_epoch_apply_mandate.cpp` (—) [domain_suite, theme_compiler] — Issue #1475/#1477/#1491/#1626/#1632 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_epoch_apply_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_epoch_apply_batch.cpp — epoch_apply pair dup-merge (R19 phase 15).
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
 - `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
 - `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_sweep_batch.cpp — GC compact sweep batch driver.
