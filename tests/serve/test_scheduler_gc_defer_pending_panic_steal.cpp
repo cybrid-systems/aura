@@ -265,16 +265,118 @@ static void ac6_gc_resumes_after_release() {
     CHECK(r.has_value(), "eval after GC resume path");
 }
 
+// ── Issue #2002 AC7: per-evaluator discriminator + TOCTOU stress ──
+// The discriminator table in gc_hooks.h now tracks per-evaluator armed
+// depth. This case verifies:
+//   - gc_deferred_for_evaluator(id) reflects the per-evaluator state
+//   - arm_gc_defer_pending_panic_for(id) increments the right slot
+//   - release_gc_defer_pending_panic_for(id) decrements + clears when
+//     depth hits 0
+//   - clear_gc_defer_for_evaluator(id) drops any orphaned depth
+//   - concurrent arm/release of distinct ids leaves zero residual
+//     depth + zero residual table entries (TOCTOU stress).
+static void ac7_per_evaluator_discriminator() {
+    std::println("\n--- AC7: #2002 per-evaluator discriminator + TOCTOU stress ---");
+    // Baseline: depth + per-evaluator table should be empty after
+    // previous tests released.
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0,
+          "AC7: process-wide depth starts at 0");
+
+    // Two distinct fake evaluator ids (avoid depending on real
+    // Evaluator lifetimes in the test process).
+    std::uintptr_t fake_a = 0xA1A1A1A1u;
+    std::uintptr_t fake_b = 0xB2B2B2B2u;
+    auto* id_a = reinterpret_cast<void*>(fake_a);
+    auto* id_b = reinterpret_cast<void*>(fake_b);
+
+    // Arm both; verify both are flagged + process-wide depth bumped.
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_a);
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_a); // nested
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_b);
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_a), "AC7: id_a flagged after 2 arms");
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_b), "AC7: id_b flagged after 1 arm");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 3,
+          "AC7: process-wide depth == 3 (2+1)");
+
+    // Release one nested arm of id_a; depth still > 0 for id_a.
+    aura::gc_hooks::release_gc_defer_pending_panic_for(id_a);
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_a),
+          "AC7: id_a still flagged after 1 release");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 2,
+          "AC7: process-wide depth == 2 after first release");
+
+    // Clear all of id_a's depth (cross-evaluator steal-style orphan
+    // cleanup).
+    const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(id_a);
+    CHECK(cleared == 1, "AC7: clear returned 1 (the remaining depth)");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(id_a),
+          "AC7: id_a cleared from per-evaluator table");
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_b),
+          "AC7: id_b still flagged (orthogonal slot)");
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 1,
+          "AC7: process-wide depth == 1 after id_a clear");
+
+    // Release id_b; everything should be back to 0.
+    aura::gc_hooks::release_gc_defer_pending_panic_for(id_b);
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0, "AC7: process-wide depth back to 0");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(id_a), "AC7: id_a not flagged");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(id_b), "AC7: id_b not flagged");
+}
+
+// TOCTOU stress: two threads race arm/release on distinct ids while a
+// third thread probes the process-wide defer predicate. The race is the
+// real TOCTOU #2002 closes: arm between probe and safepoint-arm.
+static void ac8_toctou_stress_per_evaluator() {
+    std::println("\n--- AC8: #2002 TOCTOU stress per-evaluator ---");
+    constexpr int kIters = 1000;
+    constexpr int kThreads = 4;
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([t, &ready, &go]() {
+            const auto fake = static_cast<std::uintptr_t>(0xC0DE0000u + t);
+            auto* id = reinterpret_cast<void*>(fake);
+            ++ready;
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (int i = 0; i < kIters; ++i) {
+                aura::gc_hooks::arm_gc_defer_pending_panic_for(id);
+                // probe from this thread — race window
+                (void)aura::gc_hooks::should_defer_compact_for_pending_checkpoint();
+                aura::gc_hooks::release_gc_defer_pending_panic_for(id);
+            }
+        });
+    }
+    while (ready.load() < kThreads)
+        std::this_thread::yield();
+    go.store(true, std::memory_order_release);
+    for (auto& th : threads)
+        th.join();
+
+    // After all threads join, no thread left armed → depth + table must
+    // be back to 0 (no orphan per #2002 AC).
+    CHECK(aura::gc_hooks::gc_defer_pending_panic_depth() == 0,
+          "AC8: post-stress depth == 0 (no orphan)");
+    for (int t = 0; t < kThreads; ++t) {
+        const auto fake = static_cast<std::uintptr_t>(0xC0DE0000u + t);
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(reinterpret_cast<void*>(fake)),
+              "AC8: per-evaluator table cleared for thread slot");
+    }
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581) ===");
+    std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581 + #2002) ===");
     ac1_collector_request_defers();
     ac2_compact_sweep_and_restore();
     ac3_send_defer_signal_provenance();
     ac4_repin_under_pending();
     ac5_thousand_iter_concurrent_stress();
     ac6_gc_resumes_after_release();
+    ac7_per_evaluator_discriminator();
+    ac8_toctou_stress_per_evaluator();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

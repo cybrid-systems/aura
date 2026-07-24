@@ -22,7 +22,9 @@
 #define AURA_CORE_GC_HOOKS_H
 
 #include <cstddef>
+#include <array>
 #include <atomic>
+#include <mutex>
 
 namespace aura::gc_hooks {
 
@@ -146,7 +148,23 @@ inline void note_safepoint_wait_while_mutation(std::uint64_t wait_us) noexcept {
 // StableNodeRef / EnvFrame state during the recovery window.
 // Depth (not a bool) so nested evaluators / multi-checkpoint
 // windows compose correctly.
+//
+// Issue #2002: per-evaluator discriminator table. The process-wide
+// depth stays (aggregate metrics), but the per-evaluator table lets
+// PanicCheckpointGuard cross-check expected_evaluator_id on arm/release
+// and lets fiber-steal clear orphaned depth from the previous host.
+// Bounded inline array + mutex (PanicCheckpoint save/restore is rare;
+// per-call lock is fine).
 inline std::atomic<std::uint32_t> g_gc_defer_pending_panic_depth{0};
+namespace detail {
+    constexpr std::size_t kMaxArmedEvaluators = 64;
+    struct ArmedEvaluatorEntry {
+        void* id = nullptr;
+        std::uint32_t depth = 0;
+    };
+    inline std::array<ArmedEvaluatorEntry, kMaxArmedEvaluators> g_gc_defer_armed_table{};
+    inline std::mutex g_gc_defer_armed_mtx{};
+} // namespace detail
 // Signals from Fiber::yield → block_gc_for_pending_checkpoint
 // trampoline (may fire many times per armed window).
 inline std::atomic<std::uint64_t> g_gc_defer_pending_panic_signals{0};
@@ -173,8 +191,110 @@ inline void release_gc_defer_pending_panic() noexcept {
     }
 }
 
+// Issue #2002: per-evaluator arm. Updates the per-evaluator table
+// AND the process-wide aggregate depth (so existing gc_deferred_for_pending_panic()
+// checks continue to work without changes). If evaluator_id is null,
+// falls back to the legacy process-wide increment (no discriminator).
+inline void arm_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
+    if (!evaluator_id) {
+        arm_gc_defer_pending_panic();
+        return;
+    }
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    for (auto& e : detail::g_gc_defer_armed_table) {
+        if (e.id == evaluator_id) {
+            ++e.depth;
+            g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            return;
+        }
+    }
+    for (auto& e : detail::g_gc_defer_armed_table) {
+        if (e.id == nullptr) {
+            e.id = evaluator_id;
+            e.depth = 1;
+            g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+            return;
+        }
+    }
+    // Overflow: still bump process-wide depth (legacy behavior). The
+    // per-evaluator table is bounded; in practice # of evaluators with
+    // active PanicCheckpoints is tiny.
+    g_gc_defer_pending_panic_depth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+// Issue #2002: per-evaluator release. Decrements the entry's depth;
+// when the entry's depth hits 0, clears the id slot. Always decrements
+// the process-wide aggregate too (so the aggregate matches what was
+// armed, even if the per-evaluator slot is no longer found).
+inline void release_gc_defer_pending_panic_for(void* evaluator_id) noexcept {
+    if (!evaluator_id) {
+        release_gc_defer_pending_panic();
+        return;
+    }
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    for (auto& e : detail::g_gc_defer_armed_table) {
+        if (e.id == evaluator_id) {
+            if (e.depth > 0)
+                --e.depth;
+            if (e.depth == 0)
+                e.id = nullptr;
+            break;
+        }
+    }
+    auto prev = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
+                prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+            break;
+    }
+}
+
 [[nodiscard]] inline bool gc_deferred_for_pending_panic() noexcept {
     return g_gc_defer_pending_panic_depth.load(std::memory_order_acquire) > 0;
+}
+
+// Issue #2002: per-evaluator discriminator check. Returns true if
+// the specific evaluator_id has at least one live PanicCheckpoint
+// armed in the per-evaluator table. Returns false if the id is null
+// or not found. Cross-evaluator steal can use this to detect stale
+// defer depth owned by the previous host.
+[[nodiscard]] inline bool gc_deferred_for_evaluator(void* evaluator_id) noexcept {
+    if (!evaluator_id)
+        return false;
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    for (const auto& e : detail::g_gc_defer_armed_table) {
+        if (e.id == evaluator_id)
+            return e.depth > 0;
+    }
+    return false;
+}
+
+// Issue #2002: clear any deferred depth belonging to evaluator_id
+// (used by fiber-steal path to orphan stale depth from the previous
+// host). Returns the # of slots that were cleared (0 if none).
+[[nodiscard]] inline std::uint32_t clear_gc_defer_for_evaluator(void* evaluator_id) noexcept {
+    if (!evaluator_id)
+        return 0;
+    std::uint32_t cleared = 0;
+    std::lock_guard<std::mutex> lock(detail::g_gc_defer_armed_mtx);
+    for (auto& e : detail::g_gc_defer_armed_table) {
+        if (e.id == evaluator_id) {
+            cleared = e.depth;
+            e.depth = 0;
+            e.id = nullptr;
+            break;
+        }
+    }
+    if (cleared > 0) {
+        auto prev = g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+        while (prev > 0) {
+            const auto target = (prev >= cleared) ? prev - cleared : 0;
+            if (g_gc_defer_pending_panic_depth.compare_exchange_weak(
+                    prev, target, std::memory_order_acq_rel, std::memory_order_relaxed))
+                break;
+        }
+    }
+    return cleared;
 }
 
 [[nodiscard]] inline std::uint32_t gc_defer_pending_panic_depth() noexcept {
