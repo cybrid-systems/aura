@@ -2769,6 +2769,56 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
         });
+
+    // Issue #2001: query:gc-compact-stats — pointer remapping
+    // + compaction metrics for compact_sweep. Reads from
+    // CompilerMetrics (gc_strings_compacted_total + gc_pairs_remapped_total
+    // are bumped in compact_sweep when string_heap_/pairs_ actually
+    // shrink + remap tables are built). schema=2001 marks the Phase 2
+    // remap walk landed (compact + remap, beyond report-dead).
+    ObservabilityPrims::register_stats_impl(
+        "query:gc-compact-stats", [&ev](const auto&) -> EvalValue {
+            auto* m = ev.compiler_metrics()
+                          ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
+                          : nullptr;
+            const std::uint64_t strings_compacted =
+                m ? m->gc_strings_compacted_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t pairs_remapped =
+                m ? m->gc_pairs_remapped_total.load(std::memory_order_relaxed) : 0;
+            auto* ht = FlatHashTable::create(8);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2001);
+            insert_kv("strings-compacted", static_cast<std::int64_t>(strings_compacted));
+            insert_kv("pairs-remapped", static_cast<std::int64_t>(pairs_remapped));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 }
 
 // Issue #909 part 23 (orig lines 3412-3552)

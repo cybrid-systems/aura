@@ -3554,6 +3554,17 @@ public:
         return pair_remap_[old_id];
     }
     [[nodiscard]] std::size_t pair_remap_size() const noexcept { return pair_remap_.size(); }
+    // Issue #2001: string_heap_ remap table (mirrors pair_remap_).
+    // string_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
+    // Empty means no compact has happened yet (identity mapping).
+    [[nodiscard]] std::int64_t resolve_string(std::uint64_t old_id) const noexcept {
+        if (string_remap_.empty())
+            return static_cast<std::int64_t>(old_id);
+        if (old_id >= string_remap_.size())
+            return -1;
+        return string_remap_[old_id];
+    }
+    [[nodiscard]] std::size_t string_remap_size() const noexcept { return string_remap_.size(); }
     // Issue #206: compact the pairs_ arena. `live_mask[i]`
     // is true if pairs_[i] is live (should be kept). Pairs
     // not in live_mask are removed, and the remap table is
@@ -3575,6 +3586,13 @@ public:
     // compact_env_frames — not signed int64_t.
     [[nodiscard]] std::size_t compact_pairs(const std::vector<bool>& live_mask);
     void clear_pair_remap() noexcept { pair_remap_.clear(); }
+    // Issue #2001: compact string_heap_ + build string_remap_.
+    // `live_mask[i]` is true if string_heap_[i] is live (keep).
+    // Strings not in live_mask are removed and remapped to -1.
+    // Returns # strings after compact. Empty live_mask → identity
+    // (all strings treated as live).
+    [[nodiscard]] std::size_t compact_strings(const std::vector<bool>& live_mask);
+    void clear_string_remap() noexcept { string_remap_.clear(); }
     // Walk the parent chain starting from `start`, calling
     // `f(EnvId, const EnvFrame&)` for each frame including
     // `start`. Stops when `f` returns false (early exit) or the
@@ -4018,6 +4036,9 @@ public:
     // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
     // Empty means no compact has happened yet (identity mapping).
     std::vector<std::int64_t> pair_remap_;
+    // Issue #2001: string remap table (mirrors pair_remap_).
+    // string_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
+    std::vector<std::int64_t> string_remap_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     // Issue #131: FFI state moved to FFIRuntime instance
@@ -5844,6 +5865,9 @@ public:
     // they use this wrapper.
     [[nodiscard]] std::size_t string_heap_size() const noexcept { return string_heap_.size(); }
     const std::string& string_heap_at(std::size_t idx) const { return string_heap_[idx]; }
+    // Issue #2001: public pairs_ size getter (companion to string_heap_size)
+    // for tests + observability. Live pair count post-compact.
+    [[nodiscard]] std::size_t pairs_size() const noexcept { return pairs_.size(); }
     std::int32_t push_string_heap(const std::string& s) {
         const auto idx = static_cast<std::int32_t>(string_heap_.size());
         string_heap_.push_back(s);
