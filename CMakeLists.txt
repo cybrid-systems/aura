@@ -941,7 +941,7 @@ add_test(NAME ir_basic COMMAND ./test_ir
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Phase-2 empty root stubs (test_fiber / test_mutation / test_observability /
-# test_persist) removed — coverage lives in tests/domain/* suites
+# test_persist) removed — coverage lives in core/arena + serve/gc + orch test suites
 # (see tests/root_test_classification.md Wave 0, scripts/classify_root_tests.py).
 
 # IR mode tests via --ir flag
