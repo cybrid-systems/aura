@@ -10,6 +10,7 @@
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -812,6 +813,7 @@ namespace aura_fiber_run_orch_quota_integration {
 // @reason: Issue #1880 — ResourceQuota + try_acquire on agent_spawn /
 // Issue #1880 (#1978 renamed): issue# moved from filename to header.
 // parallel_orch (typed ResourceQuotaExceeded, no panic/OOM).
+// Issue #2006: reject path must not call orch_agent_body_exit_provenance.
 //
 //   AC1: source cites #1880; memory preflight + try_acquire body wire
 //   AC2: spawn rejects when memory quota exhausted (typed error)
@@ -819,6 +821,7 @@ namespace aura_fiber_run_orch_quota_integration {
 //   AC4: query:resource-quota-stats schema-1880 + agent_arena fields
 //   AC5: spawn until memory exhaust → graceful reject, join releases
 //   AC6: try_acquire reject path under mutation budget (no panic)
+//   AC7: #2006 reject path skips provenance; success path still bumps
 
 
 namespace {
@@ -903,6 +906,18 @@ int run_orch_quota_integration() {
         CHECK(spawn.find("aura_orch_agent_body_try_acquire") != std::string::npos,
               "try_acquire body");
         CHECK(spawn.find("ResourceQuotaExceeded") != std::string::npos, "typed error");
+        // Issue #2006: provenance closed-loop must live only under acq==0.
+        CHECK(spawn.find("#2006") != std::string::npos, "agent_spawn cites #2006");
+        {
+            const auto acq_pos = spawn.find("aura_orch_agent_body_try_acquire()");
+            const auto exit_pos = spawn.find("orch_agent_body_exit_provenance()");
+            const auto else_pos =
+                spawn.find("} else {", acq_pos == std::string::npos ? 0 : acq_pos);
+            CHECK(acq_pos != std::string::npos && exit_pos != std::string::npos,
+                  "try_acquire + exit_provenance present");
+            CHECK(else_pos != std::string::npos && exit_pos < else_pos,
+                  "#2006: exit_provenance before reject else (success-only)");
+        }
         CHECK(!por.empty() && por.find("#1880") != std::string::npos, "parallel_orch cites #1880");
         CHECK(!rq.empty() && rq.find("orch_resource_quota_rejects_total") != std::string::npos,
               "orch rejects metric");
@@ -1031,6 +1046,83 @@ int run_orch_quota_integration() {
         CHECK(aura_orch_agent_body_try_acquire() == 0 || aura_orch_agent_body_try_acquire() == 1,
               "trampoline returns 0 or 1 without throw");
         aura_orch_agent_body_release_guard();
+        reset_process_resource_quota_for_test();
+    }
+
+    // ── AC7: #2006 reject path skips body-exit provenance ──
+    {
+        std::println("\n--- AC7: #2006 reject skips orch_agent_body_exit_provenance ---");
+        reset_process_resource_quota_for_test();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        // Exhaust mutation budget so fiber-path check_mutation_quota rejects.
+        ev.set_resource_quota_mutations(1);
+        ev.reset_mutation_quota_used();
+        bool ok = true;
+        auto gr = Guard::try_acquire(ev, 1, &ok);
+        CHECK(gr.has_value(), "pre-consume mutation quota");
+        // Keep unique_ptr Guard alive so used stays at 1 (dtor does not refund).
+        std::unique_ptr<Guard> host_guard = std::move(*gr);
+
+        std::uint64_t r0 = 0, s0 = 0, l0 = 0;
+        aura::orch::snapshot_orch_provenance_stats(r0, s0, l0);
+        const auto rej0 = aura::orch::g_orch_module_stats.agent_body_try_acquire_rejects_total.load(
+            std::memory_order_relaxed);
+        const auto ok0 = aura::orch::g_orch_module_stats.agent_body_try_acquire_ok_total.load(
+            std::memory_order_relaxed);
+
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        std::atomic<int> ran{0};
+        auto h = aura::orch::spawn_agent_with_mailbox(
+            sched, {.name = "reject-prov", .body = [&] {
+                        ran.fetch_add(1, std::memory_order_relaxed);
+                        Fiber::yield(YieldReason::Explicit);
+                    }});
+        CHECK(h.ok, "spawn still ok (quota is mutation budget, not fiber/memory)");
+        auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
+        CHECK(jr.status == aura::serve::JoinStatus::Ok || (h.fiber && h.fiber->is_done()),
+              "join done");
+
+        std::uint64_t r1 = 0, s1 = 0, l1 = 0;
+        aura::orch::snapshot_orch_provenance_stats(r1, s1, l1);
+        const auto rej1 = aura::orch::g_orch_module_stats.agent_body_try_acquire_rejects_total.load(
+            std::memory_order_relaxed);
+        const auto ok1 = aura::orch::g_orch_module_stats.agent_body_try_acquire_ok_total.load(
+            std::memory_order_relaxed);
+
+        // Body must not run when try_acquire rejects under mutation budget.
+        CHECK(ran.load() == 0, "body skipped on try_acquire reject");
+        CHECK(rej1 > rej0, "agent_body_try_acquire_rejects_total +1");
+        CHECK(ok1 == ok0, "agent_body_try_acquire_ok_total unchanged on reject");
+        // fiber_steal_provenance_enforced_total is ONLY bumped by
+        // orch_agent_body_exit_provenance (join bumps stable/linear only).
+        CHECK(s1 == s0, "#2006: no body-exit steal provenance on reject");
+        // Join still runs orch_post_join_provenance → stable/linear may grow.
+        CHECK(r1 >= r0, "join may still bump stable_ref");
+        CHECK(l1 >= l0, "join may still bump linear");
+
+        // Control: after dropping host Guard and resetting quota, success
+        // path still performs body-exit provenance (#1879).
+        host_guard.reset();
+        ev.reset_mutation_quota_used();
+        ev.set_resource_quota_mutations(0); // unlimited
+        std::uint64_t s2 = 0, r2 = 0, l2 = 0;
+        aura::orch::snapshot_orch_provenance_stats(r2, s2, l2);
+        auto h2 = aura::orch::spawn_agent_with_mailbox(
+            sched, {.name = "ok-prov", .body = [&] {
+                        ran.fetch_add(1, std::memory_order_relaxed);
+                        Fiber::yield(YieldReason::Explicit);
+                    }});
+        CHECK(h2.ok, "success spawn");
+        (void)aura::orch::join_agent(h2, std::optional<std::uint64_t>{5000});
+        std::uint64_t s3 = 0, r3 = 0, l3 = 0;
+        aura::orch::snapshot_orch_provenance_stats(r3, s3, l3);
+        CHECK(ran.load() == 1, "body ran on success path");
+        CHECK(s3 > s2, "success path still bumps steal provenance (body exit)");
+        (void)r3;
+        (void)l3;
+
         reset_process_resource_quota_for_test();
     }
 
