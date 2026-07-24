@@ -93,9 +93,117 @@
       "issue": null
     },
     {
+      "file": "tests/compiler/test_arithmetic_int64_safety.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_ast_workspace_modules.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_aura_result_error_policy.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_auto_evolve_closure_live.cpp",
+      "category": "unit",
+      "reason": "Issue #1713 — auto-evolve-tick/once must not apply_closure on",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_bidirectional_annotation.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_bugfix_968.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_closure_free.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_compile02_no_dup_imports.cpp",
+      "category": "unit",
+      "reason": "Issue #1857 — compile_02.cpp must not re-import",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_env_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_env_lookup_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_envframe_epoch_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_inline_pass_stats_unpack.cpp",
+      "category": "unit",
+      "reason": "Issue #1784 — compile:inline-pass-stats must unpack the",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_inline_typecheck_exception.cpp",
+      "category": "unit",
+      "reason": "Issue #1769 — run_typecheck_no_lock* / run_post_mutate_typecheck",
+      "issue": null
+    },
+    {
       "file": "tests/compiler/test_jit_batch_deopt_clear.cpp",
       "category": "unknown",
       "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_jit_closure_cache_race.cpp",
+      "category": "unit",
+      "reason": "Issue #1707 — g_closure_cache uses generation seqlock so",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_matcher_stable_captures.cpp",
+      "category": "unit",
+      "reason": "Issue #1695 — QueryMatcher captures store StableNodeRef",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_module_loader_dead_heap_circular.cpp",
+      "category": "unit",
+      "reason": "Issue #1692 — load_module_file circular-dep path must not",
+      "issue": null
+    },
+    {
+      "file": "tests/compiler/test_module_prefix_dead_heap.cpp",
+      "category": "unit",
+      "reason": "Issue #1693 — import with prefix must not intern each",
       "issue": null
     },
     {
@@ -105,297 +213,57 @@
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_arithmetic_int64_safety.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_ast_workspace_modules.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_aura_result_error_policy.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_auto_evolve_closure_live.cpp",
-      "category": "unit",
-      "reason": "Issue #1713 — auto-evolve-tick/once must not apply_closure on",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_bidirectional_annotation.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_bugfix_968.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_closure_free.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_compile02_no_dup_imports.cpp",
-      "category": "unit",
-      "reason": "Issue #1857 — compile_02.cpp must not re-import",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_compiler_closure_env_safety_post_invalidate.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_compiler_root_epoch_gc_safety_post_invalidate.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_consolidated_production_priority.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_contracts.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_coverage_holes_workspace_lock.cpp",
-      "category": "unit",
-      "reason": "Issue #1816 — verify:coverage-holes /",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_env_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_env_lookup_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_envframe_epoch_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_gc_evaluator_integration.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_hash_iter_invalidation.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_inline_pass_stats_unpack.cpp",
-      "category": "unit",
-      "reason": "Issue #1784 — compile:inline-pass-stats must unpack the",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_inline_typecheck_exception.cpp",
-      "category": "unit",
-      "reason": "Issue #1769 — run_typecheck_no_lock* / run_post_mutate_typecheck",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_jit_closure_cache_race.cpp",
-      "category": "unit",
-      "reason": "Issue #1707 — g_closure_cache uses generation seqlock so",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_lock_hierarchy.cpp",
-      "category": "integration",
-      "reason": "uses 4 std::shared_mutex in canonical order to verify",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_matcher_stable_captures.cpp",
-      "category": "unit",
-      "reason": "Issue #1695 — QueryMatcher captures store StableNodeRef",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_module_loader_dead_heap_circular.cpp",
-      "category": "unit",
-      "reason": "Issue #1692 — load_module_file circular-dep path must not",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_module_prefix_dead_heap.cpp",
-      "category": "unit",
-      "reason": "Issue #1693 — import with prefix must not intern each",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_pair_unchecked_safety.cpp",
-      "category": "unit",
-      "reason": "Issue #1710 — aura_pair_car/cdr_unchecked must not raw-index",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_panic_checkpoint_raii.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_per_symbol_dirty_cycle_guard.cpp",
+      "file": "tests/compiler/test_per_symbol_dirty_cycle_guard.cpp",
       "category": "unit",
       "reason": "Issue #1786 — compile:per-symbol-dirty-stats ancestor walk",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_per_symbol_dirty_pool_lock.cpp",
-      "category": "unit",
-      "reason": "Issue #1785 — compile:per-symbol-dirty-stats must not call",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_prim_call_count_clamp.cpp",
-      "category": "unit",
-      "reason": "Issue #1711 — aura_prim_call must clamp argc to the 3-element",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp",
+      "file": "tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_prompt6_full_memory_safety_fuzz_stress.cpp",
+      "file": "tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_propagate_marker_cycle_guard.cpp",
+      "file": "tests/compiler/test_propagate_marker_cycle_guard.cpp",
       "category": "unit",
       "reason": "Issue #1782 — syntax:propagate-marker must terminate on",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_query_dispatch.cpp",
+      "file": "tests/compiler/test_query_dispatch.cpp",
       "category": "integration",
       "reason": "Issue #1435 (query :op) unified dispatcher",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_query_pattern_concurrent.cpp",
+      "file": "tests/compiler/test_query_pattern_concurrent.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_relower_strategy_cache_lock.cpp",
+      "file": "tests/compiler/test_relower_strategy_cache_lock.cpp",
       "category": "unit",
       "reason": "Issue #1855 — compile:relower-strategy must snapshot",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_render_ai_native_template.cpp",
-      "category": "unit",
-      "reason": "Issue #1677 — render prim template + AI Native query/mutate evolution.",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_set_workspace_flat.cpp",
-      "category": "unit",
-      "reason": "Issue #1729 — set_workspace_flat must lock + roll back on",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_shapeprofiler_stability_deopt_jit_mutate.cpp",
+      "file": "tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler_core/test_soa_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_stdlib_infrastructure.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_task4_highperf_full_hotpath_matrix.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_terminal_domain_batch.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_try_lock_workspace_lock_order.cpp",
-      "category": "unit",
-      "reason": "Issue #1768 — try_lock_workspace_shared/unique must update",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_type_registry_ownership.cpp",
-      "category": "unit",
-      "reason": "Issue #1837 — type_registry_ is a documented non-owning",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_verify_parse_shared_helper.cpp",
+      "file": "tests/compiler/test_verify_parse_shared_helper.cpp",
       "category": "unit",
       "reason": "Issue #1771 — verify:parse-{coverage-feedback,assert-failure,",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_workspace_delete_child.cpp",
-      "category": "unit",
-      "reason": "Issue #1770 — WorkspaceTree::delete_child must null node",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_workspace_dispatch.cpp",
-      "category": "integration",
-      "reason": "Issue #1437 (workspace :op) unified dispatcher",
-      "issue": null
-    },
-    {
-      "file": "tests/compiler_core/test_workspace_swap_guard.cpp",
-      "category": "unit",
-      "reason": "Issue #1717 — synthesize:optimize child workspace swap must use",
       "issue": null
     },
     {
@@ -411,15 +279,129 @@
       "issue": null
     },
     {
+      "file": "tests/core/test_compiler_root_epoch_gc_safety_post_invalidate.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_consolidated_production_priority.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_contracts.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_coverage_holes_workspace_lock.cpp",
+      "category": "unit",
+      "reason": "Issue #1816 — verify:coverage-holes /",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_gc_evaluator_integration.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_hash_iter_invalidation.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/core/test_hotpath_matrix_batch.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
+      "file": "tests/core/test_lock_hierarchy.cpp",
+      "category": "integration",
+      "reason": "uses 4 std::shared_mutex in canonical order to verify",
+      "issue": null
+    },
+    {
       "file": "tests/core/test_pair_slot_lock.cpp",
       "category": "unknown",
       "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_pair_unchecked_safety.cpp",
+      "category": "unit",
+      "reason": "Issue #1710 — aura_pair_car/cdr_unchecked must not raw-index",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_panic_checkpoint_raii.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_per_symbol_dirty_pool_lock.cpp",
+      "category": "unit",
+      "reason": "Issue #1785 — compile:per-symbol-dirty-stats must not call",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_prim_call_count_clamp.cpp",
+      "category": "unit",
+      "reason": "Issue #1711 — aura_prim_call must clamp argc to the 3-element",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_set_workspace_flat.cpp",
+      "category": "unit",
+      "reason": "Issue #1729 — set_workspace_flat must lock + roll back on",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_soa_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_task4_highperf_full_hotpath_matrix.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_try_lock_workspace_lock_order.cpp",
+      "category": "unit",
+      "reason": "Issue #1768 — try_lock_workspace_shared/unique must update",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_type_registry_ownership.cpp",
+      "category": "unit",
+      "reason": "Issue #1837 — type_registry_ is a documented non-owning",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_workspace_delete_child.cpp",
+      "category": "unit",
+      "reason": "Issue #1770 — WorkspaceTree::delete_child must null node",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_workspace_dispatch.cpp",
+      "category": "integration",
+      "reason": "Issue #1437 (workspace :op) unified dispatcher",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_workspace_swap_guard.cpp",
+      "category": "unit",
+      "reason": "Issue #1717 — synthesize:optimize child workspace swap must use",
       "issue": null
     },
     {
@@ -2037,6 +2019,18 @@
       "issue": null
     },
     {
+      "file": "tests/renderer/test_render_ai_native_template.cpp",
+      "category": "unit",
+      "reason": "Issue #1677 — render prim template + AI Native query/mutate evolution.",
+      "issue": null
+    },
+    {
+      "file": "tests/repl/test_terminal_domain_batch.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/serve/test_fiber_integration_batch.cpp",
       "category": "unknown",
       "reason": "",
@@ -2074,6 +2068,12 @@
     },
     {
       "file": "tests/stdlib/test_spec_runtime.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/stdlib/test_stdlib_infrastructure.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
