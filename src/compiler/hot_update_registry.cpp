@@ -48,6 +48,14 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     reemit_success_.fetch_add(successes, std::memory_order_relaxed);
 }
 
+void HotUpdateRegistry::on_reload_success() noexcept {
+    aot_reload_success_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::on_reload_rollback() noexcept {
+    aot_reload_rollback_.fetch_add(1, std::memory_order_relaxed);
+}
+
 void HotUpdateRegistry::set_emit_region_mask(std::uint64_t mask) noexcept {
     // C path calls on_emit_region_mask_set (single bookkeeping site).
     aura_set_aot_emit_region_mask(mask);
@@ -140,6 +148,10 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.stable_id_assign_total =
         static_cast<std::int64_t>(stable_id_assign_.load(std::memory_order_relaxed));
     s.stable_func_id_map_size = static_cast<std::int64_t>(aura_stable_func_id_map_size());
+    s.aot_reload_success_total =
+        static_cast<std::int64_t>(aot_reload_success_.load(std::memory_order_relaxed));
+    s.aot_reload_rollback_total =
+        static_cast<std::int64_t>(aot_reload_rollback_.load(std::memory_order_relaxed));
     return s;
 }
 
@@ -167,4 +179,6 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
     out->stable_id_preserve_total = s.stable_id_preserve_total;
     out->stable_id_assign_total = s.stable_id_assign_total;
     out->stable_func_id_map_size = s.stable_func_id_map_size;
+    out->aot_reload_success_total = s.aot_reload_success_total;
+    out->aot_reload_rollback_total = s.aot_reload_rollback_total;
 }
