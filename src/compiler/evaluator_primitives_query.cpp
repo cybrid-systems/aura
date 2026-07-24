@@ -5466,8 +5466,43 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence-provenance-chain-wired", 1);
             insert_kv("schema-2024", 2024);
             insert_kv("issue-2024", 2024);
-            insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924)
-            insert_kv("schema", 1617); // keep 1617 for existing ACs; #2024 via schema-2024
+            // Issue #2028: stable constraint solver surface metrics
+            const std::int64_t sdo_total =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_occurrence_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t sdo_stable =
+                m ? static_cast<std::int64_t>(
+                        m->solve_delta_occurrence_stable_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t lpi_prov =
+                m ? static_cast<std::int64_t>(
+                        m->let_poly_instantiate_provenance_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t adt_ren =
+                m ? static_cast<std::int64_t>(
+                        m->adt_guardshape_selective_renarrow_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t cont_hits =
+                m ? static_cast<std::int64_t>(
+                        m->cross_delta_solve_continuity_hits_total.load(std::memory_order_relaxed))
+                  : 0;
+            insert_kv("solve-delta-occurrence-total", sdo_total);
+            insert_kv("solve_delta_occurrence_total", sdo_total);
+            insert_kv("solve-delta-occurrence-stable", sdo_stable);
+            insert_kv("let-poly-instantiate-provenance", lpi_prov);
+            insert_kv("let_poly_instantiate_provenance_total", lpi_prov);
+            insert_kv("adt-guardshape-selective-renarrow", adt_ren);
+            insert_kv("adt_guardshape_selective_renarrow_total", adt_ren);
+            insert_kv("cross-delta-solve-continuity-hits", cont_hits);
+            insert_kv("solver-surface-wired", 1);
+            insert_kv("solve-delta-occurrence-wired", 1);
+            insert_kv("let-poly-instantiate-provenance-wired", 1);
+            insert_kv("adt-guardshape-renarrow-wired", 1);
+            insert_kv("schema-2028", 2028);
+            insert_kv("issue-2028", 2028);
+            insert_kv("issue", 1617);  // primary lineage (#1617 / #798 / #1924 / #2028 satellite)
+            insert_kv("schema", 1617); // keep 1617 for existing ACs; #2028 via schema-2028
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

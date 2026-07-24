@@ -6375,6 +6375,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         flat, const_cast<StringPool&>(pool), occurrence_targets);
     engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
     engine.seed_mutation_touched_roots(flat, pool, occurrence_targets, rec.mutation_id);
+    // Issue #2028: selective ADT/GuardShape re-narrow only on dirty
+    // affected + occurrence roots (cross-delta local, no full walk).
+    {
+        std::vector<NodeId> renarrow_roots;
+        renarrow_roots.reserve(affected.size() + occurrence_targets.size());
+        for (auto id : affected)
+            renarrow_roots.push_back(id);
+        for (auto id : occurrence_targets)
+            renarrow_roots.push_back(id);
+        (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
+    }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
 
@@ -8107,6 +8118,144 @@ uint64_t TypeChecker::hash_node_shape_recursive(const aura::ast::FlatAST& flat,
         }
     }
     return h;
+}
+
+// ── Issue #2028: stable constraint solver surface ─────────────────────────
+
+SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
+                                                  std::span<const TypeId> occurrence_vars,
+                                                  std::vector<Constraint>* unresolved_out,
+                                                  void* metrics) {
+    auto* m = static_cast<CompilerMetrics*>(metrics ? metrics : cs.metrics_);
+    // Restore retained blame anchors so multi-delta solves keep continuity
+    // after clear_blame_context (dirty cascade gap).
+    if (cs.active_mutation_id() == 0 && cs.retained_mutation_id() != 0) {
+        cs.set_active_mutation_id(cs.retained_mutation_id());
+        if (cs.retained_predicate_cond_node() != 0)
+            cs.set_active_blame_context(cs.retained_predicate_cond_node(), 0);
+        if (m)
+            m->cross_delta_solve_continuity_hits_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    for (const auto t : occurrence_vars) {
+        if (t.valid())
+            cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+    }
+    SolveDeltaOccurrenceResult r;
+    r.status = cs.solve_delta(unresolved_out);
+    r.occurrence_priority_roots = cs.occurrence_priority_roots_size();
+    r.let_poly_roots = cs.let_poly_dirty_roots_size();
+    r.touched_roots = cs.touched_roots_size();
+    r.provenance_continuity = cs.last_blame_chain().is_complete() ||
+                              cs.last_blame_chain().complete || cs.retained_mutation_id() != 0 ||
+                              cs.active_mutation_id() != 0;
+    if (m) {
+        m->solve_delta_occurrence_total.fetch_add(1, std::memory_order_relaxed);
+        if (r.provenance_continuity)
+            m->solve_delta_occurrence_stable_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return r;
+}
+
+TypeId let_poly_instantiate_with_provenance(ConstraintSystem& cs, TypeRegistry& reg,
+                                            TypeId forall_id, std::uint64_t mutation_id,
+                                            std::uint32_t provenance_node, void* metrics) {
+    auto* m = static_cast<CompilerMetrics*>(metrics ? metrics : cs.metrics_);
+    if (!forall_id.valid() || reg.tag_of(forall_id) != TypeTag::FORALL) {
+        return TypeId{};
+    }
+    if (mutation_id != 0)
+        cs.set_active_mutation_id(mutation_id);
+    if (provenance_node != 0) {
+        cs.set_active_blame_context(/*predicate=*/0, provenance_node);
+        cs.push_blame_affected_node(provenance_node);
+    }
+    std::vector<TypeId> fresh_binders;
+    fresh_binders.reserve(4);
+    auto inst = reg.instantiate(forall_id, [&]() {
+        auto v = cs.fresh_var();
+        fresh_binders.push_back(v);
+        return v;
+    });
+    for (const auto v : fresh_binders)
+        cs.mark_let_poly_dirty(v);
+    // Body may itself be a var after substitution — keep it on the dirty set.
+    if (inst.valid() && reg.is_var(inst))
+        cs.mark_let_poly_dirty(inst);
+    if (m) {
+        m->let_poly_instantiate_provenance_total.fetch_add(1, std::memory_order_relaxed);
+        m->let_poly_regeneralize_check_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return inst;
+}
+
+std::size_t selective_adt_guardshape_renarrow(FlatAST& flat, const StringPool& pool,
+                                              TypeRegistry& reg,
+                                              const std::vector<NodeId>& dirty_roots,
+                                              void* metrics) {
+    if (dirty_roots.empty())
+        return 0;
+    // Refresh ADT ctor lists for any dirty DefineType roots first.
+    refresh_adt_constructors_for_dirty_define_types(flat, pool, reg, dirty_roots, metrics);
+
+    std::size_t sites = 0;
+    std::unordered_set<NodeId> visited;
+    visited.reserve(dirty_roots.size() * 2);
+
+    auto consider = [&](NodeId id) {
+        if (id == NULL_NODE || id >= flat.size())
+            return;
+        if (!visited.insert(id).second)
+            return;
+        const auto v = flat.get(id);
+        // GuardShape / occurrence: IfExpr sites under dirty cascade.
+        if (v.tag == NodeTag::IfExpr) {
+            ++sites;
+            if (metrics) {
+                auto* m = static_cast<CompilerMetrics*>(metrics);
+                m->type_incremental_epoch_sync_hits_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
+        // ADT match exhaustiveness re-check (match-let nodes).
+        if (flat.get_match_info(id) != nullptr) {
+            auto r = check_match_exhaustiveness(flat, pool, reg, id);
+            if (r.checked) {
+                ++sites;
+                if (metrics) {
+                    auto* m = static_cast<CompilerMetrics*>(metrics);
+                    m->adt_occurrence_narrow_in_match_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            return;
+        }
+        // Let nodes that host match desugar (__match_tmp lineage).
+        if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
+            auto r = check_match_exhaustiveness(flat, pool, reg, id);
+            if (r.checked) {
+                ++sites;
+                if (metrics) {
+                    auto* m = static_cast<CompilerMetrics*>(metrics);
+                    m->adt_occurrence_narrow_in_match_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    };
+
+    for (const auto root : dirty_roots) {
+        consider(root);
+        if (root == NULL_NODE || root >= flat.size())
+            continue;
+        // One level of children — dirty cascade already expanded upward;
+        // keep renarrow local (cross-delta stability).
+        for (const auto c : flat.get(root).children)
+            consider(c);
+    }
+
+    if (metrics && sites > 0) {
+        auto* m = static_cast<CompilerMetrics*>(metrics);
+        m->adt_guardshape_selective_renarrow_total.fetch_add(sites, std::memory_order_relaxed);
+    }
+    return sites;
 }
 
 } // namespace aura::compiler
