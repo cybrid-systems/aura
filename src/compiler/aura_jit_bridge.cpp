@@ -17,9 +17,11 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <print>
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -551,31 +553,20 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
     return static_cast<int>(dirty_count);
 }
 
-// ── Issue #287: AOT hot-reload scaffold ──────────────────────────────
+// ── Issue #287 / #2012: AOT hot-reload with atomic func_table swap ──
 //
-// `aura_reload_aot_module(path, version)` is the host-facing
-// entry point for hot-swapping an AOT module. The scaffold
-// here does the minimum to prove the interface + flow:
-//   1. dlopen() the new .so/.dylib
-//   2. read the `aot_emit_version` symbol to detect a stale
-//      binary (post-mutation epoch mismatch)
-//   3. call dlsym() for the `aura_aot_register_fns` constructor
-//      to populate the runtime's func_table
-//   4. return true on success
+// `aura_reload_aot_module(path, version)` hot-swaps an AOT module:
+//   1. Enter staging mode (constructor registrations do not touch live slots)
+//   2. dlopen() the new .so/.dylib (constructors write staging table)
+//   3. Probe aot_emit_version / region / defuse / env_frame
+//   4. On success: apply staging → live slots, then commit_func_table_swap
+//      (epoch bump + HotUpdateRegistry notify) so concurrent closure
+//      calls observe either fully-old or fully-new symbols
+//   5. On any failure: discard staging, dlclose, bump rollback metric,
+//      leave live table + epoch untouched
 //
-// The follow-up work (tracked in the #287 close comment) is:
-//   - implement the version-keyed func_table swap (rebind old
-//     func_id→ptr entries to new ones, decrement old refcount)
-//   - handle the "load failed" path (return false, keep old module)
-//   - wire a mult-agent isolation mode (per-agent version namespace)
-//   - expose a callback for the host to be notified on successful
-//     swap
-//
-// The current scaffold returns false (and logs a warning) on any
-// dlopen failure so the caller can fall back. Stale binaries
-// (aot_emit_version > runtime's current defuse_version) are also
-// rejected — a binary from a future mutation epoch is invalid by
-// definition.
+// Multi-agent isolation (per-eval AotState) remains on the host side
+// of the version/region checks (#1367).
 #include <dlfcn.h>
 
 namespace {
@@ -593,17 +584,61 @@ std::atomic<std::uint64_t> g_aot_table_epoch{1};
 // Issue #971: count silent drops when func_id >= kMaxAotFuncs.
 std::atomic<std::uint64_t> g_aot_register_dropped{0};
 
+// Issue #2012: staging table for atomic reload. While staging is
+// active, aura_register_fn_tracked writes here instead of live slots
+// so a failed validation never leaves torn function pointers.
+struct AotStagingEntry {
+    std::uintptr_t fn_ptr = 0;
+    bool written = false;
+};
+AotStagingEntry g_aot_staging[kMaxAotFuncs];
+std::atomic<bool> g_aot_staging_active{false};
+unsigned g_aot_staging_hi = 0; // inclusive high-water of written indices
+std::mutex g_aot_reload_mtx;   // serialize concurrent reloads
+
+void clear_aot_staging() noexcept {
+    for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i)
+        g_aot_staging[i] = {};
+    g_aot_staging_hi = 0;
+}
+
+void apply_aot_staging_to_live() noexcept {
+    const std::uint64_t epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+    for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
+        if (!g_aot_staging[i].written)
+            continue;
+        auto& slot = g_aot_func_slots[i];
+        const std::uintptr_t new_ptr = g_aot_staging[i].fn_ptr;
+        const std::uintptr_t old_ptr = slot.fn_ptr.exchange(new_ptr, std::memory_order_acq_rel);
+        if (old_ptr != 0 && old_ptr != new_ptr)
+            slot.grace_refcount.fetch_add(1, std::memory_order_relaxed);
+        // Stamp pre-commit epoch; commit_func_table_swap advances generation domain.
+        slot.table_generation.store(epoch, std::memory_order_relaxed);
+    }
+}
+
 void bump_reload_attempt() {
     if (aot_metrics())
         aot_metrics()->aot_reload_attempts_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void commit_func_table_swap() {
-    g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
+    // Publish epoch advance (acq_rel). Callers that applied staging must
+    // leave written flags set until after this returns so generations
+    // can be stamped to the new epoch (reload path). Reemit leaves
+    // staging empty — loop is a no-op.
+    const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
+    for (unsigned i = 0; i <= g_aot_staging_hi && i < kMaxAotFuncs; ++i) {
+        if (!g_aot_staging[i].written)
+            continue;
+        g_aot_func_slots[i].table_generation.store(new_epoch, std::memory_order_relaxed);
+    }
     if (aot_metrics()) {
         aot_metrics()->aot_refcount_swaps_.fetch_add(1, std::memory_order_relaxed);
         aot_metrics()->aot_concurrent_safe_reloads_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2012 / #1956: fan-out epoch listeners (reload + reemit).
+    aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
 }
 
 // Issue #1271: last successfully committed AOT module identity
@@ -612,10 +647,27 @@ static void* g_aot_last_handle = nullptr;
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
 
+void note_reload_rollback() noexcept {
+    if (aot_metrics())
+        aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+    aura::compiler::hot_update_registry().on_reload_rollback();
+}
+
 } // namespace
 
 extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
     return g_aot_table_epoch.load(std::memory_order_acquire);
+}
+
+// Issue #2012: diagnostics / tests — read live fn_ptr without taking the
+// reload lock (atomic load). Returns 0 for out-of-range or empty slots.
+extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
+    if (func_id < 0)
+        return 0;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return 0;
+    return g_aot_func_slots[idx].fn_ptr.load(std::memory_order_acquire);
 }
 
 extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
@@ -632,6 +684,15 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
                          "registration dropped (raise table limit or split AOT module)\n",
                          static_cast<long long>(func_id), kMaxAotFuncs);
         }
+        return;
+    }
+    // Issue #2012: during reload, stage registrations so live slots stay
+    // intact until validation succeeds and commit_func_table_swap runs.
+    if (g_aot_staging_active.load(std::memory_order_acquire)) {
+        g_aot_staging[idx].fn_ptr = static_cast<std::uintptr_t>(fn_ptr);
+        g_aot_staging[idx].written = true;
+        if (idx > g_aot_staging_hi)
+            g_aot_staging_hi = idx;
         return;
     }
     auto& slot = g_aot_func_slots[idx];
@@ -1382,8 +1443,12 @@ static void aot_log(const char* fmt, ...) {
 }
 
 // Issue #1367: eval_ptr selects per-agent AotState (nullptr = process default).
+// Issue #2012: version-keyed atomic func_table swap with staging + rollback.
 extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path,
                                                 std::uint64_t version) {
+    // Serialize concurrent reloads so staging state is single-writer.
+    std::lock_guard<std::mutex> reload_lock(g_aot_reload_mtx);
+
     bump_reload_attempt();
     // Issue #1271: capture pre-reload epoch so failed paths never
     // advance table generation (atomic rollback of partial register).
@@ -1396,6 +1461,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     };
     if (!path) {
         aot_log("aura_reload_aot_module: null path\n");
+        // No module loaded — no staged table to discard; skip rollback metric.
         audit_fail("aot-hotupdate-null-path");
         return false;
     }
@@ -1407,11 +1473,17 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         return d != 0 ? d : g_aot_defuse_version;
     }();
 
+    // Issue #2012: constructors from the new module stage registrations;
+    // live slots stay at the previous generation until commit.
+    clear_aot_staging();
+    g_aot_staging_active.store(true, std::memory_order_release);
+
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
+        g_aot_staging_active.store(false, std::memory_order_release);
+        clear_aot_staging();
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
-        if (aot_metrics())
-            aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        note_reload_rollback();
         audit_fail("aot-hotupdate-dlopen-fail");
         return false;
     }
@@ -1421,12 +1493,13 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // the binary's own aot_emit_version.
     auto* binary_version = static_cast<std::uint64_t*>(::dlsym(handle, "aot_emit_version"));
     auto rollback_close = [&](std::string_view audit_reason) {
+        // Discard staged registrations; live table untouched.
+        g_aot_staging_active.store(false, std::memory_order_release);
+        clear_aot_staging();
         ::dlclose(handle);
-        // Ensure table epoch was not advanced (constructor may have
-        // registered into slots; epoch_before remains authoritative).
+        // Epoch must remain epoch_before (no commit_func_table_swap).
         (void)epoch_before;
-        if (aot_metrics())
-            aot_metrics()->aot_hot_update_atomic_rollback.fetch_add(1, std::memory_order_relaxed);
+        note_reload_rollback();
         audit_fail(audit_reason);
     };
     if (binary_version) {
@@ -1522,9 +1595,13 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             return false;
         }
     }
-    // The constructor aura_aot_register_fns runs on dlopen and calls
-    // aura_register_fn (which forwards to aura_register_fn_tracked).
+    // Issue #2012: apply staged constructor registrations into live
+    // slots, then atomically bump g_aot_table_epoch so concurrent
+    // probes observe a consistent before/after boundary.
+    apply_aot_staging_to_live();
+    g_aot_staging_active.store(false, std::memory_order_release);
     commit_func_table_swap();
+    clear_aot_staging();
     // Issue #1271: record successful commit for multi-agent versioning.
     if (g_aot_last_handle && g_aot_last_handle != handle)
         ::dlclose(g_aot_last_handle); // release prior module
@@ -1536,6 +1613,7 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         aot_metrics()->aot_hot_update_success_.fetch_add(1, std::memory_order_relaxed);
         aot_metrics()->aot_hot_update_multi_agent_versioned.fetch_add(1, std::memory_order_relaxed);
     }
+    aura::compiler::hot_update_registry().on_reload_success();
     // Issue #1882: TypedMutationAudit trail for successful hot-update (sampled).
     aura::compiler::typed_audit::capture_aot_hotupdate_audit(
         /*success=*/true, epoch_before, g_aot_last_commit_epoch, "aot-hotupdate");

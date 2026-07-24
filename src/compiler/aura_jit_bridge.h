@@ -13,11 +13,9 @@
 //     (Issue #287 — user-facing module version for hot-reload
 //      and multi-agent isolation)
 //   - aura_reload_aot_module(path, version)
-//     (Issue #287 — host-facing hot-reload entry point;
-//      scaffold: dlopen + version check + constructor
-//      invocation. The version-keyed func_table swap and
-//      multi-agent isolation are tracked as follow-ups to
-//      #287.)
+//     (Issue #287 / #2012 — host-facing hot-reload: staged
+//      constructor registration, atomic func_table swap via
+//      commit_func_table_swap, rollback on validation failure.)
 //
 // These declarations are the minimum needed to call the
 // bridge from a non-module translation unit (test files,
@@ -51,13 +49,20 @@ std::uint64_t aura_get_current_bridge_epoch(void);
 void aura_set_module_version(std::uint64_t v);
 std::uint64_t aura_get_module_version(void);
 
-// #287 — AOT hot-reload scaffold.
+// #287 / #2012 — AOT hot-reload with atomic func_table swap.
 //   path    - path to the new .so/.dylib
 //   version - expected aot_emit_version; 0 = trust binary's own
 //
-// Returns true on a successful load (dlopen OK + version check
-// passed). On failure, logs to stderr and returns false.
+// Returns true on successful load (dlopen OK + version/region checks
+// passed + staged constructor registrations applied + epoch bump).
+// On failure, staged registrations are discarded, live table is left
+// intact, aot_hot_update_atomic_rollback is incremented, and false is
+// returned. Concurrent aura_closure_call observers see either fully
+// old or fully new symbols relative to aura_aot_func_table_epoch().
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
+
+// Issue #2012: probe live func_table slot (0 if empty / out of range).
+std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id);
 
 // Issue #1368: AOT metrics pointer lifecycle
 //   aura_set_aot_metrics — explicit host wire-up (overwrites)

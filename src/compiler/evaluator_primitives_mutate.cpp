@@ -61,6 +61,8 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t stable_id_preserve_total;
     std::int64_t stable_id_assign_total;
     std::int64_t stable_func_id_map_size;
+    std::int64_t aot_reload_success_total;  // #2012
+    std::int64_t aot_reload_rollback_total; // #2012
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }
@@ -5711,6 +5713,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       snap.stable_id_preserve_total);
             insert_kv("hot_update_registry_stable_id_assign_total", snap.stable_id_assign_total);
             insert_kv("stable-func-id-map-size", snap.stable_func_id_map_size);
+            // Issue #2012: atomic AOT reload recovery counters.
+            insert_kv("aot-reload-success-total", snap.aot_reload_success_total);
+            insert_kv("aot-reload-rollback-total", snap.aot_reload_rollback_total);
             insert_kv("mvp-single-workspace", 1); // #1943
             insert_kv("registry-class-wired", 1);
             auto hidx = g_hash_tables.size();

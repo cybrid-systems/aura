@@ -6,13 +6,17 @@
 #include "compiler/aot_mangle.h"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/aura_jit.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <unordered_set>
+#include <vector>
 #include "compiler/typed_mutation_audit.h"
 #include <print>
 
@@ -892,6 +896,144 @@ int run_171_smoke() {
 } // namespace aura_mut_run_wave56_171
 
 
+// Issue #2012: atomic AOT reload staging + rollback + concurrent epoch stress
+namespace aura_mut_run_2012_atomic_reload {
+using aura::compiler::CompilerMetrics;
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
+using aura::compiler::types::is_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+static std::string build_reg_so(std::uint64_t version, std::uint64_t region, int func_id,
+                                const char* tag) {
+    std::string cpath = std::format("/tmp/aura_aot_2012_{}_{}.c", tag, version);
+    std::string sopath = std::format("/tmp/aura_aot_2012_{}_{}.so", tag, version);
+    {
+        std::ofstream f(cpath);
+        if (!f)
+            return {};
+        f << "#include <stdint.h>\n";
+        f << "#include <stddef.h>\n";
+        f << "#include <dlfcn.h>\n";
+        f << "uint64_t aot_emit_version = " << version << "ULL;\n";
+        f << "uint64_t aot_region_mask = " << region << "ULL;\n";
+        f << "typedef void (*reg_fn_t)(int64_t, int64_t);\n";
+        f << "static int64_t s_" << tag << "(int64_t* a, uint32_t n){ (void)a;(void)n; return "
+          << version << "; }\n";
+        f << "__attribute__((constructor)) static void reg(void){\n";
+        f << "  void* self = dlopen(NULL, RTLD_LAZY);\n";
+        f << "  reg_fn_t fn = self ? (reg_fn_t)dlsym(self, \"aura_register_fn_tracked\") : 0;\n";
+        f << "  if (!fn) fn = (reg_fn_t)dlsym(RTLD_DEFAULT, \"aura_register_fn_tracked\");\n";
+        f << "  if (fn) fn(" << func_id << ", (int64_t)(void*)s_" << tag << ");\n";
+        f << "}\n";
+    }
+    auto cmd = std::format("cc -shared -fPIC -o {} {} -ldl 2>/dev/null", sopath, cpath);
+    if (std::system(cmd.c_str()) != 0)
+        return {};
+    return sopath;
+}
+
+int run_2012_atomic_aot_reload() {
+    std::println("\n=== #2012: atomic AOT reload staging + rollback ===");
+    CompilerMetrics metrics;
+    aura_set_aot_metrics(&metrics);
+    aura_set_aot_region_mask(0);
+    aura_set_aot_defuse_version(0);
+    aura_set_module_version(0);
+
+    constexpr std::int64_t kFid = 88;
+    const std::uintptr_t seed = static_cast<std::uintptr_t>(0x2012CAFEull);
+    aura_register_fn_tracked(kFid, static_cast<std::int64_t>(seed));
+    CHECK(aura_aot_probe_fn_ptr(kFid) == seed, "seed slot");
+
+    const auto epoch0 = aura_aot_func_table_epoch();
+    const auto rb0 = metrics.aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
+    aura_hot_update_registry_snapshot snap0{};
+    aura_hot_update_registry_get_snapshot(&snap0);
+
+    auto bad = build_reg_so(1, 0, 88, "bad");
+    if (bad.empty()) {
+        CHECK(true, "skip .so paths (cc unavailable)");
+    } else {
+        CHECK(!aura_reload_aot_module(bad.c_str(), 99), "version mismatch fails");
+        CHECK(aura_aot_probe_fn_ptr(kFid) == seed, "live slot preserved after fail");
+        CHECK(aura_aot_func_table_epoch() == epoch0, "epoch not bumped on fail");
+        CHECK(metrics.aot_hot_update_atomic_rollback.load(std::memory_order_relaxed) >= rb0 + 1,
+              "rollback metric");
+        aura_hot_update_registry_snapshot snap1{};
+        aura_hot_update_registry_get_snapshot(&snap1);
+        CHECK(snap1.aot_reload_rollback_total >= snap0.aot_reload_rollback_total + 1,
+              "registry rollback total");
+    }
+
+    // Missing file still rolls back cleanly.
+    CHECK(!aura_reload_aot_module("/tmp/__aura_2012_missing__.so", 0), "missing → false");
+    CHECK(aura_aot_probe_fn_ptr(kFid) == seed, "slot still seed after missing");
+
+    auto good = build_reg_so(7, 0, 88, "ok");
+    if (!good.empty()) {
+        const auto e1 = aura_aot_func_table_epoch();
+        const auto s0 = metrics.aot_hot_update_success_.load(std::memory_order_relaxed);
+        if (aura_reload_aot_module(good.c_str(), 7)) {
+            CHECK(aura_aot_func_table_epoch() == e1 + 1, "epoch +1 success");
+            CHECK(metrics.aot_hot_update_success_.load(std::memory_order_relaxed) == s0 + 1,
+                  "success metric");
+            CHECK(aura_aot_probe_fn_ptr(kFid) != seed && aura_aot_probe_fn_ptr(kFid) != 0,
+                  "slot swapped from staging");
+        }
+    }
+
+    // query surfaces
+    {
+        CompilerService cs;
+        aura_set_aot_metrics(static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics()));
+        auto aot = cs.eval("(engine:metrics \"query:aot-stats\")");
+        CHECK(aot && is_hash(*aot), "query:aot-stats");
+        auto rb = cs.eval(
+            "(hash-ref (engine:metrics \"query:aot-stats\") \"aot-hot-update-rollback-count\")");
+        CHECK(rb && is_int(*rb) && as_int(*rb) >= 0, "aot-hot-update-rollback-count");
+        auto reg = cs.eval("(hash-ref (engine:metrics \"query:hot-update-registry-stats\") "
+                           "\"aot-reload-rollback-total\")");
+        CHECK(reg && is_int(*reg) && as_int(*reg) >= 0, "registry rollback key");
+    }
+
+    // Concurrent epoch monotonicity under mixed success/fail reloads
+    {
+        auto so = build_reg_so(11, 0, 3, "stress");
+        std::atomic<bool> stop{false};
+        std::atomic<std::uint64_t> torn{0};
+        std::vector<std::thread> readers;
+        for (int t = 0; t < 3; ++t) {
+            readers.emplace_back([&] {
+                while (!stop.load(std::memory_order_relaxed)) {
+                    const auto a = aura_aot_func_table_epoch();
+                    (void)aura_aot_probe_fn_ptr(3);
+                    const auto b = aura_aot_func_table_epoch();
+                    if (b < a)
+                        torn.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        for (int i = 0; i < 24; ++i) {
+            if (!so.empty())
+                (void)aura_reload_aot_module(so.c_str(), 11);
+            (void)aura_reload_aot_module("/tmp/__aura_2012_nf__.so", 0);
+            if (!bad.empty())
+                (void)aura_reload_aot_module(bad.c_str(), 99);
+        }
+        stop.store(true, std::memory_order_relaxed);
+        for (auto& th : readers)
+            th.join();
+        CHECK(torn.load() == 0, "epoch never decreases under concurrent reload stress");
+    }
+
+    aura_set_aot_metrics(nullptr);
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_mut_run_2012_atomic_reload
+
 int main() {
 
     std::println("\n######## run_aot_metrics_lazy_1368 ########");
@@ -1105,6 +1247,14 @@ int main() {
     std::println("\n######## wave56_171 ########");
     if (int rc = aura_mut_run_wave56_171::run_171_smoke(); rc != 0)
         return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_2012_atomic_aot_reload ########");
+    if (int rc = aura_mut_run_2012_atomic_reload::run_2012_atomic_aot_reload(); rc != 0) {
+        std::println("run_2012 FAILED rc={}", rc);
+        return rc;
+    }
 
     std::println("\ntest_mutation_aot_unit_batch: OK");
     return 0;

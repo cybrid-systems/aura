@@ -1795,6 +1795,13 @@ aura_add_issue_test(test_jit_aot_hot_update_unit_batch)
 aura_issue_test_link_llvm_jit(test_jit_aot_hot_update_unit_batch)
 add_dependencies(all_test_issue_targets test_jit_aot_hot_update_unit_batch)
 
+# Issue #1366 / #2012: (aot:reload) primitive + atomic func_table staging/rollback.
+# -rdynamic: test .so constructors resolve aura_register_fn_tracked via dlsym.
+aura_add_issue_test(test_aot_reload_primitive)
+aura_issue_test_link_llvm_jit(test_aot_reload_primitive)
+target_link_options(test_aot_reload_primitive PRIVATE -Wl,--export-dynamic)
+add_dependencies(all_test_issue_targets test_aot_reload_primitive)
+
 # tests/issues/ removed (wave 58–60 / #1957): range batches + #178 folded into
 # theme suites (domain/arena, mutation, obs, edsl, fiber, shape, linear).
 
@@ -1810,6 +1817,7 @@ add_dependencies(all_test_issue_targets test_mutation_occurrence_dirty_batch)
 
 aura_add_issue_test(test_mutation_aot_unit_batch)
 aura_issue_test_link_llvm_jit(test_mutation_aot_unit_batch)
+target_link_options(test_mutation_aot_unit_batch PRIVATE -Wl,--export-dynamic) # #2012 dlsym
 add_dependencies(all_test_issue_targets test_mutation_aot_unit_batch)
 
 # Wave 36 (#1957): shape_soa unit batch (Env version / SoA walk smokes)

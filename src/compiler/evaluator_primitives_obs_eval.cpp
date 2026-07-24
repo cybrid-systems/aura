@@ -11684,36 +11684,33 @@ void ObservabilityPrims::register_eval_p90(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 91 (orig lines 10543-10617)
 void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
 
-    // (query:aot-stats) — Issue #452: AOT hot-update + region
-    // filtering observability. Returns a 3-field hash:
-    //   - aot-stale-reject-count: lifetime count of
-    //     aura_reload_aot_module rejections due to
-    //     aot_emit_version mismatch (bumped in
-    //     aura_jit_bridge.cpp)
-    //   - aot-region-mismatch-count: lifetime count of
-    //     region_filter mismatches (currently 0 — region
-    //     wiring is a follow-up; counter is in place
-    //     so the day it ships, observability is immediate)
-    //   - aot-hot-update-success-count: lifetime count of
-    //     successful dlopen + version check + constructor
-    //     invocation.
+    // (query:aot-stats) — Issue #452 / #2012: AOT hot-update + region
+    // filtering observability. Hash fields:
+    //   - aot-stale-reject-count: aura_reload_aot_module rejections
+    //     due to aot_emit_version mismatch
+    //   - aot-region-mismatch-count: region_filter mismatches
+    //   - aot-hot-update-success-count: successful atomic table swaps
+    //   - aot-hot-update-rollback-count: failed reload paths that
+    //     discarded staged registrations (#2012)
     //
     // This is the AI Agent's signal for "is the AOT
     // hot-update pipeline behaving correctly?". A rising
-    // stale-reject count without rising success count =
-    // version drift (the bug pattern from #452's body).
+    // stale-reject / rollback count without rising success =
+    // version drift or partial-load recovery (#452 / #2012).
     ObservabilityPrims::register_stats_impl("query:aot-stats", [&ev](const auto&) -> EvalValue {
         std::uint64_t stale_rej = 0;
         std::uint64_t region_mismatch = 0;
         std::uint64_t hot_update_ok = 0;
+        std::uint64_t hot_update_rb = 0;
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
             region_mismatch = m->aot_region_mismatch_.load(std::memory_order_relaxed);
             hot_update_ok = m->aot_hot_update_success_.load(std::memory_order_relaxed);
+            hot_update_rb = m->aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
         }
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11755,6 +11752,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
+            {"aot-hot-update-rollback-count", make_int(static_cast<std::int64_t>(hot_update_rb))},
         };
         return build_hash(kv);
     });
