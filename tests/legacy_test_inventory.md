@@ -15,9 +15,9 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 | Location | Count | Notes |
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
-| `tests/test_*.cpp` (issue-oriented) | 3 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 8 | Preferred destination suites |
-| **Total scanned** | **11** | |
+| `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
+| `tests/domain/test_*.cpp` | 15 | Preferred destination suites |
+| **Total scanned** | **15** | |
 
 ### Related artifacts
 
@@ -32,14 +32,15 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 5 | 5 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 6 | 6 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 1 | 1 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 1 | 1 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 0 | 0 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 0 | 0 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 3 | 0 | 3 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 4 | 4 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 0 | 0 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 1 | 1 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 2 | 2 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -70,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **6**
+- Existing `*_batch` drivers (migration milestones): **7**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -80,23 +81,31 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 ### Batch drivers already present
 
-- `tests/domain/arena/test_arena_batch.cpp` → theme `arena_compaction`
-- `tests/domain/arena/test_compact_batch.cpp` → theme `arena_compaction`
-- `tests/domain/arena/test_compact_sweep_batch.cpp` → theme `arena_compaction`
-- `tests/domain/test_domain_gates_batch.cpp` → theme `mutation_dirty`
-- `tests/domain/test_fiber_integration_batch.cpp` → theme `fiber_orch`
-- `tests/domain/arena/test_gc_batch.cpp` → theme `arena_compaction`
+- `tests/core/test_arena_batch.cpp` → theme `arena_compaction`
+- `tests/serve/test_fiber_integration_batch.cpp` → theme `fiber_orch`
+- `tests/serve/test_gc_batch.cpp` → theme `arena_compaction`
+- `tests/serve/test_gc_compact_batch.cpp` → theme `arena_compaction`
+- `tests/serve/test_gc_compact_sweep_batch.cpp` → theme `arena_compaction`
+- `tests/core/test_hotpath_matrix_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
 
 ### Domain suites (do not regress; extend these)
 
-- `tests/domain/arena/test_arena_batch.cpp`
-- `tests/domain/arena/test_arena_defrag_concurrent.cpp`
-- `tests/domain/arena/test_compact_batch.cpp`
-- `tests/domain/arena/test_compact_sweep_batch.cpp`
-- `tests/domain/test_domain_gates_batch.cpp`
-- `tests/domain/test_fiber_integration_batch.cpp`
-- `tests/domain/arena/test_gc_batch.cpp`
-- `tests/domain/test_obs_schema_matrix.cpp`
+- `tests/compiler/test_aot_shell_c0_escape.cpp`
+- `tests/core/test_arena_batch.cpp`
+- `tests/core/test_arena_defrag.cpp`
+- `tests/stdlib/test_atomic_swap_stdlib.cpp`
+- `tests/stdlib/test_datetime.cpp`
+- `tests/serve/test_fiber_integration_batch.cpp`
+- `tests/serve/test_gc_batch.cpp`
+- `tests/serve/test_gc_compact_batch.cpp`
+- `tests/serve/test_gc_compact_sweep_batch.cpp`
+- `tests/core/test_hotpath_matrix_batch.cpp`
+- `tests/compiler/test_jit_batch_deopt_clear.cpp`
+- `tests/compiler/test_obs_schema_matrix.cpp`
+- `tests/core/test_pair_slot_lock.cpp`
+- `tests/stdlib/test_spec_runtime.cpp`
+- `tests/stdlib/test_synthesize_namespace_demotion.cpp`
 
 ## Migration priority roadmap
 
@@ -130,19 +139,20 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (5)
+### `arena_compaction` — Arena / compaction / GC (6)
 
 **Target:** tests/domain/ (extend compact/gc family; see test_compact_*_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (5)
+#### domain/ (6)
 
-- `tests/domain/arena/test_arena_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_arena_batch.cpp — relocated for #1959 arena pilot
-- `tests/domain/arena/test_arena_defrag_concurrent.cpp` (—) [domain_suite, theme_arena] — tests/domain/arena/test_arena_defrag_concurrent.cpp — relocated for #1959 arena pilot
-- `tests/domain/arena/test_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_batch.cpp — relocated for #1959 arena pilot
-- `tests/domain/arena/test_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
-- `tests/domain/arena/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_arena] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
+- `tests/core/test_arena_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — tests/domain/arena/test_arena_batch.cpp — relocated for #1959 arena pilot
+- `tests/core/test_arena_defrag.cpp` (—) [domain_suite, theme_core] — tests/domain/arena/test_arena_defrag_concurrent.cpp — relocated for #1959 arena pilot
+- `tests/stdlib/test_datetime.cpp` (—) [domain_suite, theme_stdlib] — test_datetime.cpp — Merged datetime stdlib tests (#1978).
+- `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
+- `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/domain/arena/test_compact_batch.cpp — relocated for #1959 arena pilot
+- `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/domain/arena/test_compact_sweep_batch.cpp — relocated for #1959 arena pilot
 
 ### `mutation_dirty` — Mutation / dirty propagation / provenance (1)
 
@@ -152,7 +162,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_domain_gates_batch.cpp` (—) [large, batch_driver, domain_suite] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
+- `tests/core/test_hotpath_matrix_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
 
 ### `fiber_orch` — Fiber / orchestration / steal / Guard (1)
 
@@ -162,19 +172,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
+- `tests/serve/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
 
-### `jit_incremental` — JIT / AOT / incremental relower (3)
+### `jit_incremental` — JIT / AOT / incremental relower (4)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### root/ (3)
+#### domain/ (4)
 
-- `tests/test_issue_1996.cpp` (#1996) — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
-- `tests/test_issue_1997.cpp` (#1997) — test_issue_1997.cpp -- runtime smoke test for B-002 / #1997
-- `tests/test_issue_1998.cpp` (#1998) — test_issue_1998.cpp -- runtime smoke test for B-024 / #1998
+- `tests/compiler/test_aot_shell_c0_escape.cpp` (—) [domain_suite, theme_compiler] — test_issue_1997.cpp -- runtime smoke test for B-002 / #1997
+- `tests/compiler/test_jit_batch_deopt_clear.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
+- `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_issue_1998.cpp -- runtime smoke test for B-024 / #1998
+- `tests/stdlib/test_spec_runtime.cpp` (—) [domain_suite, theme_stdlib] — test_spec_runtime.cpp — Runtime tests for L2 specialization (Phase 3, #53)
 
 ### `observability` — Observability / metrics / query:*-stats (1)
 
@@ -184,7 +195,18 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (1)
 
-- `tests/domain/test_obs_schema_matrix.cpp` (—) [domain_suite] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
+- `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
+
+### `uncategorized` — Uncategorized / mixed (2)
+
+**Target:** manual triage before domain placement
+
+**Priority:** P3 — review case-by-case
+
+#### domain/ (2)
+
+- `tests/stdlib/test_atomic_swap_stdlib.cpp` (—) [domain_suite, theme_stdlib] — test_atomic_swap_stdlib.cpp — Issue #1380:
+- `tests/stdlib/test_synthesize_namespace_demotion.cpp` (—) [domain_suite, theme_stdlib] — test_synthesize_namespace_demotion.cpp — Issue #561:
 
 ## Regenerating
 

@@ -418,6 +418,20 @@ def collect() -> list[TestEntry]:
             if p.parent != domain:
                 e.flags.append(f"theme_{p.parent.name}")
             entries.append(e)
+    # Issue/R1 2026-07-24: post-#1957/#1977 layout is src/-aligned (tests/<module>/).
+    # tests/issues/ was removed (#1957); tests/{domain,arena,edsl,compiler_core,...}
+    # theme dirs were collapsed into tests/{core,compiler,serve,orch,reflect,
+    # renderer,repl,parser,stdlib,tui}/ per R1 reorg.
+    for theme in ("core", "compiler", "serve", "orch", "reflect", "renderer", "repl", "parser", "stdlib", "tui"):
+        theme_dir = TESTS / theme
+        if not theme_dir.is_dir():
+            continue
+        for p in sorted(theme_dir.glob("test_*.cpp")):
+            e = scan_file(p, "domain")
+            if "domain_suite" not in e.flags:
+                e.flags.append("domain_suite")
+            e.flags.append(f"theme_{theme}")
+            entries.append(e)
     return entries
 
 

@@ -5,7 +5,7 @@
 // Implementation is the shared domain matrix (included below).
 
 #include "test_harness.hpp"
-#include "domain/cases/obs_schema_cases.hpp"
+#include "obs_schema_cases.hpp"
 
 #include <cstdint>
 #include <cstring>
