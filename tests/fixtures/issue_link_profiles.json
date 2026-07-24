@@ -1,7 +1,6 @@
 {
   "light": [
-    "test_error_merr",
-    "test_pilot_harness"
+    "test_error_merr"
   ],
   "fiber": [],
   "jit": [],
