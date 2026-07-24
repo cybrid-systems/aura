@@ -2,7 +2,7 @@
 //
 // Replaces the "one test_issue_N.cpp per stats surface" pattern for
 // schema/bump gate ACs. Also folds Wave 2 production sweep field-list
-// gates (was test_domain_production_sweep.cpp).
+// gates (was test_production_sweep.cpp).
 //
 // Add new Close #N observability surfaces by editing
 // tests/domain/cases/obs_schema_cases.hpp; production flag surfaces via
@@ -219,7 +219,7 @@ int aura_issue_obs_schema_matrix_run() {
     return RUN_ALL_TESTS();
 }
 
-// Legacy alias (was test_domain_production_sweep).
+// Legacy alias (was test_production_sweep).
 int aura_issue_domain_production_sweep_run() {
     return aura_issue_obs_schema_matrix_run();
 }

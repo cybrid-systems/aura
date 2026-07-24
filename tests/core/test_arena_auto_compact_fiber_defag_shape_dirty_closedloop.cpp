@@ -1,5 +1,13 @@
-// NOTE (#1959): arena theme home is tests/domain/arena/. This file stays
-// at tests/ root while it remains a jit_late3 bundle member.
+// NOTE: This file is a jit_late3 bundle member
+// (aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run). Stays at tests/core/ per
+// the src/-aligned layout (no tests/domain/arena/ — that pilot was abandoned in R1).
+//
+// the src/-aligned layout (no tests/domain/arena/ — that pilot was abandoned in R1).
+//
+// the src/-aligned layout (no tests/domain/arena/ — that pilot was abandoned in R1).
+//
+// the src/-aligned layout (no tests/domain/arena/ — that pilot was abandoned in R1).
+//
 //
 // test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp — Issue #743:
 // Arena auto-compact + live defrag + fiber safepoint + dirty/Shape closed loop.

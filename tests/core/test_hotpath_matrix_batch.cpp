@@ -1,10 +1,10 @@
-// test_domain_gates_batch.cpp — Domain suite batch: behavioral gates.
+// test_hotpath_matrix_batch.cpp — Domain suite batch: behavioral gates.
 // Consolidates three thin theme drivers that shared CompilerService +
 // href / schema helpers into one CI binary (post-AuraDomainTests wire-up):
 //
-//   fiber / steal / Guard / orch   (was test_domain_fiber_orchestration)
-//   macro hygiene / dirty-epoch    (was test_domain_hygiene_dirty)
-//   typed mutate / type-system     (was test_domain_typed_mutate)
+//   fiber / steal / Guard / orch   consolidated into fiber section
+//   macro hygiene / dirty-epoch    consolidated into hygiene section
+//   typed mutate / type-system     consolidated into typed-mutate section
 //
 // Prefer adding a section here over a new test_domain_*.cpp binary.
 // Schema-only surfaces: test_obs_schema_matrix + cases/*.hpp.
@@ -101,7 +101,7 @@ static std::string run_str(CompilerService& cs, std::string_view src) {
     return {};
 }
 
-// ── Fiber / steal / Guard / orch (ex test_domain_fiber_orchestration) ──
+// ── Fiber / steal / Guard / orch (fiber section) ──
 static void run_fiber_orchestration(CompilerService& cs) {
     auto& ev = cs.evaluator();
 
@@ -186,7 +186,7 @@ static void run_fiber_orchestration(CompilerService& cs) {
     CHECK(href(cs, "query:opcode-coverage-deopt-stats", "coverage-hits") >= 1, "coverage-hits");
 }
 
-// ── Macro hygiene + dirty/epoch (ex test_domain_hygiene_dirty) ──
+// ── Macro hygiene + dirty/epoch (hygiene section) ──
 static void run_hygiene_dirty(CompilerService& cs) {
     auto& ev = cs.evaluator();
 
@@ -254,7 +254,7 @@ static void run_hygiene_dirty(CompilerService& cs) {
     CHECK(href(cs, "query:render-hotpath-stats", "jit-coverage") >= 1, "jit-coverage");
 }
 
-// ── Typed mutate / type-system (ex test_domain_typed_mutate) ──
+// ── Typed mutate / type-system (typed-mutate section) ──
 static void run_typed_mutate(CompilerService& cs) {
     auto& ev = cs.evaluator();
 

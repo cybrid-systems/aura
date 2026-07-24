@@ -106,6 +106,7 @@ def check_issues_fast(errors: list[str]) -> None:
             or target.startswith("test_issues_")
             or target.startswith("test_obs_")
             or target.startswith("test_domain_")
+            or target.startswith("test_hotpath_matrix_batch")
             or target.startswith("test_aura_result_")
             or target.startswith("test_primitives_")
             or target.startswith("test_aura_pets_")

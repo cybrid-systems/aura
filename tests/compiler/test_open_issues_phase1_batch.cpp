@@ -1,6 +1,6 @@
 // test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
 //
-// Prefer: tests/domain/test_obs_schema_matrix.cpp + domain/cases/obs_schema_cases.hpp
+// Prefer: tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 // This file remains so late-bundle membership / old docs still resolve.
 // Implementation is the shared domain matrix (included below).
 

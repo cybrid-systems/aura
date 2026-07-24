@@ -3,7 +3,7 @@
 // Originally test_production_safety_1047_1071.cpp +
 // test_production_safety_1097_1122.cpp. Both are Phase 1
 // production safety Wave2 scaffolding (schema flag checks
-// via test_domain_production_sweep target). Merged with both
+// via test_production_sweep target). Merged with both
 // AC sets preserved verbatim.
 //
 // AC list (all preserved; each section cites original issue#):

@@ -1,4 +1,4 @@
-// tests/bench/ast_hotpath_bench.cpp — consolidated FlatAST hot-path benches
+// tests/core/bench_ast_flatast.cpp — FlatAST hot-path benches (Issue #393/#398/#399).
 //
 // Merges four near-duplicate drivers that all `import aura.core.ast` and
 // share the same chrono/AC-report shape:

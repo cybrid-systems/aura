@@ -18,28 +18,28 @@ Probe `tests/test_*.cpp` (root), classify into theme buckets that match `tests/d
 
 ### Domain suite anchors (coverage homes)
 
-- `test_domain_fiber_orchestration.cpp` → **fiber_orch** — dest: `tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume_batch`
-- `test_domain_hygiene_dirty.cpp` → **edsl_hygiene** — dest: `tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect_batch`
-- `test_domain_typed_mutate.cpp` → **mutation_dirty** — dest: `tests/domain/test_domain_typed_mutate.cpp + mutation_boundary_batch`
-- `test_obs_schema_matrix.cpp` → **observability** — dest: `tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp`
-- `arena/test_arena_batch.cpp` → **arena_compaction** — dest: `tests/domain/arena/ (batch pilots already live)`
-- `arena/test_arena_defrag_concurrent.cpp` → **arena_compaction** — dest: `tests/domain/arena/ (batch pilots already live)`
-- `arena/test_compact_batch.cpp` → **arena_compaction** — dest: `tests/domain/arena/ (batch pilots already live)`
-- `arena/test_compact_sweep_batch.cpp` → **arena_compaction** — dest: `tests/domain/arena/ (batch pilots already live)`
-- `arena/test_gc_batch.cpp` → **arena_compaction** — dest: `tests/domain/arena/ (batch pilots already live)`
+- `test_fiber_orchestration` (legacy) → **fiber_orch** — dest: `tests/core/test_fiber_resume_batch` (domain/ pilot abandoned in R1)
+- `test_hygiene_dirty` (legacy) → **edsl_hygiene** — dest: `tests/core/test_macro_reflect_batch` (domain/ pilot abandoned in R1)
+- `test_typed_mutate` (legacy) → **mutation_dirty** — dest: `tests/core/test_mutation_boundary_batch` (domain/ pilot abandoned in R1)
+- `test_obs_schema_matrix.cpp` → **observability** — dest: `tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp`
+- `arena/test_arena_batch.cpp` → **arena_compaction** — dest: `tests/core/ (batch drivers already live)`
+- `arena/test_arena_defrag_concurrent.cpp` → **arena_compaction** — dest: `tests/core/ (batch drivers already live)`
+- `arena/test_compact_batch.cpp` → **arena_compaction** — dest: `tests/core/ (batch drivers already live)`
+- `arena/test_compact_sweep_batch.cpp` → **arena_compaction** — dest: `tests/core/ (batch drivers already live)`
+- `arena/test_gc_batch.cpp` → **arena_compaction** — dest: `tests/core/ (batch drivers already live)`
 
 ## Theme distribution (root)
 
 | Theme | Count | Preferred destination |
 |-------|------:|------------------------|
-| `arena_compaction` | 7 | tests/domain/arena/ (batch pilots already live) |
-| `mutation_dirty` | 118 | tests/domain/test_domain_typed_mutate.cpp + mutation_boundary_batch |
-| `fiber_orch` | 38 | tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume_batch |
+| `arena_compaction` | 7 | tests/core/ (batch drivers already live) |
+| `mutation_dirty` | 118 | tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1) |
+| `fiber_orch` | 38 | tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1) |
 | `linear_ownership` | 2 | tests/test_linear_ownership_batch.cpp → domain/ |
-| `edsl_hygiene` | 19 | tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect_batch |
+| `edsl_hygiene` | 19 | tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1) |
 | `jit_incremental` | 7 | future domain/jit/ (heavy JIT stays EXCLUDE or root) |
 | `shape_soa` | 1 | tests/test_soa_batch.cpp → domain/ |
-| `observability` | 180 | tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp |
+| `observability` | 180 | tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp |
 | `stdlib` | 5 | tests/suite/ + focused root integration (datetime, hot-update) |
 | `compiler_core` | 58 | keep root or future domain/compiler/ |
 | `uncategorized` | 2 | manual triage |
@@ -62,7 +62,7 @@ Probe `tests/test_*.cpp` (root), classify into theme buckets that match `tests/d
 |------|--------|--------------|
 | 0 | **done** | Empty Phase-2 stubs deleted; `open_issues_phase1_batch` EXCLUDE |
 | 1 | **done** | Thin probes → `obs_schema_cases.hpp` FieldList; selfevo/stdlib EXCLUDE |
-| 2 | **done** | `test_domain_production_sweep` + `production_sweep_cases.hpp`; ~27 prod EXCLUDE |
+| 2 | **done** | `test_production_sweep` + `production_sweep_cases.hpp`; ~27 prod EXCLUDE |
 | 3 | **done** | Near-dup supersession EXCLUDE (1636, fine_dirty, 1622, …) |
 | 4 | **done** | Root `test_issue_1943…1956` → `tests/domain/` |
 
@@ -551,7 +551,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 | `test_compile02_no_dup_imports_1857.cpp` | 116 | `keep` | no automatic streamline |
 | `test_compiler_closure_env_safety_post_invalidate.cpp` | 286 | `keep` | no automatic streamline |
 | `test_compiler_root_epoch_gc_safety_post_invalidate.cpp` | 121 | `keep` | no automatic streamline |
-| `test_consolidated_production_priority_517.cpp` | 102 | `keep` | no automatic streamline |
+| `test_open_issues_meta_batch.cpp` | 102 | `keep` | no automatic streamline |
 | `test_contracts.cpp` | 87 | `keep` | no automatic streamline |
 | `test_coverage_holes_workspace_lock_1816.cpp` | 108 | `keep` | no automatic streamline |
 | `test_env_batch.cpp` | 723 | `keep_batch_exclude` | family batch driver (EXCLUDE_FROM_ALL convention) |
@@ -607,7 +607,7 @@ Name-normalized groups (strip issue suffix / task / closed_loop). Not always red
 
 Waves 0–4 applied — see **Wave status** above. Further reductions:
 fold remaining `candidate_obs_fold` keepers; rename `domain/test_issue_*`
-to `test_domain_<theme>_*.cpp`; promote more root keeps into theme suites.
+to `tests/<src-aligned-subdir>/test_<module>_<feature>.cpp`; promote more root keeps into theme suites.
 
 ## Related
 
