@@ -757,6 +757,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         } else {
             (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
                                                            /*mark_all_linear=*/false);
+            // Issue #2067: post-mutate force-rollback counter bump. The runtime
+            // violation capture happens in ir_executor_impl.cpp via
+            // capture_linear_runtime_violation; this hook just observes the
+            // post-enforce state and bumps the per-CompilerMetrics counter so
+            // Agents can correlate linear violations with mutation boundaries.
+            // Full-strategy gating is handled by the typed_mutation_audit
+            // pass (existing full_strategy_force_rollback_total path); we bump
+            // unconditionally here so the linear-specific counter is observable.
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Issue #1500: after restamp_all_node_generations inside

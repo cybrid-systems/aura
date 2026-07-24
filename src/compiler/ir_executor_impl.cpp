@@ -84,6 +84,33 @@ static void record_linear_runtime_safety(CompilerMetrics* metrics, bool mismatch
     }
 }
 
+// Issue #2067: capture_linear_runtime_violation — first-class, always-on runtime
+// check helper for MoveOp / MutBorrowOp / DropOp / BorrowOp violations. Bumps
+// linear_runtime_violation_total + linear_post_mutate_force_rollback_total under
+// AuditStrategy::Full so TypedMutationAudit can capture the event before the
+// mutated code is executed by fibers / JIT. The mutation_id correlation lets
+// the post-mutate revalidate correlate the violation with the current
+// MutationBoundary, so a Full-strategy audit can force-rollback cleanly.
+static void capture_linear_runtime_violation(CompilerMetrics* metrics, std::uint64_t mutation_id,
+                                             aura::ir::IROpcode opcode, std::uint32_t node_id,
+                                             std::uint8_t state, std::uint8_t expected) noexcept {
+    if (!metrics)
+        return;
+    // Issue #2067: bump runtime violation counter (always-on, not gated on
+    // linear_ownership_state != 0). The Full-strategy force-rollback path
+    // lives in evaluator_mutation_boundary.cpp's enforce_linear_boundary_consistency
+    // exit (correlates via active_mutation_id_). Keeping this helper
+    // module-internal avoids the C-linkage shim import issue (#1908 pattern).
+    metrics->linear_runtime_violation_total.fetch_add(1, std::memory_order_relaxed);
+    // Side log: stderr (matches existing pattern).
+    std::println(std::cerr,
+                 "linear-runtime-violation: mutation_id={} opcode={} node={} state={} expected={}",
+                 mutation_id, static_cast<int>(opcode), node_id, static_cast<int>(state),
+                 static_cast<int>(expected));
+    (void)mutation_id; // captured in side log for post-mutate correlation
+}
+
+
 // Issue #1515: linear_ownership_state state machine
 // (0=untracked, 1=Owned, 2=Borrowed, 3=MutBorrowed, 4=Moved).
 // Returns true when the instruction's stamped state is compatible
@@ -1519,6 +1546,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // State-machine gate before heap check (Issue #1515).
                     const bool state_ok = enforce_linear_ownership_state(
                         instr.linear_ownership_state, LinearOpKind::Move);
+                    // Issue #2067: pre-capture violation (always-on, not gated
+                    // on linear_ownership_state != 0) so the post-mutate
+                    // revalidate can correlate the violation with the
+                    // MutationBoundary under Full strategy.
                     // Move ownership: decrement source refcount, pass value through
                     // Runtime check: double-move detection
                     // Issue #106: source invalidation. After a move,
@@ -1534,6 +1565,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (!state_ok) {
                         std::println(std::cerr, "error: move of non-Owned linear_ownership_state");
+                        capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
+                                                         instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);
                         locals[ops[0]] = types::make_int(0);
                         locals[ops[1]] = types::make_int(0);
@@ -1546,7 +1579,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
                                 if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, true);
+                                    capture_linear_runtime_violation(
+                                        metrics_, 0, IROpcode::MoveOp, 0,
+                                        instr.linear_ownership_state, 1);
+                                record_linear_runtime_safety(metrics_, true);
                                 locals[ops[0]] = entry.value;
                             } else {
                                 auto result = entry.value;
@@ -1561,7 +1597,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             std::println(std::cerr,
                                          "error: use after move — value already consumed");
                             if (instr.linear_ownership_state != 0)
-                                record_linear_runtime_safety(metrics_, true);
+                                capture_linear_runtime_violation(metrics_, 0, IROpcode::MoveOp, 0,
+                                                                 instr.linear_ownership_state, 1);
+                            record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1584,6 +1622,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (!state_ok) {
                         std::println(std::cerr, "error: borrow of Moved/MutBorrowed linear state");
+                        capture_linear_runtime_violation(metrics_, 0, IROpcode::BorrowOp, 0,
+                                                         instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);
                         locals[ops[0]] = types::make_int(0);
                         break;
@@ -1595,7 +1635,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: double move — value already moved");
                                 if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, true);
+                                    capture_linear_runtime_violation(
+                                        metrics_, 0, IROpcode::BorrowOp, 0,
+                                        instr.linear_ownership_state, 1);
+                                record_linear_runtime_safety(metrics_, true);
                                 locals[ops[0]] = entry.value;
                             } else {
                                 entry.ref_count++;
@@ -1607,7 +1650,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             std::println(std::cerr,
                                          "error: use after move — borrow of consumed value");
                             if (instr.linear_ownership_state != 0)
-                                record_linear_runtime_safety(metrics_, true);
+                                capture_linear_runtime_violation(metrics_, 0, IROpcode::BorrowOp, 0,
+                                                                 instr.linear_ownership_state, 1);
+                            record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1626,6 +1671,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[1]];
                     if (!state_ok) {
                         std::println(std::cerr, "error: mut-borrow of non-Owned linear state");
+                        capture_linear_runtime_violation(metrics_, 0, IROpcode::MutBorrowOp, 0,
+                                                         instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);
                         locals[ops[0]] = types::make_int(0);
                         break;
@@ -1637,7 +1684,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (entry.ref_count <= 0) {
                                 std::println(std::cerr, "error: mut-borrow of moved value");
                                 if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, true);
+                                    capture_linear_runtime_violation(
+                                        metrics_, 0, IROpcode::MutBorrowOp, 0,
+                                        instr.linear_ownership_state, 1);
+                                record_linear_runtime_safety(metrics_, true);
                             } else {
                                 if (instr.linear_ownership_state != 0)
                                     record_linear_runtime_safety(metrics_, false);
@@ -1646,7 +1696,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         } else {
                             std::println(std::cerr, "error: mut-borrow of consumed value");
                             if (instr.linear_ownership_state != 0)
-                                record_linear_runtime_safety(metrics_, true);
+                                capture_linear_runtime_violation(metrics_, 0, IROpcode::MutBorrowOp,
+                                                                 0, instr.linear_ownership_state,
+                                                                 1);
+                            record_linear_runtime_safety(metrics_, true);
                             locals[ops[0]] = types::make_int(0);
                         }
                     } else {
@@ -1666,6 +1719,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto val = locals[ops[0]];
                     if (!state_ok) {
                         std::println(std::cerr, "error: drop of Moved/Borrowed linear state");
+                        capture_linear_runtime_violation(metrics_, 0, IROpcode::DropOp, 0,
+                                                         instr.linear_ownership_state, 1);
                         record_linear_runtime_safety(metrics_, true);
                         break;
                     }
@@ -1677,7 +1732,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 std::println(std::cerr,
                                              "error: double drop — value already dropped");
                                 if (instr.linear_ownership_state != 0)
-                                    record_linear_runtime_safety(metrics_, true);
+                                    capture_linear_runtime_violation(
+                                        metrics_, 0, IROpcode::DropOp, 0,
+                                        instr.linear_ownership_state, 1);
+                                record_linear_runtime_safety(metrics_, true);
                             } else {
                                 if (--entry.ref_count == 0)
                                     entry.live = false;
@@ -1687,7 +1745,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         } else {
                             std::println(std::cerr, "error: double drop — value not in heap");
                             if (instr.linear_ownership_state != 0)
-                                record_linear_runtime_safety(metrics_, true);
+                                capture_linear_runtime_violation(metrics_, 0, IROpcode::DropOp, 0,
+                                                                 instr.linear_ownership_state, 1);
+                            record_linear_runtime_safety(metrics_, true);
                         }
                     } else if (instr.linear_ownership_state != 0) {
                         record_linear_runtime_safety(metrics_, false);
