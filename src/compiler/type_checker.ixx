@@ -220,6 +220,11 @@ private:
     std::uint32_t active_affected_node_ = 0;
     std::vector<std::uint32_t> blame_affected_nodes_;
     DeltaBlameChain last_blame_chain_;
+    // Issue #2024: retained after clear_blame_context for cross-delta
+    // stitching when the next record_cross_delta_blame_hit has no active
+    // mutation stamp yet (dirty cascade gap).
+    std::uint64_t retained_mutation_id_ = 0;
+    std::uint32_t retained_predicate_cond_node_ = 0;
     // Issue #1873: set by reverify_clean_constraints_for_touched
     // so record_cross_delta_blame_hit can mark truncated chains.
     bool last_reverify_truncated_ = false;
@@ -322,17 +327,36 @@ public:
         if (node != 0)
             blame_affected_nodes_.push_back(node);
     }
-    // Issue #1924: clear active stamps but optionally keep last_blame_chain_
-    // dumpable for post-error diagnostics (preserve_last=true).
+    // Issue #1924 / #2024: clear active stamps but retain cross-delta
+    // continuity. preserve_last=true keeps last_blame_chain_ dumpable.
+    // Issue #2024: even when preserve_last=false, a *complete* chain is
+    // retained (forensic self-evo rollback under dirty cascade) and the
+    // last mutation/predicate are stashed for stitching the next hit.
     void clear_blame_context(bool preserve_last = false) noexcept {
+        // Snapshot continuity anchors before zeroing actives.
+        if (active_mutation_id_ != 0)
+            retained_mutation_id_ = active_mutation_id_;
+        if (active_predicate_cond_node_ != 0)
+            retained_predicate_cond_node_ = active_predicate_cond_node_;
         active_predicate_cond_node_ = 0;
         active_affected_node_ = 0;
         blame_affected_nodes_.clear();
-        if (!preserve_last)
-            last_blame_chain_ = {};
+        if (!preserve_last) {
+            // Keep complete chains across dirty-cascade clears.
+            if (!last_blame_chain_.is_complete())
+                last_blame_chain_ = {};
+            // else: retain frames for Agent rollback / multi-delta blame
+        }
     }
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return last_blame_chain_;
+    }
+    // Issue #2024: cross-delta continuity anchors after clear_blame_context.
+    [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
+        return retained_mutation_id_;
+    }
+    [[nodiscard]] std::uint32_t retained_predicate_cond_node() const noexcept {
+        return retained_predicate_cond_node_;
     }
     // Issue #1877: append MacroIntroduced hygiene frame onto last blame chain
     // (tests + mutate hygiene gate; also auto-pulled on truncation).
@@ -724,6 +748,13 @@ public:
     }
     [[nodiscard]] const DeltaBlameChain& last_blame_chain() const noexcept {
         return cs_.last_blame_chain();
+    }
+    // Issue #2024: cross-delta continuity anchors.
+    [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
+        return cs_.retained_mutation_id();
+    }
+    [[nodiscard]] std::uint32_t retained_predicate_cond_node() const noexcept {
+        return cs_.retained_predicate_cond_node();
     }
     [[nodiscard]] std::size_t constraint_touched_roots_size() const noexcept {
         return cs_.touched_roots_size();

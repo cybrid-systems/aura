@@ -34,14 +34,37 @@
 // match).
 
 module;
+#include <atomic>
 #include <cstdint>
 #include <vector>
+#include "core/provenance_tracker.hh" // Issue #2024: hygiene stamp + chain recovery
 
 export module aura.compiler.coercion_map;
 
 import aura.core.ast;
 
 namespace aura::compiler {
+
+// Issue #2024: forensic sentinel base for incomplete occurrence-narrowing
+// provenance (high nibble C0E5 = "coercion"). Low 16 bits carry original_child
+// so Agents can recover the site when both predicate and mutation were unset.
+export inline constexpr std::uint32_t kCoercionProvenanceSentinelBase = 0xC0E50000u;
+
+// Issue #2024: process-wide apply_coercion_map provenance completeness.
+// Complete = both predicate_cond_node and source_mutation_id non-zero after
+// full chain walk. Miss = needed sentinel / weak fallback. Ratio = complete /
+// (complete + miss) as basis points (0–10000).
+export inline std::atomic<std::uint64_t> g_coercion_provenance_complete_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_provenance_sentinel_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_provenance_chain_walk_total{0};
+
+export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
+    const auto c = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
+    const auto m = g_coercion_provenance_miss_total.load(std::memory_order_relaxed);
+    const auto d = c + m;
+    return d > 0 ? (c * 10000u) / d : 10000u; // no samples → vacuously complete
+}
 
 // ── CoercionEntry — one deferred coercion ────────────────
 //
@@ -75,6 +98,103 @@ export struct CoercionEntry {
     // CastOp elision (stored on Coercion node float_val_).
     std::uint32_t narrow_evidence = 0;
 };
+
+// Issue #2024: walk provenance chain to fill missing CoercionEntry fields.
+// Order: child column → parent walk → mutation log (target/parent match) →
+// mutation log back() → hygiene tracker → sentinel. Never leaves both zero
+// after a non-elided apply candidate is processed.
+inline void fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e) noexcept {
+    using aura::ast::NULL_NODE;
+    g_coercion_provenance_chain_walk_total.fetch_add(1, std::memory_order_relaxed);
+
+    // 1. Child provenance column
+    if (e.predicate_cond_node == 0 && e.original_child != NULL_NODE &&
+        e.original_child < flat.size()) {
+        const auto child_prov = flat.provenance(e.original_child);
+        if (child_prov != 0)
+            e.predicate_cond_node = child_prov;
+    }
+
+    // 2. Walk parent chain for first non-zero provenance (cross-delta
+    // rewrite often leaves the child blank while an ancestor retains it).
+    if (e.predicate_cond_node == 0 && e.original_child != NULL_NODE &&
+        e.original_child < flat.size()) {
+        auto cur = static_cast<aura::ast::NodeId>(e.original_child);
+        for (int hops = 0; hops < 64; ++hops) {
+            if (cur == NULL_NODE || cur >= flat.size())
+                break;
+            const auto p = flat.provenance(cur);
+            if (p != 0) {
+                e.predicate_cond_node = p;
+                break;
+            }
+            const auto par = flat.parent_of(cur);
+            if (par == cur || par == NULL_NODE)
+                break;
+            cur = par;
+        }
+    }
+
+    // 3. Mutation log: prefer records targeting original_child / parent_id
+    // (walk reverse = newest first). Also follow parent_mutation_id once for
+    // composite / multi-delta root attribution.
+    const auto& log = flat.all_mutations();
+    if (e.source_mutation_id == 0 && !log.empty()) {
+        for (auto it = log.rbegin(); it != log.rend(); ++it) {
+            if (it->target_node == e.original_child || it->target_node == e.parent_id ||
+                it->parent_id == e.parent_id ||
+                (e.original_child != 0 && it->parent_id == e.original_child)) {
+                e.source_mutation_id = it->mutation_id;
+                if (e.predicate_cond_node == 0 && it->target_node != 0 &&
+                    it->target_node != NULL_NODE) {
+                    e.predicate_cond_node = static_cast<std::uint32_t>(it->target_node);
+                }
+                // Multi-delta: if this record has a parent mutation, prefer
+                // the root when the entry still has no predicate.
+                if (it->parent_mutation_id != 0 && e.predicate_cond_node == 0) {
+                    for (const auto& r : log) {
+                        if (r.mutation_id == it->parent_mutation_id && r.target_node != 0) {
+                            e.predicate_cond_node = static_cast<std::uint32_t>(r.target_node);
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        if (e.source_mutation_id == 0)
+            e.source_mutation_id = log.back().mutation_id;
+    }
+
+    // 4. Hygiene tracker (MacroIntroduced / audit path)
+    if (e.predicate_cond_node == 0 || e.source_mutation_id == 0) {
+        const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+        if (e.predicate_cond_node == 0 && hy.node_id != 0)
+            e.predicate_cond_node = hy.node_id;
+        if (e.source_mutation_id == 0 && hy.source_mutation_id != 0)
+            e.source_mutation_id = hy.source_mutation_id;
+    }
+
+    // 5. Completeness vs sentinel forensic recovery
+    const bool complete = e.predicate_cond_node != 0 && e.source_mutation_id != 0;
+    if (complete) {
+        g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
+    if (e.predicate_cond_node == 0) {
+        // Sentinel: always non-zero; low bits = original_child for recovery.
+        const auto low = static_cast<std::uint32_t>(e.original_child & 0xFFFFu);
+        e.predicate_cond_node = kCoercionProvenanceSentinelBase | (low == 0 ? 1u : low);
+        g_coercion_provenance_sentinel_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (e.source_mutation_id == 0) {
+        // Weak mutation stamp: original_child (or 1) so deopt/rollback trails
+        // never see a zero mutation id after apply.
+        e.source_mutation_id =
+            e.original_child != 0 ? static_cast<std::uint64_t>(e.original_child) : 1ull;
+    }
+}
 
 // ── CoercionMap — accumulated coercion intent ────────────
 //
@@ -169,17 +289,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
     s = {};
 
     for (const auto& e_in : map.entries()) {
-        // Issue #1873: strengthen provenance propagation — fill missing
-        // predicate/mutation from child provenance column or latest
-        // mutation log so truncation/cross-delta chains stay traceable.
         CoercionEntry e = e_in;
-        if (e.predicate_cond_node == 0 && e.original_child < flat.size()) {
-            const auto child_prov = flat.provenance(e.original_child);
-            if (child_prov != 0)
-                e.predicate_cond_node = child_prov;
-        }
-        if (e.source_mutation_id == 0 && !flat.all_mutations().empty())
-            e.source_mutation_id = flat.all_mutations().back().mutation_id;
 
         // Issue #1425 / #1925: identity coercion — child already has the
         // target type stamped (post-infer). Do not insert a
@@ -193,12 +303,6 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             continue;
         }
 
-        // Issue #2064: provenance-gap observability. The metric
-        // coercion_blame_missing_total (CompilerMetrics) is bumped from
-        // callers via `metrics_->coercion_blame_missing_total.fetch_add(1)`
-        // — coercion_map.ixx doesn't hold a direct metrics pointer, so the
-        // observability is wired at the entry-point callers (TypeChecker /
-        // CompilerService) instead. Best-effort back-fill above stands.
         // Issue #1925: Dynamic passthrough tag (3) with no meaningful
         // runtime check — skip CoercionNode insertion.
         if (e.type_tag == 3) {
@@ -207,6 +311,11 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 map_mut->mark_eliminated();
             continue;
         }
+
+        // Issue #1873 / #2024: full provenance chain recovery for entries
+        // that will be applied. Walk child → parent → mutation log →
+        // hygiene; stamp sentinel when still incomplete.
+        fill_coercion_provenance_chain(flat, e);
 
         // Locate the parent and confirm it still points at the
         // original child we recorded. If it doesn't (e.g. this
@@ -224,8 +333,9 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             flat.set_loc(coercion_id, e.src_line, e.src_col);
             if (e.narrow_evidence != 0)
                 flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
-            // Issue #1873: prefer predicate; fall back to mutation;
-            // always try to leave a non-zero provenance stamp.
+            // Issue #1873 / #2024: always stamp non-zero provenance after
+            // fill_coercion_provenance_chain (predicate preferred; mutation
+            // / sentinel as fallback).
             if (e.predicate_cond_node != 0)
                 flat.set_provenance(coercion_id, e.predicate_cond_node);
             else if (e.source_mutation_id != 0)
@@ -251,8 +361,8 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Build the CoercionNode wrapping the original child.
         auto coercion_id = flat.add_coercion(e.original_child, e.type_tag, e.type_id);
         flat.set_loc(coercion_id, e.src_line, e.src_col);
-        // Issue #691 / #1873: stamp narrowing evidence + predicate/mutation
-        // provenance on the coercion node for lowering elision + blame.
+        // Issue #691 / #1873 / #2024: stamp narrowing evidence + recovered
+        // predicate/mutation provenance (never leave zero after chain walk).
         if (e.narrow_evidence != 0)
             flat.set_float(coercion_id, static_cast<double>(e.narrow_evidence));
         if (e.predicate_cond_node != 0)
