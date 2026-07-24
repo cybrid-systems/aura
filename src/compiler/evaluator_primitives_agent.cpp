@@ -3022,6 +3022,23 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-stats-wired", 1);    // alias for query:orch-agent-stats intent
             insert_kv("mailbox-stats-wired", 1);  // alias for query:orch-mailbox-stats intent
             insert_kv("parallel-stats-wired", 1); // alias for query:orch-parallel-stats intent
+            // Issue #2008: keepalive / liveness surfaces
+            insert_kv("keepalive-emitted-total",
+                      static_cast<std::int64_t>(
+                          os.keepalive_emitted_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "stalled-agents-total",
+                static_cast<std::int64_t>(os.stalled_agents_total.load(std::memory_order_relaxed)));
+            insert_kv("last-keepalive-us", static_cast<std::int64_t>(os.last_keepalive_us.load(
+                                               std::memory_order_relaxed)));
+            insert_kv("keepalive-cancels-total",
+                      static_cast<std::int64_t>(
+                          os.keepalive_cancels_total.load(std::memory_order_relaxed)));
+            insert_kv("keepalive-helpers-spawned",
+                      static_cast<std::int64_t>(
+                          os.keepalive_helpers_spawned.load(std::memory_order_relaxed)));
+            insert_kv("schema-2008", 2008);
+            insert_kv("keepalive-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
