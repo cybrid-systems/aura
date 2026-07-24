@@ -1820,6 +1820,11 @@ aura_add_issue_test(test_full_strategy_partial_recovery)
 aura_issue_test_link_llvm_jit(test_full_strategy_partial_recovery)
 add_dependencies(all_test_issue_targets test_full_strategy_partial_recovery)
 
+# Issue #2030: blame completeness + occurrence hit-rate agent query surface.
+aura_add_issue_test(test_blame_occurrence_agent_ratios)
+aura_issue_test_link_llvm_jit(test_blame_occurrence_agent_ratios)
+add_dependencies(all_test_issue_targets test_blame_occurrence_agent_ratios)
+
 aura_add_issue_test(test_reflect_hygiene_unit_batch)
 aura_issue_test_link_llvm_jit(test_reflect_hygiene_unit_batch)
 add_dependencies(all_test_issue_targets test_reflect_hygiene_unit_batch)
