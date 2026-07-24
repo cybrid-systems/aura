@@ -1,5 +1,6 @@
-// tests/test_contracts.cpp
-// C++ unit test for C++26 contract_assert + trailing `pre`/`post` enforcement.
+// tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
+// enforcement test. (R18 moved from tests/core/.) C++ unit test for C++26 contract_assert +
+// trailing `pre`/`post` enforcement.
 //
 // Usage:
 //   test_contracts holds    — runs a function with pre-condition that holds

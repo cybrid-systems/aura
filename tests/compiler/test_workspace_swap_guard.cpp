@@ -1,4 +1,4 @@
-// @category: unit
+// tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 // @reason: Issue #1717 — synthesize:optimize child workspace swap must use
 // Issue #1717 (#1978 renamed): issue# moved from filename to header.
 // RAII (restore + delete_child on scope exit), not bare manual restore.

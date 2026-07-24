@@ -39,8 +39,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 17 | 17 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 25 | 25 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 17 | 17 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 92 | 92 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 29 | 29 | P3 — review case-by-case |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 91 | 91 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 30 | 30 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -197,7 +197,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_concurrent.cpp`
 - `tests/compiler/test_constraint_system_solve_delta_cross_delta_task2.cpp`
 - `tests/compiler/test_constraintsystem_solve_delta_clean_conflict_detection.cpp`
-- `tests/core/test_contracts.cpp`
+- `tests/compiler/test_contracts.cpp`
 - `tests/compiler/test_core_builtins_review.cpp`
 - `tests/core/test_coverage_holes_workspace_lock.cpp`
 - `tests/core/test_cpp26_contracts_hotpath.cpp`
@@ -472,11 +472,11 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/renderer/test_voxel_shade.cpp`
 - `tests/renderer/test_voxel_volume.cpp`
 - `tests/compiler/test_walk_batch.cpp`
-- `tests/core/test_workspace_delete_child.cpp`
-- `tests/core/test_workspace_dispatch.cpp`
+- `tests/compiler/test_workspace_delete_child.cpp`
+- `tests/compiler/test_workspace_dispatch.cpp`
 - `tests/core/test_workspace_lock_reentrancy.cpp`
 - `tests/core/test_workspace_state_lock.cpp`
-- `tests/core/test_workspace_swap_guard.cpp`
+- `tests/compiler/test_workspace_swap_guard.cpp`
 - `tests/core/test_zero_copy_arena.cpp`
 
 ## Migration priority roadmap
@@ -693,7 +693,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/core/test_stress_alloc_storage_lock.cpp` (—) [domain_suite, theme_core] — test_stress_alloc_storage_lock.cpp — Issue #1397
 - `tests/compiler/test_typechecker_incremental_guard_steal_fidelity.cpp` (—) [domain_suite, theme_compiler] — test_typechecker_incremental_guard_steal_fidelity.cpp — Issue #798:
-- `tests/core/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_core] — Issue #1717 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 
 ### `linear_ownership` — Linear ownership / borrow / consume (5)
 
@@ -717,7 +717,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (17)
 
-- `tests/core/test_contracts.cpp` (—) [small, domain_suite, theme_core] — tests/test_contracts.cpp
+- `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
 - `tests/reflect/test_ir_cache_v2.cpp` (—) [small, domain_suite, theme_reflect] — tests/test_ir_cache_v2.cpp
 - `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
@@ -793,15 +793,15 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_soa_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_soa_batch.cpp
 - `tests/compiler/test_soa_view_enforcement.cpp` (—) [domain_suite, theme_compiler] — Issue #1241/#1517/#1619/#1918 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_spec_jit.cpp` (—) [large, domain_suite, theme_compiler] — test_spec_jit.cpp — Unit tests for L1 type specialization (Phase 2, #53)
-- `tests/core/test_workspace_delete_child.cpp` (—) [domain_suite, theme_core] — Issue #1770 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (92)
+### `observability` — Observability / metrics / query:*-stats (91)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (92)
+#### domain/ (91)
 
 - `tests/renderer/test_ai_closedloop_readiness.cpp` (—) [domain_suite, theme_renderer] — Issue #1591/#1592/#1593 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.
@@ -894,15 +894,14 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_typechecker_incremental_locality.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1923 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_unified_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #1448/#1476/#1496/#1607 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
-- `tests/core/test_workspace_dispatch.cpp` (—) [domain_suite, theme_core] — Issue #1437 (workspace :op) unified dispatcher
 
-### `uncategorized` — Uncategorized / mixed (29)
+### `uncategorized` — Uncategorized / mixed (30)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (29)
+#### domain/ (30)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -933,6 +932,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/renderer/test_voxel_raycast.cpp` (—) [domain_suite, theme_renderer] — test_voxel_raycast.cpp — Issue #1983 / Epic #1979
 - `tests/renderer/test_voxel_shade.cpp` (—) [domain_suite, theme_renderer] — test_voxel_shade.cpp — Issue #1984 / Epic #1979
 - `tests/renderer/test_voxel_volume.cpp` (—) [domain_suite, theme_renderer] — test_voxel_volume.cpp — Issue #1982 / Epic #1979
+- `tests/compiler/test_workspace_dispatch.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_dispatch.cpp — Issue #1437: workspace :op dispatch contract test.
 
 ## Regenerating
 
