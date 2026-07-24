@@ -102,11 +102,26 @@ std::uint64_t aura_closure_cache_generation_mismatch_total(void);
 // aura_aot_fn_version_is_stale — true when binary version != expected.
 // aura_aot_parse_version_suffix / aura_aot_mangle_version_is_stale —
 //   host-side helpers over mangled symbol names (no dlopen).
+// Issue #2015: full suffix parse extracts optional `_eN_lN` (env/linear);
+//   mangle stale / fn stale accept optional host env + linear for drift.
 std::uint64_t aura_aot_probe_fn_version(void* dl_handle, const char* original_name);
 bool aura_aot_fn_version_is_stale(void* dl_handle, const char* original_name,
                                   std::uint64_t expected);
+// Extended: also compare aot_env_frame_version / aot_linear_state symbols
+// (when present) against host expected env/linear. defuse-only path
+// remains via expected_env=0, expected_linear=0 and missing symbols.
+bool aura_aot_fn_version_is_stale_ex(void* dl_handle, const char* original_name,
+                                     std::uint64_t expected_defuse,
+                                     std::uint64_t expected_env_frame,
+                                     std::uint8_t expected_linear);
 bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t* out_version);
+// Issue #2015: parse defuse + optional env_frame + linear. Null out_* ok.
+bool aura_aot_parse_full_version_suffix(const char* mangled, std::uint64_t* out_defuse,
+                                        std::uint64_t* out_env_frame, std::uint8_t* out_linear);
 bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expected);
+bool aura_aot_mangle_version_is_stale_ex(const char* mangled, std::uint64_t expected_defuse,
+                                         std::uint64_t expected_env_frame,
+                                         std::uint8_t expected_linear);
 
 // Issue #1271: incremental re-emit skeleton + last commit epoch.
 // Returns count of dirty functions re-emitted (0 in Phase 1 skeleton).

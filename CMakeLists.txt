@@ -1807,6 +1807,11 @@ aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)
 add_dependencies(all_test_issue_targets test_aot_incremental_reemit)
 
+# Issue #1369 / #2015: AOT mangle _vN/_eN_lN parse + stale probes.
+aura_add_issue_test(test_aot_mangle_top)
+aura_issue_test_link_llvm_jit(test_aot_mangle_top)
+add_dependencies(all_test_issue_targets test_aot_mangle_top)
+
 # tests/issues/ removed (wave 58–60 / #1957): range batches + #178 folded into
 # theme suites (domain/arena, mutation, obs, edsl, fiber, shape, linear).
 

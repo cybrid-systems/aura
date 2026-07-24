@@ -1662,22 +1662,51 @@ extern "C" std::uint64_t aura_aot_probe_fn_version(void* dl_handle, const char* 
 
 extern "C" bool aura_aot_fn_version_is_stale(void* dl_handle, const char* original_name,
                                              std::uint64_t expected) {
+    return aura_aot_fn_version_is_stale_ex(dl_handle, original_name, expected, /*env=*/0,
+                                           /*linear=*/0);
+}
+
+// Issue #2015: defuse + optional env_frame / linear drift vs dlopened module.
+extern "C" bool aura_aot_fn_version_is_stale_ex(void* dl_handle, const char* original_name,
+                                                std::uint64_t expected_defuse,
+                                                std::uint64_t expected_env_frame,
+                                                std::uint8_t expected_linear) {
     const std::uint64_t got = aura_aot_probe_fn_version(dl_handle, original_name);
     if (got == kAotFnVersionMissing) {
         // Missing per-fn + emit version: treat as stale only when host
         // expects a concrete non-zero epoch (legacy binary vs modern host).
-        if (expected != 0) {
+        if (expected_defuse != 0) {
             if (aot_metrics())
                 aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(
                     1, std::memory_order_relaxed);
             return true;
         }
-        return false;
-    }
-    if (got != expected) {
+        // Still check env/linear symbols when host tracks them.
+    } else if (got != expected_defuse) {
         if (aot_metrics())
             aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    // Issue #2015: captured-env / linear ownership drift from module symbols.
+    if (dl_handle && (expected_env_frame != 0 || expected_linear != 0)) {
+        auto* bin_env = static_cast<std::uint64_t*>(::dlsym(dl_handle, "aot_env_frame_version"));
+        // Emitted as unsigned long long in generate_registration_c when present.
+        auto* bin_lin64 = static_cast<std::uint64_t*>(::dlsym(dl_handle, "aot_linear_state"));
+        const std::uint64_t got_env = bin_env ? *bin_env : 0;
+        const std::uint8_t got_lin =
+            bin_lin64 ? static_cast<std::uint8_t>(*bin_lin64 > 255ull ? 255ull : *bin_lin64) : 0;
+        if (got_env != expected_env_frame || got_lin != expected_linear) {
+            if (aot_metrics()) {
+                aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (got_env != expected_env_frame || got_lin != expected_linear) {
+                    aot_metrics()->aot_env_frame_version_drift_prevented.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            return true;
+        }
     }
     return false;
 }
@@ -1689,10 +1718,51 @@ extern "C" bool aura_aot_parse_version_suffix(const char* mangled, std::uint64_t
     return aura::compiler::aot_parse_version_suffix(mangled, out_version);
 }
 
+extern "C" bool aura_aot_parse_full_version_suffix(const char* mangled, std::uint64_t* out_defuse,
+                                                   std::uint64_t* out_env_frame,
+                                                   std::uint8_t* out_linear) {
+    if (!mangled)
+        return false;
+    aura::compiler::AotVersionSuffix full{};
+    if (!aura::compiler::aot_parse_full_version_suffix(mangled, &full) || !full.has_defuse)
+        return false;
+    if (out_defuse)
+        *out_defuse = full.defuse_version;
+    if (out_env_frame)
+        *out_env_frame = full.has_env_linear ? full.env_frame_version : 0;
+    if (out_linear)
+        *out_linear = full.has_env_linear ? full.linear_state : 0;
+    return true;
+}
+
 extern "C" bool aura_aot_mangle_version_is_stale(const char* mangled, std::uint64_t expected) {
     if (!mangled)
         return true;
     return aura::compiler::aot_mangle_version_is_stale(mangled, expected);
+}
+
+extern "C" bool aura_aot_mangle_version_is_stale_ex(const char* mangled,
+                                                    std::uint64_t expected_defuse,
+                                                    std::uint64_t expected_env_frame,
+                                                    std::uint8_t expected_linear) {
+    if (!mangled)
+        return true;
+    bool defuse_stale = false;
+    bool env_stale = false;
+    bool lin_stale = false;
+    const bool stale = aura::compiler::aot_mangle_version_is_stale_detail(
+        mangled, expected_defuse, expected_env_frame, expected_linear, &defuse_stale, &env_stale,
+        &lin_stale);
+    if (stale && aot_metrics()) {
+        if (defuse_stale) {
+            aot_metrics()->aot_fn_version_probe_stale_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (env_stale || lin_stale) {
+            aot_metrics()->aot_env_frame_version_drift_prevented.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    return stale;
 }
 
 // Issue #1271: incremental re-emit skeleton — counts dirty AOT
@@ -2131,6 +2201,22 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "\n// Issue #1640: AOT env_frame_version (captured-env drift)\n");
     fprintf(f, "const unsigned long long aot_env_frame_version = %llull;\n",
             static_cast<unsigned long long>(emit_env_frame_version));
+    // Issue #2015: module-level linear ownership stamp for probe/stale
+    // (paired with mangle `_lN` and aura_aot_fn_version_is_stale_ex).
+    // Use max per-fn linear_ownership_state so any tracked linear in
+    // the module is visible to dlsym-based drift checks.
+    {
+        std::uint8_t max_lin = 0;
+        for (unsigned int i = 0; i < num_functions; ++i) {
+            const std::uint8_t ls =
+                static_cast<std::uint8_t>(functions[i].linear_ownership_state & 0xFFu);
+            if (ls > max_lin)
+                max_lin = ls;
+        }
+        fprintf(f, "// Issue #2015: AOT linear_state (ownership drift)\n");
+        fprintf(f, "const unsigned long long aot_linear_state = %llull;\n",
+                static_cast<unsigned long long>(max_lin));
+    }
 
     // Issue #287: AOT module version (hot-reload / multi-agent).
     // The host sets default-state module_version before
