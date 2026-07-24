@@ -403,15 +403,18 @@ static void run_1638_ensure_dual_path() {
 
 static void run_1638_exit_compact() {
     std::println("\n--- AC8 (#1638): exit_mutation_boundary compact 64KB threshold ---");
-    std::string ixx;
-    for (const char* p : {"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
-        ixx = read_file(p);
-        if (!ixx.empty())
+    // Wave4: exit_mutation_boundary body lives in evaluator_mutation_boundary.cpp.
+    std::string src;
+    for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                          "../src/compiler/evaluator_mutation_boundary.cpp",
+                          "src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"}) {
+        src = read_file(p);
+        if (!src.empty() && contains(src, "kCompactThreshold = 64 * 1024"))
             break;
     }
-    bool wired = contains(ixx, "Issue #1638: mutation_log compact at boundary exit") &&
-                 contains(ixx, "kCompactThreshold = 64 * 1024") &&
-                 contains(ixx, "compact_mutation_log()");
+    bool wired = contains(src, "Issue #1638: mutation_log compact at boundary exit") &&
+                 contains(src, "kCompactThreshold = 64 * 1024") &&
+                 contains(src, "compact_mutation_log()");
     CHECK(wired, "exit_mutation_boundary wires compact with 64KB threshold");
 }
 
