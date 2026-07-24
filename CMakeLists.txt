@@ -440,7 +440,7 @@ AT(step15_letrec_fact10
     "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))" 3628800)
 
 # ── IR tests ─────────────────────────────────────────────────────
-add_executable(test_ir tests/arena/test_ir.cpp)
+add_executable(test_ir tests/compiler/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 aura_target_cxx_modules(test_ir)
 target_sources(test_ir PRIVATE
@@ -509,7 +509,7 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 # unused-parameter, and sign-compare warnings on test_ir.cpp itself.
 # The linked-in production sources (aura_test_objects, the per-target
 # source list above) keep the lax `aura_test_compile_options` settings.
-aura_strict_test_warnings(tests/arena/test_ir.cpp)
+aura_strict_test_warnings(tests/compiler/test_ir.cpp)
 aura_test_compile_options(test_ir)
 target_include_directories(test_ir PRIVATE src src/compiler)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
