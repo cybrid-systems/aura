@@ -6632,11 +6632,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> arena_shrink_tier_hardened{1};       // #1242
     std::atomic<std::uint64_t> soa_view_eval_helpers{1};            // #1243
     std::atomic<std::uint64_t> hygiene_ir_marker_propagation{1};    // #1244
-    std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{1};   // #1245
+    std::atomic<std::uint64_t> macro_clone_concurrent_hygiene{0}; // #1245 / #2021 live fiber stamps
     // Issue #2018: rest-param hygiene gensyms in clone_macro_body.
     std::atomic<std::uint64_t> macro_rest_param_hygiene_total{0};
     // Issue #2019: MacroIntroduced restamp after expand → FlatAST.
     std::atomic<std::uint64_t> macro_restamp_after_flat_total{0};
+    // Issue #2021: peak concurrent top-level clone_macro_body + live in-flight.
+    std::atomic<std::uint64_t> macro_clone_concurrent_peak{0};
+    std::atomic<std::uint64_t> macro_clone_in_flight{0};
 
     // ── Issues #1246–#1250: reflect/hygiene/agent-OOB/provenance Phase 1 ──
     std::atomic<std::uint64_t> production_sweep_1246_1250_active{1};

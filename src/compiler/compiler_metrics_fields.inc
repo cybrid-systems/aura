@@ -1205,6 +1205,9 @@ AURA_COMPILER_METRICS_FIELD(macro_clone_concurrent_hygiene)
 AURA_COMPILER_METRICS_FIELD(macro_rest_param_hygiene_total)
 // Issue #2019: MacroIntroduced restamp after expand → FlatAST.
 AURA_COMPILER_METRICS_FIELD(macro_restamp_after_flat_total)
+// Issue #2021: concurrent top-level clone occupancy peak + live in-flight.
+AURA_COMPILER_METRICS_FIELD(macro_clone_concurrent_peak)
+AURA_COMPILER_METRICS_FIELD(macro_clone_in_flight)
 AURA_COMPILER_METRICS_FIELD(production_sweep_1246_1250_active)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_bridge_guard)
 AURA_COMPILER_METRICS_FIELD(runtime_reflect_mutated_schema_checks)
