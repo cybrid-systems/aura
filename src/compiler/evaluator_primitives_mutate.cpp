@@ -5071,7 +5071,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             std::uint32_t strategy = 0, ratio = 0;
             snapshot_global(considered, skipped, contextual, trail_sz, rollbacks, errors, strategy,
                             ratio);
-            auto* ht = FlatHashTable::create(64); // #1894: more AC keys
+            auto* ht = FlatHashTable::create(128); // #1894 + #2027 composite keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5184,7 +5184,52 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("contextual-should-audit-wired", 1);
             insert_kv("full-force-rollback-wired", 1);
             insert_kv("dirty-aware-pass-inventory", 1);
-            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882
+            // Issue #2027: composite / nested txn + partial recover counters
+            {
+                const auto& c = g_typed_mutation_audit_counters;
+                insert_kv("composite-invariant-audits",
+                          static_cast<std::int64_t>(
+                              c.composite_invariant_audits_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-invariant-ok",
+                          static_cast<std::int64_t>(
+                              c.composite_invariant_ok_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-invariant-fail",
+                          static_cast<std::int64_t>(
+                              c.composite_invariant_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("composite_invariant_fail_total",
+                          static_cast<std::int64_t>(
+                              c.composite_invariant_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-partial-recover-type",
+                          static_cast<std::int64_t>(c.composite_partial_recover_type_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-partial-recover-linear",
+                          static_cast<std::int64_t>(c.composite_partial_recover_linear_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-partial-recover-success",
+                          static_cast<std::int64_t>(c.composite_partial_recover_success_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-partial-recover-attempt",
+                          static_cast<std::int64_t>(c.composite_partial_recover_attempt_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("composite-full-rollback",
+                          static_cast<std::int64_t>(
+                              c.composite_full_rollback_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-nested-audit",
+                          static_cast<std::int64_t>(
+                              c.composite_nested_audit_total.load(std::memory_order_relaxed)));
+                insert_kv("composite-batch-audit",
+                          static_cast<std::int64_t>(
+                              c.composite_batch_audit_total.load(std::memory_order_relaxed)));
+                insert_kv(
+                    "composite-cross-batch-linear-escape",
+                    static_cast<std::int64_t>(c.composite_cross_batch_linear_escape_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv("composite-partial-recover-wired", 1);
+                insert_kv("composite-nested-audit-wired", 1);
+                insert_kv("schema-2027", 2027);
+                insert_kv("issue-2027", 2027);
+            }
+            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 satellite
             insert_kv("schema", 1894);
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {
