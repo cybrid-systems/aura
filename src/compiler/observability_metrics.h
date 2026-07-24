@@ -7187,6 +7187,13 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> type_dep_graph_affected_expand_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
+    // Issue #2065: solve_delta_epoch_skip_total — count of touched /
+    // occurrence / let-poly roots skipped during solve_delta worklist
+    // seeding because last_seen_epoch already matches the current
+    // mutation epoch (no new dirty since last pass). Mirrors the
+    // epoch filter in solve_delta_impl + reverify_clean_constraints_for_touched.
+    std::atomic<std::uint64_t> solve_delta_epoch_skip_total{0};
+
     std::atomic<std::uint64_t> incremental_locality_hit_rate{0};
     std::atomic<std::uint64_t> reverify_adaptive_adjustments_total{0};
     // Issue #1923: minimal recheck locality gate metrics.
