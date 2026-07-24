@@ -2994,15 +2994,18 @@ public:
     // ownership probe + StableNodeRef restamp (joiner-side enforcement).
     // joined_fiber_void may be null (uses current fiber / full scan).
     void complete_post_join_linear_enforcement(void* joined_fiber_void = nullptr) noexcept;
-    // Issue #1614: TypedMutationAudit real invariant suite (type reval +
+    // Issue #1614 / #2027: TypedMutationAudit real invariant suite (type reval +
     // linear_post_mutate_enforce_all + provenance/reflect). Gated by
     // typed_audit::should_audit. Records trail + counters; returns true
     // if all three checks passed (or checks were not applicable).
-    [[nodiscard]] bool run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
-                                                          std::string_view op_name,
-                                                          std::uint32_t target_node,
-                                                          std::uint64_t before_epoch,
-                                                          std::uint64_t after_epoch) noexcept;
+    // composite_mode: nested boundary / atomic_batch — extra cross-batch
+    // linear-escape scan + composite counters (#2027).
+    // out_result: optional breakdown for partial recovery.
+    [[nodiscard]] bool
+    run_typed_mutation_invariant_audit(std::uint64_t mutation_id, std::string_view op_name,
+                                       std::uint32_t target_node, std::uint64_t before_epoch,
+                                       std::uint64_t after_epoch, bool composite_mode = false,
+                                       void* out_result = nullptr) noexcept;
     // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
     // Returns false when a linear claim in payload fails ownership checks
     // (caller must not deliver). Always runs light StableNodeRef probe.

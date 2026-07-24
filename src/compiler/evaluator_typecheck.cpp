@@ -412,15 +412,19 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     }
 }
 
-// Issue #1614: TypedMutationAudit real post-mutation invariant suite.
+// Issue #1614 / #2027: TypedMutationAudit real post-mutation invariant suite.
 // Type (post_mutation_invariant_check), linear (linear_post_mutate_enforce_all),
 // provenance (post_mutation_reflect_validate). Records trail + counters.
+// composite_mode: nested / atomic_batch — scan live Moved roots (cross-batch
+// linear escape) and stamp composite counters for partial recovery.
 bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
                                                    std::string_view op_name,
                                                    std::uint32_t target_node,
                                                    std::uint64_t before_epoch,
-                                                   std::uint64_t after_epoch) noexcept {
+                                                   std::uint64_t after_epoch, bool composite_mode,
+                                                   void* out_result) noexcept {
     typed_audit::InvariantAuditResult r;
+    r.composite_mode = composite_mode;
     auto* flat = workspace_flat_;
     auto* pool = workspace_pool_;
     auto* reg = type_registry_ ? static_cast<aura::core::TypeRegistry*>(type_registry_) : nullptr;
@@ -453,6 +457,23 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
         r.linear_ok = sweep.all_safe;
         if (sweep.frames_checked == 0)
             r.linear_ok = true; // no frames → N/A pass
+    }
+
+    // Issue #2027: composite / nested / atomic_batch — no dangling Moved
+    // live root may survive a batch commit or nested boundary success.
+    if (composite_mode) {
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        for (const auto& fr : env_frames_) {
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s == linear_rt::Moved) {
+                    r.cross_batch_linear_escape = true;
+                    r.linear_ok = false;
+                    break;
+                }
+            }
+            if (r.cross_batch_linear_escape)
+                break;
+        }
     }
 
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
@@ -504,6 +525,8 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             ac.predicate_memo_evict_correlated_total.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
     }
+    if (out_result)
+        *static_cast<typed_audit::InvariantAuditResult*>(out_result) = r;
     return r.all_ok();
 }
 

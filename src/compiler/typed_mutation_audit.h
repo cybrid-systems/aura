@@ -18,8 +18,10 @@
 
 namespace aura::compiler::typed_audit {
 
-inline constexpr int kTypedMutationAuditPassPhase = 4; // #1894 hotpath contextual + Full rollback
-inline constexpr int kTypedMutationAuditIssue = 1894;  // lineage 1614 / 1589; AOT wire #1882
+inline constexpr int kTypedMutationAuditPassPhase =
+    5; // #2027 composite/nested txn + partial recover
+inline constexpr int kTypedMutationAuditIssue =
+    1894; // lineage 1614 / 1589; AOT wire #1882; #2027 satellite
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
@@ -119,6 +121,18 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> last_dce_narrow_hits{0};
     std::atomic<std::uint64_t> last_predicate_memo_evictions{0};
     std::atomic<std::uint64_t> last_invariant_all_ok{1}; // 1=pass, 0=fail
+    // Issue #2027: composite / nested txn + atomic_batch invariant suite.
+    std::atomic<std::uint64_t> composite_invariant_audits_total{0};
+    std::atomic<std::uint64_t> composite_invariant_ok_total{0};
+    std::atomic<std::uint64_t> composite_invariant_fail_total{0};
+    std::atomic<std::uint64_t> composite_partial_recover_type_total{0};
+    std::atomic<std::uint64_t> composite_partial_recover_linear_total{0};
+    std::atomic<std::uint64_t> composite_partial_recover_success_total{0};
+    std::atomic<std::uint64_t> composite_full_rollback_total{0};
+    std::atomic<std::uint64_t> composite_nested_audit_total{0};
+    std::atomic<std::uint64_t> composite_batch_audit_total{0};
+    std::atomic<std::uint64_t> composite_cross_batch_linear_escape_total{0};
+    std::atomic<std::uint64_t> composite_partial_recover_attempt_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -345,13 +359,35 @@ inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view 
 }
 
 // Issue #1614: record result of type + linear + provenance invariant suite.
+// Issue #2027: composite_mode / cross_batch_linear_escape feed partial recovery.
 struct InvariantAuditResult {
     bool type_ok = true;
     bool linear_ok = true;
     bool provenance_ok = true;
+    bool composite_mode = false;
+    bool cross_batch_linear_escape = false;
     std::uint32_t notes_count = 0;
-    [[nodiscard]] bool all_ok() const noexcept { return type_ok && linear_ok && provenance_ok; }
+    [[nodiscard]] bool all_ok() const noexcept {
+        return type_ok && linear_ok && provenance_ok && !cross_batch_linear_escape;
+    }
 };
+
+// Issue #2027: stamp composite audit outcome (nested and/or atomic_batch).
+inline void record_composite_invariant_audit(bool nested, bool batch_active,
+                                             const InvariantAuditResult& r) noexcept {
+    auto& c = g_typed_mutation_audit_counters;
+    c.composite_invariant_audits_total.fetch_add(1, std::memory_order_relaxed);
+    if (nested)
+        c.composite_nested_audit_total.fetch_add(1, std::memory_order_relaxed);
+    if (batch_active)
+        c.composite_batch_audit_total.fetch_add(1, std::memory_order_relaxed);
+    if (r.cross_batch_linear_escape)
+        c.composite_cross_batch_linear_escape_total.fetch_add(1, std::memory_order_relaxed);
+    if (r.all_ok())
+        c.composite_invariant_ok_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        c.composite_invariant_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Issue #1884: stamp last TypePropagationPass / DCE narrow metrics for
 // the next invariant audit correlation window.
@@ -576,6 +612,28 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.last_predicate_memo_evictions.store(0,
                                                                         std::memory_order_relaxed);
     g_typed_mutation_audit_counters.last_invariant_all_ok.store(1, std::memory_order_relaxed);
+    // Issue #2027 composite counters
+    g_typed_mutation_audit_counters.composite_invariant_audits_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_invariant_ok_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_invariant_fail_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_type_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_linear_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_success_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_full_rollback_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_nested_audit_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_batch_audit_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_attempt_total.store(
+        0, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     std::lock_guard lock(g_trail().mu);

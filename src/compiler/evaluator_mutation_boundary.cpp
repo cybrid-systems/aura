@@ -397,50 +397,116 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
         emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                             static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
-        // Issue #1589 / #1614 / #1894: TypedMutationAudit trail + real
-        // invariant suite on mutation boundary hot path. Contextual
+        // Issue #1589 / #1614 / #1894 / #2027: TypedMutationAudit trail +
+        // real invariant suite on mutation boundary hot path. Contextual
         // sampling (#1894) forces audit for large dirty scopes / linear.
-        // Under Full strategy, invariant failure converts this success
-        // path into a structural rollback (do not silently continue).
+        // #2027: nested_boundary || atomic_batch always forces audit under
+        // Sampled/Full and tries per-category partial recovery before Full
+        // structural rollback (fine_rollback + children PCV still apply).
         {
             const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
             const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
             const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
                                      (audit_op.find("move") != std::string_view::npos) ||
                                      (audit_op.find("inline") != std::string_view::npos);
-            if (nodes_changed > 0 &&
-                typed_audit::should_audit_contextual(mid, nodes_changed, linear_hint)) {
-                const bool inv_ok = run_typed_mutation_invariant_audit(
+            const bool batch_active = cp.bump_suppressed_at_entry ||
+                                      (workspace_flat_ && workspace_flat_->atomic_batch_active());
+            const bool composite = nested_boundary || batch_active;
+            const auto strat = typed_audit::get_strategy();
+            // Composite paths never under-sample (self-evo multi-step safety).
+            const bool do_audit = nodes_changed > 0 && strat != typed_audit::AuditStrategy::Off &&
+                                  (composite || typed_audit::should_audit_contextual(
+                                                    mid, nodes_changed, linear_hint));
+            if (do_audit) {
+                typed_audit::InvariantAuditResult first{};
+                bool inv_ok = run_typed_mutation_invariant_audit(
                     mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
-                    epoch_after);
-                // #1894: Full strategy → force rollback on any invariant fail.
-                if (!inv_ok && typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                    typed_audit::g_typed_mutation_audit_counters.full_strategy_force_rollback_total
-                        .fetch_add(1, std::memory_order_relaxed);
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                        m->typed_mutation_full_force_rollback_total.fetch_add(
+                    epoch_after,
+                    /*composite_mode=*/composite, &first);
+                if (composite)
+                    typed_audit::record_composite_invariant_audit(nested_boundary, batch_active,
+                                                                  first);
+                // #1894 / #2027: Full strategy → partial recover then force rollback.
+                if (!inv_ok && strat == typed_audit::AuditStrategy::Full) {
+                    bool recovered = false;
+                    if (composite) {
+                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                        ac.composite_partial_recover_attempt_total.fetch_add(
                             1, std::memory_order_relaxed);
-                    // Structural undo (same as failure path below).
-                    BoundaryRollbackStats stats;
-                    stats.field_records_rolled =
-                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
-                    if (stats.field_records_rolled > 0)
-                        bump_mutation_log_rollback_count();
-                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
-                    stats.children_column_restored = true;
-                    if (cp.fine_rollback) {
-                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-                        stats.sym_id_column_restored = true;
-                        stats.param_columns_restored = true;
+                        // Prefer linear re-enforce before type recheck (cheap).
+                        if (!first.linear_ok || first.cross_batch_linear_escape) {
+                            ac.composite_partial_recover_linear_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            (void)linear_post_mutate_enforce_all();
+                            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                                      /*mark_all_linear=*/true);
+                        }
+                        if (!first.type_ok) {
+                            ac.composite_partial_recover_type_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Type-only recheck is re-driven by the full suite below;
+                            // visitor rewalks NotChecked / dirty mutations.
+                        }
+                        typed_audit::InvariantAuditResult after{};
+                        inv_ok = run_typed_mutation_invariant_audit(
+                            mid, "composite-partial-recover",
+                            static_cast<std::uint32_t>(audit_target), cp.version, epoch_after,
+                            /*composite_mode=*/true, &after);
+                        if (inv_ok) {
+                            recovered = true;
+                            ac.composite_partial_recover_success_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            typed_audit::record_composite_invariant_audit(nested_boundary,
+                                                                          batch_active, after);
+                        }
                     }
-                    last_boundary_rollback_stats_ = stats;
-                    defuse_index_ = nullptr;
-                    typed_audit::record_boundary_outcome(
-                        mid, "invariant-force-rollback", cp.version, epoch_after,
-                        /*success=*/false, static_cast<std::uint32_t>(audit_target), 0, fid);
-                    // Skip success-path reflect; failure path already recorded.
-                    return cp;
+                    if (!recovered) {
+                        typed_audit::g_typed_mutation_audit_counters
+                            .full_strategy_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        if (composite) {
+                            typed_audit::g_typed_mutation_audit_counters
+                                .composite_full_rollback_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        }
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->typed_mutation_full_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        // Structural undo (same as failure path; preserves fine_rollback).
+                        BoundaryRollbackStats stats;
+                        stats.field_records_rolled =
+                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                        if (stats.field_records_rolled > 0) {
+                            bump_mutation_log_rollback_count();
+                            if (nested_boundary)
+                                bump_edsl_nested_atomic_rollback();
+                        }
+                        workspace_flat_->restore_children(std::move(cp.children_snapshot));
+                        stats.children_column_restored = true;
+                        if (cp.fine_rollback) {
+                            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                            stats.sym_id_column_restored = true;
+                            stats.param_columns_restored = true;
+                        }
+                        // Realign atomic-batch flag if nested path left it inconsistent.
+                        if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
+                            if (cp.bump_suppressed_at_entry)
+                                workspace_flat_->begin_atomic_batch();
+                            else
+                                workspace_flat_->rollback_atomic_batch();
+                            suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        last_boundary_rollback_stats_ = stats;
+                        defuse_index_ = nullptr;
+                        typed_audit::record_boundary_outcome(
+                            mid,
+                            composite ? "composite-invariant-force-rollback"
+                                      : "invariant-force-rollback",
+                            cp.version, epoch_after, /*success=*/false,
+                            static_cast<std::uint32_t>(audit_target), 0, fid);
+                        return cp;
+                    }
                 }
             } else {
                 typed_audit::record_boundary_outcome(
