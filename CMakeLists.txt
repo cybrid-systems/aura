@@ -2012,6 +2012,11 @@ aura_issue_test_link_llvm_jit(test_dirty_cascade_optimize)
 aura_add_issue_test(test_stringpool_concurrent_intern)
 aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
 
+# Issue #2061: incremental restamp observability for generation wrap
+# (restamp_nodes_total + restamp_us_total metrics, force-wrap synthetic test).
+aura_add_issue_test(test_incremental_restamp_2061)
+aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
