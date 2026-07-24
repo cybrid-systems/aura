@@ -58,6 +58,9 @@ export inline std::atomic<std::uint64_t> g_coercion_provenance_complete_total{0}
 export inline std::atomic<std::uint64_t> g_coercion_provenance_miss_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_sentinel_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_provenance_chain_walk_total{0};
+// Issue #2025: AST-level identity elision count (apply_coercion_map) for
+// layered zero-overhead synergy with IR DeadCoercionEliminationPass.
+export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
 
 export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
     const auto c = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
@@ -300,6 +303,8 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             ++s.eliminated;
             if (map_mut)
                 map_mut->mark_eliminated();
+            // Issue #2025: AST elision feeds layered dead-coercion metrics.
+            g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
 
@@ -309,6 +314,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             ++s.eliminated;
             if (map_mut)
                 map_mut->mark_eliminated();
+            g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
 
