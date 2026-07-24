@@ -46,27 +46,27 @@ THEME_ORDER = [
 THEME_META: dict[str, dict[str, str]] = {
     "arena_compaction": {
         "title": "Arena / compaction / GC",
-        "target": "tests/domain/ (extend compact/gc family; see test_compact_*_batch)",
+        "target": "tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)",
         "priority": "P0 — well-contained, batch drivers already exist",
     },
     "mutation_dirty": {
         "title": "Mutation / dirty propagation / provenance",
-        "target": "tests/domain/test_domain_typed_mutate.cpp + mutation_boundary batch",
+        "target": "tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)",
         "priority": "P0 — high volume; strong domain suite foothold",
     },
     "fiber_orch": {
         "title": "Fiber / orchestration / steal / Guard",
-        "target": "tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume batch",
+        "target": "tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)",
         "priority": "P1 — domain suite already collapses many obs gates",
     },
     "linear_ownership": {
         "title": "Linear ownership / borrow / consume",
-        "target": "tests/test_linear_ownership_batch.cpp → domain/",
+        "target": "tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)",
         "priority": "P1 — small, already partially batched",
     },
     "edsl_hygiene": {
         "title": "EDSL / macro hygiene / reflect",
-        "target": "tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch",
+        "target": "tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)",
         "priority": "P1 — domain hygiene suite exists",
     },
     "jit_incremental": {
@@ -76,12 +76,12 @@ THEME_META: dict[str, dict[str, str]] = {
     },
     "shape_soa": {
         "title": "Shape / SoA / column layout",
-        "target": "tests/test_soa_batch.cpp → domain/",
+        "target": "tests/core/test_soa_batch.cpp (no move needed)",
         "priority": "P2 — small-medium; soa_batch precedent",
     },
     "observability": {
         "title": "Observability / metrics / query:*-stats",
-        "target": "tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp",
+        "target": "tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp",
         "priority": "P2 — often thin schema probes; collapse into obs matrix",
     },
     "uncategorized": {
@@ -494,7 +494,7 @@ def render_markdown(entries: list[TestEntry]) -> str:
     a("")
     a(
         "Categorize legacy per-issue regression tests so we can migrate them in "
-        "batches into the preferred `tests/domain/` structure (and existing "
+        "batches into the preferred `tests/core/` structure (and existing "
         "family batch drivers under `tests/test_*_batch.cpp`)."
     )
     a("")
@@ -506,14 +506,14 @@ def render_markdown(entries: list[TestEntry]) -> str:
     a("|----------|------:|-------|")
     a(f"| `tests/issues/test_issue_*.cpp` | {by_loc.get('issues', 0)} | Legacy per-issue mains / bundle members |")
     a(f"| `tests/test_*.cpp` (issue-oriented) | {by_loc.get('root', 0)} | Numbered root tests + `*_batch` drivers |")
-    a(f"| `tests/domain/test_*.cpp` | {by_loc.get('domain', 0)} | Preferred destination suites |")
+    a(f"| `tests/core/test_*.cpp` | {by_loc.get('domain', 0)} | Preferred destination suites |")
     a(f"| **Total scanned** | **{len(entries)}** | |")
     a("")
     a("### Related artifacts")
     a("")
     a(
         "- Coarser 5-bucket Phase-2 map: "
-        "[`tests/domain_classification.md`](domain_classification.md) "
+        "[`tests_classification.md`](domain_classification.md) "
         "(`scripts/classify_test_issues.py`)"
     )
     a("- Link/bundle profiles: [`tests/fixtures/issue_link_profiles.json`](fixtures/issue_link_profiles.json)")
@@ -587,7 +587,7 @@ def render_markdown(entries: list[TestEntry]) -> str:
     a(
         "2. **Observability dual-path**: many files named `*_observability.cpp` "
         "or probing `query:*-stats` / `engine:metrics`. Prefer folding into "
-        "`tests/domain/cases/obs_schema_cases.hpp` + `test_obs_schema_matrix.cpp`."
+        "`tests/compiler/obs_schema_cases.hpp` + `test_obs_schema_matrix.cpp`."
     )
     a(
         "3. **Bundle link profiles** (`light` / `jit` / `fiber` / `*_late*`): "

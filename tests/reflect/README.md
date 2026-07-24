@@ -21,7 +21,7 @@ ninja -C build test_edsl_pattern_hygiene_batch test_edsl_macro_hygiene_batch tes
 ./build/test_edsl_pattern_hygiene_batch   # optional: AURA_STRESS_ITERS=20
 ```
 
-Schema-only hygiene gates also live in `tests/domain/test_domain_gates_batch.cpp` — do not re-add those here.
+Schema-only hygiene gates also live in `tests/core/test_hotpath_matrix_batch.cpp` — do not re-add those here.
 
 ## NodeView reflection (#178 / #268)
 

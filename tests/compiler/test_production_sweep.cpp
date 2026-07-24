@@ -2,7 +2,7 @@
 //
 // Originally 23 separate test_production_sweep_*.cpp files (each
 // covering a distinct Phase 1 issue range). All are Wave2 scaffolding
-// (schema flag checks via test_domain_production_sweep target).
+// (schema flag checks via test_production_sweep target).
 // Merged into one file with all AC blocks preserved verbatim.
 //
 // Issues covered (24 ranges):

@@ -1,4 +1,4 @@
-// test_issue_1994.cpp — Issue #1994 (F-004): `(workspace-state)` and
+// tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 // `(workspace-tree-*)` primitives dereference `ev.workspace_flat_`
 // without `workspace_mtx_` (racy NULL-check-then-dereference).
 //

@@ -14,7 +14,7 @@
        workspace_tree_ and the root node's flat/pool).
   AC5: (workspace:resolve-stable-ref) in evaluator_primitives_workspace.cpp
        takes a shared_lock on workspace_mtx_ (read-only).
-  AC6: tests/mutation/test_issue_1994.cpp exists.
+  AC6: tests/core/test_workspace_state_lock.cpp exists.
   AC7: linter self-test (--self-test passes).
 
 Exit 0 = all ACs satisfied.
@@ -48,7 +48,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 AGENT = ROOT / "src" / "compiler" / "evaluator_primitives_agent.cpp"
 WORK = ROOT / "src" / "compiler" / "evaluator_primitives_workspace.cpp"
-TEST = ROOT / "tests" / "mutation" / "test_issue_1994.cpp"
+TEST = ROOT / "tests" / "mutation" / "test_workspace_state_lock.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -139,7 +139,7 @@ def main() -> int:
 
     # === AC6: test file exists ===
     if not TEST.exists():
-        failures.append("AC6: tests/mutation/test_issue_1994.cpp not found")
+        failures.append("AC6: tests/core/test_workspace_state_lock.cpp not found")
 
     if failures:
         for f in failures:
@@ -191,7 +191,7 @@ def self_test() -> int:
             encoding="utf-8",
         )
         good_test = tmp / "test.cpp"
-        good_test.write_text("// test_issue_1994.cpp\n", encoding="utf-8")
+        good_test.write_text("// test_workspace_state_lock.cpp\n", encoding="utf-8")
 
         import check_workspace_state_lock_coverage as self_mod
 

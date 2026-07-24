@@ -1,5 +1,5 @@
-// tests/domain/arena/test_compact_batch.cpp — relocated for #1959 arena pilot
-// (was tests/test_compact_batch.cpp). Prefer this path; do not re-add under tests/ root.
+// tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
+// (domain/ pilot abandoned in R1; tests/domain/arena/ no longer exists).
 //
 // test_compact_batch.cpp
 // B pilot #12 (after walk in af2307d7): consolidated compact family

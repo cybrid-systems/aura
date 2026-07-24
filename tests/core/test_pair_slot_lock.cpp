@@ -1,4 +1,4 @@
-// test_issue_1998.cpp -- runtime smoke test for B-024 / #1998
+// test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
 //
 // Verifies the IR-executor MakePair path holds aura_lock_workspace_write()
 // / aura_unlock_workspace_write() around g_owned_pair_slots_.push_back(slot)
@@ -90,7 +90,7 @@ int64_t eval_i64(aura::compiler::CompilerService& cs, const std::string& expr) {
 } // namespace
 
 int main() {
-    std::println("test_issue_1998: B-024 g_owned_pair_slots_ push lock");
+    std::println("test_pair_slot_lock: B-024 g_owned_pair_slots_ push lock");
     aura::compiler::CompilerService cs;
 
     // AC1: simple (cons 1 2) -- basic functional sanity that the fix
@@ -191,6 +191,6 @@ int main() {
         check_true(monotonic, "AC5: g_owned_pair_slots_ is monotonic non-decreasing during push");
     }
 
-    std::println("test_issue_1998: {}/{} passed", passed, total);
+    std::println("test_pair_slot_lock: {}/{} passed", passed, total);
     return passed == total ? 0 : 1;
 }

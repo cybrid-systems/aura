@@ -1,5 +1,5 @@
 // Issue #514/#515/#516/#517/#520 (#1978 renamed): issue# moved from filename to header.
-// test_consolidated_production_priority_517.cpp
+// (R17 renamed: test_open_issues_meta_batch.cpp)
 // Issue #517: Consolidated open-issues meta — 3 P0 production pillars.
 //
 // Non-duplicative with #514 (Task6), #515 (consolidated P0), #516

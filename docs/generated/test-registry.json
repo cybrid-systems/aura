@@ -1389,18 +1389,6 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_compiler_root_epoch_gc_safety_post_invalidate.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
-      "file": "tests/core/test_consolidated_production_priority.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
       "file": "tests/core/test_contracts.cpp",
       "category": "unknown",
       "reason": "",
@@ -1449,16 +1437,16 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_hotpath_matrix_batch.cpp",
+      "file": "tests/core/test_highperf_full_hotpath_matrix.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/core/test_issue_1994.cpp",
+      "file": "tests/core/test_hotpath_matrix_batch.cpp",
       "category": "unknown",
       "reason": "",
-      "issue": 1994
+      "issue": null
     },
     {
       "file": "tests/core/test_lock_hierarchy.cpp",
@@ -1476,6 +1464,12 @@
       "file": "tests/core/test_module_boundary.cpp",
       "category": "unit",
       "reason": "Issue #1885 — module_boundary.ixx layering + contracts",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_open_issues_meta_batch.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {
@@ -1551,6 +1545,12 @@
       "issue": null
     },
     {
+      "file": "tests/core/test_root_epoch_gc_safety_post_invalidate.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
       "file": "tests/core/test_sandbox_capability_enforce.cpp",
       "category": "unit",
       "reason": "Issue #1876 — runtime SandboxMode + CapabilityGrant enforcement",
@@ -1587,12 +1587,6 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_task4_highperf_full_hotpath_matrix.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
       "file": "tests/core/test_tenant_isolation_enforcement.cpp",
       "category": "unit",
       "reason": "Issue #1566 — WorkspaceIsolationPolicy enforcement:",
@@ -1617,12 +1611,6 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_wave1_workspace_lock_reentrancy.cpp",
-      "category": "unknown",
-      "reason": "",
-      "issue": null
-    },
-    {
       "file": "tests/core/test_workspace_delete_child.cpp",
       "category": "unit",
       "reason": "Issue #1770 — WorkspaceTree::delete_child must null node",
@@ -1632,6 +1620,18 @@
       "file": "tests/core/test_workspace_dispatch.cpp",
       "category": "integration",
       "reason": "Issue #1437 (workspace :op) unified dispatcher",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_workspace_lock_reentrancy.cpp",
+      "category": "unknown",
+      "reason": "",
+      "issue": null
+    },
+    {
+      "file": "tests/core/test_workspace_state_lock.cpp",
+      "category": "unknown",
+      "reason": "",
       "issue": null
     },
     {

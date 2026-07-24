@@ -1,4 +1,4 @@
-// tests/bench/cycle221_pcv_bench.cpp — Issue #221 (Cycle 14 P5)
+// tests/core/bench_pcv.cpp — Issue #221 PCV bench (Cycle 14 P5).
 //
 // Quantitative benchmark for the PersistentChildVector (PCV)
 // path shipped in slices 1-4/5 of Issue #221. The PCV replaces

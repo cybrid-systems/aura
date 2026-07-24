@@ -1,5 +1,5 @@
-// tests/domain/arena/test_gc_batch.cpp — relocated for #1959 arena pilot
-// (was tests/test_gc_batch.cpp). Prefer this path; do not re-add under tests/ root.
+// tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
+// (domain/ pilot abandoned in R1; tests/domain/arena/ no longer exists).
 //
 // test_gc_batch.cpp
 // B pilot #13 (after compact in 8a505b5c): consolidated gc family

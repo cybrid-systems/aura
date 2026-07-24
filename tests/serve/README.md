@@ -37,4 +37,4 @@ ninja -C build test_fiber_orch_core_batch test_fiber_orch_parallel_quota_batch
 | `test_self_heal_policy_engine.cpp` | Policy engine ACs |
 | `test_production_sweep.cpp` | Fiber production flag sweep |
 
-Schema-only orch gates also live in `tests/domain/test_domain_gates_batch.cpp`.
+Schema-only orch gates also live in `tests/core/test_hotpath_matrix_batch.cpp`.

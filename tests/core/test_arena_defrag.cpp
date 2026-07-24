@@ -1,5 +1,5 @@
-// tests/domain/arena/test_arena_defrag_concurrent.cpp — relocated for #1959 arena pilot
-// (was tests/test_arena_defrag_concurrent.cpp). Prefer this path; do not re-add under tests/ root.
+// tests/core/test_arena_defrag.cpp — Issue #1390: request_defrag + safepoint contract test.
+//
 //
 // @category: integration
 // @reason: concurrent arena.create<T>() + request_defrag()/defrag()

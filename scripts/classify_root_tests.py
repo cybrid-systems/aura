@@ -45,16 +45,16 @@ THEME_ORDER = [
 ]
 
 THEME_DEST: dict[str, str] = {
-    "arena_compaction": "tests/domain/arena/ (batch pilots already live)",
-    "mutation_dirty": "tests/domain/test_domain_typed_mutate.cpp + mutation_boundary_batch",
-    "fiber_orch": "tests/domain/test_domain_fiber_orchestration.cpp + fiber_resume_batch",
-    "linear_ownership": "tests/test_linear_ownership_batch.cpp → domain/",
-    "edsl_hygiene": "tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect_batch",
-    "jit_incremental": "future domain/jit/ (heavy JIT stays EXCLUDE or root)",
-    "shape_soa": "tests/test_soa_batch.cpp → domain/",
-    "observability": "tests/domain/test_obs_schema_matrix.cpp + cases/obs_schema_cases.hpp",
+    "arena_compaction": "tests/core/ (batch drivers: test_arena_batch / test_hotpath_matrix_batch / test_soa_batch)",
+    "mutation_dirty": "tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)",
+    "fiber_orch": "tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)",
+    "linear_ownership": "tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)",
+    "edsl_hygiene": "tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)",
+    "jit_incremental": "tests/compiler/jit/ (heavy JIT stays in issue bundles)",
+    "shape_soa": "tests/core/test_soa_batch.cpp (no move needed)",
+    "observability": "tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp",
     "stdlib": "tests/suite/ + focused root integration (datetime, hot-update)",
-    "compiler_core": "keep root or future domain/compiler/",
+    "compiler_core": "keep root or move to tests/compiler/ (R1 src/-aligned)",
     "uncategorized": "manual triage",
 }
 
@@ -151,9 +151,6 @@ THEME_PATTERNS: dict[str, list[str]] = {
 
 # Existing domain suites (coverage anchors for dedup)
 DOMAIN_SUITES: dict[str, str] = {
-    "test_domain_fiber_orchestration.cpp": "fiber_orch",
-    "test_domain_hygiene_dirty.cpp": "edsl_hygiene",
-    "test_domain_typed_mutate.cpp": "mutation_dirty",
     "test_obs_schema_matrix.cpp": "observability",
     "arena/test_arena_batch.cpp": "arena_compaction",
     "arena/test_arena_defrag_concurrent.cpp": "arena_compaction",
@@ -296,7 +293,7 @@ def render_md(rows: list[RootTest]) -> str:
     lines.append("")
     lines.append(
         "Probe `tests/test_*.cpp` (root), classify into theme buckets that match "
-        "`tests/domain/` and family batches, flag near-dups / supersessions, and "
+        "`tests/core/` and family batches, flag near-dups / supersessions, and "
         "drive streamline waves **without losing coverage**."
     )
     lines.append("")
@@ -305,7 +302,7 @@ def render_md(rows: list[RootTest]) -> str:
     lines.append("| Location | Count |")
     lines.append("|----------|------:|")
     lines.append(f"| `tests/test_*.cpp` (root) | {len(rows)} |")
-    lines.append(f"| `tests/domain/**/test_*.cpp` | {len(domain)} |")
+    lines.append(f"| `tests/core/**/test_*.cpp` | {len(domain)} |")
     lines.append(f"| Near-dup name clusters (≥2) | {len(clusters)} |")
     lines.append("")
     lines.append("### Domain suite anchors (coverage homes)")
@@ -346,9 +343,9 @@ def render_md(rows: list[RootTest]) -> str:
     lines.append("|------|--------|--------------|")
     lines.append("| 0 | **done** | Empty Phase-2 stubs deleted; `open_issues_phase1_batch` EXCLUDE |")
     lines.append("| 1 | **done** | Thin probes → `obs_schema_cases.hpp` FieldList; selfevo/stdlib EXCLUDE |")
-    lines.append("| 2 | **done** | `test_domain_production_sweep` + `production_sweep_cases.hpp`; ~27 prod EXCLUDE |")
+    lines.append("| 2 | **done** | `test_production_sweep` + `production_sweep_cases.hpp`; ~27 prod EXCLUDE |")
     lines.append("| 3 | **done** | Near-dup supersession EXCLUDE (1636, fine_dirty, 1622, …) |")
-    lines.append("| 4 | **done** | Root `test_issue_1943…1956` → `tests/domain/` |")
+    lines.append("| 4 | **done** | Root `test_issue_*` → `tests/core/` (R1 abandoned domain/ pilot) |")
     lines.append("")
     lines.append("Prefer **extend domain/** over new root binaries (see tests/README.md).")
     lines.append("")
@@ -393,7 +390,9 @@ def render_md(rows: list[RootTest]) -> str:
     lines.append("")
     lines.append("Waves 0–4 applied — see **Wave status** above. Further reductions:")
     lines.append("fold remaining `candidate_obs_fold` keepers; rename `domain/test_issue_*`")
-    lines.append("to `test_domain_<theme>_*.cpp`; promote more root keeps into theme suites.")
+    lines.append(
+        "to `tests/<src-aligned-subdir>/test_<module>_<feature>.cpp`; promote more root keeps into theme suites."
+    )
     lines.append("")
     lines.append("## Related")
     lines.append("")

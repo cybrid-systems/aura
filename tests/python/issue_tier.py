@@ -26,8 +26,8 @@ ROOT = _SCRIPT_DIR.parents[1]
 _TESTS = _SCRIPT_DIR.parent  # tests/
 FAST_FIXTURE = _TESTS / "fixtures" / "issues_fast.json"
 PROFILES_FIXTURE = _TESTS / "fixtures" / "issue_link_profiles.json"
-# Match tests/test_*.cpp, tests/domain/test_*.cpp, tests/domain/<theme>/test_*.cpp.
-ISSUE_CPP_RE = re.compile(r"^tests/(?:domain/(?:[\w]+/)?)?(test_[\w]+)\.cpp$")
+# Match tests/<any-subdir>/test_*.cpp (R1 src/-aligned).
+ISSUE_CPP_RE = re.compile(r"^tests/(?:[\w]+/)?(test_[\w]+)\.cpp$")
 
 BUNDLE_PROFILES = (
     "light",

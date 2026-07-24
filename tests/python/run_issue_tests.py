@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run_issue_tests.py — issue/domain/bundle C++ binary runner.
+run_issue_tests.py — issue/bundle C++ binary runner.
 
 Prefer the unified CLI (#1961):
   python3 tests/run.py issues [--tier fast|full] …
@@ -104,10 +104,10 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_issue_1954",
     "test_issue_309",
     # Arena defrag / safepoint registration gaps under EXCLUDE_FROM_ALL
-    # domain pilots (g_arena_safepoint_check null).
+    # core pilots (g_arena_safepoint_check null).
     "test_arena_batch",
     "test_arena_defrag_concurrent",
-    # Compact family domain pilot: residual AC drift (defrag-requested?
+    # Compact family pilot: residual AC drift (defrag-requested?
     # without safepoint, panic restore soft path). Wave 58+ soft smokes
     # stay green; mark pre-existing so leftover EXCLUDE_FROM_ALL binary
     # does not fail CI when residual CHECKs flake under parallel load.
@@ -128,17 +128,17 @@ def _test_binary_has_source(name: str) -> bool:
     """True if a source for *name* still exists (mirrors cmake/AuraTest.cmake).
 
     Stale executables left in build/ after source cleanup (e.g. orphan
-    tests/domain/test_issue_1956.cpp removed in #1978) must not be
+    tests/issues/test_issue_1956.cpp removed in #1978) must not be
     rediscovered as NEW CI failures.
     """
-    # tests/issues/ removed (#1957 wave 59+); resolve theme/domain only.
-    # 1. tests/domain/<NAME>.cpp
-    if (ROOT / "tests" / "domain" / f"{name}.cpp").is_file():
+    # tests/issues/ removed (#1957 wave 59+); resolve src/-aligned only.
+    # 1. tests/core/<NAME>.cpp (R1 src/-aligned default)
+    if (ROOT / "tests" / "core" / f"{name}.cpp").is_file():
         return True
-    # 2. tests/domain/<theme>/<NAME>.cpp  ·  3. tests/<theme>/<NAME>.cpp
-    domain = ROOT / "tests" / "domain"
-    if domain.is_dir():
-        for theme in domain.iterdir():
+    # 2. tests/compiler/<NAME>.cpp / tests/<src-subdir>/<NAME>.cpp  ·  3. tests/<theme>/<NAME>.cpp
+    core = ROOT / "tests" / "core"
+    if core.is_dir():
+        for theme in core.iterdir():
             if theme.is_dir() and (theme / f"{name}.cpp").is_file():
                 return True
     tests = ROOT / "tests"
@@ -167,11 +167,11 @@ def discover_test_issue_binaries() -> list[str]:
         if (
             name.startswith("test_issues_")
             or name.startswith("test_obs_")
-            or name.startswith("test_domain_")
+            or name.startswith("test_")
             or name.startswith("test_aura_result_")
             or (name.startswith("test_issue_") and name not in bundled)
             or name.startswith("test_primitives_hotpath")
-            # domain/<theme>/ pilots built as aura_add_issue_test targets (#1959)
+            # src/-aligned pilots built as aura_add_issue_test targets (R1)
             or name
             in {
                 "test_arena_batch",
@@ -211,7 +211,7 @@ def discover_test_issue_targets() -> list[str]:
                 name.startswith("test_issues_")
                 or name.startswith("test_issue_")
                 or name.startswith("test_obs_")
-                or name.startswith("test_domain_")
+                or name.startswith("test_")
                 or name.startswith("test_aura_result_")
                 or name.startswith("test_primitives_hotpath")
             )

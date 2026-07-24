@@ -22,7 +22,7 @@ Acceptance criteria:
   AC5: src/compiler/runtime_shared.h declares the lock functions
        (extern "C" void aura_lock_workspace_write(); extern "C" void
        aura_unlock_workspace_write();) so other TUs can call them.
-  AC6: tests/test_issue_1998.cpp exists with concurrent push + reset coverage.
+  AC6: tests/core/test_pair_slot_lock.cpp exists with concurrent push + reset coverage.
   AC7: --self-test accepts good fixture (locked push), rejects bad
        (unlocked push -- the B-024 regression).
 
@@ -42,7 +42,7 @@ REPO = Path(__file__).resolve().parent.parent
 IR_EXECUTOR = REPO / "src" / "compiler" / "ir_executor_impl.cpp"
 AURA_JIT_RUNTIME = REPO / "src" / "compiler" / "aura_jit_runtime.cpp"
 RUNTIME_SHARED = REPO / "src" / "compiler" / "runtime_shared.h"
-TEST_FILE = REPO / "tests" / "test_issue_1998.cpp"
+TEST_FILE = REPO / "tests" / "core" / "test_pair_slot_lock.cpp"
 
 # Window (lines) within which a lock/unlock must surround the push.
 LOCK_WINDOW = 6
@@ -237,7 +237,7 @@ def check() -> tuple[bool, list[str]]:
                 "Symmetric to AC5 lock decl."
             )
 
-    # ── AC6: tests/test_issue_1998.cpp exists with concurrent coverage ──
+    # ── AC6: tests/core/test_pair_slot_lock.cpp exists with concurrent coverage ──
     if not TEST_FILE.exists():
         errors.append(f"AC6 FAIL: test file {TEST_FILE} not found")
     else:

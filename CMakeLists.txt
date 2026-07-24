@@ -1373,11 +1373,11 @@ aura_issue_test_link_llvm_jit(test_issue_1993)
 # read+write) to gate against concurrent set_workspace_flat (#1729)
 # mid-construction rollback — racy NULL-check-then-dereference
 # pattern (F-004, sibling of B-010 / D-001).
-aura_add_issue_test(test_issue_1994)
-aura_issue_test_link_llvm_jit(test_issue_1994)
+aura_add_issue_test(test_workspace_state_lock)
+aura_issue_test_link_llvm_jit(test_workspace_state_lock)
 # Wave1 B-03/B-09: eval-current short pin + WorkspaceFlatPin adopt under Guard
-aura_add_issue_test(test_wave1_workspace_lock_reentrancy)
-aura_issue_test_link_llvm_jit(test_wave1_workspace_lock_reentrancy)
+aura_add_issue_test(test_workspace_lock_reentrancy)
+aura_issue_test_link_llvm_jit(test_workspace_lock_reentrancy)
 # Issue #1996: g_batch_deopt_jit file-scope pointer nulled in
 # ~CompilerService via aura_clear_jit_batch_deopt_target(&jit_) —
 # prevents UAF on late batch_deopt_for / deopt_pending_count after
@@ -1557,8 +1557,8 @@ aura_issue_test_link_llvm_jit(test_hardware_resource_linear_ownership)
 # 7 ACs: compiler-root-stats (schema 599), root-refresh on invalidate,
 # stale/env-mismatch/dangling counters, multi-round monotonic + regression.
 # Non-duplicative with #531 (closure-env-safety), #598 (linear-runtime).
-aura_add_issue_test(test_compiler_root_epoch_gc_safety_post_invalidate)
-aura_issue_test_link_llvm_jit(test_compiler_root_epoch_gc_safety_post_invalidate)
+aura_add_issue_test(test_root_epoch_gc_safety_post_invalidate)
+aura_issue_test_link_llvm_jit(test_root_epoch_gc_safety_post_invalidate)
 # Issue #600: Per-block dirty + impact scope + closure bridge synergy for
 # minimal re-lower in AI self-mod. 7 ACs: incremental-closure-stats
 # (schema 600), blocks-relowered/bridge-hits/min-scope-win/jit-sync,
