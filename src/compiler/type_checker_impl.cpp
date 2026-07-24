@@ -1113,6 +1113,14 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
             unify(t1, reg_.dynamic_type());
         else if (reg_.is_var(t2))
             unify(t2, reg_.dynamic_type());
+        // Issue #2064: bump dynamic_degrade_with_blame_total when the
+        // active mutation_id is non-zero (a non-zero provenance was
+        // preserved through this Dynamic accept path) so Agents can
+        // observe degrade coverage in TypedMutationAudit.
+        if (metrics_ && active_mutation_id_ != 0) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+        }
         return true;
     }
 
