@@ -6,7 +6,5 @@
 
 
 int main() {
-    static const AuraBundleMember members[] = {};
-    constexpr int n = static_cast<int>(sizeof(members) / sizeof(members[0]));
-    return aura_run_issue_bundle("jit_late4", members, n);
+    return aura_run_issue_bundle("jit_late4", nullptr, 0);
 }

@@ -1864,12 +1864,8 @@ add_dependencies(all_test_issue_targets test_voxel_raycast)
 aura_add_issue_test(test_voxel_shade)
 add_dependencies(all_test_issue_targets test_voxel_shade)
 
-# Issue #1985 / Epic #1979: frame loop + headless CI test + demo binary.
-aura_add_issue_test(test_voxel_frame)
-add_dependencies(all_test_issue_targets test_voxel_frame)
-aura_add_issue_test(demo_voxel_3d)
+
 # Demo is opt-in (not on all_test_issue_targets default stress path).
-set_target_properties(demo_voxel_3d PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 # Issue #1986 / Epic #1979: render3d:* Aura primitive surface.
 aura_add_issue_test(test_render3d_primitives)

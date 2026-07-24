@@ -278,6 +278,23 @@ def render_bundle_main(profile: str, members: list[str]) -> str:
         fn = run_function_name(member)
         lines.append(f"extern int {fn}();")
 
+    if not members:
+        # 0-member placeholder profile (e.g. jit / fiber / reflect before any
+        # issue tests are bucketed into them). C++ forbids zero-size arrays,
+        # so emit a no-op main that calls aura_run_issue_bundle with a null
+        # member table + count 0. aura_run_issue_bundle(nullptr, 0) is well-
+        # defined and returns 0 immediately (issue_bundle_runner.hh:13).
+        lines.extend(
+            [
+                "",
+                "int main() {",
+                f'    return aura_run_issue_bundle("{profile}", nullptr, 0);',
+                "}",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
     lines.extend(
         [
             "",
