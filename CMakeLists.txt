@@ -1274,7 +1274,7 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # Relocated tests/issues/ → tests/edsl/ (wave 59 / #1957). Soft surface also in
 # test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection
 # on the reflect TU only (GCC 16 ICE if mixed with import aura.core.ast).
-# Bridge: tests/edsl/test_issue_178_bridge.h
+# Bridge: tests/reflect/test_issue_178_bridge.h
 add_executable(test_issue_178 tests/reflect/test_issue_178.cpp tests/reflect/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
