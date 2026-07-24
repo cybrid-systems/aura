@@ -30,36 +30,27 @@ BUNDLES_DIR = ROOT / "tests" / "bundles"
 OUT_CMAKE = ROOT / "cmake" / "AuraIssueBundles.cmake"
 
 # Profiles merged into one executable each (reflect/standalone stay separate).
+# R16 dropped 7 zero-member placeholder bundles (fiber/jit/jit_minimal/
+# jit_contract/jit_tests/jit_late4/jit_late5) — they had no real members
+# and only emitted `int main() { return aura_run_issue_bundle("...", nullptr, 0); }`.
 BUNDLE_PROFILES = (
     "light",
-    "jit",
-    "jit_minimal",
-    "jit_contract",
-    "jit_tests",
-    "fiber",
     # Late profiles: post-#400 issue tests that were never folded into
     # the original 6 bundles. One link unit per ~55 members instead of
     # ~200MB × N standalone executables (#871 / #873 performance).
     "jit_late1",
     "jit_late2",
     "jit_late3",
-    "jit_late4",
-    "jit_late5",
     "light_late",
 )
 
 PROFILE_LINK_HELPER: dict[str, str | None] = {
+    # R16: removed 7 zero-member profiles (jit/jit_minimal/jit_contract/
+    # jit_tests/fiber/jit_late4/jit_late5). Keep only active bundles.
     "light": None,
-    "jit": "aura_issue_test_link_llvm_jit",
-    "jit_minimal": "aura_issue_test_link_llvm_jit_minimal",
-    "jit_contract": "aura_issue_test_link_llvm_jit_contract",
-    "jit_tests": "aura_issue_test_link_llvm_jit_tests",
-    "fiber": "aura_issue_test_link_llvm_fiber_stubs",
     "jit_late1": "aura_issue_test_link_llvm_jit",
     "jit_late2": "aura_issue_test_link_llvm_jit",
     "jit_late3": "aura_issue_test_link_llvm_jit",
-    "jit_late4": "aura_issue_test_link_llvm_jit",
-    "jit_late5": "aura_issue_test_link_llvm_jit",
     "light_late": None,
 }
 
@@ -354,25 +345,11 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         "",
         '    if(PROFILE STREQUAL "light")',
         "        aura_issue_test_observability(${_target})",
-        '    elseif(PROFILE STREQUAL "jit")',
-        "        aura_issue_test_link_llvm_jit(${_target})",
-        '    elseif(PROFILE STREQUAL "jit_minimal")',
-        "        aura_issue_test_link_llvm_jit_minimal(${_target})",
-        '    elseif(PROFILE STREQUAL "jit_contract")',
-        "        aura_issue_test_link_llvm_jit_contract(${_target})",
-        '    elseif(PROFILE STREQUAL "jit_tests")',
-        "        aura_issue_test_link_llvm_jit_tests(${_target})",
-        '    elseif(PROFILE STREQUAL "fiber")',
-        "        aura_issue_test_link_llvm_fiber_stubs(${_target})",
         '    elseif(PROFILE STREQUAL "jit_late1")',
         "        aura_issue_test_link_llvm_jit(${_target})",
         '    elseif(PROFILE STREQUAL "jit_late2")',
         "        aura_issue_test_link_llvm_jit(${_target})",
         '    elseif(PROFILE STREQUAL "jit_late3")',
-        "        aura_issue_test_link_llvm_jit(${_target})",
-        '    elseif(PROFILE STREQUAL "jit_late4")',
-        "        aura_issue_test_link_llvm_jit(${_target})",
-        '    elseif(PROFILE STREQUAL "jit_late5")',
         "        aura_issue_test_link_llvm_jit(${_target})",
         '    elseif(PROFILE STREQUAL "light_late")',
         "        aura_issue_test_observability(${_target})",
