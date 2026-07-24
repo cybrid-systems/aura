@@ -473,6 +473,7 @@ namespace aura_fiber_run_multi_fiber_mailbox {
 //   AC4: backpressure when high_water exceeded
 //   AC5: concurrent push/recv under Scheduler fibers
 //   AC6: query:mf-mailbox-stats reachable (schema 1585)
+//   AC7: #2010 linear-viol on push/broadcast/fanout + fanout BP + orch mirror
 
 
 namespace {
@@ -668,6 +669,147 @@ namespace {
         CHECK(phase && is_int(*phase) && as_int(*phase) >= 2, "phase >= 2");
     }
 
+    // Issue #2010: linear-viol on all entry points + fanout backpressure observability.
+    static void ac7_linear_fanout_2010() {
+        std::println("\n--- AC7: #2010 linear-viol + fanout backpressure ---");
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::is_linear_viol_payload;
+        using aura::serve::mf_mailbox::reject_if_linear_viol;
+
+        CHECK(is_linear_viol_payload("linear-viol:x"), "prefix helper matches");
+        CHECK(!is_linear_viol_payload("ok"), "prefix helper rejects normal");
+
+        // (a) push / broadcast / fanout all reject linear-viol: with Closed.
+        {
+            const auto chk0 = g_mf_mailbox_stats.linear_checks.load(std::memory_order_relaxed);
+            const auto viol0 = g_mf_mailbox_stats.linear_violations.load(std::memory_order_relaxed);
+            MultiFiberMailbox mb(16);
+            CHECK(mb.push({.payload = "linear-viol:push"}) == PushStatus::Closed, "push Closed");
+            CHECK(mb.broadcast({.payload = "linear-viol:bc"}) == PushStatus::Closed,
+                  "broadcast Closed");
+            CHECK(mb.broadcast_fanout({.payload = "linear-viol:fan"}) == PushStatus::Closed,
+                  "fanout Closed");
+            CHECK(mb.size() == 0, "no messages enqueued on linear-viol");
+            CHECK(g_mf_mailbox_stats.linear_checks.load() >= chk0 + 3, "linear_checks +3");
+            CHECK(g_mf_mailbox_stats.linear_violations.load() >= viol0 + 3, "linear_violations +3");
+        }
+
+        // (b) Fanout backpressure under concurrent attachers + orch mirror.
+        {
+            Scheduler sched(3);
+            SchedRunner runner(sched);
+            MultiFiberMailbox mb(2); // tiny high-water
+            std::atomic<int> n_att{0};
+            std::vector<Fiber*> holders;
+            // Hold two attachers alive so fanout needs 2 slots.
+            for (int i = 0; i < 2; ++i) {
+                holders.push_back(sched.spawn([&] {
+                    if (aura::serve::g_current_fiber) {
+                        mb.attach(aura::serve::g_current_fiber);
+                        n_att.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    for (int k = 0; k < 80; ++k)
+                        Fiber::yield(YieldReason::Explicit);
+                }));
+            }
+            // Wait until both attached (or timeout).
+            for (int i = 0; i < 100 && n_att.load() < 2; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            CHECK(n_att.load() >= 1, "at least one attacher for fanout BP");
+
+            // Fill one slot so need=2 does not fit.
+            CHECK(mb.push({.payload = "fill"}) == PushStatus::Ok, "fill ok");
+            const auto bp0 =
+                g_mf_mailbox_stats.backpressure_rejects.load(std::memory_order_relaxed);
+            const auto fbp0 =
+                g_mf_mailbox_stats.fanout_backpressure_rejects.load(std::memory_order_relaxed);
+            const auto orch_bp0 = aura::orch::g_orch_module_stats.send_backpressure_total.load(
+                std::memory_order_relaxed);
+
+            if (mb.attacher_count() >= 2) {
+                CHECK(mb.broadcast_fanout({.payload = "need-two"}) == PushStatus::Backpressure,
+                      "fanout Backpressure when need exceeds free slots");
+                CHECK(g_mf_mailbox_stats.backpressure_rejects.load() > bp0,
+                      "global backpressure_rejects advanced");
+                CHECK(g_mf_mailbox_stats.fanout_backpressure_rejects.load() > fbp0,
+                      "fanout_backpressure_rejects advanced");
+                // Strong orch hook is linked in this test binary via aura_test_objects.
+                CHECK(aura::orch::g_orch_module_stats.send_backpressure_total.load() > orch_bp0,
+                      "orch send_backpressure_total mirrored from fanout BP");
+            } else {
+                // Fallback: push-path BP still notes orch.
+                while (mb.push({.payload = "x"}) == PushStatus::Ok) {
+                }
+                CHECK(mb.push({.payload = "bp"}) == PushStatus::Backpressure, "push BP fallback");
+                CHECK(g_mf_mailbox_stats.backpressure_rejects.load() > bp0, "push BP counter");
+            }
+
+            for (auto* f : holders)
+                (void)Fiber::join(f, std::optional<std::uint64_t>{3000});
+        }
+
+        // (c) Host-side fanout stress (attach static fiber* + fanout mix).
+        // Avoid multi-fiber attach/detach races under multi-worker steal.
+        {
+            MultiFiberMailbox mb(8);
+            // Register a few dummy attachers (non-null pointers for id routing).
+            // Use stack addresses only as opaque tags; never deref.
+            Fiber* tags[3] = {};
+            // Prefer real fiber ids when a short-lived scheduler is available.
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<int> n_att{0};
+            Fiber* hold = sched.spawn([&] {
+                if (aura::serve::g_current_fiber) {
+                    mb.attach(aura::serve::g_current_fiber);
+                    tags[0] = aura::serve::g_current_fiber;
+                    n_att.fetch_add(1, std::memory_order_relaxed);
+                }
+                for (int k = 0; k < 30; ++k)
+                    Fiber::yield(YieldReason::Explicit);
+            });
+            for (int i = 0; i < 50 && n_att.load() < 1; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+            int fan_ok = 0, fan_bp = 0, fan_closed = 0;
+            for (int i = 0; i < 40; ++i) {
+                auto st = mb.broadcast_fanout(
+                    {.payload = (i % 7 == 0) ? std::string("linear-viol:x") : std::string("ok")});
+                if (st == PushStatus::Ok)
+                    ++fan_ok;
+                else if (st == PushStatus::Backpressure)
+                    ++fan_bp;
+                else
+                    ++fan_closed;
+            }
+            CHECK(fan_ok + fan_bp + fan_closed == 40, "all fanout attempts accounted");
+            CHECK(fan_closed >= 1, "linear-viol path exercised under stress");
+            CHECK(fan_ok + fan_bp >= 1, "non-closed outcomes also occur");
+            MailMessage junk;
+            while (mb.try_pop(junk)) {
+            }
+            (void)Fiber::join(hold, std::optional<std::uint64_t>{3000});
+            (void)tags;
+        }
+
+        // (d) query surfaces expose #2010 keys.
+        {
+            CompilerService cs;
+            auto s2010 =
+                cs.eval(R"((hash-ref (engine:metrics "query:mf-mailbox-stats") "schema-2010"))");
+            CHECK(s2010 && is_int(*s2010) && as_int(*s2010) == 2010, "mf schema-2010");
+            auto fbp = cs.eval(
+                R"((hash-ref (engine:metrics "query:mf-mailbox-stats") "fanout-backpressure-rejects"))");
+            CHECK(fbp && is_int(*fbp) && as_int(*fbp) >= 0, "fanout-backpressure-rejects key");
+            auto orch2010 =
+                cs.eval(R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2010"))");
+            CHECK(orch2010 && is_int(*orch2010) && as_int(*orch2010) == 2010, "orch schema-2010");
+            auto mfb = cs.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "mailbox-fanout-backpressure-rejects"))");
+            CHECK(mfb && is_int(*mfb) && as_int(*mfb) >= 0, "orch fanout BP key");
+        }
+    }
+
 } // namespace
 
 int run_multi_fiber_mailbox() {
@@ -678,6 +820,7 @@ int run_multi_fiber_mailbox() {
     ac4_backpressure();
     ac5_concurrent_fibers();
     ac6_stats_primitive();
+    ac7_linear_fanout_2010();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

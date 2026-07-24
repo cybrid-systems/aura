@@ -1,6 +1,9 @@
 // multi_fiber_mailbox.h — Issue #1585 / #1211 / #1595: MultiFiberMailbox with
 // multi-attach, broadcast, blocking recv, priority, and backpressure.
 // #1595: linear-claim payload prefix filter (linear-viol:) + process counters.
+// #1881: fanout linear_checks + local push stats.
+// #2010: shared linear filter on all entry points; fanout backpressure
+//        observability (+ orch hook for dashboards).
 // Header form (like mailbox.h) so serve + tests can include without module churn.
 
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
@@ -16,16 +19,24 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include <unistd.h>
 
+// Issue #2010: optional orch mirror for mailbox backpressure (weak no-op when
+// orch is not linked; strong def bumps OrchModuleStats::send_backpressure_total).
+extern "C" void aura_orch_note_mailbox_backpressure();
+
 namespace aura::serve::mf_mailbox {
 
 inline constexpr int kMultiFiberMailboxPhase = 3; // #1881 observability
 inline constexpr int kMultiFiberMailboxIssue = 1881;
+
+// Issue #1595 / #2010: provenance-safety prefix (fiber-stack safe, pure string).
+inline constexpr std::string_view kLinearViolPrefix = "linear-viol:";
 
 enum class MailPriority : std::uint8_t { Low = 0, Normal = 1, High = 2, Critical = 3 };
 
@@ -54,10 +65,42 @@ struct MultiFiberMailboxStats {
     // Issue #1595: linear claim checks / violations (prefix filter on push).
     std::atomic<std::uint64_t> linear_checks{0};
     std::atomic<std::uint64_t> linear_violations{0};
+    // Issue #2010: fanout-specific backpressure (also counted in backpressure_rejects).
+    std::atomic<std::uint64_t> fanout_backpressure_rejects{0};
 };
 
 // Process-wide aggregate (tests / observability).
 inline MultiFiberMailboxStats g_mf_mailbox_stats{};
+
+// ── Hot-path helpers (no Evaluator / GC / provenance) ──
+[[nodiscard]] inline bool is_linear_viol_payload(std::string_view payload) noexcept {
+    return payload.size() >= kLinearViolPrefix.size() &&
+           payload.compare(0, kLinearViolPrefix.size(), kLinearViolPrefix) == 0;
+}
+
+// Bump linear_checks; if payload is linear-viol:, bump violations and return true
+// (caller should return Closed without locking).
+[[nodiscard]] inline bool reject_if_linear_viol(std::string_view payload) noexcept {
+    g_mf_mailbox_stats.linear_checks.fetch_add(1, std::memory_order_relaxed);
+    if (!is_linear_viol_payload(payload))
+        return false;
+    g_mf_mailbox_stats.linear_violations.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+// Backpressure accounting: process + local + optional orch dashboard mirror.
+inline void note_backpressure(MultiFiberMailboxStats* local = nullptr,
+                              bool from_fanout = false) noexcept {
+    g_mf_mailbox_stats.backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+    if (local)
+        local->backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+    if (from_fanout) {
+        g_mf_mailbox_stats.fanout_backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+        if (local)
+            local->fanout_backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura_orch_note_mailbox_backpressure();
+}
 
 // Multi-fiber mailbox: many attachers, priority queue, broadcast wake,
 // high-water backpressure.
@@ -110,20 +153,17 @@ public:
     }
 
     // Push with backpressure: when size >= high_water, reject.
-    // Issue #1595: reject payloads with "linear-viol:" prefix (fiber-stack safe,
-    // no Evaluator call on hot path). Deeper StableNodeRef/linear probe is via
-    // aura_evaluator_mailbox_linear_check / complete_post_join on host paths.
+    // Issue #1595 / #2010: linear-viol: filter runs first (before lock), pure
+    // string prefix — fiber-stack safe, no Evaluator/GC/provenance on hot path.
+    // Deeper StableNodeRef/linear probe is via host/post-join paths only.
     [[nodiscard]] PushStatus push(MailMessage msg) {
-        g_mf_mailbox_stats.linear_checks.fetch_add(1, std::memory_order_relaxed);
-        if (msg.payload.size() >= 12 && msg.payload.compare(0, 12, "linear-viol:") == 0) {
-            g_mf_mailbox_stats.linear_violations.fetch_add(1, std::memory_order_relaxed);
+        if (reject_if_linear_viol(msg.payload))
             return PushStatus::Closed;
-        }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
         if (queue_.size() >= high_water_) {
-            g_mf_mailbox_stats.backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+            note_backpressure(&local_stats_, /*from_fanout=*/false);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.pushes.fetch_add(1, std::memory_order_relaxed);
@@ -145,6 +185,7 @@ public:
     // Still a single queue message; all waiters compete via priority pop.
     // Semantics: one message, all waiters woken (first recv wins unless fan-out).
     // For true per-fiber fan-out, use broadcast_fanout.
+    // Linear filter runs via push (shared entry-point guarantee, #2010).
     [[nodiscard]] PushStatus broadcast(MailMessage msg) {
         msg.to_fiber = 0;
         return push(std::move(msg));
@@ -152,19 +193,16 @@ public:
 
     // Fan-out: enqueue one message copy per attached fiber (to_fiber = fiber id).
     // Returns Backpressure if any push would overflow (none applied).
+    // Issue #1881 / #2010: linear filter first; fanout BP mirrored to orch.
     [[nodiscard]] PushStatus broadcast_fanout(const MailMessage& proto) {
-        // Issue #1881: linear_checks on fanout (was only on push → dead on fanout path).
-        g_mf_mailbox_stats.linear_checks.fetch_add(1, std::memory_order_relaxed);
-        if (proto.payload.size() >= 12 && proto.payload.compare(0, 12, "linear-viol:") == 0) {
-            g_mf_mailbox_stats.linear_violations.fetch_add(1, std::memory_order_relaxed);
+        if (reject_if_linear_viol(proto.payload))
             return PushStatus::Closed;
-        }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
         const auto need = attachers_.empty() ? std::size_t{1} : attachers_.size();
         if (queue_.size() + need > high_water_) {
-            g_mf_mailbox_stats.backpressure_rejects.fetch_add(1, std::memory_order_relaxed);
+            note_backpressure(&local_stats_, /*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.broadcasts.fetch_add(1, std::memory_order_relaxed);
@@ -263,18 +301,22 @@ public:
     }
 
     // Issue #1881: full health snapshot (priority / waits / linear).
+    // Issue #2010: optional fanout_bp out-param (pass nullptr to skip).
     static void snapshot_global_full(std::uint64_t& pushes, std::uint64_t& pops,
                                      std::uint64_t& broadcasts, std::uint64_t& bp,
                                      std::uint64_t& attaches, std::uint64_t& priority_high,
                                      std::uint64_t& recv_waits, std::uint64_t& recv_timeouts,
-                                     std::uint64_t& linear_checks,
-                                     std::uint64_t& linear_violations) noexcept {
+                                     std::uint64_t& linear_checks, std::uint64_t& linear_violations,
+                                     std::uint64_t* fanout_bp = nullptr) noexcept {
         snapshot_global(pushes, pops, broadcasts, bp, attaches);
         priority_high = g_mf_mailbox_stats.priority_high.load(std::memory_order_relaxed);
         recv_waits = g_mf_mailbox_stats.recv_waits.load(std::memory_order_relaxed);
         recv_timeouts = g_mf_mailbox_stats.recv_timeouts.load(std::memory_order_relaxed);
         linear_checks = g_mf_mailbox_stats.linear_checks.load(std::memory_order_relaxed);
         linear_violations = g_mf_mailbox_stats.linear_violations.load(std::memory_order_relaxed);
+        if (fanout_bp)
+            *fanout_bp =
+                g_mf_mailbox_stats.fanout_backpressure_rejects.load(std::memory_order_relaxed);
     }
 
 private:

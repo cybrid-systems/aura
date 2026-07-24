@@ -2982,14 +2982,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Mailbox submodule (prefix mailbox-*)
             using namespace aura::serve::mf_mailbox;
             std::uint64_t mp = 0, mo = 0, mbc = 0, mbp = 0, ma = 0, mph = 0, mw = 0, mt = 0,
-                          mlc = 0, mlv = 0;
-            MultiFiberMailbox::snapshot_global_full(mp, mo, mbc, mbp, ma, mph, mw, mt, mlc, mlv);
+                          mlc = 0, mlv = 0, mfbp = 0;
+            MultiFiberMailbox::snapshot_global_full(mp, mo, mbc, mbp, ma, mph, mw, mt, mlc, mlv,
+                                                    &mfbp);
             insert_kv("mailbox-pushes", static_cast<std::int64_t>(mp));
             insert_kv("mailbox-pops", static_cast<std::int64_t>(mo));
             insert_kv("mailbox-backpressure-rejects", static_cast<std::int64_t>(mbp));
+            // Issue #2010: fanout BP alias (also mirrored into send-backpressure via hook).
+            insert_kv("mailbox-fanout-backpressure-rejects", static_cast<std::int64_t>(mfbp));
             insert_kv("mailbox-priority-high", static_cast<std::int64_t>(mph));
             insert_kv("mailbox-recv-waits", static_cast<std::int64_t>(mw));
             insert_kv("mailbox-linear-violations", static_cast<std::int64_t>(mlv));
+            insert_kv("schema-2010", 2010);
             // Parallel submodule (prefix parallel-*)
             using namespace aura::serve::parallel_orch;
             std::uint64_t pb = 0, ps = 0, pj = 0, pok = 0, perr = 0, pff = 0, pto = 0, pmb = 0,

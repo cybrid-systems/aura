@@ -13,6 +13,7 @@ module;
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "observability_metrics.h"
+#include "orch/agent_spawn.h" // #2010: g_orch_module_stats for mailbox BP mirror
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
 #include <cassert>
@@ -1722,6 +1723,12 @@ extern "C" int aura_orch_agent_body_try_acquire() {
 
 extern "C" void aura_orch_agent_body_release_guard() {
     g_orch_agent_body_guard.reset();
+}
+
+// Issue #2010: MultiFiberMailbox backpressure → OrchModuleStats dashboard.
+// Strong def overrides fiber_bridge weak no-op when evaluator/orch is linked.
+extern "C" void aura_orch_note_mailbox_backpressure() {
+    aura::orch::g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).
