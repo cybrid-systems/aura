@@ -7,6 +7,7 @@ module;
 #include <cstdio>
 #include <cstdint>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 
 module aura.compiler.macro_expansion;
 
@@ -172,6 +173,10 @@ thread_local int s_hygiene_depth = 0;
 // Issue #1245 Phase 1: concurrent hygiene / dirty observability.
 std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total{0};
 std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
+// Issue #2021: how many top-level clone_macro_body calls are live
+// across threads, and the high-water mark (peak concurrent).
+std::atomic<std::uint64_t> g_macro_clone_in_flight{0};
+std::atomic<std::uint64_t> g_macro_clone_concurrent_peak{0};
 
 // Issue #1247–#1248 Phase 1: macro-origin provenance + hygiene tracer.
 std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0};
@@ -214,6 +219,48 @@ std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept {
 std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept {
     return g_macro_restamp_after_flat_total.load(std::memory_order_relaxed);
 }
+std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
+    return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_macro_clone_in_flight_v_read() noexcept {
+    return g_macro_clone_in_flight.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept {
+    return g_hygiene_tracer_depth_max.load(std::memory_order_relaxed);
+}
+std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept {
+    return g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2021: mirror live macro-hygiene atomics into CompilerMetrics
+// so query / Guard / Agent dashboards see peak depth + concurrent peak.
+// `metrics_ptr` is CompilerMetrics* (void* avoids module import here).
+void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept {
+    if (!metrics_ptr)
+        return;
+    auto* m = static_cast<CompilerMetrics*>(metrics_ptr);
+    m->hygiene_tracer_depth_max.store(g_hygiene_tracer_depth_max.load(std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+    m->hygiene_tracer_expansions.store(g_hygiene_tracer_expansions.load(std::memory_order_relaxed),
+                                       std::memory_order_relaxed);
+    m->macro_origin_provenance_errors.store(
+        g_macro_origin_provenance_errors.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    // #1245 flag was a constant 1; now mirror the live fiber-stamp total.
+    m->macro_clone_concurrent_hygiene.store(
+        g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    m->macro_clone_concurrent_peak.store(
+        g_macro_clone_concurrent_peak.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    m->macro_clone_in_flight.store(g_macro_clone_in_flight.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
+    m->macro_rest_param_hygiene_total.store(
+        g_macro_rest_param_hygiene_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+    m->macro_restamp_after_flat_total.store(
+        g_macro_restamp_after_flat_total.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+}
 } // extern "C"
 
 // Issue #2019: restamp MacroIntroduced gens after a successful expand
@@ -239,6 +286,27 @@ aura::ast::NodeId clone_macro_body(
     // deferred to #1688 along with the clone_macro_body recursive-walk
     // refactor that threads the cumulative count through the AST walk.
     g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2021: track concurrent top-level clone occupancy (not recursive
+    // re-entries on the same thread). Peak is visible via query/metrics.
+    struct ConcurrentCloneGuard {
+        bool armed = false;
+        ConcurrentCloneGuard() noexcept {
+            if (s_hygiene_depth != 0)
+                return;
+            armed = true;
+            const auto n = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed) + 1;
+            auto peak = g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
+            while (n > peak && !g_macro_clone_concurrent_peak.compare_exchange_weak(
+                                   peak, n, std::memory_order_relaxed)) {
+            }
+        }
+        ~ConcurrentCloneGuard() noexcept {
+            if (armed)
+                g_macro_clone_in_flight.fetch_sub(1, std::memory_order_relaxed);
+        }
+        ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
+        ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
+    } concurrent_guard;
     // Issue #365: depth guard. The public API starts at
     // depth=0 (s_hygiene_depth is bumped on recursion inside
     // the function body below). When the depth exceeds

@@ -37,6 +37,10 @@ import std;
 import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 
+// Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
+// on outermost MutationBoundaryGuard exit (module-safe C entry).
+extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
+
 namespace aura::compiler {
 
 // ── enter / exit mutation boundary (Wave 4) ──────────────────────────────
@@ -809,6 +813,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // don't need it (the outer guard handles visibility).
     if (outermost) {
         ev_->flush_mutation_boundary();
+        // Issue #2021: publish macro hygiene depth + concurrent peak
+        // observed during the mutation (including any expand under Guard).
+        if (ev_->compiler_metrics())
+            aura_macro_hygiene_snapshot_metrics(ev_->compiler_metrics());
     }
     if (outermost) {
         // Issue #354: clear the flag that

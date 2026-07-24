@@ -37,6 +37,9 @@ export constexpr int MAX_HYGIENE_DEPTH = 1024;
 // Issue #1245 Phase 1: concurrent macro-clone hygiene counters (defined in .cpp).
 export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total;
 export extern std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total;
+// Issue #2021: live occupancy + peak concurrent top-level clone_macro_body.
+export extern std::atomic<std::uint64_t> g_macro_clone_in_flight;
+export extern std::atomic<std::uint64_t> g_macro_clone_concurrent_peak;
 
 // Issue #1247–#1248 Phase 1: macro-origin provenance + hygiene tracer.
 export extern std::atomic<std::uint64_t> g_macro_origin_provenance_errors;

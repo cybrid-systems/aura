@@ -42,6 +42,12 @@ extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
 extern "C" std::uint64_t aura_macro_rest_param_hygiene_total_v_read() noexcept;
 // Issue #2019: MacroIntroduced restamp-after-flat counter.
 extern "C" std::uint64_t aura_macro_restamp_after_flat_total_v_read() noexcept;
+// Issue #2021: depth + concurrent peak readers / metrics snapshot.
+extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
+extern "C" std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept;
+extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -2564,7 +2570,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(48);
+            // Issue #2021: capacity 128 (power-of-2) — depth/concurrent keys
+            // grew the dashboard past the old 48-slot open-address table.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2685,29 +2693,45 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("macro-audit-allowed", audit_allowed);
             insert_kv("audit-trail-writes", trail_writes);
             insert_kv("allow-macro-mutate", ev->get_allow_macro_mutate() ? 1 : 0);
-            // Issue #2018: rest-param hygiene gensyms (file-level atomic +
-            // CompilerMetrics mirror). Prefer metrics when wired.
+            // Issue #2018 / #2019 / #2021: mirror live atomics → CompilerMetrics,
+            // then publish depth + concurrent peak on this Agent surface.
+            if (m)
+                aura_macro_hygiene_snapshot_metrics(m);
             {
-                const std::int64_t rest_hyg = static_cast<std::int64_t>(
-                    m ? m->macro_rest_param_hygiene_total.load(std::memory_order_relaxed)
-                      : aura_macro_rest_param_hygiene_total_v_read());
-                // If CompilerMetrics is zero but the file-level counter
-                // advanced (module-unaware clone path), surface the larger.
                 const std::int64_t rest_file =
                     static_cast<std::int64_t>(aura_macro_rest_param_hygiene_total_v_read());
-                insert_kv("macro-rest-param-hygiene-total",
-                          rest_hyg > rest_file ? rest_hyg : rest_file);
-                insert_kv("macro_rest_param_hygiene_total",
-                          rest_hyg > rest_file ? rest_hyg : rest_file);
-                // Issue #2019
-                const std::int64_t restamp_m = static_cast<std::int64_t>(
-                    m ? m->macro_restamp_after_flat_total.load(std::memory_order_relaxed) : 0);
+                insert_kv("macro-rest-param-hygiene-total", rest_file);
+                insert_kv("macro_rest_param_hygiene_total", rest_file);
                 const std::int64_t restamp_f =
                     static_cast<std::int64_t>(aura_macro_restamp_after_flat_total_v_read());
-                insert_kv("macro-restamp-after-flat-total",
-                          restamp_m > restamp_f ? restamp_m : restamp_f);
-                insert_kv("macro_restamp_after_flat_total",
-                          restamp_m > restamp_f ? restamp_m : restamp_f);
+                insert_kv("macro-restamp-after-flat-total", restamp_f);
+                insert_kv("macro_restamp_after_flat_total", restamp_f);
+                // Issue #2021: depth max + concurrent peak / in-flight.
+                const std::int64_t depth_max =
+                    static_cast<std::int64_t>(aura_hygiene_tracer_depth_max_v_read());
+                const std::int64_t conc_peak =
+                    static_cast<std::int64_t>(aura_macro_clone_concurrent_peak_v_read());
+                const std::int64_t in_flight =
+                    static_cast<std::int64_t>(aura_macro_clone_in_flight_v_read());
+                const std::int64_t fiber_stamps =
+                    static_cast<std::int64_t>(aura_macro_clone_concurrent_fiber_total_v_read());
+                insert_kv("max_depth", depth_max);
+                insert_kv("max-depth", depth_max);
+                insert_kv("hygiene-tracer-depth-max", depth_max);
+                insert_kv("hygiene-depth-max", depth_max);
+                insert_kv("concurrent_fiber_count", fiber_stamps);
+                insert_kv("concurrent-fiber-count", fiber_stamps);
+                insert_kv("macro-clone-concurrent-fiber-total", fiber_stamps);
+                insert_kv("concurrent_peak", conc_peak);
+                insert_kv("concurrent-peak", conc_peak);
+                insert_kv("macro-clone-concurrent-peak", conc_peak);
+                insert_kv("in_flight", in_flight);
+                insert_kv("in-flight", in_flight);
+                insert_kv("macro-clone-in-flight", in_flight);
+                insert_kv("max-hygiene-depth-cap", 1024);
+                insert_kv("depth-obs-wired", 1);
+                insert_kv("concurrent-obs-wired", 1);
+                insert_kv("depth-concurrent-obs-issue", 2021);
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias
@@ -2716,8 +2740,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("action", recommendation);
             insert_kv("ai-closedloop-macro-health-wired", 1);
             insert_kv("audit-trail-wired", 1);
-            insert_kv("issue", 1613);
-            insert_kv("schema", 1613); // lineage 1609 / 1501 / 486
+            insert_kv("issue", 1613); // lineage 1609 / 1501 / 486; depth keys #2021
+            insert_kv("schema", 1613);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -6403,6 +6427,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("hygiene-dirty", dirty_nodes);
         insert_kv("concurrent_fiber_count", concurrent_fiber);
         insert_kv("concurrent-fiber-count", concurrent_fiber);
+        // Issue #2021: peak concurrent top-level clone + live in-flight.
+        {
+            using aura::compiler::macro_exp::g_macro_clone_concurrent_peak;
+            using aura::compiler::macro_exp::g_macro_clone_in_flight;
+            const std::int64_t peak = static_cast<std::int64_t>(
+                g_macro_clone_concurrent_peak.load(std::memory_order_relaxed));
+            const std::int64_t inflight =
+                static_cast<std::int64_t>(g_macro_clone_in_flight.load(std::memory_order_relaxed));
+            insert_kv("concurrent_peak", peak);
+            insert_kv("concurrent-peak", peak);
+            insert_kv("macro-clone-concurrent-peak", peak);
+            insert_kv("in_flight", inflight);
+            insert_kv("in-flight", inflight);
+            insert_kv("macro-clone-in-flight", inflight);
+            insert_kv("depth-obs-wired", 1);
+            insert_kv("concurrent-obs-wired", 1);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                aura_macro_hygiene_snapshot_metrics(m);
+        }
         insert_kv("expansions", expansions);
         insert_kv("tracer-expansions", tracer_expansions);
         insert_kv("macro_markers", macro_markers);
@@ -6416,8 +6459,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("max-hygiene-depth-cap", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
         insert_kv("allow-macro-mutate", ev.get_allow_macro_mutate() ? 1 : 0);
         insert_kv("active", 1);
-        insert_kv("schema", 2020);
+        insert_kv("schema", 2020); // Agent surface #2020; concurrent peak keys #2021
         insert_kv("issue", 2020);
+        insert_kv("depth-concurrent-obs-issue", 2021);
 
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
