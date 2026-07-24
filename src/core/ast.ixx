@@ -1628,6 +1628,16 @@ public:
     // live node_gen_ is restamped without manual agent intervention.
     mutable std::atomic<bool> auto_restamp_pending_{false};
     mutable std::atomic<std::uint64_t> auto_restamp_on_wrap_count_{0};
+    // Issue #2061: incremental restamp observability. restamp_nodes_total_
+    // counts the number of live (non-free-list) nodes actually restamped
+    // (incremental: free-list slots are skipped). restamp_us_total_ is the
+    // cumulative wall-clock time spent in restamp_all_node_generations() in
+    // microseconds, so an Agent can compute mean restamp latency
+    // (restamp_us_total / restamp_nodes_total) and detect O(n) latency
+    // spikes on wrap. StableNodeRef semantics are unchanged — the
+    // wrap_epoch_ / generation_ / node_gen_ triad is preserved.
+    mutable std::atomic<std::uint64_t> restamp_nodes_total_{0};
+    mutable std::atomic<std::uint64_t> restamp_us_total_{0};
     // Issue #1281: children topology restore via PCV snapshot count.
     mutable std::atomic<std::uint64_t> children_topology_restore_count_{0};
     // Issue #1502: parent_ column restored (snapshot or rebuild-from-children)
@@ -6950,6 +6960,18 @@ public:
     [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {
         return auto_restamp_on_wrap_count_.load(std::memory_order_relaxed);
     }
+    // Issue #2061: incremental restamp observability — total nodes
+    // restamped across all calls (free-list slots skipped).
+    [[nodiscard]] std::uint64_t restamp_nodes_total() const noexcept {
+        return restamp_nodes_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2061: incremental restamp observability — total wall-clock
+    // time spent in restamp_all_node_generations() across all calls, in
+    // microseconds. Mean restamp latency = restamp_us_total() /
+    // auto_restamp_on_wrap_count() (or restamp call count).
+    [[nodiscard]] std::uint64_t restamp_us_total() const noexcept {
+        return restamp_us_total_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool auto_restamp_pending() const noexcept {
         return auto_restamp_pending_.load(std::memory_order_relaxed);
     }
@@ -6972,17 +6994,30 @@ public:
     // Issue #273: refresh node_gen_ after a generation bump that does
     // not invalidate the whole FlatAST (e.g. hygienic macro rewrite).
     void restamp_all_node_generations() {
+        // Issue #2061: restamp is incremental in the sense that free-list
+        // slots (on_free[id] == 1) are skipped — only live nodes are
+        // restamped. restamp_nodes_total_ tracks how many live nodes were
+        // actually restamped; restamp_us_total_ tracks wall-clock time in
+        // microseconds. The cost is O(live_nodes) per call, not O(all_nodes).
         // node_gen_==0 marks free-list slots, but live nodes at
         // generation_==0 also carry 0 — do not use is_free_slot here.
+        const auto t0 = std::chrono::steady_clock::now();
+        std::uint64_t restamped = 0;
         std::vector<std::uint8_t> on_free(size(), 0);
         for (NodeId fid : free_list_) {
             if (fid < on_free.size())
                 on_free[fid] = 1;
         }
         for (NodeId id = 0; id < size(); ++id) {
-            if (!on_free[id] && id < node_gen_.size())
+            if (!on_free[id] && id < node_gen_.size()) {
                 node_gen_[id] = generation_;
+                ++restamped;
+            }
         }
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        restamp_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
+        restamp_us_total_.fetch_add(static_cast<std::uint64_t>(us), std::memory_order_relaxed);
         // Issue #1282: if restamp was pending due to uint16 wrap,
         // clear the flag and count the recovery (Agent-visible via
         // ast:generation-stats / production-sweep-1281-1285-stats).
