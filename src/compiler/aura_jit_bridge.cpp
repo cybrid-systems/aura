@@ -12,6 +12,7 @@
 #include "aot_mangle.h"            // mangle_aot_name (Issue #136)
 #include "hot_update_registry.hh"  // Issue #1956: unified hot-update coordination
 #include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
+#include "runtime_shared.h"        // Issue #2013: aura_remap_live_closures_after_reemit
 #include "typed_mutation_audit.h"  // Issue #1882: TypedMutationAudit on hot-update
 
 #include <atomic>
@@ -1746,6 +1747,13 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     std::uint64_t closure_dep_count = 0;
     bool any_re_emit = false;
 
+    // Issue #2013: collect (name, stable_id) for successful reemits so we
+    // can retarget live closures after the epoch commit.
+    std::vector<std::string> reemit_names;
+    std::vector<std::uint32_t> reemit_stable_ids;
+    reemit_names.reserve(16);
+    reemit_stable_ids.reserve(16);
+
     // Phase 2 walk: iterate host-pushed candidates + region-mask filter.
     // #1952: host-wired LLVM emit. #1930: stable name→func_id on success.
     while (true) {
@@ -1783,9 +1791,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             const bool emitted = g_aot_emit_fn(name, region, g_aot_emit_userdata);
             if (emitted) {
                 int preserved = 0;
+                std::uint32_t sid = 0;
                 {
                     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                    (void)preserve_stable_func_id_locked(name, &preserved);
+                    sid = preserve_stable_func_id_locked(name, &preserved);
                 }
                 aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
                 if (aot_metrics()) {
@@ -1799,15 +1808,20 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                             1, std::memory_order_relaxed);
                     }
                 }
+                if (sid != 0) {
+                    reemit_names.emplace_back(name);
+                    reemit_stable_ids.push_back(sid);
+                }
                 ++success_count;
                 any_re_emit = true;
             }
         } else {
             // Phase 1 / #1480 skeleton: would-reemit + stable map stamp.
             int preserved = 0;
+            std::uint32_t sid = 0;
             {
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                (void)preserve_stable_func_id_locked(name, &preserved);
+                sid = preserve_stable_func_id_locked(name, &preserved);
             }
             aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
             if (aot_metrics()) {
@@ -1819,6 +1833,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                         1, std::memory_order_relaxed);
                 }
             }
+            if (sid != 0) {
+                reemit_names.emplace_back(name);
+                reemit_stable_ids.push_back(sid);
+            }
             any_re_emit = true;
         }
     }
@@ -1827,6 +1845,26 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     // successful / would-reemit path advanced.
     if (any_re_emit) {
         commit_func_table_swap();
+        // Issue #2013: retarget live closures whose name matches a
+        // reemitted stable id so they keep calling native code without
+        // dual-freshness deopt. Global epoch bump remains for unmatched
+        // closures (safety preserved).
+        if (!reemit_names.empty()) {
+            std::vector<const char*> name_ptrs;
+            name_ptrs.reserve(reemit_names.size());
+            for (const auto& s : reemit_names)
+                name_ptrs.push_back(s.c_str());
+            const std::uint64_t new_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+            const std::uint64_t remapped = aura_remap_live_closures_after_reemit(
+                name_ptrs.data(), reemit_stable_ids.data(), reemit_stable_ids.size(), new_epoch);
+            if (remapped > 0) {
+                if (aot_metrics()) {
+                    aot_metrics()->live_closure_remap_total.fetch_add(remapped,
+                                                                      std::memory_order_relaxed);
+                }
+                aura::compiler::hot_update_registry().on_live_closure_remap(remapped);
+            }
+        }
     }
 
     // Stamp last-call stats for tests + EDSL observability primitives.

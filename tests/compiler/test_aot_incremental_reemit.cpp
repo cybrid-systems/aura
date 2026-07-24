@@ -1,7 +1,7 @@
 // @category: unit
 // @reason: Issue #1930 — complete aura_reemit_aot_for_dirty LLVM re-emit
-// Issue #1480/#1930/#1943/#1952 (#1978 renamed): issue# moved from filename to header.
-// pipeline + stable name→func_id map (refine #1952 #1480 #1943).
+// Issue #1480/#1930/#1943/#1952/#2013 (#1978 renamed): issue# moved from filename to header.
+// pipeline + stable name→func_id map (refine #1952 #1480 #1943) + live remap (#2013).
 //
 //   AC1: source cites #1930; stable map + emit path + return-success
 //   AC2: query:aot-incremental-reemit-stats schema-1930 + AC metric keys
@@ -11,10 +11,12 @@
 //   AC6: multi-round same names → func_id stable; preserved_total grows
 //   AC7: 1000-iter fuzz candidates + partial emit failure — no crash
 //   AC8: #1952 getters + #1480 count lineage retained
+//   AC9: #2013 live closure remap after reemit (named match; unmatched deopt)
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
-#include "compiler/runtime_shared.h" // aura_set_aot_metrics
+#include "compiler/runtime_shared.h" // aura_set_aot_metrics + closures
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -137,10 +139,11 @@ static void ac2_schema() {
     CHECK(href(cs, "stable-func-id-map-wired") == 1, "map wired");
     CHECK(href(cs, "emit-callback-path-wired") == 1, "emit path");
     CHECK(href(cs, "return-success-when-emit-wired") == 1, "return success");
-    CHECK(href(cs, "pipeline-phase") == 3, "phase 3");
+    CHECK(href(cs, "pipeline-phase") == 4, "phase 4 (+ live remap #2013)");
     CHECK(href(cs, "aot_incremental_reemit_success_total") >= 0, "success key");
     CHECK(href(cs, "stable_func_id_preserved_total") >= 0, "preserved key");
     CHECK(href(cs, "stable_func_id_assigned_total") >= 0, "assigned key");
+    CHECK(href(cs, "live_closure_remap_total") >= 0, "remap key in schema");
 }
 
 static void ac3_stable_map_api() {
@@ -298,15 +301,107 @@ static void ac8_lineage() {
     CHECK(ev.get_stable_func_id_preserved_total() == 0, "preserved 0");
     CHECK(ev.get_stable_func_id_assigned_total() == 0, "assigned 0");
     CHECK(ev.get_aot_incremental_reemit_count() == 0, "count 0");
+    CHECK(ev.get_live_closure_remap_total() == 0, "remap 0");
     CompilerService cs;
     CHECK(href(cs, "schema-1952") == 1952, "1952");
+    CHECK(href(cs, "schema-2013") == 2013, "2013");
     CHECK(href(cs, "active") == 1, "active");
+    CHECK(href(cs, "live_closure_remap_total") >= 0, "remap key");
+    CHECK(href(cs, "live-closure-remap-wired") == 1, "remap wired");
+}
+
+// Issue #2013: live closures named like reemitted funcs keep freshness
+// after epoch bump; unnamed / other-name closures still deopt.
+static void ac9_live_closure_remap() {
+    std::println("\n--- AC9: #2013 live closure remap after reemit ---");
+    aura::compiler::CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    aura_set_aot_defuse_version(1);
+
+    // Pre-seed stable map so reemit preserves (not first-assign).
+    const auto sid_hot = aura_get_or_preserve_stable_func_id("hot", nullptr);
+    CHECK(sid_hot != 0, "seed hot stable id");
+
+    // Live named closures under hot; one unmatched name; one unnamed.
+    const auto c_hot1 = aura_alloc_closure(static_cast<std::int64_t>(sid_hot));
+    const auto c_hot2 = aura_alloc_closure(static_cast<std::int64_t>(sid_hot));
+    const auto c_other = aura_alloc_closure(99);
+    const auto c_anon = aura_alloc_closure(7);
+    CHECK(c_hot1 >= 0 && c_hot2 >= 0 && c_other >= 0 && c_anon >= 0, "alloc closures");
+    aura_closure_set_name(c_hot1, "hot");
+    aura_closure_set_name(c_hot2, "hot");
+    aura_closure_set_name(c_other, "unrelated");
+    // c_anon: leave name empty → must not remap.
+
+    const auto epoch_before = aura_aot_func_table_epoch();
+    const auto bridge_hot1_before = aura_get_closure_bridge_epoch(c_hot1);
+    CHECK(bridge_hot1_before == epoch_before || bridge_hot1_before != 0, "hot1 stamped");
+
+    ReemitFixture rf;
+    rf.candidates = {{"hot", 1, false}};
+    EmitFixture ef;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+
+    const auto rb0 = metrics.live_closure_remap_total.load(std::memory_order_relaxed);
+    aura_hot_update_registry_snapshot snap0{};
+    aura_hot_update_registry_get_snapshot(&snap0);
+
+    CHECK(aura_reemit_aot_for_dirty(0) == 1, "reemit hot success 1");
+    const auto epoch_after = aura_aot_func_table_epoch();
+    CHECK(epoch_after == epoch_before + 1, "epoch bumped once");
+
+    // Remapped: both hot closures restamped to new epoch.
+    CHECK(aura_get_closure_bridge_epoch(c_hot1) == epoch_after, "hot1 restamped");
+    CHECK(aura_get_closure_bridge_epoch(c_hot2) == epoch_after, "hot2 restamped");
+    CHECK(metrics.live_closure_remap_total.load(std::memory_order_relaxed) >= rb0 + 2,
+          "live_closure_remap_total +2");
+    aura_hot_update_registry_snapshot snap1{};
+    aura_hot_update_registry_get_snapshot(&snap1);
+    CHECK(snap1.live_closure_remap_total >= snap0.live_closure_remap_total + 2,
+          "registry remap +2");
+
+    // Dual-freshness: remapped should still be fresh; unmatched stale.
+    CHECK(aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(c_hot1),
+                                    aura_get_closure_defuse_version(c_hot1)),
+          "hot1 still fresh after remap");
+    CHECK(aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(c_hot2),
+                                    aura_get_closure_defuse_version(c_hot2)),
+          "hot2 still fresh after remap");
+    // Unrelated name + anonymous keep old epoch → stale vs new table epoch.
+    CHECK(!aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(c_other),
+                                     aura_get_closure_defuse_version(c_other)),
+          "unrelated name still stale (safety)");
+    CHECK(!aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(c_anon),
+                                     aura_get_closure_defuse_version(c_anon)),
+          "unnamed still stale (safety)");
+
+    // Direct call path: remapped returns without forcing deopt refuse;
+    // unmatched deopts to 0 (no registered JIT fn, but dual-check first).
+    std::int64_t args[1] = {0};
+    const auto deopt0 = aura_jit_closure_stale_deopt_total();
+    (void)aura_closure_call(c_hot1, args, 0); // may return 0 for missing fn, not deopt
+    // Unmatched should bump stale deopt (dual check fails).
+    (void)aura_closure_call(c_other, args, 0);
+    CHECK(aura_jit_closure_stale_deopt_total() > deopt0, "unmatched call deopts");
+
+    aura_free_closure(c_hot1);
+    aura_free_closure(c_hot2);
+    aura_free_closure(c_other);
+    aura_free_closure(c_anon);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_defuse_version(0);
 }
 
 } // namespace
 
 int main() {
-    std::println("=== Issue #1930: AOT incremental re-emit + stable func_id ===");
+    std::println("=== Issue #1930/#2013: AOT reemit + stable func_id + live remap ===");
     ac1_source();
     ac2_schema();
     ac3_stable_map_api();
@@ -315,6 +410,7 @@ int main() {
     ac6_multi_round_stable();
     ac7_fuzz();
     ac8_lineage();
+    ac9_live_closure_remap();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

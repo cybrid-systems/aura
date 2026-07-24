@@ -42,6 +42,8 @@ public:
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
     void on_reload_rollback() noexcept;
+    // Issue #2013: live closures remapped after reemit (count of slots).
+    void on_live_closure_remap(std::uint64_t count) noexcept;
 
     // ── preferred C++ API (forwards to C ABI + bookkeeping) ──
     void set_emit_region_mask(std::uint64_t mask) noexcept;
@@ -79,6 +81,8 @@ public:
         // Issue #2012: atomic reload recovery counters.
         std::int64_t aot_reload_success_total = 0;
         std::int64_t aot_reload_rollback_total = 0;
+        // Issue #2013: live closure remaps after reemit.
+        std::int64_t live_closure_remap_total = 0;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -116,6 +120,7 @@ private:
     std::atomic<std::uint64_t> stable_id_assign_{0};
     std::atomic<std::uint64_t> aot_reload_success_{0};  // #2012
     std::atomic<std::uint64_t> aot_reload_rollback_{0}; // #2012
+    std::atomic<std::uint64_t> live_closure_remap_{0};  // #2013
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -149,6 +154,7 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t stable_func_id_map_size;
     std::int64_t aot_reload_success_total;  // #2012
     std::int64_t aot_reload_rollback_total; // #2012
+    std::int64_t live_closure_remap_total;  // #2013
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 }

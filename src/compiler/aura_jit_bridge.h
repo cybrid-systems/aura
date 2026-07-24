@@ -170,6 +170,8 @@ std::uint64_t aura_reemit_region_filtered_skips(void);
 std::uint64_t aura_reemit_closure_dep_count(void);
 // Last re-emit success count (emit callback true count; 0 if no emit fn).
 std::uint64_t aura_reemit_success_count(void);
+// Issue #2013: remapped live-closure count is in CompilerMetrics::live_closure_remap_total
+// and HotUpdateRegistry snapshot (live_closure_remap_total).
 
 // Issue #708 — region isolation + func_table refcount tracking.
 // Global (default) APIs — equivalent to for_eval(nullptr, ...).
