@@ -802,7 +802,7 @@ endfunction()
 #     stale_cache with TYPE_VAR validation)
 #   - Stress test: 100 mutate+typecheck cycles
 #   - Performance: incremental vs full typecheck cache behavior
-add_executable(test_gc_evaluator_integration tests/compiler_core/test_gc_evaluator_integration.cpp)
+add_executable(test_gc_evaluator_integration tests/core/test_gc_evaluator_integration.cpp)
 set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: pre-existing build fix. Without this
 # FILE_SET, the C++ module scanner produces empty modmap files
@@ -890,12 +890,12 @@ endif()
 # actually enforced at runtime. Two phases:
 #   1. test_contracts holds — pre-condition holds, no violation (exit 0)
 #   2. test_contracts fires — pre-condition violated, handler fires (exit 42)
-add_executable(test_contracts tests/compiler_core/test_contracts.cpp)
-set_source_files_properties(tests/compiler_core/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+add_executable(test_contracts tests/core/test_contracts.cpp)
+set_source_files_properties(tests/core/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
 # Issue #477: contract test is small + production-quality; opt into strict
 # warnings for the test source itself.
-aura_strict_test_warnings(tests/compiler_core/test_contracts.cpp)
+aura_strict_test_warnings(tests/core/test_contracts.cpp)
 # Issue #278 follow-up: pre-existing build fix. contract_handler.cpp
 # provides `handle_contract_violation` for C++26 contract checks.
 target_sources(test_contracts PRIVATE src/core/contract_handler.cpp)
