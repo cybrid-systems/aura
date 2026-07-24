@@ -397,12 +397,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
         emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
                             static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
-        // Issue #1589 / #1614 / #1894 / #2027: TypedMutationAudit trail +
-        // real invariant suite on mutation boundary hot path. Contextual
-        // sampling (#1894) forces audit for large dirty scopes / linear.
-        // #2027: nested_boundary || atomic_batch always forces audit under
-        // Sampled/Full and tries per-category partial recovery before Full
-        // structural rollback (fine_rollback + children PCV still apply).
+        // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
+        // trail + real invariant suite on mutation boundary hot path.
+        // Contextual sampling (#1894) forces audit for large dirty / linear.
+        // #2027: nested/atomic_batch never under-samples.
+        // #2029: Full strategy always tries per-category partial recovery
+        // (type recheck / linear re-enforce / provenance restamp) before
+        // structural rollback — composite and single-boundary alike.
         {
             const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
             const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
@@ -426,48 +427,68 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 if (composite)
                     typed_audit::record_composite_invariant_audit(nested_boundary, batch_active,
                                                                   first);
-                // #1894 / #2027: Full strategy → partial recover then force rollback.
+                // #1894 / #2027 / #2029: Full → per-category partial recover, then
+                // structural force-rollback only if re-audit still fails.
                 if (!inv_ok && strat == typed_audit::AuditStrategy::Full) {
                     bool recovered = false;
+                    auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                    ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
                     if (composite) {
-                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
                         ac.composite_partial_recover_attempt_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        // Prefer linear re-enforce before type recheck (cheap).
-                        if (!first.linear_ok || first.cross_batch_linear_escape) {
+                    }
+                    // Prefer linear re-enforce first (cheap; often fixes Moved live roots).
+                    if (!first.linear_ok || first.cross_batch_linear_escape) {
+                        ac.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
+                        if (composite) {
                             ac.composite_partial_recover_linear_total.fetch_add(
                                 1, std::memory_order_relaxed);
-                            (void)linear_post_mutate_enforce_all();
-                            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                                      /*mark_all_linear=*/true);
                         }
-                        if (!first.type_ok) {
+                        (void)linear_post_mutate_enforce_all();
+                        (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                                  /*mark_all_linear=*/true);
+                    }
+                    // Type-only recheck: re-driven by the full suite below
+                    // (visitor rewalks NotChecked / dirty mutations).
+                    if (!first.type_ok) {
+                        ac.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+                        if (composite) {
                             ac.composite_partial_recover_type_total.fetch_add(
                                 1, std::memory_order_relaxed);
-                            // Type-only recheck is re-driven by the full suite below;
-                            // visitor rewalks NotChecked / dirty mutations.
                         }
-                        typed_audit::InvariantAuditResult after{};
-                        inv_ok = run_typed_mutation_invariant_audit(
-                            mid, "composite-partial-recover",
-                            static_cast<std::uint32_t>(audit_target), cp.version, epoch_after,
-                            /*composite_mode=*/true, &after);
-                        if (inv_ok) {
-                            recovered = true;
+                    }
+                    // Provenance fail → restamp pins / generations + re-validate chain.
+                    if (!first.provenance_ok) {
+                        ac.partial_recovery_provenance_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                        if (workspace_flat_)
+                            workspace_flat_->restamp_all_node_generations();
+                        (void)restamp_pinned_stable_refs();
+                        (void)post_mutation_reflect_validate();
+                    }
+                    typed_audit::InvariantAuditResult after{};
+                    inv_ok = run_typed_mutation_invariant_audit(
+                        mid, composite ? "composite-partial-recover" : "full-partial-recover",
+                        static_cast<std::uint32_t>(audit_target), cp.version, epoch_after,
+                        /*composite_mode=*/composite, &after);
+                    if (inv_ok) {
+                        recovered = true;
+                        ac.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+                        if (composite) {
                             ac.composite_partial_recover_success_total.fetch_add(
                                 1, std::memory_order_relaxed);
                             typed_audit::record_composite_invariant_audit(nested_boundary,
                                                                           batch_active, after);
                         }
+                    } else {
+                        ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
                     }
                     if (!recovered) {
-                        typed_audit::g_typed_mutation_audit_counters
-                            .full_strategy_force_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
+                        ac.full_strategy_force_rollback_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
                         if (composite) {
-                            typed_audit::g_typed_mutation_audit_counters
-                                .composite_full_rollback_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
+                            ac.composite_full_rollback_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
                         }
                         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                             m->typed_mutation_full_force_rollback_total.fetch_add(

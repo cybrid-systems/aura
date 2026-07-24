@@ -5228,8 +5228,38 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("composite-nested-audit-wired", 1);
                 insert_kv("schema-2027", 2027);
                 insert_kv("issue-2027", 2027);
+                // Issue #2029: Full-strategy per-category partial recovery (all boundaries)
+                insert_kv("partial_recovery_success_total",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_success_total.load(std::memory_order_relaxed)));
+                insert_kv("partial_recovery_fail_total",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-attempt",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_attempt_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-success",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_success_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-fail",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-type",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_type_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-linear",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_linear_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-provenance",
+                          static_cast<std::int64_t>(
+                              c.partial_recovery_provenance_total.load(std::memory_order_relaxed)));
+                insert_kv("partial-recovery-wired", 1);
+                insert_kv("full-partial-recover-wired", 1);
+                insert_kv("provenance-restamp-recover-wired", 1);
+                insert_kv("schema-2029", 2029);
+                insert_kv("issue-2029", 2029);
             }
-            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 satellite
+            insert_kv("issue", 1894); // lineage 1614 / 1589 / #1882 / #2027 / #2029 satellite
             insert_kv("schema", 1894);
             TypedMutationAuditEvent latest{};
             if (trail_latest(latest)) {
