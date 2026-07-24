@@ -2214,6 +2214,14 @@ struct CompilerMetrics {
     // is the live LifetimePin count for FFI buffers; ffi_defer_because_pin_total
     // is the cumulative # of compact_sweep deferrals while ffi_pin_defer_active.
     std::atomic<std::uint64_t> ffi_pin_active_count{0};
+    // Issue #2063: dirty cascade subtree-skip counter. Bumped in
+    // cascade_mark_dirty (dirty_propagation.ixx) when a node's BFS
+    // expansion is short-circuited because every dependent is already
+    // dirty (summary-dirty optimization: don't re-walk a cone that's
+    // already marked). Pair with cascade_mark_dirty's existing marked
+    // counter so the AI Agent can compute skip / (skip+mark) ratio.
+    std::atomic<std::uint64_t> cascade_skip_subtree_total{0};
+
     // Issue #2064: blame / provenance stamping on Dynamic degrade + CoercionMap
     // fallback paths. coercion_blame_missing_total is bumped by
     // apply_coercion_map when both predicate_cond_node + source_mutation_id

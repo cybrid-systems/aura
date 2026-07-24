@@ -1904,6 +1904,10 @@ aura_issue_test_link_llvm_jit(test_solve_delta_epoch_filter)
 aura_add_issue_test(test_blame_stamp_on_degrade)
 aura_issue_test_link_llvm_jit(test_blame_stamp_on_degrade)
 
+# Issue #2063: Dirty cascade subtree-skip (summary-dirty early-exit) optimization.
+aura_add_issue_test(test_dirty_cascade_optimize)
+aura_issue_test_link_llvm_jit(test_dirty_cascade_optimize)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
