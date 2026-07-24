@@ -915,7 +915,7 @@ set_tests_properties(contracts_fires PROPERTIES
 # Verifies the FNV-1a source-hash function used by ir_cache_v2_.
 # Full integration is covered by tests/edsl_ir_cache_test.aura
 # (see tests/run-tests.sh).
-add_executable(test_ir_cache_v2 tests/edsl/test_ir_cache_v2.cpp)
+add_executable(test_ir_cache_v2 tests/reflect/test_ir_cache_v2.cpp)
 add_test(NAME ir_cache_v2_fnv1a
          COMMAND test_ir_cache_v2)
 
@@ -991,7 +991,7 @@ add_test(NAME tc_let
 
 
 # ── Shape profiler tests (Phase 1, #53) ─────────────────────
-add_executable(test_shape tests/shape/test_shape.cpp src/compiler/shape_profiler.cpp)
+add_executable(test_shape tests/compiler/shape/test_shape.cpp src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape PRIVATE src)
 target_link_libraries(test_shape PRIVATE stdc++)
 # Issue #278 follow-up: pre-existing build fix. shape_profiler.cpp
@@ -1038,8 +1038,8 @@ add_test(NAME test_spec_jit COMMAND test_spec_jit
 # Verifies the AuraJIT::Metrics struct (default state, atomic
 # concurrent increments, format() output, edge cases). Doesn't
 # need a full LLVM stack — exercises the counter paths directly.
-add_executable(test_jit_metrics tests/jit/test_jit_metrics.cpp
-    tests/jit/test_jit_metrics_stub.cpp
+add_executable(test_jit_metrics tests/compiler/jit/test_jit_metrics.cpp
+    tests/compiler/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1063,7 +1063,7 @@ add_test(NAME jit_metrics COMMAND test_jit_metrics
 # under concurrent access. Doesn't need a full LLVM stack —
 # exercises the counter paths directly.
 add_executable(test_jit_concurrent_compile tests/fiber/test_jit_concurrent_compile.cpp
-    tests/jit/test_jit_metrics_stub.cpp
+    tests/compiler/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1090,7 +1090,7 @@ add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
 # pipeline — exercises the public metrics + per-function
 # accessors directly. Same build pattern as test_jit_metrics.
 add_executable(test_jit_consistency tests/observability/test_jit_consistency.cpp
-    tests/jit/test_jit_metrics_stub.cpp
+    tests/compiler/jit/test_jit_metrics_stub.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp)
@@ -1267,11 +1267,11 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 # test_edsl_macro_hygiene_batch (wave47_178_reflect). Full AC needs -freflection
 # on the reflect TU only (GCC 16 ICE if mixed with import aura.core.ast).
 # Bridge: tests/edsl/test_issue_178_bridge.h
-add_executable(test_issue_178 tests/edsl/test_issue_178.cpp tests/edsl/test_issue_178_reflect.cpp)
+add_executable(test_issue_178 tests/reflect/test_issue_178.cpp tests/reflect/test_issue_178_reflect.cpp)
 set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
 aura_test_compile_options(test_issue_178)
-set_source_files_properties(tests/edsl/test_issue_178_reflect.cpp
+set_source_files_properties(tests/reflect/test_issue_178_reflect.cpp
                             PROPERTIES COMPILE_OPTIONS "-freflection")
 target_compile_features(test_issue_178 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)

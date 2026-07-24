@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/domain/test_*.cpp` | 15 | Preferred destination suites |
-| **Total scanned** | **15** | |
+| `tests/domain/test_*.cpp` | 22 | Preferred destination suites |
+| **Total scanned** | **22** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 1 | 1 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 1 | 1 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 0 | 0 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 0 | 0 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 7 | 7 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 4 | 4 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 0 | 0 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 1 | 1 | P2 — often thin schema probes; collapse into obs matrix |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **7**
+- Existing `*_batch` drivers (migration milestones): **10**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -88,6 +88,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_gc_compact_sweep_batch.cpp` → theme `arena_compaction`
 - `tests/core/test_hotpath_matrix_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
+- `tests/reflect/test_reflect_hygiene_unit_batch.cpp` → theme `edsl_hygiene`
+- `tests/reflect/test_reflect_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
+- `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
 
 ### Domain suites (do not regress; extend these)
 
@@ -96,14 +99,21 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_arena_defrag.cpp`
 - `tests/stdlib/test_atomic_swap_stdlib.cpp`
 - `tests/stdlib/test_datetime.cpp`
+- `tests/reflect/test_error_merr.cpp`
 - `tests/serve/test_fiber_integration_batch.cpp`
 - `tests/serve/test_gc_batch.cpp`
 - `tests/serve/test_gc_compact_batch.cpp`
 - `tests/serve/test_gc_compact_sweep_batch.cpp`
 - `tests/core/test_hotpath_matrix_batch.cpp`
+- `tests/reflect/test_ir_cache_v2.cpp`
+- `tests/reflect/test_issue_178.cpp`
+- `tests/reflect/test_issue_178_reflect.cpp`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp`
 - `tests/compiler/test_obs_schema_matrix.cpp`
 - `tests/core/test_pair_slot_lock.cpp`
+- `tests/reflect/test_reflect_hygiene_unit_batch.cpp`
+- `tests/reflect/test_reflect_macro_hygiene_batch.cpp`
+- `tests/reflect/test_reflect_pattern_hygiene_batch.cpp`
 - `tests/stdlib/test_spec_runtime.cpp`
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp`
 
@@ -173,6 +183,22 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (1)
 
 - `tests/serve/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/domain/test_fiber_integration_batch.cpp — Wave 8 of #1957 migration.
+
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (7)
+
+**Target:** tests/domain/test_domain_hygiene_dirty.cpp + macro_reflect batch
+
+**Priority:** P1 — domain hygiene suite exists
+
+#### domain/ (7)
+
+- `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
+- `tests/reflect/test_ir_cache_v2.cpp` (—) [small, domain_suite, theme_reflect] — tests/test_ir_cache_v2.cpp
+- `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
+- `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
+- `tests/reflect/test_reflect_hygiene_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_hygiene_unit_batch.cpp — consolidated edsl hygiene drivers
+- `tests/reflect/test_reflect_macro_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_macro_hygiene_batch.cpp — consolidated edsl hygiene drivers
+- `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
 
 ### `jit_incremental` — JIT / AOT / incremental relower (4)
 
