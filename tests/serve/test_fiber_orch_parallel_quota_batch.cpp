@@ -214,6 +214,7 @@ namespace aura_fiber_run_parallel_orch_1586 {
 //   AC6: MultiFiberMailbox result posts
 //   AC7: parallel faster than sequential (busy yield work)
 //   AC8: query:parallel-orch-stats schema 1586
+//   AC10: #2007 FailurePolicy — RetryN / CollectAll / CircuitBreaker / fail_fast alias
 
 
 namespace {
@@ -227,9 +228,11 @@ namespace {
     using aura::serve::YieldReason;
     using aura::serve::mf_mailbox::MultiFiberMailbox;
     using aura::serve::parallel_orch::BatchStatus;
+    using aura::serve::parallel_orch::FailurePolicy;
     using aura::serve::parallel_orch::g_parallel_orch_stats;
     using aura::serve::parallel_orch::parallel_intend;
     using aura::serve::parallel_orch::ParallelPolicy;
+    using aura::serve::parallel_orch::resolved_failure_policy;
     using aura::serve::parallel_orch::sequential_run;
     using aura::serve::parallel_orch::TaskResult;
     using aura::serve::parallel_orch::TaskSpec;
@@ -261,6 +264,14 @@ namespace {
         CHECK(validate_policy(ParallelPolicy{.max_concurrency = 1}), "min concurrency");
         CHECK(!validate_policy(ParallelPolicy{.max_concurrency = 0}), "zero concurrency invalid");
         CHECK(!validate_policy(ParallelPolicy{.max_concurrency = 2048}), "over 1024 invalid");
+        // #2007: CircuitBreaker with consecutive_fail_limit=0 is invalid.
+        CHECK(!validate_policy(ParallelPolicy{.failure_policy = FailurePolicy::CircuitBreaker,
+                                              .consecutive_fail_limit = 0}),
+              "circuit limit 0 invalid");
+        CHECK(resolved_failure_policy(ParallelPolicy{.fail_fast = true}) == FailurePolicy::FailFast,
+              "fail_fast alias resolves to FailFast");
+        CHECK(resolved_failure_policy(ParallelPolicy{}) == FailurePolicy::CollectAll,
+              "default resolves to CollectAll");
 
         Scheduler sched(1);
         SchedRunner runner(sched);
@@ -503,6 +514,221 @@ namespace {
               "joined advanced under stress");
     }
 
+    // Issue #2007: composable FailurePolicy.
+    static void ac10_failure_policy() {
+        std::println("\n--- AC10: #2007 FailurePolicy ---");
+
+        // (a) CollectAll: multiple permanent failures → Partial, no aborts.
+        {
+            Scheduler sched(3);
+            SchedRunner runner(sched);
+            std::vector<TaskSpec> tasks;
+            for (int i = 0; i < 6; ++i) {
+                tasks.push_back(TaskSpec{.body = [i] {
+                    busy_yield(1);
+                    if (i % 2 == 0)
+                        return TaskResult{.ok = false, .error = "odd-fail"};
+                    return TaskResult{.ok = true, .value = "ok"};
+                }});
+            }
+            ParallelPolicy p{.max_concurrency = 3,
+                             .timeout_ms = 15000,
+                             .failure_policy = FailurePolicy::CollectAll};
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.status == BatchStatus::Partial, "CollectAll → Partial");
+            CHECK(r.ok_count == 3, "CollectAll 3 ok");
+            CHECK(r.err_count == 3, "CollectAll 3 err");
+            CHECK(r.aborted_count == 0, "CollectAll no aborts");
+            CHECK(!r.circuit_opened, "CollectAll circuit closed");
+        }
+
+        // (b) RetryN: transient failure succeeds after retries.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::atomic<int> attempts{0};
+            std::vector<TaskSpec> tasks;
+            tasks.push_back(TaskSpec{.body = [&] {
+                int n = attempts.fetch_add(1, std::memory_order_relaxed) + 1;
+                busy_yield(1);
+                if (n < 3)
+                    return TaskResult{.ok = false, .error = "transient"};
+                return TaskResult{.ok = true, .value = "recovered"};
+            }});
+            // Stable sibling so concurrency path is exercised.
+            tasks.push_back(TaskSpec{.body = [] {
+                busy_yield(2);
+                return TaskResult{.ok = true, .value = "stable"};
+            }});
+            const auto retries0 =
+                g_parallel_orch_stats.retries_performed.load(std::memory_order_relaxed);
+            ParallelPolicy p{.max_concurrency = 2,
+                             .timeout_ms = 15000,
+                             .failure_policy = FailurePolicy::RetryN,
+                             .max_retries = 4,
+                             .retry_backoff_ms = 0};
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.status == BatchStatus::Ok, "RetryN recovers → Ok");
+            CHECK(r.ok_count == 2, "RetryN both ok");
+            CHECK(r.retries_performed >= 2, "RetryN retries_performed >= 2");
+            CHECK(g_parallel_orch_stats.retries_performed.load() >= retries0 + 2,
+                  "global retries counter advanced");
+            CHECK(attempts.load() == 3, "body attempted 3 times");
+        }
+
+        // (c) RetryN exhausted: permanent fail still Partial after max_retries.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::atomic<int> attempts{0};
+            std::vector<TaskSpec> tasks;
+            tasks.push_back(TaskSpec{.body = [&] {
+                attempts.fetch_add(1, std::memory_order_relaxed);
+                return TaskResult{.ok = false, .error = "permanent"};
+            }});
+            tasks.push_back(TaskSpec{.body = [] { return TaskResult{.ok = true, .value = "ok"}; }});
+            ParallelPolicy p{.max_concurrency = 2,
+                             .timeout_ms = 10000,
+                             .failure_policy = FailurePolicy::RetryN,
+                             .max_retries = 2};
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.status == BatchStatus::Partial, "RetryN exhausted → Partial");
+            CHECK(r.err_count == 1 && r.ok_count == 1, "RetryN mixed outcome");
+            // 1 initial + 2 retries = 3 attempts.
+            CHECK(attempts.load() == 3, "RetryN exhausted attempts == max_retries+1");
+            CHECK(r.retries_performed == 2, "retries_performed == max_retries");
+        }
+
+        // (d) CircuitBreaker opens after consecutive_fail_limit errors.
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::atomic<int> body_ran{0};
+            std::vector<TaskSpec> tasks;
+            // First 3 always fail (serialized via max_concurrency=1 so consecutive
+            // streak is deterministic). Remaining tasks should be aborted after open.
+            for (int i = 0; i < 8; ++i) {
+                tasks.push_back(TaskSpec{.body = [&, i] {
+                    body_ran.fetch_add(1, std::memory_order_relaxed);
+                    // Slow later tasks so circuit can open before they admit.
+                    if (i >= 3) {
+                        for (int k = 0; k < 40; ++k)
+                            Fiber::yield(YieldReason::Explicit);
+                    } else {
+                        busy_yield(1);
+                    }
+                    return TaskResult{.ok = false, .error = "cb-fail"};
+                }});
+            }
+            const auto circ0 =
+                g_parallel_orch_stats.circuit_opened_total.load(std::memory_order_relaxed);
+            ParallelPolicy p{.max_concurrency = 1,
+                             .timeout_ms = 15000,
+                             .failure_policy = FailurePolicy::CircuitBreaker,
+                             .consecutive_fail_limit = 3};
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.circuit_opened, "CircuitBreaker circuit_opened");
+            CHECK(r.status == BatchStatus::FailFast, "CircuitBreaker → FailFast status");
+            CHECK(r.aborted_count >= 1 || r.err_count >= 3,
+                  "CircuitBreaker aborts remaining or records errs");
+            CHECK(g_parallel_orch_stats.circuit_opened_total.load() >= circ0 + 1,
+                  "circuit_opened_total advanced");
+            // Not all 8 bodies need to fully execute once circuit opens.
+            CHECK(body_ran.load() < 8 || r.aborted_count >= 1,
+                  "circuit limited full body runs or aborted");
+            bool saw_circuit_abort = false;
+            for (auto& tr : r.results) {
+                if (!tr.ok && tr.error.find("circuit") != std::string::npos)
+                    saw_circuit_abort = true;
+            }
+            CHECK(saw_circuit_abort || r.aborted_count >= 1 || r.circuit_opened,
+                  "saw circuit abort marker or open flag");
+        }
+
+        // (e) fail_fast=true still maps to FailFast (alias preserved).
+        {
+            Scheduler sched(2);
+            SchedRunner runner(sched);
+            std::vector<TaskSpec> tasks;
+            tasks.push_back(TaskSpec{.body = [] {
+                busy_yield(1);
+                return TaskResult{.ok = false, .error = "boom"};
+            }});
+            for (int i = 0; i < 5; ++i) {
+                tasks.push_back(TaskSpec{.body = [] {
+                    for (int k = 0; k < 40; ++k)
+                        Fiber::yield(YieldReason::Explicit);
+                    return TaskResult{.ok = true, .value = "late"};
+                }});
+            }
+            // Explicit CollectAll in failure_policy, but fail_fast overrides.
+            ParallelPolicy p{.max_concurrency = 1,
+                             .timeout_ms = 15000,
+                             .fail_fast = true,
+                             .failure_policy = FailurePolicy::CollectAll};
+            CHECK(resolved_failure_policy(p) == FailurePolicy::FailFast,
+                  "alias wins over CollectAll");
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.status == BatchStatus::FailFast || r.status == BatchStatus::Partial,
+                  "fail_fast alias still aborts/records");
+            CHECK(r.err_count + r.aborted_count >= 1, "fail_fast alias has errors/aborts");
+        }
+
+        // (f) query surface exposes #2007 counters.
+        {
+            CompilerService cs;
+            auto h = cs.eval("(engine:metrics \"query:parallel-orch-stats\")");
+            CHECK(h && is_hash(*h), "parallel-orch-stats hash");
+            auto schema2007 = cs.eval(
+                "(hash-ref (engine:metrics \"query:parallel-orch-stats\") \"schema-2007\")");
+            CHECK(schema2007 && is_int(*schema2007) && as_int(*schema2007) == 2007,
+                  "schema-2007 present");
+            auto retries = cs.eval(
+                "(hash-ref (engine:metrics \"query:parallel-orch-stats\") \"retries-performed\")");
+            CHECK(retries && is_int(*retries) && as_int(*retries) >= 1,
+                  "retries-performed in query");
+            auto circ = cs.eval("(hash-ref (engine:metrics \"query:parallel-orch-stats\") "
+                                "\"circuit-opened-total\")");
+            CHECK(circ && is_int(*circ) && as_int(*circ) >= 1, "circuit-opened-total in query");
+        }
+
+        // (g) concurrent RetryN under tight concurrency + one permanent fail.
+        {
+            Scheduler sched(4);
+            SchedRunner runner(sched);
+            std::atomic<int> transient_tries{0};
+            std::vector<TaskSpec> tasks;
+            for (int i = 0; i < 8; ++i) {
+                if (i == 0) {
+                    tasks.push_back(TaskSpec{.body = [&] {
+                        int n = transient_tries.fetch_add(1, std::memory_order_relaxed) + 1;
+                        busy_yield(1);
+                        if (n < 2)
+                            return TaskResult{.ok = false, .error = "t"};
+                        return TaskResult{.ok = true, .value = "ok"};
+                    }});
+                } else if (i == 1) {
+                    tasks.push_back(TaskSpec{
+                        .body = [] { return TaskResult{.ok = false, .error = "permanent"}; }});
+                } else {
+                    tasks.push_back(TaskSpec{.body = [] {
+                        busy_yield(2);
+                        return TaskResult{.ok = true, .value = "ok"};
+                    }});
+                }
+            }
+            ParallelPolicy p{.max_concurrency = 4,
+                             .timeout_ms = 15000,
+                             .failure_policy = FailurePolicy::RetryN,
+                             .max_retries = 3};
+            auto r = parallel_intend(sched, tasks, p);
+            CHECK(r.status == BatchStatus::Partial, "concurrent RetryN mixed → Partial");
+            CHECK(r.ok_count >= 6, "concurrent RetryN mostly ok");
+            CHECK(r.err_count >= 1, "concurrent RetryN has permanent err");
+            CHECK(r.retries_performed >= 1, "concurrent RetryN performed retries");
+        }
+    }
+
 } // namespace
 
 int run_parallel_orch_1586() {
@@ -516,6 +742,7 @@ int run_parallel_orch_1586() {
     ac7_throughput();
     ac8_stats_query();
     ac9_stress_multi_round();
+    ac10_failure_policy();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
@@ -1309,10 +1536,12 @@ namespace {
         CompilerService cs;
         auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
         CHECK(h && is_hash(*h), "stats hash");
-        CHECK(href(cs, "schema") == 1618 || href(cs, "schema") == 1600 ||
-                  href(cs, "schema") == 1590,
-              "schema 1618|1600|1590");
-        CHECK(href(cs, "issue") == 1600 || href(cs, "issue") == 1590, "issue 1600|1590");
+        // Schema lineage advances with quota issues; accept known markers.
+        CHECK(href(cs, "schema") == 1634 || href(cs, "schema") == 1618 ||
+                  href(cs, "schema") == 1600 || href(cs, "schema") == 1590,
+              "schema 1634|1618|1600|1590");
+        CHECK(href(cs, "issue") == 1634 || href(cs, "issue") == 1600 || href(cs, "issue") == 1590,
+              "issue 1634|1600|1590");
         CHECK(href(cs, "fiber_spawn_rejected_total") >= 1, "fiber_spawn_rejected_total");
         CHECK(href(cs, "orchestration_quota_exceeded_count") >= 1, "orchestration_quota_exceeded");
         CHECK(href(cs, "join_resource_wait_us") >= 0, "join_resource_wait_us");
@@ -1706,13 +1935,14 @@ namespace {
         auto r = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
         CHECK(r.has_value() && aura::compiler::types::is_hash(*r), "hash");
         auto schema = cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'schema)");
-        // #1618 bumped schema to 1618; accept earlier lineage for older agents.
+        // Schema lineage: 1579 → … → 1618 → 1634; accept known markers.
         CHECK(schema.has_value() && aura::compiler::types::is_int(*schema) &&
-                  (aura::compiler::types::as_int(*schema) == 1618 ||
+                  (aura::compiler::types::as_int(*schema) == 1634 ||
+                   aura::compiler::types::as_int(*schema) == 1618 ||
                    aura::compiler::types::as_int(*schema) == 1600 ||
                    aura::compiler::types::as_int(*schema) == 1590 ||
                    aura::compiler::types::as_int(*schema) == 1579),
-              "schema == 1618 or 1600 or 1590 or 1579");
+              "schema == 1634 or 1618 or 1600 or 1590 or 1579");
         auto phase =
             cs.eval("(hash-ref (engine:metrics \"query:resource-quota-stats\") 'module_phase)");
         CHECK(phase.has_value() && aura::compiler::types::is_int(*phase) &&

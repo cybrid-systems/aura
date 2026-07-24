@@ -174,6 +174,8 @@ struct AgentSpec {
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         pq.orch_resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+        // #1600: align preflight reject with Scheduler::spawn metric surface.
+        pq.fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
         h.error = "ResourceQuotaExceeded: " + ferr->message;
         return h;
