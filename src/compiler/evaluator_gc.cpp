@@ -874,6 +874,28 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     //    We report 0 here so the totals add up correctly.
     result.fiber_results_freed = 0;
 
+    // Issue #2004: opportunistic live_compact(Soft) after a successful
+    // compact_sweep. Soft-gates under render hotpath / MutationBoundary;
+    // bumps generation + invalidates LifetimePins on layout change. Wired
+    // here (the C++ TU with the evaluator module imported) so per-
+    // CompilerMetrics atomics can be bumped directly, same pattern as
+    // #1908 macro_provenance wire-up sites.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->arena_live_compact_soft_count.fetch_add(1, std::memory_order_relaxed);
+    }
+    const aura::ast::LiveCompactResult lc =
+        arena_group_ ? arena_group_->live_compact(aura::ast::LiveCompactMode::Soft)
+                     : aura::ast::LiveCompactResult{};
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+        m->arena_live_compact_reclaimed_bytes_total.fetch_add(lc.bytes_reclaimed,
+                                                              std::memory_order_relaxed);
+        m->arena_live_compact_freelist_hits_total.fetch_add(lc.slots_recycled,
+                                                            std::memory_order_relaxed);
+        if (lc.invalidates_pins) {
+            m->arena_live_compact_gen_restamps_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     return result;
 }
 

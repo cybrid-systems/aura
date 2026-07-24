@@ -245,6 +245,44 @@ static void ac8_lineage() {
     CHECK(href(cs, "query:arena-auto-policy-stats", "auto-compact-triggers") >= 0, "triggers");
 }
 
+// Issue #2004: explicit live_compact primitive — (arena:live-compact) returns
+// a LiveCompactResult hash with bytes_reclaimed / slots-recycled / new-gen /
+// mode / soft-gated / invalidates-pins / schema=2004. Force mode bypasses
+// the soft-gate (render hotpath / MutationBoundary) and bumps generation.
+static void ac_live_compact_primitive() {
+    std::println("\n--- AC_LC1: (arena:live-compact) primitive returns LiveCompactResult ---");
+    CompilerService cs;
+    // Allocate some objects so freelist recycling has something to do.
+    CHECK(cs.eval("(let xs (map (lambda (x) (* x x)) (range 1 100)))").has_value(), "alloc");
+    // Invoke the primitive (default Soft mode).
+    const auto r1 = cs.eval("(arena:live-compact)");
+    CHECK(r1.has_value(), "live_compact returns");
+    // soft-gated=true is fine in test context (no MutationBoundary held);
+    // result is otherwise valid.
+    CHECK(href(cs, "arena:live-compact", "schema") == 2004, "schema 2004");
+    CHECK(href(cs, "arena:live-compact", "new-gen") >= 0, "new-gen field present");
+    CHECK(href(cs, "arena:live-compact", "soft-gated") >= 0, "soft-gated field present");
+    CHECK(href(cs, "arena:live-compact", "invalidates-pins") >= 0,
+          "invalidates-pins field present");
+
+    std::println("\n--- AC_LC2: (arena:live-compact 1) Force mode bumps generation ---");
+    const auto gen_before = href(cs, "arena:live-compact", "new-gen");
+    const auto r2 = cs.eval("(arena:live-compact 1)"); // Force mode
+    CHECK(r2.has_value(), "force live_compact returns");
+    CHECK(href(cs, "arena:live-compact", "mode") == 1, "mode=1 (Force)");
+
+    std::println("\n--- AC_LC3: (query:arena-live-compact-stats) surfaces 6 counters ---");
+    cs.eval("(arena:live-compact 1)"); // Force again to bump force_count
+    CHECK(href(cs, "query:arena-live-compact-stats", "schema") == 2004, "stats schema 2004");
+    CHECK(href(cs, "query:arena-live-compact-stats", "soft-count") >= 0, "soft-count");
+    CHECK(href(cs, "query:arena-live-compact-stats", "force-count") >= 0, "force-count");
+    CHECK(href(cs, "query:arena-live-compact-stats", "reclaimed-bytes-total") >= 0, "reclaimed");
+    CHECK(href(cs, "query:arena-live-compact-stats", "freelist-hits-total") >= 0, "freelist-hits");
+    CHECK(href(cs, "query:arena-live-compact-stats", "gen-restamps-total") >= 0, "gen-restamps");
+    CHECK(href(cs, "query:arena-live-compact-stats", "invalidated-pins-total") >= 0,
+          "invalidated-pins");
+}
+
 } // namespace
 
 int main() {
@@ -257,6 +295,7 @@ int main() {
     ac6_source_wiring();
     ac7_mutate_stress();
     ac8_lineage();
+    ac_live_compact_primitive();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

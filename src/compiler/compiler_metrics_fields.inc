@@ -1582,5 +1582,12 @@ AURA_COMPILER_METRICS_FIELD(mutate_template_marker_propagated_total)
 // Issue #1893: atomic-batch metadata (marker/provenance/dirty) snapshot/restore.
 AURA_COMPILER_METRICS_FIELD(atomic_batch_metadata_restored_total)
 AURA_COMPILER_METRICS_FIELD(atomic_batch_metadata_captured_total)
+// Issue #2004: explicit live_compact + freelist observability (refine #1518).
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_soft_count)
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_force_count)
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_reclaimed_bytes_total)
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_freelist_hits_total)
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_gen_restamps_total)
+AURA_COMPILER_METRICS_FIELD(arena_live_compact_invalidated_pins_total)
 
 #undef AURA_COMPILER_METRICS_FIELD
