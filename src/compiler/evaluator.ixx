@@ -5109,6 +5109,14 @@ public:
                                                std::string_view op, ast::NodeId target_node = 0,
                                                std::uint64_t tenant_id = 0,
                                                std::uint64_t provenance_mutation_id = 0) noexcept;
+    // Issue #2072: single production entry for new side-effect paths.
+    // Wraps check_and_record_effect with standard args (required = actual,
+    // tenant = capability_tenant_id_, provenance = active mutation id).
+    // All new FFI / network / exec / render / hotpath entry points MUST
+    // go through require_effect (not call check_and_record_effect directly)
+    // so the audit ring + capability metrics surface stays consistent.
+    [[nodiscard]] bool require_effect(std::uint16_t req_bits, std::string_view op,
+                                      ast::NodeId target_node = 0) noexcept;
     void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0) noexcept;

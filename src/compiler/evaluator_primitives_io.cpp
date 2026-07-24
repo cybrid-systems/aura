@@ -299,6 +299,15 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (git-commit "message") → exit code (0 = ok, no shell escape needed)
     add("git-commit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #2072: force git-commit through capability effect check
+        // (exec + network — git-commit forks a child process AND may push
+        // to remote). require_effect() bumps capability_effect_denied_total
+        // on deny + records the op in the mutation audit ring.
+        using aura::compiler::security::kEffectExec;
+        using aura::compiler::security::kEffectNetwork;
+        if (!ev.require_effect(static_cast<std::uint16_t>(kEffectExec | kEffectNetwork),
+                               "git-commit", 0))
+            return make_int(-1);
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto mi = as_string_idx(a[0]);
