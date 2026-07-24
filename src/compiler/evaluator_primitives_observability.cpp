@@ -1320,6 +1320,9 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
         "compile:block-dirty-count",
         "dirty:reasons",     // (dirty:reasons node-id)
         "dirty:ppa-reasons", // (dirty:ppa-reasons node-id)
+        // Issue #2020: Agent hygiene snapshot; optional node-id root
+        // (engine:metrics cannot forward optional subtree scope).
+        "reflect:hygiene-stats",
     };
     for (auto m : kMultiArgPublic) {
         if (name == m)

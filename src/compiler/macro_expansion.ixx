@@ -43,6 +43,11 @@ export extern std::atomic<std::uint64_t> g_macro_origin_provenance_errors;
 export extern std::atomic<std::uint64_t> g_hygiene_tracer_expansions;
 export extern std::atomic<std::uint64_t> g_hygiene_tracer_depth_max;
 
+// Issue #1652 / #2020: expand success + hygiene-violation totals (Agent diagnostics).
+export extern std::atomic<std::uint64_t> g_macro_expansion_total;
+export extern std::atomic<std::uint64_t> g_macro_introduced_nodes_created_total;
+export extern std::atomic<std::uint64_t> g_hygiene_violation_in_macro_expand_total;
+
 // Issue #2018: rest-param gensyms (`__rest_<name>_<n>`) applied in
 // clone_macro_body pre-scan / rename path.
 export extern std::atomic<std::uint64_t> g_macro_rest_param_hygiene_total;

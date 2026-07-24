@@ -28,6 +28,7 @@ import std;
 import aura.core.ast;
 import aura.core.type;
 import aura.compiler.ir;
+import aura.compiler.macro_expansion; // Issue #2020: hygiene atomics for Agent diagnostics
 import aura.compiler.pass_manager;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -6261,6 +6262,233 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             bump_reflection_schema_metrics(m, result);
         return make_bool(result.ok);
+    });
+
+    // Issue #2020: (reflect:hygiene-stats [node-id]) — Agent-visible live
+    // hygiene snapshot for expand → diagnose → mutate/rollback closed loops.
+    // No arg / void: process-wide atomics + workspace MacroIntroduced counts.
+    // With node-id: also counts MacroIntroduced / dirty / stale under that root
+    // (bounded walk; no allocation beyond the hash table).
+    // Cheap: relaxed atomics + optional O(subtree) walk only when root given.
+    add("reflect:hygiene-stats", [&ev, &string_heap](const auto& a) -> EvalValue {
+        using aura::compiler::macro_exp::g_hygiene_tracer_depth_max;
+        using aura::compiler::macro_exp::g_hygiene_tracer_expansions;
+        using aura::compiler::macro_exp::g_hygiene_violation_in_macro_expand_total;
+        using aura::compiler::macro_exp::g_macro_clone_concurrent_fiber_total;
+        using aura::compiler::macro_exp::g_macro_clone_hygiene_dirty_total;
+        using aura::compiler::macro_exp::g_macro_expansion_total;
+        using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
+        using aura::compiler::macro_exp::g_macro_rest_param_hygiene_total;
+        using aura::compiler::macro_exp::g_macro_restamp_after_flat_total;
+        using aura::compiler::macro_exp::MAX_HYGIENE_DEPTH;
+
+        auto* ht = FlatHashTable::create(64);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+
+        // Process-wide expand/hygiene atomics (relaxed; Agent dashboard).
+        const std::int64_t violation_count = static_cast<std::int64_t>(
+            g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed) +
+            ev.get_hygiene_violation_count());
+        const std::int64_t provenance_errors = static_cast<std::int64_t>(
+            g_macro_origin_provenance_errors.load(std::memory_order_relaxed));
+        const std::int64_t max_depth =
+            static_cast<std::int64_t>(g_hygiene_tracer_depth_max.load(std::memory_order_relaxed));
+        const std::int64_t dirty_nodes = static_cast<std::int64_t>(
+            g_macro_clone_hygiene_dirty_total.load(std::memory_order_relaxed));
+        const std::int64_t concurrent_fiber = static_cast<std::int64_t>(
+            g_macro_clone_concurrent_fiber_total.load(std::memory_order_relaxed));
+        const std::int64_t expansions =
+            static_cast<std::int64_t>(g_macro_expansion_total.load(std::memory_order_relaxed));
+        const std::int64_t tracer_expansions =
+            static_cast<std::int64_t>(g_hygiene_tracer_expansions.load(std::memory_order_relaxed));
+        const std::int64_t rest_hyg = static_cast<std::int64_t>(
+            g_macro_rest_param_hygiene_total.load(std::memory_order_relaxed));
+        const std::int64_t restamp = static_cast<std::int64_t>(
+            g_macro_restamp_after_flat_total.load(std::memory_order_relaxed));
+
+        std::int64_t macro_markers = 0;
+        std::int64_t subtree_dirty = 0;
+        std::int64_t subtree_stale = 0;
+        std::int64_t subtree_nodes = 0;
+        std::int64_t scoped = 0;
+        auto* ws = ev.workspace_flat();
+        if (ws) {
+            constexpr auto kExpansion =
+                static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+            // Optional root: walk only that subtree; else whole flat.
+            aura::ast::NodeId root = aura::ast::NULL_NODE;
+            if (!a.empty() && is_int(a[0])) {
+                root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                scoped = 1;
+            }
+            if (scoped &&
+                (root == aura::ast::NULL_NODE || root >= ws->size() || !ws->is_live_node(root))) {
+                // Invalid root: report zeros for scoped fields; still return atomics.
+            } else if (scoped) {
+                std::vector<aura::ast::NodeId> stack;
+                std::vector<std::uint8_t> seen(ws->size(), 0);
+                stack.push_back(root);
+                seen[static_cast<std::size_t>(root)] = 1;
+                while (!stack.empty()) {
+                    const auto id = stack.back();
+                    stack.pop_back();
+                    ++subtree_nodes;
+                    if (ws->is_macro_introduced(id)) {
+                        ++macro_markers;
+                        if ((ws->macro_dirty(id) & kExpansion) != 0)
+                            ++subtree_dirty;
+                        if (!ws->is_valid(id))
+                            ++subtree_stale;
+                    }
+                    auto v = ws->get(id);
+                    for (auto c : v.children) {
+                        if (c == aura::ast::NULL_NODE || c >= ws->size())
+                            continue;
+                        if (seen[static_cast<std::size_t>(c)])
+                            continue;
+                        seen[static_cast<std::size_t>(c)] = 1;
+                        stack.push_back(c);
+                    }
+                }
+            } else {
+                for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                    if (!ws->is_live_node(id))
+                        continue;
+                    if (ws->is_macro_introduced(id)) {
+                        ++macro_markers;
+                        if ((ws->macro_dirty(id) & kExpansion) != 0)
+                            ++subtree_dirty;
+                        if (!ws->is_valid(id))
+                            ++subtree_stale;
+                    }
+                }
+                subtree_nodes = static_cast<std::int64_t>(ws->size());
+            }
+        }
+
+        // AC names (exact + snake_case aliases for Agent scripts).
+        insert_kv("violation_count", violation_count);
+        insert_kv("hygiene-violations", violation_count);
+        insert_kv("provenance_errors", provenance_errors);
+        insert_kv("provenance-errors", provenance_errors);
+        insert_kv("max_depth", max_depth);
+        insert_kv("max-depth", max_depth);
+        insert_kv("hygiene-depth-max", max_depth);
+        insert_kv("dirty_nodes", dirty_nodes);
+        insert_kv("hygiene-dirty", dirty_nodes);
+        insert_kv("concurrent_fiber_count", concurrent_fiber);
+        insert_kv("concurrent-fiber-count", concurrent_fiber);
+        insert_kv("expansions", expansions);
+        insert_kv("tracer-expansions", tracer_expansions);
+        insert_kv("macro_markers", macro_markers);
+        insert_kv("macro-markers", macro_markers);
+        insert_kv("macro-dirty-nodes", subtree_dirty);
+        insert_kv("stale-macro-nodes", subtree_stale);
+        insert_kv("subtree-nodes", subtree_nodes);
+        insert_kv("scoped", scoped);
+        insert_kv("rest-param-hygiene-total", rest_hyg);
+        insert_kv("restamp-after-flat-total", restamp);
+        insert_kv("max-hygiene-depth-cap", static_cast<std::int64_t>(MAX_HYGIENE_DEPTH));
+        insert_kv("allow-macro-mutate", ev.get_allow_macro_mutate() ? 1 : 0);
+        insert_kv("active", 1);
+        insert_kv("schema", 2020);
+        insert_kv("issue", 2020);
+
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // Issue #2020: (reflect:provenance-blame node-id) — MacroIntroduced origin
+    // / expansion-site provenance for a single node. Returns void (nil) when
+    // the node is not MacroIntroduced (or invalid); hash otherwise.
+    add("reflect:provenance-blame", [&ev, &string_heap](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_void();
+        auto* ws = ev.workspace_flat();
+        if (!ws)
+            return make_void();
+        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
+            return make_void();
+        if (!ws->is_macro_introduced(nid))
+            return make_void(); // AC: nil if not macro-introduced
+
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = string_heap.size();
+                    string_heap.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+
+        constexpr auto kExpansion =
+            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion);
+        const auto prov = static_cast<std::int64_t>(ws->provenance(nid));
+        const auto dirty = static_cast<std::int64_t>(ws->macro_dirty(nid));
+        const auto parent = ws->parent_of(nid);
+        insert_kv("node", static_cast<std::int64_t>(nid));
+        insert_kv("macro-introduced", 1);
+        insert_kv("marker", static_cast<std::int64_t>(static_cast<std::uint8_t>(ws->marker(nid))));
+        insert_kv("provenance", prov);
+        insert_kv("origin", prov); // expansion-site id (weak provenance stamp)
+        insert_kv("gen-valid", ws->is_valid(nid) ? 1 : 0);
+        insert_kv("macro-dirty", dirty);
+        insert_kv("macro-expansion-dirty", (dirty & kExpansion) != 0 ? 1 : 0);
+        insert_kv("parent", parent == aura::ast::NULL_NODE ? static_cast<std::int64_t>(-1)
+                                                           : static_cast<std::int64_t>(parent));
+        insert_kv("flat-generation", static_cast<std::int64_t>(ws->generation()));
+        insert_kv("schema", 2020);
+        insert_kv("issue", 2020);
+
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #501 / #514 / #1610 / #1616 / #1891: query:ir-hygiene-stats —
