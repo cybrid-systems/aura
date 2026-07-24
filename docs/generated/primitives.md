@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**530** registrations scanned from `src/**/*.cpp` (19 marked **deprecated** — Issue #1438).
+**532** registrations scanned from `src/**/*.cpp` (20 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 100 primitives (19%)
-- **core**: 376 primitives (71%)
+- **core**: 378 primitives (71%)
 - **internal-observable**: 46 primitives (9%)
 - **convenience**: 8 primitives (2%)
 
@@ -555,8 +555,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `primitives:alias` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` *[core]* — `src/compiler/evaluator_primitives_test.cpp`
 
-## Reflect: (2)
+## Reflect: (4)
 
+- `reflect:hygiene-stats` *[core]* **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `reflect:provenance-blame` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
 
@@ -788,7 +790,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:unlock` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (376)
+### Core builtins (must remain primitive) (378)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1008,6 +1010,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
+- `reflect:hygiene-stats` **deprecated** — `src/compiler/evaluator_primitives_query.cpp`
+- `reflect:provenance-blame` — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-edsl` — `src/compiler/evaluator_primitives_query.cpp`
 - `reflect:validate-macro-body` — `src/compiler/evaluator_primitives_query.cpp`
 - `regex-find` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1229,7 +1233,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/gen_docs.py` (Is
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **19** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **20** names:
 
 - `compile:per-symbol-dirty-stats` — `src/compiler/evaluator_primitives_compile.cpp`
 - `ffi:opaque-stats` — `src/compiler/ffi_primitives_impl.cpp`
@@ -1243,6 +1247,7 @@ Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(wo
 - `query:node` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:parent-stable` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `reflect:hygiene-stats` — `src/compiler/evaluator_primitives_query.cpp`
 - `workspace:create` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:current` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:list` — `src/compiler/evaluator_primitives_workspace.cpp`
