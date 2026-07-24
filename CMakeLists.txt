@@ -1880,6 +1880,10 @@ aura_add_issue_test(test_arena_batch)
 aura_issue_test_link_llvm_jit(test_arena_batch)
 set_target_properties(test_arena_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
+# Issue #2067: Linear Ownership runtime enforcement + post-mutate revalidate.
+aura_add_issue_test(test_linear_runtime_violation)
+aura_issue_test_link_llvm_jit(test_linear_runtime_violation)
+
 aura_add_issue_test(test_gc_compact_batch)
 aura_issue_test_link_llvm_jit(test_gc_compact_batch)
 set_target_properties(test_gc_compact_batch PROPERTIES EXCLUDE_FROM_ALL TRUE)

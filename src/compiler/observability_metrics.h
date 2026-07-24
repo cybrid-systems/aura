@@ -2214,6 +2214,14 @@ struct CompilerMetrics {
     // is the live LifetimePin count for FFI buffers; ffi_defer_because_pin_total
     // is the cumulative # of compact_sweep deferrals while ffi_pin_defer_active.
     std::atomic<std::uint64_t> ffi_pin_active_count{0};
+    // Issue #2067: IR-executor linear runtime enforcement. linear_runtime_violation_total
+    // is bumped on each MoveOp/MutBorrowOp/DropOp/BorrowOp use-after-move /
+    // double-borrow / double-drop detection at execute time.
+    // linear_post_mutate_force_rollback_total is bumped when enforce_linear_boundary_consistency
+    // discovers a linear violation post-mutate under AuditStrategy::Full and force-rolls back.
+    std::atomic<std::uint64_t> linear_runtime_violation_total{0};
+    std::atomic<std::uint64_t> linear_post_mutate_force_rollback_total{0};
+
     std::atomic<std::uint64_t> ffi_defer_because_pin_total{0};
     // Issue #2004: explicit live_compact + freelist observability. Mirrors
     // ArenaStats::live_compact_* fields; bumped by Evaluator::live_compact
