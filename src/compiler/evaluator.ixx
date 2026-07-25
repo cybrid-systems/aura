@@ -11739,7 +11739,12 @@ public:
     void pin_node_for_atomic_batch(aura::ast::NodeId id) noexcept {
         if (!workspace_flat_ || id >= workspace_flat_->size())
             return;
-        const auto ref = workspace_flat_->make_safe_ref(id);
+        auto ref = workspace_flat_->make_safe_ref(id);
+        // Issue #2073: stamp tenant on every ref capture so cross-tenant
+        // isolation check (#1566) has provenance to compare against.
+        // Without this stamp, ref.tenant_id stays 0 and isolation can't
+        // distinguish "own tenant" from "foreign tenant" refs.
+        stamp_ref_tenant(ref);
         for (const auto& existing : atomic_batch_pinned_refs_) {
             if (existing.id == ref.id)
                 return;

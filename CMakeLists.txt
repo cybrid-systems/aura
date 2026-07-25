@@ -2022,6 +2022,12 @@ aura_issue_test_link_llvm_jit(test_stringpool_concurrent_intern)
 aura_add_issue_test(test_incremental_restamp_2061)
 aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
 
+# Issue #2073: wire check_workspace_isolation + stamp_ref_tenant on
+# mutate / StableNodeRef hot paths (stamp_ref_tenant at
+# pin_node_for_atomic_batch). Extends #1566 / #81967 coverage.
+aura_add_issue_test(test_workspace_isolation_wire_2073)
+aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
+
 # Issue #2072: force check_and_record_effect on all side-effect primitives
 # (FFI/Network/Exec/Render). require_effect() helper + git-commit +
 # render3d:create-volume wired at primitive entry points.
