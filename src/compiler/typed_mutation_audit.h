@@ -138,6 +138,9 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_nested_audit_total{0};
     std::atomic<std::uint64_t> composite_batch_audit_total{0};
     std::atomic<std::uint64_t> composite_cross_batch_linear_escape_total{0};
+    // Issue #2108: commit hard-blocked because linear escape was observed
+    // (never leave escaped linear live across composite batch boundaries).
+    std::atomic<std::uint64_t> linear_escape_commit_blocked_total{0};
     std::atomic<std::uint64_t> composite_partial_recover_attempt_total{0};
     // Issue #2105: ordered composite/nested commit barrier
     // (solve_delta_occurrence → linear revalidate → invariant audit).
@@ -748,6 +751,8 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_linear_fail_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_escape_commit_blocked_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_partial_recover_attempt_total.store(
         0, std::memory_order_relaxed);

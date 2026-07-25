@@ -3053,6 +3053,12 @@ public:
     }
     void note_txn_dirty() noexcept { txn_dirty_.store(1, std::memory_order_relaxed); }
     void clear_txn_dirty() noexcept { txn_dirty_.store(0, std::memory_order_relaxed); }
+    // Issue #2108: inject a live Moved linear root so composite commit /
+    // invariant audit tests can force cross-batch escape hard-block.
+    void inject_cross_batch_linear_escape_for_test() noexcept;
+    // Issue #2108: hard-block helper (Moved live roots + AST escape).
+    // Returns true if escape detected; sets r.linear_ok / cross_batch flags.
+    bool hard_block_cross_batch_linear_escape(typed_audit::InvariantAuditResult& r) noexcept;
     // Issue #1595: MultiFiberMailbox attach/recv/broadcast path.
     // Returns false when a linear claim in payload fails ownership checks
     // (caller must not deliver). Always runs light StableNodeRef probe.

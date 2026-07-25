@@ -412,10 +412,107 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     }
 }
 
-// Issue #2105: ordered composite / nested / atomic_batch commit barrier.
+// Issue #2108: hard-block composite commit when linear escapes across
+// batch boundaries (live Moved roots + AST escape re-analysis).
+// Always runs on composite commit / composite_mode audit — Sampled must
+// not skip this path when linear ops are present (see boundary force).
+// Returns true if escape was detected (caller must set linear_ok=false).
+bool Evaluator::hard_block_cross_batch_linear_escape(
+    typed_audit::InvariantAuditResult& r) noexcept {
+    bool escape = false;
+    // 1) Live Moved roots in env frames (runtime ownership half).
+    {
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        for (const auto& fr : env_frames_) {
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s == linear_rt::Moved) {
+                    escape = true;
+                    break;
+                }
+            }
+            if (escape)
+                break;
+        }
+    }
+    // 2) AST-level analyze_linear_escape_for_dirty over dirty linear names.
+    auto* flat = workspace_flat_;
+    auto* pool = workspace_pool_;
+    if (flat && pool && flat->size() > 0) {
+        try {
+            std::unordered_set<std::string> dirty;
+            // Discover Move/Borrow/Drop bindings under every node that looks
+            // like a linear ownership op (full-workspace dirty set).
+            using aura::ast::NodeTag;
+            for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+                const auto tag = flat->get(id).tag;
+                if (tag == NodeTag::Move || tag == NodeTag::Borrow || tag == NodeTag::MutBorrow ||
+                    tag == NodeTag::Drop) {
+                    aura::compiler::discover_linear_bindings_in_subtree(*flat, *pool, id, dirty);
+                }
+            }
+            // Also include names of any env binding already in linear state.
+            {
+                std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+                for (const auto& fr : env_frames_) {
+                    const auto n =
+                        std::min(fr.bindings_.size(), fr.bindings_linear_ownership_state_.size());
+                    for (std::size_t i = 0; i < n; ++i) {
+                        if (fr.bindings_linear_ownership_state_[i] != linear_rt::Untracked &&
+                            !fr.bindings_[i].first.empty())
+                            dirty.insert(fr.bindings_[i].first);
+                    }
+                }
+            }
+            if (!dirty.empty()) {
+                std::vector<OwnershipNote> notes;
+                LinearEscapeAnalysisResult esc{};
+                // Walk from node 0 (workspace forest entry) — covers top-level.
+                const aura::ast::NodeId root =
+                    flat->size() > 0 ? static_cast<aura::ast::NodeId>(0) : aura::ast::NULL_NODE;
+                const bool esc_ok =
+                    analyze_linear_escape_for_dirty(*flat, *pool, root, dirty, notes, esc);
+                if (!esc_ok || esc.escape_sites > 0)
+                    escape = true;
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->linear_escape_reanalysis_total.fetch_add(1, std::memory_order_relaxed);
+                    if (esc.escape_while_borrowed)
+                        m->linear_escape_while_borrowed_total.fetch_add(esc.escape_while_borrowed,
+                                                                        std::memory_order_relaxed);
+                    if (esc.escape_after_move)
+                        m->linear_escape_after_move_total.fetch_add(esc.escape_after_move,
+                                                                    std::memory_order_relaxed);
+                }
+            }
+        } catch (...) {
+            // [SILENCE-PRIM] escape analysis failure → treat as escape (safe).
+            escape = true;
+        }
+    }
+    if (escape) {
+        r.cross_batch_linear_escape = true;
+        r.linear_ok = false;
+    }
+    return escape;
+}
+
+void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
+    std::unique_lock<std::shared_mutex> lock(env_frames_mtx_);
+    if (env_frames_.empty())
+        env_frames_.emplace_back();
+    auto& fr = env_frames_[0];
+    if (fr.bindings_linear_ownership_state_.empty()) {
+        fr.bindings_.emplace_back("__escape_test__", make_int(0));
+        fr.bindings_linear_ownership_state_.push_back(linear_rt::Moved);
+    } else {
+        fr.bindings_linear_ownership_state_[0] = linear_rt::Moved;
+    }
+}
+
+// Issue #2105 / #2108: ordered composite / nested / atomic_batch commit barrier.
 // Agent-visible type + linear views must not go clean until this sequence
-// succeeds: solve_delta_occurrence → linear revalidate → invariant audit
-// → (Full) partial recovery, else reject (caller structural-rolls back).
+// succeeds: solve_delta_occurrence → linear revalidate → escape hard-block →
+// invariant audit → (Full) partial recovery, else reject.
+// Issue #2108: cross-batch linear escape never leaves live state (hard-block).
 bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
                                      std::uint32_t target_node, std::uint64_t before_epoch,
                                      std::uint64_t after_epoch, bool nested, bool batch_active,
@@ -461,6 +558,16 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             c.composite_commit_linear_fail_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // 2b) Issue #2108: always hard-block on cross-batch linear escape
+    // (independent of Sampled strategy — runs every composite commit).
+    InvariantAuditResult escape_probe{};
+    if (hard_block_cross_batch_linear_escape(escape_probe)) {
+        cr.linear_ok = false;
+        c.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // 3) Invariant audit (type + linear + provenance) under composite_mode.
     InvariantAuditResult audit{};
     cr.audit_ok =
@@ -469,6 +576,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     if (!cr.solve_ok)
         audit.type_ok = false;
     if (!cr.linear_ok) {
+        audit.linear_ok = false;
+    }
+    if (escape_probe.cross_batch_linear_escape) {
+        audit.cross_batch_linear_escape = true;
         audit.linear_ok = false;
     }
     cr.audit = audit;
@@ -485,6 +596,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     }
 
     // 4) Full strategy: per-category partial recovery then re-audit (#2029).
+    // Issue #2108 AC4: partial recovery linear success only if re-audit
+    // all_ok (including !cross_batch_linear_escape); otherwise reject.
     if (get_strategy() == AuditStrategy::Full) {
         c.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
         c.composite_partial_recover_attempt_total.fetch_add(1, std::memory_order_relaxed);
@@ -510,7 +623,16 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         const bool after_ok = run_typed_mutation_invariant_audit(
             mutation_id, "composite-txn-partial-recover", target_node, before_epoch, after_epoch,
             /*composite_mode=*/true, &after);
-        if (after_ok && after.all_ok()) {
+        // Re-run escape hard-block after linear recover (must still be clean).
+        InvariantAuditResult esc_after{};
+        if (hard_block_cross_batch_linear_escape(esc_after)) {
+            after.cross_batch_linear_escape = true;
+            after.linear_ok = false;
+            c.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape) {
             c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
@@ -528,8 +650,15 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         cr.audit = after;
     }
 
-    // Reject: caller performs structural rollback.
+    // Reject: caller performs structural rollback. Never leave escaped
+    // linear live (txn_dirty stays set; clear only on success).
     c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+    if (audit.cross_batch_linear_escape || escape_probe.cross_batch_linear_escape) {
+        // Ensure blocked counter is at least 1 for Agent dashboards
+        // (may already have been bumped in 2b).
+        if (c.linear_escape_commit_blocked_total.load(std::memory_order_relaxed) == 0)
+            c.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+    }
     cr.rejected = true;
     cr.committed = false;
     if (out_commit)
@@ -584,21 +713,12 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             r.linear_ok = true; // no frames → N/A pass
     }
 
-    // Issue #2027: composite / nested / atomic_batch — no dangling Moved
-    // live root may survive a batch commit or nested boundary success.
+    // Issue #2027 / #2108: composite / nested / atomic_batch — no dangling
+    // Moved live root and no AST escape may survive a batch commit.
+    // hard_block_cross_batch_linear_escape runs Moved scan + AST
+    // analyze_linear_escape_for_dirty (always, not Sampled-gated).
     if (composite_mode) {
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-        for (const auto& fr : env_frames_) {
-            for (const auto s : fr.bindings_linear_ownership_state_) {
-                if (s == linear_rt::Moved) {
-                    r.cross_batch_linear_escape = true;
-                    r.linear_ok = false;
-                    break;
-                }
-            }
-            if (r.cross_batch_linear_escape)
-                break;
-        }
+        (void)hard_block_cross_batch_linear_escape(r);
     }
 
     // ── Provenance / reflect hygiene (#1611 post_mutation_reflect_validate) ──
