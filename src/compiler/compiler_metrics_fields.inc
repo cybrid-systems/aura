@@ -1263,6 +1263,17 @@ AURA_COMPILER_METRICS_FIELD(mutation_boundary_yield_rollback_total)
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_hold_time_total_us)
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_holds_total)
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_holds_over_1ms_total)
+// Issue #2090: outermost MutationBoundaryGuard dtor unified hot-update
+// recovery sequence (throttle → reemit → epoch_notify → batch_deopt
+// unmatched). Counters are bumped by the outermost boundary dtor when
+// dirty_or_env_restamp_this_boundary_ is set — see
+// evaluator_mutation_boundary.cpp ~`outermost dtor post-cascade hook`.
+// Pairs with #2035 cascade-only path so non-cascade exits (fiber-steal
+// restore / partial recovery / compact-only / exception unwind) also
+// drive a single ordered recovery sequence.
+AURA_COMPILER_METRICS_FIELD(boundary_reemit_success_total)
+AURA_COMPILER_METRICS_FIELD(boundary_reemit_throttled_total)
+AURA_COMPILER_METRICS_FIELD(boundary_batch_deopt_unmatched_total)
 // Issue #2040: workspace_mtx_ unique-acquire contention + wait latency.
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_acquire_total)
 AURA_COMPILER_METRICS_FIELD(workspace_mtx_contended_total)
@@ -1594,7 +1605,7 @@ AURA_COMPILER_METRICS_FIELD(aot_incremental_reemit_count)
 AURA_COMPILER_METRICS_FIELD(aot_closure_dependency_reemit_total)
 AURA_COMPILER_METRICS_FIELD(aot_region_filtered_skips)
 AURA_COMPILER_METRICS_FIELD(aot_closure_bridge_refresh_total)
-AURA_COMPILER_METRICS_FIELD(live_closure_remap_total) // #2013
+AURA_COMPILER_METRICS_FIELD(live_closure_remap_total)             // #2013
 AURA_COMPILER_METRICS_FIELD(aot_incremental_llvm_emit_total)      // #2016
 AURA_COMPILER_METRICS_FIELD(aot_evolution_region_skips_total)     // #2016
 AURA_COMPILER_METRICS_FIELD(aot_region_mask_adapt_clears_total)   // #2016
@@ -1656,7 +1667,8 @@ AURA_COMPILER_METRICS_FIELD(arena_live_compact_invalidated_pins_total)
 // Issue #2005: FFI buffer pin/defer observability (refine #2000).
 AURA_COMPILER_METRICS_FIELD(ffi_pin_active_count)
 AURA_COMPILER_METRICS_FIELD(ffi_defer_because_pin_total)
-// Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback (refine #1589 / #1216).
+// Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback (refine #1589 /
+// #1216).
 AURA_COMPILER_METRICS_FIELD(coercion_blame_missing_total)
 // Issue #2063: cascade subtree-skip (summary-dirty early-exit).
 AURA_COMPILER_METRICS_FIELD(cascade_skip_subtree_total)
@@ -1666,7 +1678,6 @@ AURA_COMPILER_METRICS_FIELD(dynamic_degrade_with_blame_total)
 // Issue #2067: IR-executor linear runtime enforcement (refine #747 / #1926).
 AURA_COMPILER_METRICS_FIELD(linear_runtime_violation_total)
 AURA_COMPILER_METRICS_FIELD(linear_post_mutate_force_rollback_total)
-
 
 
 #undef AURA_COMPILER_METRICS_FIELD
