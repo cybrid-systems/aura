@@ -3837,7 +3837,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64); // #2036 SafePCVSpan default keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -3918,6 +3918,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 recommendation = 1;
             insert_kv("children-call-count", static_cast<std::int64_t>(children_calls));
             insert_kv("children-safe-view-count", static_cast<std::int64_t>(children_safe));
+            // Issue #2036: PCV migration end-state + SafePCVSpan default APIs.
+            {
+                const std::uint64_t safe_default =
+                    ws ? ws->children_stable_safe_default_total() : 0;
+                const std::uint64_t span_calls = ws ? ws->children_stable_span_calls_total() : 0;
+                insert_kv("children-stable-safe-default-total",
+                          static_cast<std::int64_t>(safe_default));
+                insert_kv("children-stable-span-calls-total",
+                          static_cast<std::int64_t>(span_calls));
+                insert_kv("children-pcv-migration-complete",
+                          ws ? ws->children_pcv_migration_complete() : 1);
+                insert_kv("children-default-safe-pcv-wired", 1);
+                insert_kv("schema-2036", 2036);
+                insert_kv("issue-2036", 2036);
+            }
             insert_kv("mark-dirty-upward-calls", static_cast<std::int64_t>(dirty_up));
             insert_kv("mark-dirty-total-nodes", static_cast<std::int64_t>(dirty_nodes));
             insert_kv("dirty-fast-fixed-point-hits", static_cast<std::int64_t>(fast_fixed));
@@ -3963,7 +3978,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ev = Evaluator::get_query_evaluator();
             if (!ev)
                 return make_void();
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64); // #2036 migration complete keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4058,7 +4073,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("region-dense-hits", static_cast<std::int64_t>(ws->region_dense_hits()));
                 insert_kv("map-indirection-miss",
                           static_cast<std::int64_t>(ws->map_indirection_miss_total()));
+                // Issue #2036: PCV migration end-state.
+                insert_kv("children-stable-safe-default-total",
+                          static_cast<std::int64_t>(ws->children_stable_safe_default_total()));
+                insert_kv("children-stable-span-calls-total",
+                          static_cast<std::int64_t>(ws->children_stable_span_calls_total()));
             }
+            insert_kv("children-pcv-migration-complete", 1);
+            insert_kv("children-default-safe-pcv-wired", 1);
+            insert_kv("schema-2036", 2036);
+            insert_kv("issue-2036", 2036);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

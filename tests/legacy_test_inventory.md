@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 353 | Preferred destination suites |
-| **Total scanned** | **353** | |
+| `tests/core/test_*.cpp` | 354 | Preferred destination suites |
+| **Total scanned** | **354** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 35 | 35 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 85 | 85 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 36 | 36 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 37 | 37 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 7 | 7 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 21 | 21 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 35 | 35 | P2 — link-profile heavy; migrate AC smoke first |
@@ -368,6 +368,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp`
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp`
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp`
+- `tests/compiler/test_pcv_children_safe_default_migration.cpp`
 - `tests/compiler/test_per_defuse_batch.cpp`
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp`
 - `tests/compiler/test_per_symbol_dirty_cycle_guard.cpp`
@@ -673,13 +674,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_workspace_lock_reentrancy.cpp` (—) [domain_suite, theme_core] — test_wave1_workspace_lock_reentrancy.cpp — Wave1 B-03 / B-09
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (36)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (37)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (36)
+#### domain/ (37)
 
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
@@ -703,6 +704,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [small, domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp` (—) [domain_suite, theme_serve] — test_panic_checkpoint_fiber_resume_safety.cpp — Issue #592:
+- `tests/compiler/test_pcv_children_safe_default_migration.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2036; children_ is PersistentChildVector; children_default
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp` (—) [domain_suite, theme_serve] — test_per_fiber_stack_pool_high_concurrency.cpp — Issue #652:
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:

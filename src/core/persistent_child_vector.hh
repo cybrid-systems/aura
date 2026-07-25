@@ -2,9 +2,9 @@
 //  persistent_child_vector.hh — immutable (copy-on-write) vector
 //  for per-node AST children.
 //
-//  Issue #221 (Issue #179 Cycle 3, slice 1/5): the "final form"
-//  of FlatAST's children storage. Replaces the mutable
-//  std::pmr::vector<NodeId> (added in #220) with a persistent
+//  Issue #221 (Issue #179 Cycle 3) + Issue #2036 (migration complete):
+//  the "final form" of FlatAST's children storage. Replaces the
+//  mutable std::pmr::vector<NodeId> (added in #220) with a persistent
 //  (immutable) version that supports:
 //    1. COW semantics: a "mutation" (with_push_back / with_insert /
 //       with_erase / with_set) does NOT modify the receiver; it
@@ -25,20 +25,18 @@
 //       keeps the old shared_ptr alive until the rollback
 //       boundary is exited.
 //
-//  This commit ships the data structure + standalone tests.
-//  Integration into FlatAST (slice 2/5), #177 rollback
-//  integration (slice 3/5), and migration of structural
-//  mutate operations (slice 4/5) are follow-up cycles.
+//  Issue #2036 migration end-state (complete):
+//    - FlatAST::children_ is std::vector<PersistentChildVector<NodeId>>
+//      (no remaining pmr::vector path for children lists).
+//    - Default agent-facing children APIs pin storage via SafePCVSpan
+//      (children_safe / children_default / children_stable path).
+//    - MutationCheckpoint snapshot_children / restore_children share
+//      or abandon storage correctly (abandon_storage on teardown).
+//    - Raw children() spans remain for single-statement hot paths only;
+//      prefer children_safe / children_columnar for multi-round AI loops.
 //
 //  Header-only, no std::pmr dependency. Uses std::shared_ptr
-//  (which is reference-counted atomically — safe to share
-//  across threads even though this cycle doesn't exercise
-//  that). The shared_ptr copy is O(1) (atomic increment).
-//
-//  The header is intentionally NOT included from ast.ixx in
-//  this cycle; FlatAST keeps its std::pmr::vector<NodeId>
-//  children_ field. The persistent design is verified
-//  standalone in test_issue_221.cpp.
+//  (atomic refcount — safe to share across fibers / threads).
 //
 // Test plan (test_issue_221.cpp):
 //   1. Basic: construct, size, operator[], iterators

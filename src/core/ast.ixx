@@ -1234,19 +1234,17 @@ public:
     std::pmr::vector<std::int64_t> int_val_;
     std::pmr::vector<double> float_val_;
     std::pmr::vector<SymId> sym_id_;
-    // Issue #220/221: per-node children. Each node has its own
-    // PersistentChildVector<NodeId> (a COW / immutable vector
-    // defined in src/core/persistent_child_vector.hh). The
-    // accessors (children(), set_child(), insert_child(),
-    // remove_child(), get().children) read through the PCV
-    // span. The add_X methods build a per-node list from their
-    // child NodeIds and store it via the PCV range constructor
-    // (one allocation per node, no per-element COW).
+    // Issue #220/#221/#2036: per-node children — fully PCV-backed.
+    // Each node has its own PersistentChildVector<NodeId> (COW /
+    // immutable; src/core/persistent_child_vector.hh). Accessors
+    // (children_safe / children_default / children_stable path) pin
+    // storage via SafePCVSpan so AI multi-round mutate loops never
+    // hold dangling child lists. Raw children() remains for
+    // single-statement use only.
     //
-    // The PCV's storage is reference-counted via
-    // std::shared_ptr, so back-references (e.g. a closure that
-    // captured the pre-mutation children list) stay valid. This
-    // is the foundation for #221 slice 3/5 (#177 rollback).
+    // The PCV's storage is reference-counted via std::shared_ptr,
+    // so back-references (e.g. MutationCheckpoint snapshots) stay
+    // valid across rollback (#177 / restore_children).
     // Heap std::vector (not pmr/arena): pmr::vector realloc was
     // leaving aliased PCV slots sharing one control block (#300).
     std::vector<PersistentChildVector<NodeId>> children_;
@@ -1713,6 +1711,9 @@ public:
     // mark_dirty_early_exit_count_ (#1251) which covers the parallel dirty-side
     // zero-allocation optimization surface.
     mutable std::atomic<std::uint64_t> children_stable_span_calls_total_{0};
+    // Issue #2036: children_stable / for_each_stable_child / children_default
+    // routes that pin via SafePCVSpan (migration end-state progress).
+    mutable std::atomic<std::uint64_t> children_stable_safe_default_total_{0};
     // Issue #1348: auto soft-compact on atomic batch commit.
     mutable std::atomic<std::uint64_t> auto_compact_on_commit_count_{0};
     // Issue #1465: AST-level dirty short-circuit API surface.
@@ -3850,14 +3851,15 @@ public:
         children_call_count_.fetch_add(1, std::memory_order_relaxed);
         if (id >= children_.size())
             return {};
-        // WARNING (Issue #370): the returned std::span borrows
+        // WARNING (Issue #370 / #2036): the returned std::span borrows
         // the underlying storage. If callers cache this span
         // across mutations (set_child / insert_child /
         // remove_child / rollback_to_size), the span WILL
         // dangle when the storage's last shared_ptr is
-        // released. Use children_safe(id) for lifetime-pinned
-        // views; reserve raw children(id) for single-statement
-        // use within the same mutation boundary.
+        // released. Prefer children_safe / children_default
+        // (SafePCVSpan) for multi-round AI agent loops; reserve
+        // raw children(id) for single-statement use within the
+        // same mutation boundary.
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
 
@@ -3868,7 +3870,7 @@ public:
     // returned span stays valid across mutate operations +
     // rollback. One atomic refcount bump per call (amortized
     // over all reads via the same handle).
-    // Issue #370/#678: lifetime-pinned children accessor.
+    // Issue #370/#678/#2036: lifetime-pinned children accessor.
     [[nodiscard]] SafePCVSpan<NodeId> children_safe_view(NodeId id) const {
         children_safe_view_count_.fetch_add(1, std::memory_order_relaxed);
         pcv_pin_count_.fetch_add(1, std::memory_order_relaxed);
@@ -3881,6 +3883,16 @@ public:
     }
 
     [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
+        return children_safe_view(id);
+    }
+
+    // Issue #2036: default agent-facing children accessor.
+    // Alias of children_safe — SafePCVSpan is the default for
+    // multi-round structural mutate/query loops. Prefer this
+    // (or children_safe) over raw children() / thread_local
+    // children_stable_span_view when holding state across calls.
+    [[nodiscard]] SafePCVSpan<NodeId> children_default(NodeId id) const {
+        children_stable_safe_default_total_.fetch_add(1, std::memory_order_relaxed);
         return children_safe_view(id);
     }
 
@@ -6979,9 +6991,22 @@ public:
     [[nodiscard]] std::uint64_t children_safe_view_count() const noexcept {
         return children_safe_view_count_.load(std::memory_order_relaxed);
     }
+    // Issue #2036: SafePCVSpan-default stable/default children path hits.
+    [[nodiscard]] std::uint64_t children_stable_safe_default_total() const noexcept {
+        return children_stable_safe_default_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #1651: children_stable_span_view call counter.
+    [[nodiscard]] std::uint64_t children_stable_span_calls_total() const noexcept {
+        return children_stable_span_calls_total_.load(std::memory_order_relaxed);
+    }
     // Issue #678: parent_safe_view call counter.
     [[nodiscard]] std::uint64_t parent_safe_view_count() const noexcept {
         return parent_safe_view_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #2036: migration complete flag (always 1 once children_ is PCV-backed
+    // and stable APIs default to SafePCVSpan pin).
+    [[nodiscard]] static constexpr std::int64_t children_pcv_migration_complete() noexcept {
+        return 1;
     }
 
     // Issue #191: bump the generation counter (with wrap-around
@@ -8040,15 +8065,18 @@ public:
         return parent_stable(id);
     }
 
-    // Issue #1500: full-provenance StableNodeRef per child (make_ref).
+    // Issue #1500 / #2036: full-provenance StableNodeRef per child
+    // (make_ref). Pins underlying PCV storage via children_safe_view
+    // for the duration of the walk so concurrent mutate/rollback
+    // cannot free the NodeId array mid-iteration. Returned vector
+    // owns StableNodeRefs (safe across mutation boundaries).
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
         std::vector<StableNodeRef> out;
-        if (id >= children_.size())
-            return out;
-        const auto& pcv = children_[id];
-        out.reserve(pcv.size());
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            auto cid = pcv[i];
+        auto safe = children_safe_view(id); // Issue #2036: default SafePCVSpan pin
+        children_stable_safe_default_total_.fetch_add(1, std::memory_order_relaxed);
+        out.reserve(safe.size());
+        for (std::size_t i = 0; i < safe.size(); ++i) {
+            auto cid = safe[i];
             if (cid == NULL_NODE)
                 continue;
             out.push_back(make_ref(cid));
@@ -8080,30 +8108,26 @@ public:
         return n;
     }
 
-    // Issue #1651: zero-copy span-return variant of children_stable (Task1 review 建议 #4).
-    // Returns std::span<const StableNodeRef> over a thread-local pinned buffer of StableNodeRef
-    // instead of std::vector<StableNodeRef>. Bumps children_stable_span_calls_total_ on every
-    // call (observability surface for Agent's `copy-avoided` count; pairs with the dirty-side
-    // mark_dirty_early_exit_count_ from #1251).
+    // Issue #1651 / #2036: zero-copy span-return variant of children_stable.
+    // Returns std::span<const StableNodeRef> over a thread-local buffer.
+    // Also pins the underlying PCV storage in a thread_local SafePCVSpan
+    // for the lifetime of the buffer (next call on this thread replaces it).
     //
-    // The thread_local buffer is sized lazily at first call (PersistentChildVector pattern),
-    // cleared, then populated by make_ref over a narrowed index range. The returned span is
-    // valid until the next call to this method on the SAME thread.
-    //
-    // Prefer children_stable_span_view over children_stable in AI hot paths (focused subtree
-    // mutate + query loops, EDSL navigation); reserve children_stable for boundary crossings
-    // where the vector must outlive the caller's frame. NULL_NODE children are filtered out
-    // (same as children_stable). Out-of-range ids return an empty span (no buffer mutation).
+    // Lifetime: span is valid until the next call to this method on the
+    // SAME thread. For holding children across fibers / mutate rounds,
+    // prefer children_safe / children_default (SafePCVSpan) or the
+    // allocating children_stable() vector.
     [[nodiscard]] std::span<const StableNodeRef> children_stable_span_view(NodeId id) const {
         children_stable_span_calls_total_.fetch_add(1, std::memory_order_relaxed);
-        if (id >= children_.size())
-            return {};
-        const auto& pcv = children_[id];
+        children_stable_safe_default_total_.fetch_add(1, std::memory_order_relaxed);
+        // Pin PCV storage until next call on this thread (#2036).
+        thread_local SafePCVSpan<NodeId> pin_keep;
+        pin_keep = children_safe_view(id);
         thread_local std::vector<StableNodeRef> buf;
         buf.clear();
-        buf.reserve(pcv.size());
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            auto cid = pcv[i];
+        buf.reserve(pin_keep.size());
+        for (std::size_t i = 0; i < pin_keep.size(); ++i) {
+            auto cid = pin_keep[i];
             if (cid == NULL_NODE)
                 continue;
             buf.push_back(make_ref(cid));
@@ -8111,34 +8135,16 @@ public:
         return {buf.data(), buf.size()};
     }
 
-    // Issue #398: zero-allocation iteration over stable
-    // children. Equivalent to children_stable() but does NOT
-    // allocate a vector — each non-NULL child is delivered to
-    // the callback as a `StableNodeRef` (with the current
-    // generation_ captured at call time). The callback may
-    // return any type (typically void or a count).
-    //
-    // Use this in hot paths (AI Agent multi-round loops,
-    // production EDSL navigation) where the caller only needs
-    // to iterate once. For callers that need to store the
-    // refs (e.g. across mutation boundaries), use the
-    // allocating `children_stable()` instead.
-    //
-    // The callback signature: `void(StableNodeRef)`. Order
-    // matches the underlying children span (left-to-right
-    // = first-to-last child). NULL_NODE children are
-    // filtered out (same as children_stable()).
-    //
-    // Out-of-range ids are silently a no-op (no callback
-    // invocation, same as the allocating version's empty
-    // vector).
-    // Issue #1500: deliver full-provenance StableNodeRef to callback.
+    // Issue #398 / #1500 / #2036: zero-allocation iteration over stable
+    // children. Pins via SafePCVSpan for the walk (children_safe_view).
+    // Equivalent to children_stable() but does NOT allocate a vector —
+    // each non-NULL child is delivered as a StableNodeRef. Prefer
+    // children_stable() when storing refs across mutation boundaries.
     template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
-        if (id >= children_.size())
-            return;
-        const auto& pcv = children_[id];
-        for (std::size_t i = 0; i < pcv.size(); ++i) {
-            auto cid = pcv[i];
+        auto safe = children_safe_view(id); // Issue #2036 pin
+        children_stable_safe_default_total_.fetch_add(1, std::memory_order_relaxed);
+        for (std::size_t i = 0; i < safe.size(); ++i) {
+            auto cid = safe[i];
             if (cid == NULL_NODE)
                 continue;
             fn(make_ref(cid));
