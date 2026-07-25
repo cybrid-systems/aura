@@ -18,6 +18,8 @@
 #include "serve/aura_platform.h"
 #include "compiler/runtime_paths.h" // #906
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+// Issue #2076 / #2053: production security defaults (must be before import std).
+#include "compiler/security_defaults.hh"
 
 import std;
 import aura.core;
@@ -46,8 +48,6 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 
 extern "C" void aura_reset_runtime(); // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
-// Issue #2076 / #2053: production security defaults (header-inline).
-#include "compiler/security_defaults.hh"
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 // Issue #243: defuse_version_ setter/getter so the AOT
 // bridge can mangle + register with the current emit epoch.
